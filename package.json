@@ -1,0 +1,20 @@
+{
+  "name": "rackbops-bot-plugins",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "description": "Plugins for rackbops-discord-bot, published as npm bundles + a Plugin Index (plugins.json)",
+  "scripts": {
+    "check": "bunx tsc --noEmit",
+    "test": "bun test",
+    "build": "bun run scripts/build-plugins.ts",
+    "generate-index": "bun run scripts/generate-index.ts",
+    "check-contract": "bun run scripts/check-contract.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "discord.js": "^14.27.0",
+    "typescript": "^5.9.3"
+  }
+}

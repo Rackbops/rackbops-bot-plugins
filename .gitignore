@@ -1,0 +1,15 @@
+node_modules/
+dist/
+plugins/*/dist/
+*.log
+
+.env
+.env.*
+
+.DS_Store
+Thumbs.db
+
+.idea/
+.vscode/
+
+.claude/settings.local.json
