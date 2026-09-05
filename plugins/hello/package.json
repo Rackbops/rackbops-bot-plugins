@@ -1,0 +1,17 @@
+{
+  "name": "@rackbops/plugin-hello",
+  "version": "0.0.0",
+  "description": "Throwaway plugin to prove the OIDC publish pipeline; deleted after the test",
+  "type": "module",
+  "main": "dist/plugin.js",
+  "files": ["dist"],
+  "peerDependencies": {
+    "discord.js": "^14.27.0"
+  },
+  "botPlugin": {
+    "hostApiVersion": 1,
+    "intents": [],
+    "commands": ["hello"],
+    "env": []
+  }
+}
