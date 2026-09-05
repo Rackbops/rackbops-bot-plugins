@@ -1,38 +1,5 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-05T01:25:31.120Z",
-  "plugins": [
-    {
-      "name": "hello",
-      "package": "@rackbops/plugin-hello",
-      "version": "0.0.2",
-      "description": "Throwaway plugin to prove the OIDC publish pipeline; deleted after the test",
-      "hostApiVersion": 1,
-      "intents": [],
-      "commands": [
-        "hello"
-      ],
-      "env": [],
-      "releases": [
-        {
-          "version": "0.0.2",
-          "publishedAt": "2026-09-04T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/hello-v0.0.2",
-          "notes": "### Fixed\n\n- Add `repository` so npm OIDC provenance verification passes (the `0.0.1` publish was\n  rejected E422 for an empty `repository.url`). Throwaway."
-        },
-        {
-          "version": "0.0.1",
-          "publishedAt": "2026-09-04T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/hello-v0.0.1",
-          "notes": "### Added\n\n- CI/OIDC publish test: this version is published by `publish.yml` via GitHub Actions\n  OIDC trusted publishing (no token), proving the pipeline end to end. Throwaway."
-        },
-        {
-          "version": "0.0.0",
-          "publishedAt": "2026-09-04T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/hello-v0.0.0",
-          "notes": "### Added\n\n- Placeholder release to bootstrap trusted publishing for `@rackbops/plugin-hello`\n  (a package must exist before a Trusted Publisher can be attached). Throwaway."
-        }
-      ]
-    }
-  ]
+  "generatedAt": "2026-09-05T01:27:47.908Z",
+  "plugins": []
 }
