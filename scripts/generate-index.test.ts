@@ -217,10 +217,12 @@ describe("generate-index CLI --check", () => {
     expect(stdout).toContain("up to date");
   });
 
-  test("committed plugins.json has the empty-envelope shape", async () => {
+  test("committed plugins.json is a well-formed envelope", async () => {
+    // Shape only -- NOT emptiness: a real plugin (or the throwaway hello) legitimately populates
+    // plugins[]. The "--check" test above already pins that the committed file matches disk.
     const written = JSON.parse(await Bun.file(PLUGINS_JSON).text());
     expect(written.schemaVersion).toBe(1);
-    expect(written.plugins).toEqual([]);
+    expect(Array.isArray(written.plugins)).toBe(true);
     expect(typeof written.generatedAt).toBe("string");
   });
 });
