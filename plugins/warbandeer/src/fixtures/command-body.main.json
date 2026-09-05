@@ -1,0 +1,22 @@
+[
+  {
+    "options": [],
+    "name": "link",
+    "description": "Link the Warbandeer desktop app to your Discord account",
+    "type": 1
+  },
+  {
+    "options": [
+      {
+        "type": 3,
+        "name": "account_label",
+        "description": "Which linked account (only needed if you have more than one)",
+        "required": false,
+        "max_length": 64
+      }
+    ],
+    "name": "unlink",
+    "description": "Unlink a Warbandeer desktop account from your Discord account",
+    "type": 1
+  }
+]
