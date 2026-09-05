@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-05T01:21:38.501Z",
+  "generatedAt": "2026-09-05T01:24:52.551Z",
   "plugins": [
     {
       "name": "hello",
       "package": "@rackbops/plugin-hello",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "description": "Throwaway plugin to prove the OIDC publish pipeline; deleted after the test",
       "hostApiVersion": 1,
       "intents": [],
@@ -14,6 +14,12 @@
       ],
       "env": [],
       "releases": [
+        {
+          "version": "0.0.2",
+          "publishedAt": "2026-09-04T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/hello-v0.0.2",
+          "notes": "### Fixed\n\n- Add `repository` so npm OIDC provenance verification passes (the `0.0.1` publish was\n  rejected E422 for an empty `repository.url`). Throwaway."
+        },
         {
           "version": "0.0.1",
           "publishedAt": "2026-09-04T00:00:00.000Z",
