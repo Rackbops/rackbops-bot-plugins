@@ -91,9 +91,12 @@ Two rules the host relies on:
 1. **`createPlugin` must be pure -- no I/O.** Do every side effect (reading files, starting a
    server) in `activate()`, which the host calls once, after it has taken over the gateway. Command
    builders and the plugin object are all `createPlugin` returns.
-2. **To refuse on bad config, throw from `createPlugin`** with a clear, named message (e.g. an
-   invalid port). The host skips just that plugin and logs the message -- it never crashes the bot,
-   and an enabled-but-misconfigured plugin still loads so its commands can report what's missing.
+2. **Throw from `createPlugin` only to reject an _invalid_ value** (e.g. a malformed port), with a
+   clear, named message -- the host skips just that plugin and logs it, never crashing the bot. Do
+   **not** throw when config is merely _absent_: treat unset as the feature being off and still
+   return your `commands`, so an enabled-but-unconfigured plugin loads and its commands can report
+   what's missing (enabled != configured). Reading `host.env.X` and finding it `undefined` is the
+   normal unconfigured case, not an error.
 
 ```ts
 import type { HostApi, Plugin } from "../../../packages/api/contract.js"; // path from src/index.ts
