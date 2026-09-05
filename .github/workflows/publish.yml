@@ -9,7 +9,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # commit the regenerated plugins.json back to main
+      contents: write # create the GitHub release
       id-token: write # OIDC trusted publishing to npm (no NPM_TOKEN)
     steps:
       - uses: actions/checkout@v7
@@ -42,6 +42,12 @@ jobs:
       - run: bun test
       - run: bun run build
 
+      # Fail before npm publish if the tagged commit's plugins.json is out of sync with the plugin
+      # sources, instead of discovering it after the package is already live. `checks` on every PR
+      # already enforces this, so under branch protection a synced index is guaranteed on main before
+      # any tag; this is belt-and-suspenders for a tag pushed at an unexpected commit.
+      - run: bun run generate-index -- --check
+
       # Publishing uses OIDC trusted publishing, not a token: npm revoked classic tokens (2025-12-09)
       # and retired bypass-2FA CI tokens (2026-07-31). `bun publish` does not support OIDC
       # (oven-sh/bun#22423), so the publish step runs `npm publish`; install/test/build stay on Bun
@@ -57,17 +63,6 @@ jobs:
 
       - name: Publish to npm (OIDC trusted publishing)
         run: cd "plugins/${{ steps.tag.outputs.name }}" && npm publish --access public
-
-      - name: Regenerate plugins.json
-        run: bun run generate-index
-
-      - name: Commit plugins.json
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add plugins.json
-          git diff --staged --quiet || git commit -m "chore: regenerate plugins.json [skip ci]"
-          git push origin HEAD:main
 
       - name: Extract the CHANGELOG section for the release body
         run: |
