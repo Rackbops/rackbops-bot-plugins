@@ -43,9 +43,26 @@ pin only needs to change in one place.
   `raw.githubusercontent.com/Rackbops/rackbops-discord-bot/main/src/plugins/contract.ts` live --
   a CI failure here can mean either real drift or a transient network/GitHub outage; check which
   before assuming the contract actually changed.
-- **`scripts/generate-index.ts` throws if `plugins/` is non-empty.** It only implements the
-  empty-envelope case; see `CLAUDE.md`'s Key gotchas for why, and don't work around the throw
-  without first building the real per-plugin extraction it's guarding.
+- **`scripts/generate-index.ts` extracts every `plugins/<name>` into `plugins.json`.** It builds
+  each `PluginIndexEntry` from `package.json`'s `botPlugin` block + `CHANGELOG.md` (Keep-a-Changelog
+  `## [x.y.z] - YYYY-MM-DD`, newest first, capped at 10), and **fails** on a bad plugin name, a
+  missing `hostApiVersion`, a current version with no CHANGELOG section, or a command name declared
+  by two plugins. `buildIndex`/`parseChangelogReleases`/`sameIgnoringGeneratedAt` are exported and
+  pure over an injected dir, so the extraction is unit-tested without a subprocess
+  (`scripts/generate-index.test.ts`); the CLI (`--check` / write) is a thin `import.meta.main`
+  wrapper. `generatedAt` is excluded from the `--check` diff.
+- **Relative imports need a `.js` extension** (`tsconfig.json`'s `moduleResolution: NodeNext`).
+  Import the vendored contract as `../packages/api/contract.js` (type-only) -- it resolves to
+  `contract.d.ts`, and Bun resolves the `.js` specifier to the `.ts`/`.d.ts` source at runtime.
+  Omitting the extension fails `bun run check` with TS2835.
+- **Publishing is OIDC trusted publishing via `npm publish`, not a token** (verified 2026-09-04
+  against npm docs). npm revoked classic tokens (2025-12-09) and retired bypass-2FA CI tokens
+  (2026-07-31), so there is no `NPM_TOKEN`; `publish.yml` authenticates with GitHub Actions OIDC
+  (`id-token: write` + `actions/setup-node` + npm >= 11.5.1). `bun publish` does **not** support
+  OIDC ([oven-sh/bun#22423](https://github.com/oven-sh/bun/issues/22423)), which is why the publish
+  step is `npm publish` while install/test/build stay Bun. A Trusted Publisher must be configured
+  per package on npmjs.com, and npm requires the package to exist first -- bootstrap a new package
+  with a one-time local placeholder `npm publish` + 2FA OTP, then CI/OIDC owns every real version.
 - **CI job names (`checks`, `test`) intentionally split lint/typecheck-shaped work from tests**,
   matching `/audit`'s "at least two jobs" requirement -- `rackbops-discord-bot`'s own `ci.yml`
   uses a single `checks` job and doesn't split this way; don't use that file as a reference for
@@ -62,9 +79,8 @@ pin only needs to change in one place.
 
 ## Open questions
 
-- **npm scope for published packages (`@rackbops/plugin-<name>`)** -- probe: check whether the
-  `@rackbops` npm org exists yet (`npm view @rackbops/<any-package>`) before the first real
-  publish; not yet live as of 2026-09-04 (`rackbops-ui-ux-std-lib`, the other repo expected to
-  use this scope, hadn't published under it either as of that date).
+- **npm scope for published packages (`@rackbops/plugin-<name>`)** -- RESOLVED 2026-09-04: the
+  `rackbops` npm org exists (created 2026-09-04, account `rshelton`), so the scope is `@rackbops`.
+  Authentication is OIDC trusted publishing (see the publishing gotcha above), not a scope token.
 - **When to turn on branch protection** -- probe: has `checks` been green on "a few" real merges
   yet? See the twin of `rackbops-discord-bot#84` filed in this repo's issues.

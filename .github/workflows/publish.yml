@@ -9,7 +9,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # commit the regenerated plugins.json back to main
+      id-token: write # OIDC trusted publishing to npm (no NPM_TOKEN)
     steps:
       - uses: actions/checkout@v7
 
@@ -41,10 +42,21 @@ jobs:
       - run: bun test
       - run: bun run build
 
-      - name: Publish to npm
-        run: cd "plugins/${{ steps.tag.outputs.name }}" && bun publish --access public
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Publishing uses OIDC trusted publishing, not a token: npm revoked classic tokens (2025-12-09)
+      # and retired bypass-2FA CI tokens (2026-07-31). `bun publish` does not support OIDC
+      # (oven-sh/bun#22423), so the publish step runs `npm publish`; install/test/build stay on Bun
+      # above. A Trusted Publisher for each package must be configured on npmjs.com
+      # (GitHub Actions / Rackbops / rackbops-bot-plugins / publish.yml) — see README.md.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Ensure npm supports OIDC trusted publishing (>= 11.5.1)
+        run: npm install -g npm@latest
+
+      - name: Publish to npm (OIDC trusted publishing)
+        run: cd "plugins/${{ steps.tag.outputs.name }}" && npm publish --access public
 
       - name: Regenerate plugins.json
         run: bun run generate-index

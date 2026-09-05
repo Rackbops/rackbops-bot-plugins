@@ -9,15 +9,6 @@ My personal `~/.claude/CLAUDE.md` governs *how I work* -- the review gate, escal
 shipping, commit mechanics, search-tool routing, and shell choice. It is **not restated here**;
 this file covers only what is specific to this repo.
 
-> **FIRST-RUN -- populate `CONTEXT.md`, then delete this block.** This repo's `CONTEXT.md`
-> starts thin. The facts worth a ledger -- confirmed toolchain/CI quirks, where secrets/state
-> live, docs pinned by tests, or a code-orientation map -- only surface after real work here, so
-> a template can't pre-fill them. The first session doing substantial work (most likely: landing
-> follow-up issue A, the manifest generator/publish pipeline) should run a **gap self-review**
-> ("what would a future session trip on that isn't written down?"), verify each finding against
-> source, and add the real ones to `CONTEXT.md`. Then delete this block -- including if the repo
-> genuinely has nothing non-obvious to record.
-
 **Commit convention (intended -- no history yet to confirm scopes against):** Conventional
 Commits `type(scope): subject`, matching every other Rackbops repo. Revisit this line once real
 commits accumulate; match `git log`, not this guess, if they disagree.
@@ -109,10 +100,10 @@ Follows personal's **Code style** baseline. This repo's individuality:
   file via `import type`. Code that needs the actual `HOST_API_VERSION` *value* at runtime needs
   a different source (a local literal, or `plugins.json`'s own `hostApiVersion` field) -- not an
   `import` from this file.
-- **`scripts/generate-index.ts` refuses to run against a non-empty `plugins/`.** It's a
-  deliberately minimal empty-envelope generator; adding a real plugin without first building out
-  the full per-plugin extraction (CHANGELOG parsing, name/hostApiVersion validation,
-  duplicate-command detection) will make it throw on purpose rather than emit a wrong manifest.
+- **`scripts/generate-index.ts` extracts every `plugins/<name>` into `plugins.json`** (from each
+  `package.json` `botPlugin` block + `CHANGELOG.md`) and fails on a bad name, a missing
+  `hostApiVersion`, a current version with no CHANGELOG section, or a duplicate command name across
+  plugins. See `CONTEXT.md` for the extractor's shape and the OIDC publishing path.
 - **Branch protection on `main` is off, on purpose.** Mirrors `rackbops-discord-bot`'s own
   "Phase 2, after CI has been green on a few real merges" plan (`rackbops-discord-bot#84`) -- see
   the twin issue filed in this repo for when/how to turn it on.
