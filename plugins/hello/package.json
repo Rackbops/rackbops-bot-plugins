@@ -1,6 +1,6 @@
 {
   "name": "@rackbops/plugin-hello",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Throwaway plugin to prove the OIDC publish pipeline; deleted after the test",
   "type": "module",
   "main": "dist/plugin.js",

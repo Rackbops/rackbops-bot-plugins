@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.1] - 2026-09-04
+
+### Added
+
+- CI/OIDC publish test: this version is published by `publish.yml` via GitHub Actions
+  OIDC trusted publishing (no token), proving the pipeline end to end. Throwaway.
+
 ## [0.0.0] - 2026-09-04
 
 ### Added
