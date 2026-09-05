@@ -41,6 +41,11 @@ later, inside `activate()`.
   "type": "module",
   "main": "dist/plugin.js",
   "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rackbops/rackbops-bot-plugins.git",
+    "directory": "plugins/<name>"
+  },
   "peerDependencies": { "discord.js": "^14.27.0" },
   "botPlugin": {
     "hostApiVersion": 1,
@@ -66,6 +71,9 @@ later, inside `activate()`.
   bot's `HOST_API_VERSION`, currently `1`), the gateway `intents` the plugin needs (raw
   `GatewayIntentBits` numbers, so the manifest needs no discord.js), the bare `commands` it
   contributes (unique across core + every enabled plugin), and its `env` keys.
+- `repository` (with the monorepo `directory`) is **required**: OIDC trusted publishing signs an npm
+  provenance statement, and the registry rejects the publish (E422) unless `repository.url` matches
+  this repo. Copy it verbatim, changing only `directory` to `plugins/<name>`.
 - `env[].format` is a POSIX ERE evaluated by the bot's `ops/bot-ops.sh env-set` in bash's `[[ =~ ]]`,
   possibly in a C locale -- **keep to the common subset: enumerate characters, never multibyte
   ranges** (`[A-Za-z0-9]`, not `[[:alpha:]]` or unicode ranges). `required` mirrors env-set's REQUIRED

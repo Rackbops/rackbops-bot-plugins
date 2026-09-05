@@ -55,6 +55,11 @@ pin only needs to change in one place.
   Import the vendored contract as `../packages/api/contract.js` (type-only) -- it resolves to
   `contract.d.ts`, and Bun resolves the `.js` specifier to the `.ts`/`.d.ts` source at runtime.
   Omitting the extension fails `bun run check` with TS2835.
+- **Every plugin's `package.json` MUST declare `repository` (url + monorepo `directory`).** OIDC
+  trusted publishing auto-signs an npm provenance statement, and the registry **rejects** the publish
+  with `E422 ... "repository.url" is "", expected to match ...` when it's absent. Verified 2026-09-04
+  by the throwaway `hello` pipeline test (its `0.0.1` publish was rejected for exactly this; `0.0.2`
+  with `repository` succeeded). The authoring guide's template includes it.
 - **Publishing is OIDC trusted publishing via `npm publish`, not a token** (verified 2026-09-04
   against npm docs). npm revoked classic tokens (2025-12-09) and retired bypass-2FA CI tokens
   (2026-07-31), so there is no `NPM_TOKEN`; `publish.yml` authenticates with GitHub Actions OIDC
