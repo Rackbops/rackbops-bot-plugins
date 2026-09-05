@@ -29,7 +29,7 @@ unless `check-contract` fails; when it does, re-vendor rather than hand-edit the
 
 | File / dir | Produced by | Rule |
 |---|---|---|
-| `plugins.json` | `scripts/generate-index.ts`, from `plugins/*/package.json` + `CHANGELOG.md` | Never hand-edit. Regenerate and commit. `publish.yml` also writes it, automatically, after a real publish. |
+| `plugins.json` | `scripts/generate-index.ts`, from `plugins/*/package.json` + `CHANGELOG.md` | Never hand-edit. Regenerate and commit it in the PR that changes a plugin; CI's `generate-index -- --check` gate enforces sync. `publish.yml` only verifies it (via `--check`), never writes it. |
 | `packages/api/contract.d.ts` | Vendored from `rackbops-discord-bot`'s `src/plugins/contract.ts` | Never hand-edit. Re-fetch upstream and overwrite verbatim; `scripts/check-contract.ts` verifies the match. |
 | `plugins/*/dist/plugin.js` | `scripts/build-plugins.ts` (`bun build`) | Never hand-edit. Gitignored -- not committed, rebuilt by CI/publish. |
 

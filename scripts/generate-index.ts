@@ -1,6 +1,8 @@
 // Generates plugins.json (the Plugin Index) from every plugins/<name>/package.json "botPlugin"
-// block + CHANGELOG.md. The published manifest is bot-agnostic and never hand-edited: publish.yml
-// (after a real publish) and a manual `bun run generate-index` are its only writers. The entry
+// block + CHANGELOG.md. The published manifest is bot-agnostic and never hand-edited: its only
+// writer is a manual `bun run generate-index`, committed in the PR that changes a plugin; CI's
+// `--check` gate enforces the committed index stays in sync, and publish.yml only verifies it
+// (via `--check`), never writes it. The entry
 // shape is the vendored contract's PluginIndexEntry (packages/api/contract.d.ts) minus the fields
 // this generator derives (package/version come from package.json, releases from the CHANGELOG).
 //
