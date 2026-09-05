@@ -17,7 +17,8 @@ const OUTPUT_PATH = new URL("plugins.json", ROOT);
 // The `PLUGINS=` token, the `[name]` log prefix, and the data/plugins/<name> directory on the bot's
 // host all resolve by this name — see contract.d.ts's PluginIndexEntry.name.
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
-const RELEASE_HEADING_RE = /^## \[([^\]]+)\]\s*-\s*(\d{4}-\d{2}-\d{2})\s*$/;
+// Tolerates trailing text after the date, e.g. Keep-a-Changelog's "## [1.0.0] - 2026-01-02 [YANKED]".
+const RELEASE_HEADING_RE = /^## \[([^\]]+)\]\s*-\s*(\d{4}-\d{2}-\d{2})(?:\s.*)?$/;
 const MAX_RELEASES = 10;
 
 // The subset of a plugin's package.json this generator reads. Typed loosely because it is untrusted
@@ -115,9 +116,15 @@ export function parseChangelogReleases(
   let current: { version: string; date: string; notes: string[] } | null = null;
   const flush = (): void => {
     if (!current) return;
+    // Reject an impossible date (2026-13-45 -> Invalid Date; 2026-02-30 -> silent rollover to
+    // 2026-03-02) rather than write a wrong publishedAt into the published manifest.
+    const date = new Date(`${current.date}T00:00:00Z`);
+    if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== current.date) {
+      throw new Error(`${pluginName}: CHANGELOG.md has an invalid date "${current.date}" for version ${current.version}`);
+    }
     releases.push({
       version: current.version,
-      publishedAt: new Date(`${current.date}T00:00:00Z`).toISOString(),
+      publishedAt: date.toISOString(),
       url: `https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/${pluginName}-v${current.version}`,
       notes: current.notes.join("\n").trim(),
     });
@@ -138,7 +145,15 @@ export function parseChangelogReleases(
       `${pluginName}: CHANGELOG.md has no "## [${currentVersion}]" section for the current package version`,
     );
   }
-  return releases.slice(0, MAX_RELEASES);
+  const capped = releases.slice(0, MAX_RELEASES);
+  // The manifest must carry the current version's notes; if it fell outside the newest MAX_RELEASES
+  // entries, fail loudly rather than ship a releases[] the update notification can't use for it.
+  if (!capped.some((r) => r.version === currentVersion)) {
+    throw new Error(
+      `${pluginName}: version ${currentVersion} is not among the ${MAX_RELEASES} most recent CHANGELOG entries`,
+    );
+  }
+  return capped;
 }
 
 /**
@@ -160,7 +175,12 @@ export async function buildIndex(
       throw new Error(`${name}: plugin directory name must match ${NAME_RE.source}`);
     }
     const dir = new URL(`${name}/`, pluginsDir);
-    const pkg = JSON.parse(await Bun.file(new URL("package.json", dir)).text()) as PluginPackageJson;
+    let pkg: PluginPackageJson;
+    try {
+      pkg = JSON.parse(await Bun.file(new URL("package.json", dir)).text()) as PluginPackageJson;
+    } catch (err) {
+      throw new Error(`${name}: cannot read package.json -- ${(err as Error).message}`);
+    }
     const bp = pkg.botPlugin;
     if (typeof bp !== "object" || bp === null) {
       throw new Error(`${name}: package.json has no "botPlugin" block`);
@@ -177,7 +197,12 @@ export async function buildIndex(
       commandOwner.set(command, name);
     }
 
-    const changelog = await Bun.file(new URL("CHANGELOG.md", dir)).text();
+    let changelog: string;
+    try {
+      changelog = await Bun.file(new URL("CHANGELOG.md", dir)).text();
+    } catch (err) {
+      throw new Error(`${name}: cannot read CHANGELOG.md -- ${(err as Error).message}`);
+    }
 
     // Fixed key order so `--check`'s JSON comparison is stable across runs.
     plugins.push({

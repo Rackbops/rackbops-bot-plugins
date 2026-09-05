@@ -154,6 +154,24 @@ describe("parseChangelogReleases", () => {
   test("throws when the current version has no section", () => {
     expect(() => parseChangelogReleases(body, "alpha", "9.9.9")).toThrow(/no "## \[9\.9\.9\]" section/);
   });
+
+  test("rejects an impossible calendar date instead of rolling it over", () => {
+    expect(() => parseChangelogReleases("## [1.0.0] - 2026-02-30\n- x", "alpha", "1.0.0")).toThrow(/invalid date "2026-02-30"/);
+    expect(() => parseChangelogReleases("## [1.0.0] - 2026-13-45\n- x", "alpha", "1.0.0")).toThrow(/invalid date "2026-13-45"/);
+  });
+
+  test("parses a heading with a trailing [YANKED] marker", () => {
+    const releases = parseChangelogReleases("## [1.0.0] - 2026-01-02 [YANKED]\n- pulled", "alpha", "1.0.0");
+    expect(releases.map((r) => r.version)).toEqual(["1.0.0"]);
+    expect(releases[0].publishedAt).toBe("2026-01-02T00:00:00.000Z");
+  });
+
+  test("fails when the current version is sliced past the newest 10", () => {
+    const versions = Array.from({ length: 11 }, (_, i) => `1.${11 - i}.0`); // newest first: 1.11.0 .. 1.1.0
+    const text = versions.map((v, i) => `## [${v}] - 2026-01-${String(11 - i).padStart(2, "0")}\n- note`).join("\n\n");
+    // current = the oldest (present in the file, but outside the newest 10)
+    expect(() => parseChangelogReleases(text, "alpha", "1.1.0")).toThrow(/not among the 10 most recent/);
+  });
 });
 
 describe("sortByName", () => {

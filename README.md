@@ -27,8 +27,9 @@ credentials"), and the packages are public on npm regardless.
 ## Authoring a plugin
 
 A plugin is one directory under `plugins/<name>/`, built to a single bundle and published as
-`@rackbops/plugin-<name>`. The bot reads its manifest entry (from `package.json`'s `botPlugin`
-block) *before* it logs in, and runs the bundle's code only later, inside `activate()`.
+`@rackbops/plugin-<name>`. The bot reads its Plugin Index entry (which the generator derives from
+`package.json`'s `botPlugin` block, below) *before* it logs in, and runs the bundle's code only
+later, inside `activate()`.
 
 ### `plugins/<name>/package.json`
 

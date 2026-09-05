@@ -2,7 +2,7 @@
 // commands its package.json "botPlugin.commands" declares. The generator reads the declaration
 // (into plugins.json) and the bot registers what the code returns, so a mismatch would register
 // a command the manifest never announced (or fail to register one it did). Runs against every real
-// plugins/* (none while the repo is empty) plus two in-repo fixtures that pin the check itself.
+// plugins/* (none while the repo is empty) plus in-repo fixtures that pin the check itself.
 //
 // Builds each bundle inside the test with process.execPath (never bare "bun" — the ENOENT that
 // causes is Windows-specific and wouldn't reproduce on Linux CI), because the CI `test` job has no
@@ -17,6 +17,23 @@ interface LoadedModule {
   createPlugin: (host: unknown) => { commands?: ReadonlyArray<{ name: string }> };
 }
 
+// A complete-enough fake HostApi: createPlugin is pure but the contract lets it read host.env (and,
+// defensively, any other field) to validate config. Passing a bare {} would TypeError on the first
+// `host.env.X` — exactly what a real config-bearing plugin does — so the sweep must hand over this.
+const fakeHost = {
+  name: "fixture",
+  env: {} as Record<string, string | undefined>,
+  dataDir: join(tmpdir(), "drift-fake-datadir"),
+  log: { info() {}, warn() {}, error() {} },
+  storage: {
+    readJsonOrFresh: async (_path: string, fresh: () => unknown) => fresh(),
+    writeJsonAtomic: async () => {},
+    createJsonWriter: () => ({ save: async () => {} }),
+    createKeyedJsonMutator: () => ({ update: async () => {} }),
+  },
+  announce: async () => {},
+};
+
 async function buildBundle(pluginDir: string): Promise<string> {
   const outfile = join(pluginDir, "dist", "plugin.js");
   const proc = Bun.spawn(
@@ -30,10 +47,9 @@ async function buildBundle(pluginDir: string): Promise<string> {
 
 async function builtCommandNames(pluginDir: string): Promise<string[]> {
   const outfile = await buildBundle(pluginDir);
-  // Cache-bust the import: two fixtures build to the same relative dist path across temp dirs, but
-  // the absolute temp paths differ, so a fresh URL is enough; the query param guards a repeat run.
+  // Cache-bust the import: fixtures build to the same relative dist path across temp dirs.
   const mod = (await import(`${pathToFileURL(outfile).href}?t=${Date.now()}`)) as LoadedModule;
-  const plugin = mod.createPlugin({});
+  const plugin = mod.createPlugin(fakeHost);
   return (plugin.commands ?? []).map((c) => c.name);
 }
 
@@ -42,18 +58,25 @@ async function declaredCommands(pluginDir: string): Promise<string[]> {
   return pkg.botPlugin?.commands ?? [];
 }
 
-// A minimal plugin whose src returns `commands` names — no discord.js import needed, since the
-// check only reads command names. `build`/`handle` are stubs to satisfy the shape.
-function pluginSource(names: string[]): string {
+// A minimal plugin whose src returns `commands` names -- no discord.js import needed, since the
+// check only reads command names. `build`/`handle` are stubs. When `readsEnv`, createPlugin touches
+// host.env (as a config-bearing plugin would), so the fixture crashes unless handed a real host.
+function pluginSource(names: string[], readsEnv = false): string {
+  const envLine = readsEnv ? "  const _configured = host.env.FIXTURE_PORT !== undefined;\n" : "";
   const entries = names.map((n) => `{ name: ${JSON.stringify(n)}, build: (b) => b, handle: async () => {} }`).join(", ");
-  return `export function createPlugin() { return { commands: [${entries}] }; }\n`;
+  return `export function createPlugin(host) {\n${envLine}  return { commands: [${entries}] };\n}\n`;
 }
 
-async function withFixture<T>(codeCommands: string[], declared: string[], fn: (dir: string) => Promise<T>): Promise<T> {
+async function withFixture<T>(
+  codeCommands: string[],
+  declared: string[],
+  fn: (dir: string) => Promise<T>,
+  readsEnv = false,
+): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "drift-"));
   try {
     await mkdir(join(dir, "src"), { recursive: true });
-    await writeFile(join(dir, "src", "index.ts"), pluginSource(codeCommands));
+    await writeFile(join(dir, "src", "index.ts"), pluginSource(codeCommands, readsEnv));
     await writeFile(
       join(dir, "package.json"),
       JSON.stringify({ name: "@rackbops/plugin-fixture", version: "0.0.1", botPlugin: { hostApiVersion: 1, commands: declared, env: [] } }),
@@ -80,6 +103,14 @@ describe("command drift", () => {
     });
   });
 
+  // Guards the fake host: a config-bearing createPlugin (reads host.env) must not crash the check.
+  // Handing createPlugin a bare {} would TypeError here.
+  test("a config-reading plugin's createPlugin runs against the check's host", async () => {
+    await withFixture(["cfg"], ["cfg"], async (dir) => {
+      expect(await builtCommandNames(dir)).toEqual(["cfg"]);
+    }, true);
+  });
+
   // Real plugins, once any exist: every committed plugin's built commands must match its manifest.
   test("every committed plugin's built commands match its manifest", async () => {
     const pluginsDir = join(import.meta.dir, "..", "plugins");
@@ -93,6 +124,5 @@ describe("command drift", () => {
       const dir = join(pluginsDir, name);
       expect(await builtCommandNames(dir)).toEqual(await declaredCommands(dir));
     }
-    expect(names).toBeDefined();
   });
 });
