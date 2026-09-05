@@ -1,5 +1,35 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-05T01:27:47.908Z",
-  "plugins": []
+  "generatedAt": "2026-09-05T01:47:28.222Z",
+  "plugins": [
+    {
+      "name": "warbandeer",
+      "package": "@rackbops/plugin-warbandeer",
+      "version": "1.0.0",
+      "description": "Warbandeer desktop-app character linking (/link, /unlink, ingest endpoint)",
+      "hostApiVersion": 1,
+      "intents": [],
+      "commands": [
+        "link",
+        "unlink"
+      ],
+      "env": [
+        {
+          "key": "WARBANDEER_INGEST_PORT",
+          "format": "^([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$",
+          "description": "Port the ingest server binds inside the container; unset = connector off (never published to the host; reachable only through the Cloudflare Tunnel)",
+          "required": false,
+          "secret": false
+        }
+      ],
+      "releases": [
+        {
+          "version": "1.0.0",
+          "publishedAt": "2026-09-04T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/warbandeer-v1.0.0",
+          "notes": "### Added\n\n- Warbandeer desktop-app character linking, ported from the bot's baked-in connector\n  (`rackbops-discord-bot#3`, PR #92) as the first published plugin: the `/link` and `/unlink`\n  slash commands and the HTTP ingest endpoint (`POST /link`, `POST /characters`), gated behind\n  `WARBANDEER_INGEST_PORT` (unset = connector off). Behaviour is identical to the baked-in\n  connector; see the bot's `docs/adr/0001`–`0003` for the transport, auth, and storage design."
+        }
+      ]
+    }
+  ]
 }
