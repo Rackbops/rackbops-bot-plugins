@@ -78,6 +78,9 @@ later, inside `activate()`.
   possibly in a C locale -- **keep to the common subset: enumerate characters, never multibyte
   ranges** (`[A-Za-z0-9]`, not `[[:alpha:]]` or unicode ranges). `required` mirrors env-set's REQUIRED
   set; `secret` keys are never listed or edited by ops tooling.
+- `adminApiVersion` (optional) opts the plugin into its own **admin-panel tab** -- see
+  [Admin tab](#admin-tab-optional) below. Absent = no tab; the plugin's `env` keys still appear as
+  generic fields in the panel's config section either way.
 
 ### `plugins/<name>/src/index.ts`
 
@@ -131,6 +134,39 @@ from it fails (see [`CONTEXT.md`](CONTEXT.md)).
 host provides `discord.js` (a command handler's `interaction.client` reaches the live `Client`), so
 it stays external; every other dependency must be bundled, with **no native/binary deps** (the bot
 loads a single JS file). Never hand-edit `dist/` -- it is gitignored and rebuilt by CI/publish.
+
+### Admin tab (optional)
+
+A plugin can ship its own tab in the bot's admin panel -- a small UI for its settings, richer than the
+generic env-key fields the panel renders for every plugin. Opt in with two things:
+
+1. **Declare `botPlugin.adminApiVersion`** (currently `1`) in `package.json`. `generate-index` then
+   derives the manifest's `adminUrl` (a jsDelivr URL to the bundle below) -- never hand-author it.
+2. **Ship `src/admin/index.ts`** exporting `mountAdmin` and `adminApiVersion` (`MountAdmin` /
+   `ADMIN_API_VERSION` in [`packages/api/admin.ts`](packages/api/admin.ts)):
+
+```ts
+import type { AdminApi } from "../../../../packages/api/admin.js"; // path from src/admin/index.ts (one deeper than src/index.ts)
+export const adminApiVersion = 1;
+
+export function mountAdmin(root: HTMLElement, api: AdminApi): () => void {
+  // Render your settings UI into `root`. `api` is the panel-provided bridge:
+  //   api.getEnv()          -- this plugin's declared, non-secret env values
+  //   api.setEnv(changes)   -- routed through the panel's guarded env-set (auth + validation + recreate)
+  //   api.getState()        -- this plugin's data/plugins/state.json entry
+  //   api.proxyFetch(path)  -- GET a data asset published inside this plugin's own package
+  return () => {
+    // cleanup on unmount
+  };
+}
+```
+
+`build-plugins.ts` builds this to `dist/admin.js` with `bun build --target browser` (no discord.js --
+the admin UI uses `AdminApi`, not the gateway). The panel fetches the bundle via `adminUrl`, serves it
+same-origin, and mounts it in the plugin's tab **only when `adminApiVersion` matches the panel's**.
+The panel keeps authority: `setEnv` is scoped to this plugin's own keys and re-validated server-side,
+so a bundle can only ever change its own config. Contract + design:
+[rackbops-discord-bot#123](https://github.com/Rackbops/rackbops-discord-bot/issues/123).
 
 ## Testing
 

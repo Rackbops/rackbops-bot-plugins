@@ -11,6 +11,8 @@ const PLUGINS_JSON = new URL("../plugins.json", import.meta.url);
 interface PluginSpec {
   pkg?: unknown;
   changelog?: string;
+  /** Create a `src/admin/index.ts` so a plugin that declares `adminApiVersion` has a real bundle source. */
+  adminEntry?: boolean;
 }
 
 // Lays out a temp plugins/ tree, runs `fn` against its file:// URL, and cleans up. buildIndex is
@@ -29,6 +31,10 @@ async function withPlugins<T>(
         await writeFile(join(dir, "package.json"), JSON.stringify(files.pkg, null, 2));
       }
       if (files.changelog !== undefined) await writeFile(join(dir, "CHANGELOG.md"), files.changelog);
+      if (files.adminEntry) {
+        await mkdir(join(dir, "src", "admin"), { recursive: true });
+        await writeFile(join(dir, "src", "admin", "index.ts"), "export const adminApiVersion = 1;\nexport function mountAdmin() { return () => {}; }\n");
+      }
     }
     const pluginsDir = new URL(pathToFileURL(join(tmp, "plugins")).href + "/");
     return await fn(pluginsDir);
@@ -113,6 +119,51 @@ describe("buildIndex", () => {
   test("an empty plugins/ yields the empty envelope", async () => {
     const index = await withPlugins({}, (dir) => buildIndex(dir, fixedNow));
     expect(index).toEqual({ schemaVersion: 1, generatedAt: "2026-09-04T00:00:00.000Z", plugins: [] });
+  });
+
+  test("emits adminApiVersion + a DERIVED adminUrl only when a plugin advertises admin support", async () => {
+    const index = await withPlugins(
+      {
+        withadmin: { pkg: pkg("withadmin", { adminApiVersion: 1 }), changelog: changelog(), adminEntry: true },
+        noadmin: { pkg: pkg("noadmin"), changelog: changelog() },
+      },
+      (dir) => buildIndex(dir, fixedNow),
+    );
+    const withAdmin = index.plugins.find((p) => p.name === "withadmin")!;
+    const noAdmin = index.plugins.find((p) => p.name === "noadmin")!;
+    // Derived from package@version — mutation: a wrong template/host/path fails here.
+    expect(withAdmin.adminUrl).toBe("https://cdn.jsdelivr.net/npm/@rackbops/plugin-withadmin@1.0.0/dist/admin.js");
+    expect(withAdmin.adminApiVersion).toBe(1);
+    // Not declared → NEITHER field is present (absent key, not an undefined value — JSON stability).
+    // Mutation: emitting unconditionally fails both of these.
+    expect("adminUrl" in noAdmin).toBe(false);
+    expect("adminApiVersion" in noAdmin).toBe(false);
+  });
+
+  test("admin fields sit between env and releases (fixed key order for --check)", async () => {
+    const index = await withPlugins(
+      { wow: { pkg: pkg("wow", { adminApiVersion: 1 }), changelog: changelog(), adminEntry: true } },
+      (dir) => buildIndex(dir, fixedNow),
+    );
+    // Mutation: moving the `...parseAdmin` spread out from between env and releases reorders these.
+    expect(Object.keys(index.plugins[0])).toEqual([
+      "name", "package", "version", "description", "hostApiVersion",
+      "intents", "commands", "env", "adminUrl", "adminApiVersion", "releases",
+    ]);
+  });
+
+  test("rejects a non-number adminApiVersion", async () => {
+    await expect(
+      withPlugins({ wow: { pkg: pkg("wow", { adminApiVersion: "1" }), changelog: changelog() } }, (dir) => buildIndex(dir, fixedNow)),
+    ).rejects.toThrow(/adminApiVersion must be a number/);
+  });
+
+  test("rejects adminApiVersion declared without a src/admin/index.ts bundle (no 404-ing adminUrl)", async () => {
+    // No `adminEntry: true`, so the source is missing. Mutation: dropping the hasAdminEntry guard lets
+    // this emit an adminUrl for a bundle that never builds instead of failing at generate time.
+    await expect(
+      withPlugins({ wow: { pkg: pkg("wow", { adminApiVersion: 1 }), changelog: changelog() } }, (dir) => buildIndex(dir, fixedNow)),
+    ).rejects.toThrow(/adminApiVersion is declared but src\/admin\/index\.ts is missing/);
   });
 });
 
