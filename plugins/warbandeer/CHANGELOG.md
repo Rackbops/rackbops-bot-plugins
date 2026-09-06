@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.0] - 2026-09-06
+
+### Added
+
+- An admin-panel tab, via the plugin admin-UI contract
+  (`rackbops-discord-bot#123`): shows whether the ingest connector is running and
+  lets an admin set (or clear) `WARBANDEER_INGEST_PORT` — saved through the panel's
+  guarded env-set, which recreates the bot to apply it. No character/link data is
+  shown.
+
 ## [1.0.0] - 2026-09-04
 
 ### Added

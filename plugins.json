@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-05T03:03:36.929Z",
+  "generatedAt": "2026-09-06T07:59:09.860Z",
   "plugins": [
     {
       "name": "warbandeer",
       "package": "@rackbops/plugin-warbandeer",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "Warbandeer desktop-app character linking (/link, /unlink, ingest endpoint)",
       "hostApiVersion": 1,
       "intents": [],
@@ -22,7 +22,15 @@
           "secret": false
         }
       ],
+      "adminUrl": "https://cdn.jsdelivr.net/npm/@rackbops/plugin-warbandeer@1.1.0/dist/admin.js",
+      "adminApiVersion": 1,
       "releases": [
+        {
+          "version": "1.1.0",
+          "publishedAt": "2026-09-06T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/warbandeer-v1.1.0",
+          "notes": "### Added\n\n- An admin-panel tab, via the plugin admin-UI contract\n  (`rackbops-discord-bot#123`): shows whether the ingest connector is running and\n  lets an admin set (or clear) `WARBANDEER_INGEST_PORT` — saved through the panel's\n  guarded env-set, which recreates the bot to apply it. No character/link data is\n  shown."
+        },
         {
           "version": "1.0.0",
           "publishedAt": "2026-09-04T00:00:00.000Z",
