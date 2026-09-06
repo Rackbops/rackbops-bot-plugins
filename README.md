@@ -164,13 +164,11 @@ export function mountAdmin(root: HTMLElement, api: AdminApi): () => void {
 `build-plugins.ts` builds this to `dist/admin.js` with `bun build --target browser` (no discord.js --
 the admin UI uses `AdminApi`, not the gateway).
 
-**The admin panel that consumes this bundle is a separate, not-yet-built piece (child 2 of the epic).**
-Declaring `adminApiVersion` + shipping `src/admin/index.ts` today wires the manifest (the derived
-`adminUrl`) and builds the bundle, but **no tab renders yet** -- there is no panel to mount it. Once the
-panel lands it will fetch the bundle via `adminUrl`, serve it same-origin, and mount it in the plugin's
-tab **only when `adminApiVersion` matches the panel's**; it will keep authority -- `setEnv` will be
+The admin panel that consumes this bundle is the bot's own admin UI (child 2 of the epic, now built).
+It fetches the bundle via the manifest's `adminUrl`, serves it same-origin, and mounts it in the
+plugin's tab **only when `adminApiVersion` matches the panel's** -- and it keeps authority: `setEnv` is
 scoped to this plugin's own keys and re-validated server-side, so a bundle can only ever change its own
-config. Contract + design:
+config. `warbandeer` ships the first such tab (its ingest-port + connector status). Contract + design:
 [rackbops-discord-bot#123](https://github.com/Rackbops/rackbops-discord-bot/issues/123).
 
 ## Testing
