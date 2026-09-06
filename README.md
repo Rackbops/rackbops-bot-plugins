@@ -138,7 +138,7 @@ loads a single JS file). Never hand-edit `dist/` -- it is gitignored and rebuilt
 ### Admin tab (optional)
 
 A plugin can ship its own tab in the bot's admin panel -- a small UI for its settings, richer than the
-generic env-key fields the panel renders for every plugin. Opt in with two things:
+generic env-key fields the panel will render for every plugin. Opt in with two things:
 
 1. **Declare `botPlugin.adminApiVersion`** (currently `1`) in `package.json`. `generate-index` then
    derives the manifest's `adminUrl` (a jsDelivr URL to the bundle below) -- never hand-author it.
@@ -162,10 +162,15 @@ export function mountAdmin(root: HTMLElement, api: AdminApi): () => void {
 ```
 
 `build-plugins.ts` builds this to `dist/admin.js` with `bun build --target browser` (no discord.js --
-the admin UI uses `AdminApi`, not the gateway). The panel fetches the bundle via `adminUrl`, serves it
-same-origin, and mounts it in the plugin's tab **only when `adminApiVersion` matches the panel's**.
-The panel keeps authority: `setEnv` is scoped to this plugin's own keys and re-validated server-side,
-so a bundle can only ever change its own config. Contract + design:
+the admin UI uses `AdminApi`, not the gateway).
+
+**The admin panel that consumes this bundle is a separate, not-yet-built piece (child 2 of the epic).**
+Declaring `adminApiVersion` + shipping `src/admin/index.ts` today wires the manifest (the derived
+`adminUrl`) and builds the bundle, but **no tab renders yet** -- there is no panel to mount it. Once the
+panel lands it will fetch the bundle via `adminUrl`, serve it same-origin, and mount it in the plugin's
+tab **only when `adminApiVersion` matches the panel's**; it will keep authority -- `setEnv` will be
+scoped to this plugin's own keys and re-validated server-side, so a bundle can only ever change its own
+config. Contract + design:
 [rackbops-discord-bot#123](https://github.com/Rackbops/rackbops-discord-bot/issues/123).
 
 ## Testing
