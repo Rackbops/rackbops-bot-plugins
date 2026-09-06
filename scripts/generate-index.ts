@@ -34,6 +34,7 @@ interface PluginPackageJson {
     intents?: unknown;
     commands?: unknown;
     env?: unknown;
+    adminApiVersion?: unknown;
   };
 }
 
@@ -101,6 +102,40 @@ function parseIntents(value: unknown, pluginName: string): number[] {
     throw new Error(`${pluginName}: botPlugin.intents must be an array of numbers`);
   }
   return value as number[];
+}
+
+/**
+ * A plugin opts into an admin-panel tab by declaring `botPlugin.adminApiVersion` (a number). When it
+ * does, the manifest entry carries that version PLUS a DERIVED `adminUrl` — the jsDelivr-npm URL of
+ * the admin bundle that rides inside the published package (`dist/admin.js`). Derived, never
+ * hand-authored, exactly like a release `url`, so it can't drift from `package@version`. Absent =
+ * the plugin contributes no admin UI, and neither field is emitted (so the panel shows it no tab).
+ */
+function parseAdmin(
+  adminApiVersion: unknown,
+  hasAdminEntry: boolean,
+  packageName: string,
+  version: string,
+  pluginName: string,
+): { adminUrl: string; adminApiVersion: number } | undefined {
+  // A built admin bundle with no declaration is a harmless orphan (no adminUrl -> the panel shows no
+  // tab); only the reverse must be caught -- a declared version whose source is MISSING would put an
+  // adminUrl in the manifest for a dist/admin.js that never gets built (a jsDelivr 404 the panel hits
+  // at runtime), with nothing failing at generate/build time. Fail loudly here instead.
+  if (adminApiVersion === undefined) return undefined;
+  if (typeof adminApiVersion !== "number") {
+    throw new Error(`${pluginName}: botPlugin.adminApiVersion must be a number`);
+  }
+  if (!hasAdminEntry) {
+    throw new Error(
+      `${pluginName}: botPlugin.adminApiVersion is declared but src/admin/index.ts is missing -- the ` +
+        `manifest would advertise an admin bundle that never gets built`,
+    );
+  }
+  return {
+    adminUrl: `https://cdn.jsdelivr.net/npm/${packageName}@${version}/dist/admin.js`,
+    adminApiVersion,
+  };
 }
 
 /**
@@ -206,16 +241,23 @@ export async function buildIndex(
       throw new Error(`${name}: cannot read CHANGELOG.md -- ${(err as Error).message}`);
     }
 
-    // Fixed key order so `--check`'s JSON comparison is stable across runs.
+    const packageName = requireString(pkg.name, `${name}: package.json name`);
+    // Read from the same source dir the manifest is generated over, so a declared admin bundle whose
+    // source is absent is caught here (parseAdmin), not silently shipped as a 404-ing adminUrl.
+    const hasAdminEntry = await Bun.file(new URL("src/admin/index.ts", dir)).exists();
+    // Fixed key order so `--check`'s JSON comparison is stable across runs. The optional admin fields
+    // (present only when the plugin advertises an admin bundle) sit between `env` and `releases`;
+    // spreading `undefined` contributes nothing, so a plugin without them emits exactly as before.
     plugins.push({
       name,
-      package: requireString(pkg.name, `${name}: package.json name`),
+      package: packageName,
       version,
       description: requireString(pkg.description, `${name}: package.json description`),
       hostApiVersion: bp.hostApiVersion,
       intents: parseIntents(bp.intents, name),
       commands,
       env: parseEnv(bp.env, name),
+      ...parseAdmin(bp.adminApiVersion, hasAdminEntry, packageName, version, name),
       releases: parseChangelogReleases(changelog, name, version),
     });
   }

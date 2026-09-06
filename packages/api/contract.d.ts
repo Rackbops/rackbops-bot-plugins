@@ -60,6 +60,17 @@ export interface PluginIndexEntry {
   /** Bare slash-command names the bundle contributes; uniqueness (core + every enabled plugin) is checked BEFORE any code loads. */
   commands: string[];
   env: PluginEnvKey[];
+  /** jsDelivr-npm URL of the plugin's admin bundle (`dist/admin.js`), DERIVED by the plugins repo's
+   *  `generate-index` when a plugin advertises admin support (by declaring `botPlugin.adminApiVersion`).
+   *  Absent = the plugin contributes no admin UI. The admin panel fetches it and serves it same-origin
+   *  under its own tab; see the admin contract (a SEPARATE module from this file). */
+  adminUrl?: string;
+  /** The `ADMIN_API_VERSION` the plugin's admin bundle was built against; the panel mounts the bundle
+   *  only when this equals the panel's own `ADMIN_API_VERSION`, else it shows a version-mismatch note.
+   *  Absent = no admin bundle. The admin contract (`AdminApi`/`mountAdmin`/`ADMIN_API_VERSION`) lives
+   *  in its own module (browser/DOM-typed) so this file can stay the single-const, side-effect-free
+   *  module read at boot before the Client exists. */
+  adminApiVersion?: number;
   /** Latest first, at most 10. */
   releases: PluginRelease[];
 }
@@ -78,8 +89,14 @@ export interface PluginStateEntry {
   name: string;
   /** Listed in `PLUGINS=`. */
   enabled: boolean;
-  /** The pinned version — what a restart reinstalls. Absent when never installed. */
+  /** The pinned version — what a restart reinstalls, and the last version that actually came up
+   *  (kept honest for the panel / `ops/bot-ops.sh status`). Absent when never installed. */
   installedVersion?: string;
+  /** #104: a transient "trying to become this" set by `/plugins update` (now or scheduled). The next
+   *  boot's install prefers it over `installedVersion`; `buildPluginStateFile` then CONSUMES it — on
+   *  success `installedVersion` becomes it and this clears; on failure it clears and `installedVersion`
+   *  stays the last-good, so a broken target reverts instead of pinning itself forever. */
+  targetVersion?: string;
   /** The index's current version, present only when it is newer than `installedVersion`. */
   availableVersion?: string;
   /** Every env key the plugin expects is present. Enabled-but-unconfigured plugins still load. */
@@ -112,6 +129,10 @@ export interface PluginStateFile {
   hostApiVersion: number;
   writtenAt: string; // ISO-8601
   plugins: PluginStateEntry[];
+  /** A single slot — normally enough, since one restart carries one owed report. If two update
+   *  actions fire in the same brief pre-restart window, the second's report overwrites the first's:
+   *  a lost *confirmation DM* only, never a wrong or lost update (each plugin's pin is consumed
+   *  independently, and the report reads the surviving plugin's own state). Acceptable for v1. */
   pendingReport?: PluginPendingReport;
 }
 

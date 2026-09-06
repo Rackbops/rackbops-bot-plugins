@@ -51,6 +51,15 @@ pin only needs to change in one place.
   pure over an injected dir, so the extraction is unit-tested without a subprocess
   (`scripts/generate-index.test.ts`); the CLI (`--check` / write) is a thin `import.meta.main`
   wrapper. `generatedAt` is excluded from the `--check` diff.
+- **`packages/api/admin.ts` is the admin-UI contract -- a SEPARATE module from `contract.d.ts`.** It
+  is browser/DOM-typed (`/// <reference lib="dom" />`) and carries `AdminApi`, `MountAdmin`, and a
+  **runtime** `ADMIN_API_VERSION` const -- so, unlike the type-only `contract.d.ts`, it can be
+  runtime-imported. Kept separate precisely so `contract.d.ts` stays single-const + DOM-free (read at
+  boot before the Client exists). A plugin opts into an admin tab by declaring
+  `botPlugin.adminApiVersion`; `generate-index` then emits that version plus a **derived** `adminUrl`
+  (`https://cdn.jsdelivr.net/npm/<pkg>@<version>/dist/admin.js`), and `build-plugins` bundles
+  `src/admin/index.ts` -> `dist/admin.js` (`--target browser`, no discord.js). Design + panel side:
+  the epic [rackbops-discord-bot#123](https://github.com/Rackbops/rackbops-discord-bot/issues/123).
 - **Relative imports need a `.js` extension** (`tsconfig.json`'s `moduleResolution: NodeNext`).
   Import the vendored contract as `../packages/api/contract.js` (type-only) -- it resolves to
   `contract.d.ts`, and Bun resolves the `.js` specifier to the `.ts`/`.d.ts` source at runtime.
