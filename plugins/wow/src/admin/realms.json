@@ -1,0 +1,2838 @@
+{
+  "generated": "2026-09-02",
+  "source": "/data/wow/realm/index (dynamic namespace, us + eu)",
+  "regions": {
+    "us": [
+      {
+        "slug": "aegwynn",
+        "name": "Aegwynn"
+      },
+      {
+        "slug": "aerie-peak",
+        "name": "Aerie Peak"
+      },
+      {
+        "slug": "agamaggan",
+        "name": "Agamaggan"
+      },
+      {
+        "slug": "aggramar",
+        "name": "Aggramar"
+      },
+      {
+        "slug": "akama",
+        "name": "Akama"
+      },
+      {
+        "slug": "alexstrasza",
+        "name": "Alexstrasza"
+      },
+      {
+        "slug": "alleria",
+        "name": "Alleria"
+      },
+      {
+        "slug": "altar-of-storms",
+        "name": "Altar of Storms"
+      },
+      {
+        "slug": "alterac-mountains",
+        "name": "Alterac Mountains"
+      },
+      {
+        "slug": "amanthul",
+        "name": "Aman'Thul"
+      },
+      {
+        "slug": "andorhal",
+        "name": "Andorhal"
+      },
+      {
+        "slug": "anetheron",
+        "name": "Anetheron"
+      },
+      {
+        "slug": "antonidas",
+        "name": "Antonidas"
+      },
+      {
+        "slug": "anubarak",
+        "name": "Anub'arak"
+      },
+      {
+        "slug": "anvilmar",
+        "name": "Anvilmar"
+      },
+      {
+        "slug": "arathor",
+        "name": "Arathor"
+      },
+      {
+        "slug": "archimonde",
+        "name": "Archimonde"
+      },
+      {
+        "slug": "area-52",
+        "name": "Area 52"
+      },
+      {
+        "slug": "argent-dawn",
+        "name": "Argent Dawn"
+      },
+      {
+        "slug": "arthas",
+        "name": "Arthas"
+      },
+      {
+        "slug": "arygos",
+        "name": "Arygos"
+      },
+      {
+        "slug": "au2a3inst",
+        "name": "AU2A3-INST"
+      },
+      {
+        "slug": "au2a3instsl",
+        "name": "AU2A3-INST-SL"
+      },
+      {
+        "slug": "au2a4inst",
+        "name": "AU2A4-INST"
+      },
+      {
+        "slug": "au2a4instsl",
+        "name": "AU2A4-INST-SL"
+      },
+      {
+        "slug": "auchindoun",
+        "name": "Auchindoun"
+      },
+      {
+        "slug": "azgalor",
+        "name": "Azgalor"
+      },
+      {
+        "slug": "azjolnerub",
+        "name": "Azjol-Nerub"
+      },
+      {
+        "slug": "azralon",
+        "name": "Azralon"
+      },
+      {
+        "slug": "azshara",
+        "name": "Azshara"
+      },
+      {
+        "slug": "azuremyst",
+        "name": "Azuremyst"
+      },
+      {
+        "slug": "baelgun",
+        "name": "Baelgun"
+      },
+      {
+        "slug": "balnazzar",
+        "name": "Balnazzar"
+      },
+      {
+        "slug": "barthilas",
+        "name": "Barthilas"
+      },
+      {
+        "slug": "black-dragonflight",
+        "name": "Black Dragonflight"
+      },
+      {
+        "slug": "blackhand",
+        "name": "Blackhand"
+      },
+      {
+        "slug": "blackrock",
+        "name": "Blackrock"
+      },
+      {
+        "slug": "blackwater-raiders",
+        "name": "Blackwater Raiders"
+      },
+      {
+        "slug": "blackwing-lair",
+        "name": "Blackwing Lair"
+      },
+      {
+        "slug": "blades-edge",
+        "name": "Blade's Edge"
+      },
+      {
+        "slug": "bladefist",
+        "name": "Bladefist"
+      },
+      {
+        "slug": "bleeding-hollow",
+        "name": "Bleeding Hollow"
+      },
+      {
+        "slug": "blood-furnace",
+        "name": "Blood Furnace"
+      },
+      {
+        "slug": "bloodhoof",
+        "name": "Bloodhoof"
+      },
+      {
+        "slug": "bloodscalp",
+        "name": "Bloodscalp"
+      },
+      {
+        "slug": "bonechewer",
+        "name": "Bonechewer"
+      },
+      {
+        "slug": "borean-tundra",
+        "name": "Borean Tundra"
+      },
+      {
+        "slug": "boulderfist",
+        "name": "Boulderfist"
+      },
+      {
+        "slug": "bronzebeard",
+        "name": "Bronzebeard"
+      },
+      {
+        "slug": "burning-blade",
+        "name": "Burning Blade"
+      },
+      {
+        "slug": "burning-legion",
+        "name": "Burning Legion"
+      },
+      {
+        "slug": "caelestrasz",
+        "name": "Caelestrasz"
+      },
+      {
+        "slug": "cairne",
+        "name": "Cairne"
+      },
+      {
+        "slug": "cenarion-circle",
+        "name": "Cenarion Circle"
+      },
+      {
+        "slug": "cenarius",
+        "name": "Cenarius"
+      },
+      {
+        "slug": "chogall",
+        "name": "Cho'gall"
+      },
+      {
+        "slug": "chromaggus",
+        "name": "Chromaggus"
+      },
+      {
+        "slug": "coilfang",
+        "name": "Coilfang"
+      },
+      {
+        "slug": "crushridge",
+        "name": "Crushridge"
+      },
+      {
+        "slug": "daggerspine",
+        "name": "Daggerspine"
+      },
+      {
+        "slug": "dalaran",
+        "name": "Dalaran"
+      },
+      {
+        "slug": "dalvengyr",
+        "name": "Dalvengyr"
+      },
+      {
+        "slug": "dark-iron",
+        "name": "Dark Iron"
+      },
+      {
+        "slug": "darkspear",
+        "name": "Darkspear"
+      },
+      {
+        "slug": "darrowmere",
+        "name": "Darrowmere"
+      },
+      {
+        "slug": "dathremar",
+        "name": "Dath'Remar"
+      },
+      {
+        "slug": "dawnbringer",
+        "name": "Dawnbringer"
+      },
+      {
+        "slug": "deathwing",
+        "name": "Deathwing"
+      },
+      {
+        "slug": "demon-soul",
+        "name": "Demon Soul"
+      },
+      {
+        "slug": "dentarg",
+        "name": "Dentarg"
+      },
+      {
+        "slug": "destromath",
+        "name": "Destromath"
+      },
+      {
+        "slug": "dethecus",
+        "name": "Dethecus"
+      },
+      {
+        "slug": "detheroc",
+        "name": "Detheroc"
+      },
+      {
+        "slug": "doomhammer",
+        "name": "Doomhammer"
+      },
+      {
+        "slug": "draenor",
+        "name": "Draenor"
+      },
+      {
+        "slug": "dragonblight",
+        "name": "Dragonblight"
+      },
+      {
+        "slug": "dragonmaw",
+        "name": "Dragonmaw"
+      },
+      {
+        "slug": "draktharon",
+        "name": "Drak'Tharon"
+      },
+      {
+        "slug": "drakthul",
+        "name": "Drak'thul"
+      },
+      {
+        "slug": "draka",
+        "name": "Draka"
+      },
+      {
+        "slug": "drakkari",
+        "name": "Drakkari"
+      },
+      {
+        "slug": "dreadmaul",
+        "name": "Dreadmaul"
+      },
+      {
+        "slug": "drenden",
+        "name": "Drenden"
+      },
+      {
+        "slug": "dunemaul",
+        "name": "Dunemaul"
+      },
+      {
+        "slug": "durotan",
+        "name": "Durotan"
+      },
+      {
+        "slug": "duskwood",
+        "name": "Duskwood"
+      },
+      {
+        "slug": "earthen-ring",
+        "name": "Earthen Ring"
+      },
+      {
+        "slug": "echo-isles",
+        "name": "Echo Isles"
+      },
+      {
+        "slug": "eitrigg",
+        "name": "Eitrigg"
+      },
+      {
+        "slug": "eldrethalas",
+        "name": "Eldre'Thalas"
+      },
+      {
+        "slug": "elune",
+        "name": "Elune"
+      },
+      {
+        "slug": "emerald-dream",
+        "name": "Emerald Dream"
+      },
+      {
+        "slug": "eonar",
+        "name": "Eonar"
+      },
+      {
+        "slug": "eredar",
+        "name": "Eredar"
+      },
+      {
+        "slug": "executus",
+        "name": "Executus"
+      },
+      {
+        "slug": "exodar",
+        "name": "Exodar"
+      },
+      {
+        "slug": "farstriders",
+        "name": "Farstriders"
+      },
+      {
+        "slug": "feathermoon",
+        "name": "Feathermoon"
+      },
+      {
+        "slug": "fenris",
+        "name": "Fenris"
+      },
+      {
+        "slug": "firetree",
+        "name": "Firetree"
+      },
+      {
+        "slug": "fizzcrank",
+        "name": "Fizzcrank"
+      },
+      {
+        "slug": "frostmane",
+        "name": "Frostmane"
+      },
+      {
+        "slug": "frostmourne",
+        "name": "Frostmourne"
+      },
+      {
+        "slug": "frostwolf",
+        "name": "Frostwolf"
+      },
+      {
+        "slug": "galakrond",
+        "name": "Galakrond"
+      },
+      {
+        "slug": "gallywix",
+        "name": "Gallywix"
+      },
+      {
+        "slug": "garithos",
+        "name": "Garithos"
+      },
+      {
+        "slug": "garona",
+        "name": "Garona"
+      },
+      {
+        "slug": "garrosh",
+        "name": "Garrosh"
+      },
+      {
+        "slug": "ghostlands",
+        "name": "Ghostlands"
+      },
+      {
+        "slug": "gilneas",
+        "name": "Gilneas"
+      },
+      {
+        "slug": "gnomeregan",
+        "name": "Gnomeregan"
+      },
+      {
+        "slug": "goldrinn",
+        "name": "Goldrinn"
+      },
+      {
+        "slug": "gorefiend",
+        "name": "Gorefiend"
+      },
+      {
+        "slug": "gorgonnash",
+        "name": "Gorgonnash"
+      },
+      {
+        "slug": "greymane",
+        "name": "Greymane"
+      },
+      {
+        "slug": "grizzly-hills",
+        "name": "Grizzly Hills"
+      },
+      {
+        "slug": "guldan",
+        "name": "Gul'dan"
+      },
+      {
+        "slug": "gundrak",
+        "name": "Gundrak"
+      },
+      {
+        "slug": "gurubashi",
+        "name": "Gurubashi"
+      },
+      {
+        "slug": "hakkar",
+        "name": "Hakkar"
+      },
+      {
+        "slug": "haomarush",
+        "name": "Haomarush"
+      },
+      {
+        "slug": "hellscream",
+        "name": "Hellscream"
+      },
+      {
+        "slug": "hydraxis",
+        "name": "Hydraxis"
+      },
+      {
+        "slug": "hyjal",
+        "name": "Hyjal"
+      },
+      {
+        "slug": "icecrown",
+        "name": "Icecrown"
+      },
+      {
+        "slug": "illidan",
+        "name": "Illidan"
+      },
+      {
+        "slug": "jaedenar",
+        "name": "Jaedenar"
+      },
+      {
+        "slug": "jubeithos",
+        "name": "Jubei'Thos"
+      },
+      {
+        "slug": "kaelthas",
+        "name": "Kael'thas"
+      },
+      {
+        "slug": "kalecgos",
+        "name": "Kalecgos"
+      },
+      {
+        "slug": "kargath",
+        "name": "Kargath"
+      },
+      {
+        "slug": "kelthuzad",
+        "name": "Kel'Thuzad"
+      },
+      {
+        "slug": "khadgar",
+        "name": "Khadgar"
+      },
+      {
+        "slug": "khaz-modan",
+        "name": "Khaz Modan"
+      },
+      {
+        "slug": "khazgoroth",
+        "name": "Khaz'goroth"
+      },
+      {
+        "slug": "kiljaeden",
+        "name": "Kil'jaeden"
+      },
+      {
+        "slug": "kilrogg",
+        "name": "Kilrogg"
+      },
+      {
+        "slug": "kirin-tor",
+        "name": "Kirin Tor"
+      },
+      {
+        "slug": "korgath",
+        "name": "Korgath"
+      },
+      {
+        "slug": "korialstrasz",
+        "name": "Korialstrasz"
+      },
+      {
+        "slug": "kul-tiras",
+        "name": "Kul Tiras"
+      },
+      {
+        "slug": "laughing-skull",
+        "name": "Laughing Skull"
+      },
+      {
+        "slug": "lethon",
+        "name": "Lethon"
+      },
+      {
+        "slug": "lightbringer",
+        "name": "Lightbringer"
+      },
+      {
+        "slug": "lightnings-blade",
+        "name": "Lightning's Blade"
+      },
+      {
+        "slug": "lightninghoof",
+        "name": "Lightninghoof"
+      },
+      {
+        "slug": "llane",
+        "name": "Llane"
+      },
+      {
+        "slug": "lothar",
+        "name": "Lothar"
+      },
+      {
+        "slug": "madoran",
+        "name": "Madoran"
+      },
+      {
+        "slug": "maelstrom",
+        "name": "Maelstrom"
+      },
+      {
+        "slug": "magtheridon",
+        "name": "Magtheridon"
+      },
+      {
+        "slug": "maiev",
+        "name": "Maiev"
+      },
+      {
+        "slug": "malganis",
+        "name": "Mal'Ganis"
+      },
+      {
+        "slug": "malfurion",
+        "name": "Malfurion"
+      },
+      {
+        "slug": "malorne",
+        "name": "Malorne"
+      },
+      {
+        "slug": "malygos",
+        "name": "Malygos"
+      },
+      {
+        "slug": "mannoroth",
+        "name": "Mannoroth"
+      },
+      {
+        "slug": "medivh",
+        "name": "Medivh"
+      },
+      {
+        "slug": "misha",
+        "name": "Misha"
+      },
+      {
+        "slug": "moknathal",
+        "name": "Mok'Nathal"
+      },
+      {
+        "slug": "moon-guard",
+        "name": "Moon Guard"
+      },
+      {
+        "slug": "moonrunner",
+        "name": "Moonrunner"
+      },
+      {
+        "slug": "mugthol",
+        "name": "Mug'thol"
+      },
+      {
+        "slug": "muradin",
+        "name": "Muradin"
+      },
+      {
+        "slug": "nagrand",
+        "name": "Nagrand"
+      },
+      {
+        "slug": "nathrezim",
+        "name": "Nathrezim"
+      },
+      {
+        "slug": "nazgrel",
+        "name": "Nazgrel"
+      },
+      {
+        "slug": "nazjatar",
+        "name": "Nazjatar"
+      },
+      {
+        "slug": "nemesis",
+        "name": "Nemesis"
+      },
+      {
+        "slug": "nerzhul",
+        "name": "Ner'zhul"
+      },
+      {
+        "slug": "nesingwary",
+        "name": "Nesingwary"
+      },
+      {
+        "slug": "nordrassil",
+        "name": "Nordrassil"
+      },
+      {
+        "slug": "norgannon",
+        "name": "Norgannon"
+      },
+      {
+        "slug": "onyxia",
+        "name": "Onyxia"
+      },
+      {
+        "slug": "perenolde",
+        "name": "Perenolde"
+      },
+      {
+        "slug": "proudmoore",
+        "name": "Proudmoore"
+      },
+      {
+        "slug": "queldorei",
+        "name": "Quel'dorei"
+      },
+      {
+        "slug": "quelthalas",
+        "name": "Quel'Thalas"
+      },
+      {
+        "slug": "ragnaros",
+        "name": "Ragnaros"
+      },
+      {
+        "slug": "ravencrest",
+        "name": "Ravencrest"
+      },
+      {
+        "slug": "ravenholdt",
+        "name": "Ravenholdt"
+      },
+      {
+        "slug": "rdb-us",
+        "name": "RDB US"
+      },
+      {
+        "slug": "rexxar",
+        "name": "Rexxar"
+      },
+      {
+        "slug": "rivendare",
+        "name": "Rivendare"
+      },
+      {
+        "slug": "runetotem",
+        "name": "Runetotem"
+      },
+      {
+        "slug": "sargeras",
+        "name": "Sargeras"
+      },
+      {
+        "slug": "saurfang",
+        "name": "Saurfang"
+      },
+      {
+        "slug": "scarlet-crusade",
+        "name": "Scarlet Crusade"
+      },
+      {
+        "slug": "scilla",
+        "name": "Scilla"
+      },
+      {
+        "slug": "senjin",
+        "name": "Sen'jin"
+      },
+      {
+        "slug": "sentinels",
+        "name": "Sentinels"
+      },
+      {
+        "slug": "shadow-council",
+        "name": "Shadow Council"
+      },
+      {
+        "slug": "shadowmoon",
+        "name": "Shadowmoon"
+      },
+      {
+        "slug": "shadowsong",
+        "name": "Shadowsong"
+      },
+      {
+        "slug": "shandris",
+        "name": "Shandris"
+      },
+      {
+        "slug": "shattered-halls",
+        "name": "Shattered Halls"
+      },
+      {
+        "slug": "shattered-hand",
+        "name": "Shattered Hand"
+      },
+      {
+        "slug": "shuhalo",
+        "name": "Shu'halo"
+      },
+      {
+        "slug": "silver-hand",
+        "name": "Silver Hand"
+      },
+      {
+        "slug": "silvermoon",
+        "name": "Silvermoon"
+      },
+      {
+        "slug": "sisters-of-elune",
+        "name": "Sisters of Elune"
+      },
+      {
+        "slug": "skullcrusher",
+        "name": "Skullcrusher"
+      },
+      {
+        "slug": "skywall",
+        "name": "Skywall"
+      },
+      {
+        "slug": "smolderthorn",
+        "name": "Smolderthorn"
+      },
+      {
+        "slug": "spinebreaker",
+        "name": "Spinebreaker"
+      },
+      {
+        "slug": "spirestone",
+        "name": "Spirestone"
+      },
+      {
+        "slug": "staghelm",
+        "name": "Staghelm"
+      },
+      {
+        "slug": "steamwheedle-cartel",
+        "name": "Steamwheedle Cartel"
+      },
+      {
+        "slug": "stonemaul",
+        "name": "Stonemaul"
+      },
+      {
+        "slug": "stormrage",
+        "name": "Stormrage"
+      },
+      {
+        "slug": "stormreaver",
+        "name": "Stormreaver"
+      },
+      {
+        "slug": "stormscale",
+        "name": "Stormscale"
+      },
+      {
+        "slug": "suramar",
+        "name": "Suramar"
+      },
+      {
+        "slug": "tanaris",
+        "name": "Tanaris"
+      },
+      {
+        "slug": "terenas",
+        "name": "Terenas"
+      },
+      {
+        "slug": "terokkar",
+        "name": "Terokkar"
+      },
+      {
+        "slug": "thaurissan",
+        "name": "Thaurissan"
+      },
+      {
+        "slug": "the-forgotten-coast",
+        "name": "The Forgotten Coast"
+      },
+      {
+        "slug": "the-scryers",
+        "name": "The Scryers"
+      },
+      {
+        "slug": "the-underbog",
+        "name": "The Underbog"
+      },
+      {
+        "slug": "the-venture-co",
+        "name": "The Venture Co"
+      },
+      {
+        "slug": "thorium-brotherhood",
+        "name": "Thorium Brotherhood"
+      },
+      {
+        "slug": "thrall",
+        "name": "Thrall"
+      },
+      {
+        "slug": "thunderhorn",
+        "name": "Thunderhorn"
+      },
+      {
+        "slug": "thunderlord",
+        "name": "Thunderlord"
+      },
+      {
+        "slug": "tichondrius",
+        "name": "Tichondrius"
+      },
+      {
+        "slug": "tol-barad",
+        "name": "Tol Barad"
+      },
+      {
+        "slug": "tortheldrin",
+        "name": "Tortheldrin"
+      },
+      {
+        "slug": "trollbane",
+        "name": "Trollbane"
+      },
+      {
+        "slug": "turalyon",
+        "name": "Turalyon"
+      },
+      {
+        "slug": "twisting-nether",
+        "name": "Twisting Nether"
+      },
+      {
+        "slug": "uldaman",
+        "name": "Uldaman"
+      },
+      {
+        "slug": "uldum",
+        "name": "Uldum"
+      },
+      {
+        "slug": "undermine",
+        "name": "Undermine"
+      },
+      {
+        "slug": "ursin",
+        "name": "Ursin"
+      },
+      {
+        "slug": "us-auxiliary-70",
+        "name": "US Auxiliary 70"
+      },
+      {
+        "slug": "us1-100-partner",
+        "name": "US1 100 Partner"
+      },
+      {
+        "slug": "us1a-account-realm",
+        "name": "US1A Account Realm"
+      },
+      {
+        "slug": "us1a1inst",
+        "name": "US1A1-INST"
+      },
+      {
+        "slug": "us1a1instbfa",
+        "name": "US1A1-INST-BFA"
+      },
+      {
+        "slug": "us1a2inst",
+        "name": "US1A2-INST"
+      },
+      {
+        "slug": "us1a2instbfa",
+        "name": "US1A2-INST-BFA"
+      },
+      {
+        "slug": "us1a3inst",
+        "name": "US1A3-INST"
+      },
+      {
+        "slug": "us1a3instbfa",
+        "name": "US1A3-INST-BFA"
+      },
+      {
+        "slug": "us1a4inst",
+        "name": "US1A4-INST"
+      },
+      {
+        "slug": "us1a4instsl",
+        "name": "US1A4-INST-SL"
+      },
+      {
+        "slug": "us1b-account-realm",
+        "name": "US1B Account Realm"
+      },
+      {
+        "slug": "us1b1inst",
+        "name": "US1B1-INST"
+      },
+      {
+        "slug": "us1b1instbfa",
+        "name": "US1B1-INST-BFA"
+      },
+      {
+        "slug": "us1b2inst",
+        "name": "US1B2-INST"
+      },
+      {
+        "slug": "us1b2instbfa",
+        "name": "US1B2-INST-BFA"
+      },
+      {
+        "slug": "us1b3inst",
+        "name": "US1B3-INST"
+      },
+      {
+        "slug": "us1b3instbfa",
+        "name": "US1B3-INST-BFA"
+      },
+      {
+        "slug": "us1b4inst",
+        "name": "US1B4-INST"
+      },
+      {
+        "slug": "us1b4instsl",
+        "name": "US1B4-INST-SL"
+      },
+      {
+        "slug": "us2a-account-realm",
+        "name": "US2A Account Realm"
+      },
+      {
+        "slug": "us2a1inst",
+        "name": "US2A1-INST"
+      },
+      {
+        "slug": "us2a1instbfa",
+        "name": "US2A1-INST-BFA"
+      },
+      {
+        "slug": "us2a2inst",
+        "name": "US2A2-INST"
+      },
+      {
+        "slug": "us2a2instbfa",
+        "name": "US2A2-INST-BFA"
+      },
+      {
+        "slug": "us2a3inst",
+        "name": "US2A3-INST"
+      },
+      {
+        "slug": "us2a3instbfa",
+        "name": "US2A3-INST-BFA"
+      },
+      {
+        "slug": "us2a4inst",
+        "name": "US2A4-INST"
+      },
+      {
+        "slug": "us2a4instsl",
+        "name": "US2A4-INST-SL"
+      },
+      {
+        "slug": "us2b-account-realm",
+        "name": "US2B Account Realm"
+      },
+      {
+        "slug": "us2b1inst",
+        "name": "US2B1-INST"
+      },
+      {
+        "slug": "us2b1instbfa",
+        "name": "US2B1-INST-BFA"
+      },
+      {
+        "slug": "us2b2inst",
+        "name": "US2B2-INST"
+      },
+      {
+        "slug": "us2b2instbfa",
+        "name": "US2B2-INST-BFA"
+      },
+      {
+        "slug": "us2b3inst",
+        "name": "US2B3-INST"
+      },
+      {
+        "slug": "us2b3instbfa",
+        "name": "US2B3-INST-BFA"
+      },
+      {
+        "slug": "us2b4inst",
+        "name": "US2B4-INST"
+      },
+      {
+        "slug": "us2b4instsl",
+        "name": "US2B4-INST-SL"
+      },
+      {
+        "slug": "us3a-account-realm-old-au",
+        "name": "US3A Account Realm OLD AU"
+      },
+      {
+        "slug": "us3a1inst",
+        "name": "US3A1-INST"
+      },
+      {
+        "slug": "us3a1instbfa",
+        "name": "US3A1-INST-BFA"
+      },
+      {
+        "slug": "us3a2inst",
+        "name": "US3A2-INST"
+      },
+      {
+        "slug": "us3a2instbfa",
+        "name": "US3A2-INST-BFA"
+      },
+      {
+        "slug": "us3a3inst",
+        "name": "US3A3-INST"
+      },
+      {
+        "slug": "us3a3instbfa",
+        "name": "US3A3-INST-BFA"
+      },
+      {
+        "slug": "us3a4inst",
+        "name": "US3A4-INST"
+      },
+      {
+        "slug": "us3a4instsl",
+        "name": "US3A4-INST-SL"
+      },
+      {
+        "slug": "us3b-account-realm",
+        "name": "US3B Account Realm"
+      },
+      {
+        "slug": "us3b1inst",
+        "name": "US3B1-INST"
+      },
+      {
+        "slug": "us3b1instbfa",
+        "name": "US3B1-INST-BFA"
+      },
+      {
+        "slug": "us3b2inst",
+        "name": "US3B2-INST"
+      },
+      {
+        "slug": "us3b2instbfa",
+        "name": "US3B2-INST-BFA"
+      },
+      {
+        "slug": "us3b3inst",
+        "name": "US3B3-INST"
+      },
+      {
+        "slug": "us3b3instbfa",
+        "name": "US3B3-INST-BFA"
+      },
+      {
+        "slug": "us3b4inst",
+        "name": "US3B4-INST"
+      },
+      {
+        "slug": "us3b4instsl",
+        "name": "US3B4-INST-SL"
+      },
+      {
+        "slug": "us4a-account-realm",
+        "name": "US4A Account Realm"
+      },
+      {
+        "slug": "us4a1inst",
+        "name": "US4A1-INST"
+      },
+      {
+        "slug": "us4a1instbfa",
+        "name": "US4A1-INST-BFA"
+      },
+      {
+        "slug": "us4a2inst",
+        "name": "US4A2-INST"
+      },
+      {
+        "slug": "us4a2instbfa",
+        "name": "US4A2-INST-BFA"
+      },
+      {
+        "slug": "us4a3inst",
+        "name": "US4A3-INST"
+      },
+      {
+        "slug": "us4a3instbfa",
+        "name": "US4A3-INST-BFA"
+      },
+      {
+        "slug": "us4a4inst",
+        "name": "US4A4-INST"
+      },
+      {
+        "slug": "us4a4instsl",
+        "name": "US4A4-INST-SL"
+      },
+      {
+        "slug": "us4b-account-realm",
+        "name": "US4B Account Realm"
+      },
+      {
+        "slug": "us4b1inst",
+        "name": "US4B1-INST"
+      },
+      {
+        "slug": "us4b1instbfa",
+        "name": "US4B1-INST-BFA"
+      },
+      {
+        "slug": "us4b2inst",
+        "name": "US4B2-INST"
+      },
+      {
+        "slug": "us4b2instbfa",
+        "name": "US4B2-INST-BFA"
+      },
+      {
+        "slug": "us4b3inst",
+        "name": "US4B3-INST"
+      },
+      {
+        "slug": "us4b3instbfa",
+        "name": "US4B3-INST-BFA"
+      },
+      {
+        "slug": "us4b4inst",
+        "name": "US4B4-INST"
+      },
+      {
+        "slug": "us4b4instsl",
+        "name": "US4B4-INST-SL"
+      },
+      {
+        "slug": "us5a-account-realm",
+        "name": "US5A Account Realm"
+      },
+      {
+        "slug": "us5a1inst",
+        "name": "US5A1-INST"
+      },
+      {
+        "slug": "us5a2inst",
+        "name": "US5A2-INST"
+      },
+      {
+        "slug": "us5b-account-realm",
+        "name": "US5B Account Realm"
+      },
+      {
+        "slug": "us5b1inst",
+        "name": "US5B1-INST"
+      },
+      {
+        "slug": "us5b2inst",
+        "name": "US5B2-INST"
+      },
+      {
+        "slug": "us6a-account-realm",
+        "name": "US6A Account Realm"
+      },
+      {
+        "slug": "us6a1inst",
+        "name": "US6A1-INST"
+      },
+      {
+        "slug": "us6a2inst",
+        "name": "US6A2-INST"
+      },
+      {
+        "slug": "us6b-account-realm",
+        "name": "US6B Account Realm"
+      },
+      {
+        "slug": "us6b1inst",
+        "name": "US6B1-INST"
+      },
+      {
+        "slug": "us6b2inst",
+        "name": "US6B2-INST"
+      },
+      {
+        "slug": "us7a-account-realm",
+        "name": "US7A Account Realm"
+      },
+      {
+        "slug": "us7b-account-realm",
+        "name": "US7B Account Realm"
+      },
+      {
+        "slug": "us7b1inst",
+        "name": "US7B1-INST"
+      },
+      {
+        "slug": "us7b2inst",
+        "name": "US7B2-INST"
+      },
+      {
+        "slug": "us8a1inst",
+        "name": "US8A1-INST"
+      },
+      {
+        "slug": "us8a2inst",
+        "name": "US8A2-INST"
+      },
+      {
+        "slug": "us8b1inst",
+        "name": "US8B1-INST"
+      },
+      {
+        "slug": "us8b2inst",
+        "name": "US8B2-INST"
+      },
+      {
+        "slug": "uther",
+        "name": "Uther"
+      },
+      {
+        "slug": "vashj",
+        "name": "Vashj"
+      },
+      {
+        "slug": "veknilash",
+        "name": "Vek'nilash"
+      },
+      {
+        "slug": "velen",
+        "name": "Velen"
+      },
+      {
+        "slug": "warsong",
+        "name": "Warsong"
+      },
+      {
+        "slug": "whisperwind",
+        "name": "Whisperwind"
+      },
+      {
+        "slug": "wildhammer",
+        "name": "Wildhammer"
+      },
+      {
+        "slug": "windrunner",
+        "name": "Windrunner"
+      },
+      {
+        "slug": "winterhoof",
+        "name": "Winterhoof"
+      },
+      {
+        "slug": "wyrmrest-accord",
+        "name": "Wyrmrest Accord"
+      },
+      {
+        "slug": "ysera",
+        "name": "Ysera"
+      },
+      {
+        "slug": "ysondre",
+        "name": "Ysondre"
+      },
+      {
+        "slug": "zangarmarsh",
+        "name": "Zangarmarsh"
+      },
+      {
+        "slug": "zuljin",
+        "name": "Zul'jin"
+      },
+      {
+        "slug": "zuluhed",
+        "name": "Zuluhed"
+      }
+    ],
+    "eu": [
+      {
+        "slug": "aegwynn",
+        "name": "Aegwynn"
+      },
+      {
+        "slug": "aerie-peak",
+        "name": "Aerie Peak"
+      },
+      {
+        "slug": "agamaggan",
+        "name": "Agamaggan"
+      },
+      {
+        "slug": "aggra-português",
+        "name": "Aggra (Português)"
+      },
+      {
+        "slug": "aggramar",
+        "name": "Aggramar"
+      },
+      {
+        "slug": "ahnqiraj",
+        "name": "Ahn'Qiraj"
+      },
+      {
+        "slug": "alakir",
+        "name": "Al'Akir"
+      },
+      {
+        "slug": "alexstrasza",
+        "name": "Alexstrasza"
+      },
+      {
+        "slug": "alleria",
+        "name": "Alleria"
+      },
+      {
+        "slug": "alonsus",
+        "name": "Alonsus"
+      },
+      {
+        "slug": "amanthul",
+        "name": "Aman'Thul"
+      },
+      {
+        "slug": "ambossar",
+        "name": "Ambossar"
+      },
+      {
+        "slug": "anachronos",
+        "name": "Anachronos"
+      },
+      {
+        "slug": "anetheron",
+        "name": "Anetheron"
+      },
+      {
+        "slug": "antonidas",
+        "name": "Antonidas"
+      },
+      {
+        "slug": "anubarak",
+        "name": "Anub'arak"
+      },
+      {
+        "slug": "arakarahm",
+        "name": "Arak-arahm"
+      },
+      {
+        "slug": "arathi",
+        "name": "Arathi"
+      },
+      {
+        "slug": "arathor",
+        "name": "Arathor"
+      },
+      {
+        "slug": "archimonde",
+        "name": "Archimonde"
+      },
+      {
+        "slug": "area-52",
+        "name": "Area 52"
+      },
+      {
+        "slug": "argent-dawn",
+        "name": "Argent Dawn"
+      },
+      {
+        "slug": "arthas",
+        "name": "Arthas"
+      },
+      {
+        "slug": "arygos",
+        "name": "Arygos"
+      },
+      {
+        "slug": "ashenvale",
+        "name": "Ashenvale"
+      },
+      {
+        "slug": "aszune",
+        "name": "Aszune"
+      },
+      {
+        "slug": "auchindoun",
+        "name": "Auchindoun"
+      },
+      {
+        "slug": "azjolnerub",
+        "name": "Azjol-Nerub"
+      },
+      {
+        "slug": "azshara",
+        "name": "Azshara"
+      },
+      {
+        "slug": "azuregos",
+        "name": "Azuregos"
+      },
+      {
+        "slug": "azuremyst",
+        "name": "Azuremyst"
+      },
+      {
+        "slug": "baelgun",
+        "name": "Baelgun"
+      },
+      {
+        "slug": "balnazzar",
+        "name": "Balnazzar"
+      },
+      {
+        "slug": "blackhand",
+        "name": "Blackhand"
+      },
+      {
+        "slug": "blackmoore",
+        "name": "Blackmoore"
+      },
+      {
+        "slug": "blackrock",
+        "name": "Blackrock"
+      },
+      {
+        "slug": "blackscar",
+        "name": "Blackscar"
+      },
+      {
+        "slug": "blades-edge",
+        "name": "Blade's Edge"
+      },
+      {
+        "slug": "bladefist",
+        "name": "Bladefist"
+      },
+      {
+        "slug": "bloodfeather",
+        "name": "Bloodfeather"
+      },
+      {
+        "slug": "bloodhoof",
+        "name": "Bloodhoof"
+      },
+      {
+        "slug": "bloodscalp",
+        "name": "Bloodscalp"
+      },
+      {
+        "slug": "blutkessel",
+        "name": "Blutkessel"
+      },
+      {
+        "slug": "booty-bay",
+        "name": "Booty Bay"
+      },
+      {
+        "slug": "borean-tundra",
+        "name": "Borean Tundra"
+      },
+      {
+        "slug": "boulderfist",
+        "name": "Boulderfist"
+      },
+      {
+        "slug": "bronze-dragonflight",
+        "name": "Bronze Dragonflight"
+      },
+      {
+        "slug": "bronzebeard",
+        "name": "Bronzebeard"
+      },
+      {
+        "slug": "burning-blade",
+        "name": "Burning Blade"
+      },
+      {
+        "slug": "burning-legion",
+        "name": "Burning Legion"
+      },
+      {
+        "slug": "burning-steppes",
+        "name": "Burning Steppes"
+      },
+      {
+        "slug": "cthun",
+        "name": "C'Thun"
+      },
+      {
+        "slug": "chamber-of-aspects",
+        "name": "Chamber of Aspects"
+      },
+      {
+        "slug": "chants-éternels",
+        "name": "Chants éternels"
+      },
+      {
+        "slug": "chogall",
+        "name": "Cho'gall"
+      },
+      {
+        "slug": "chromaggus",
+        "name": "Chromaggus"
+      },
+      {
+        "slug": "colinas-pardas",
+        "name": "Colinas Pardas"
+      },
+      {
+        "slug": "confrérie-du-thorium",
+        "name": "Confrérie du Thorium"
+      },
+      {
+        "slug": "conseil-des-ombres",
+        "name": "Conseil des Ombres"
+      },
+      {
+        "slug": "crushridge",
+        "name": "Crushridge"
+      },
+      {
+        "slug": "culte-de-la-rive-noire",
+        "name": "Culte de la Rive noire"
+      },
+      {
+        "slug": "daggerspine",
+        "name": "Daggerspine"
+      },
+      {
+        "slug": "dalaran",
+        "name": "Dalaran"
+      },
+      {
+        "slug": "dalvengyr",
+        "name": "Dalvengyr"
+      },
+      {
+        "slug": "darkmoon-faire",
+        "name": "Darkmoon Faire"
+      },
+      {
+        "slug": "darksorrow",
+        "name": "Darksorrow"
+      },
+      {
+        "slug": "darkspear",
+        "name": "Darkspear"
+      },
+      {
+        "slug": "das-konsortium",
+        "name": "Das Konsortium"
+      },
+      {
+        "slug": "das-syndikat",
+        "name": "Das Syndikat"
+      },
+      {
+        "slug": "deathguard",
+        "name": "Deathguard"
+      },
+      {
+        "slug": "deathweaver",
+        "name": "Deathweaver"
+      },
+      {
+        "slug": "deathwing",
+        "name": "Deathwing"
+      },
+      {
+        "slug": "deepholm",
+        "name": "Deepholm"
+      },
+      {
+        "slug": "defias-brotherhood",
+        "name": "Defias Brotherhood"
+      },
+      {
+        "slug": "dentarg",
+        "name": "Dentarg"
+      },
+      {
+        "slug": "der-abyssische-rat",
+        "name": "Der abyssische Rat"
+      },
+      {
+        "slug": "der-mithrilorden",
+        "name": "Der Mithrilorden"
+      },
+      {
+        "slug": "der-rat-von-dalaran",
+        "name": "Der Rat von Dalaran"
+      },
+      {
+        "slug": "destromath",
+        "name": "Destromath"
+      },
+      {
+        "slug": "dethecus",
+        "name": "Dethecus"
+      },
+      {
+        "slug": "die-aldor",
+        "name": "Die Aldor"
+      },
+      {
+        "slug": "die-arguswacht",
+        "name": "Die Arguswacht"
+      },
+      {
+        "slug": "die-ewige-wacht",
+        "name": "Die ewige Wacht"
+      },
+      {
+        "slug": "die-nachtwache",
+        "name": "Die Nachtwache"
+      },
+      {
+        "slug": "die-silberne-hand",
+        "name": "Die Silberne Hand"
+      },
+      {
+        "slug": "die-todeskrallen",
+        "name": "Die Todeskrallen"
+      },
+      {
+        "slug": "doomhammer",
+        "name": "Doomhammer"
+      },
+      {
+        "slug": "draenor",
+        "name": "Draenor"
+      },
+      {
+        "slug": "dragonblight",
+        "name": "Dragonblight"
+      },
+      {
+        "slug": "dragonmaw",
+        "name": "Dragonmaw"
+      },
+      {
+        "slug": "drakthul",
+        "name": "Drak'thul"
+      },
+      {
+        "slug": "drekthar",
+        "name": "Drek'Thar"
+      },
+      {
+        "slug": "dun-modr",
+        "name": "Dun Modr"
+      },
+      {
+        "slug": "dun-morogh",
+        "name": "Dun Morogh"
+      },
+      {
+        "slug": "dunemaul",
+        "name": "Dunemaul"
+      },
+      {
+        "slug": "durotan",
+        "name": "Durotan"
+      },
+      {
+        "slug": "earthen-ring",
+        "name": "Earthen Ring"
+      },
+      {
+        "slug": "echsenkessel",
+        "name": "Echsenkessel"
+      },
+      {
+        "slug": "eitrigg",
+        "name": "Eitrigg"
+      },
+      {
+        "slug": "eldrethalas",
+        "name": "Eldre'Thalas"
+      },
+      {
+        "slug": "elune",
+        "name": "Elune"
+      },
+      {
+        "slug": "emerald-dream",
+        "name": "Emerald Dream"
+      },
+      {
+        "slug": "emeriss",
+        "name": "Emeriss"
+      },
+      {
+        "slug": "eonar",
+        "name": "Eonar"
+      },
+      {
+        "slug": "eredar",
+        "name": "Eredar"
+      },
+      {
+        "slug": "eu-arena-pass-csbg",
+        "name": "EU Arena Pass CSBG"
+      },
+      {
+        "slug": "eu-arena-pass-csbg-2",
+        "name": "EU Arena Pass CSBG 2"
+      },
+      {
+        "slug": "eu-auxiliary-70",
+        "name": "EU Auxiliary 70"
+      },
+      {
+        "slug": "eu1a-account-realm",
+        "name": "EU1A Account Realm"
+      },
+      {
+        "slug": "eu1a1inst",
+        "name": "EU1A1-INST"
+      },
+      {
+        "slug": "eu1a2inst",
+        "name": "EU1A2-INST"
+      },
+      {
+        "slug": "eu1b-account-realm",
+        "name": "EU1B Account Realm"
+      },
+      {
+        "slug": "eu1b1inst",
+        "name": "EU1B1-INST"
+      },
+      {
+        "slug": "eu1b2inst",
+        "name": "EU1B2-INST"
+      },
+      {
+        "slug": "eu2a-account-realm",
+        "name": "EU2A Account Realm"
+      },
+      {
+        "slug": "eu2a1inst",
+        "name": "EU2A1-INST"
+      },
+      {
+        "slug": "eu2a2inst",
+        "name": "EU2A2-INST"
+      },
+      {
+        "slug": "eu2b-account-realm",
+        "name": "EU2B Account Realm"
+      },
+      {
+        "slug": "eu2b1inst",
+        "name": "EU2B1-INST"
+      },
+      {
+        "slug": "eu2b2inst",
+        "name": "EU2B2-INST"
+      },
+      {
+        "slug": "eu3a-account-realm",
+        "name": "EU3A Account Realm"
+      },
+      {
+        "slug": "eu3a1inst",
+        "name": "EU3A1-INST"
+      },
+      {
+        "slug": "eu3a2inst",
+        "name": "EU3A2-INST"
+      },
+      {
+        "slug": "eu3b-account-realm",
+        "name": "EU3B Account Realm"
+      },
+      {
+        "slug": "eu3b1inst",
+        "name": "EU3B1-INST"
+      },
+      {
+        "slug": "eu3b2inst",
+        "name": "EU3B2-INST"
+      },
+      {
+        "slug": "eu4-100-partner",
+        "name": "EU4 100 Partner"
+      },
+      {
+        "slug": "eu4a-account-realm",
+        "name": "EU4A Account Realm"
+      },
+      {
+        "slug": "eu4a1inst",
+        "name": "EU4A1-INST"
+      },
+      {
+        "slug": "eu4a1instbfa",
+        "name": "EU4A1-INST-BFA"
+      },
+      {
+        "slug": "eu4a2inst",
+        "name": "EU4A2-INST"
+      },
+      {
+        "slug": "eu4a2instbfa",
+        "name": "EU4A2-INST-BFA"
+      },
+      {
+        "slug": "eu4a3inst",
+        "name": "EU4A3-INST"
+      },
+      {
+        "slug": "eu4a3instbfa",
+        "name": "EU4A3-INST-BFA"
+      },
+      {
+        "slug": "eu4a4inst",
+        "name": "EU4A4-INST"
+      },
+      {
+        "slug": "eu4a4instsl",
+        "name": "EU4A4-INST-SL"
+      },
+      {
+        "slug": "eu4b-account-realm",
+        "name": "EU4B Account Realm"
+      },
+      {
+        "slug": "eu4b1inst",
+        "name": "EU4B1-INST"
+      },
+      {
+        "slug": "eu4b1instbfa",
+        "name": "EU4B1-INST-BFA"
+      },
+      {
+        "slug": "eu4b2inst",
+        "name": "EU4B2-INST"
+      },
+      {
+        "slug": "eu4b2instbfa",
+        "name": "EU4B2-INST-BFA"
+      },
+      {
+        "slug": "eu4b3inst",
+        "name": "EU4B3-INST"
+      },
+      {
+        "slug": "eu4b3instbfa",
+        "name": "EU4B3-INST-BFA"
+      },
+      {
+        "slug": "eu4b4inst",
+        "name": "EU4B4-INST"
+      },
+      {
+        "slug": "eu4b4instsl",
+        "name": "EU4B4-INST-SL"
+      },
+      {
+        "slug": "eu5a-account-realm",
+        "name": "EU5A Account Realm"
+      },
+      {
+        "slug": "eu5a1inst",
+        "name": "EU5A1-INST"
+      },
+      {
+        "slug": "eu5a1instbfa",
+        "name": "EU5A1-INST-BFA"
+      },
+      {
+        "slug": "eu5a2inst",
+        "name": "EU5A2-INST"
+      },
+      {
+        "slug": "eu5a2instbfa",
+        "name": "EU5A2-INST-BFA"
+      },
+      {
+        "slug": "eu5a3inst",
+        "name": "EU5A3-INST"
+      },
+      {
+        "slug": "eu5a3instbfa",
+        "name": "EU5A3-INST-BFA"
+      },
+      {
+        "slug": "eu5a4inst",
+        "name": "EU5A4-INST"
+      },
+      {
+        "slug": "eu5a4instsl",
+        "name": "EU5A4-INST-SL"
+      },
+      {
+        "slug": "eu5b-account-realm",
+        "name": "EU5B Account Realm"
+      },
+      {
+        "slug": "eu5b1inst",
+        "name": "EU5B1-INST"
+      },
+      {
+        "slug": "eu5b1instbfa",
+        "name": "EU5B1-INST-BFA"
+      },
+      {
+        "slug": "eu5b2inst",
+        "name": "EU5B2-INST"
+      },
+      {
+        "slug": "eu5b2instbfa",
+        "name": "EU5B2-INST-BFA"
+      },
+      {
+        "slug": "eu5b3inst",
+        "name": "EU5B3-INST"
+      },
+      {
+        "slug": "eu5b3instbfa",
+        "name": "EU5B3-INST-BFA"
+      },
+      {
+        "slug": "eu5b4inst",
+        "name": "EU5B4-INST"
+      },
+      {
+        "slug": "eu5b4instsl",
+        "name": "EU5B4-INST-SL"
+      },
+      {
+        "slug": "eu6a-account-realm",
+        "name": "EU6A Account Realm"
+      },
+      {
+        "slug": "eu6a1inst",
+        "name": "EU6A1-INST"
+      },
+      {
+        "slug": "eu6a1instbfa",
+        "name": "EU6A1-INST-BFA"
+      },
+      {
+        "slug": "eu6a2inst",
+        "name": "EU6A2-INST"
+      },
+      {
+        "slug": "eu6a2instbfa",
+        "name": "EU6A2-INST-BFA"
+      },
+      {
+        "slug": "eu6a3inst",
+        "name": "EU6A3-INST"
+      },
+      {
+        "slug": "eu6a3instbfa",
+        "name": "EU6A3-INST-BFA"
+      },
+      {
+        "slug": "eu6a4inst",
+        "name": "EU6A4-INST"
+      },
+      {
+        "slug": "eu6a4instsl",
+        "name": "EU6A4-INST-SL"
+      },
+      {
+        "slug": "eu6b-account-realm",
+        "name": "EU6B Account Realm"
+      },
+      {
+        "slug": "eu6b1inst",
+        "name": "EU6B1-INST"
+      },
+      {
+        "slug": "eu6b1instbfa",
+        "name": "EU6B1-INST-BFA"
+      },
+      {
+        "slug": "eu6b2inst",
+        "name": "EU6B2-INST"
+      },
+      {
+        "slug": "eu6b2instbfa",
+        "name": "EU6B2-INST-BFA"
+      },
+      {
+        "slug": "eu6b3inst",
+        "name": "EU6B3-INST"
+      },
+      {
+        "slug": "eu6b3instbfa",
+        "name": "EU6B3-INST-BFA"
+      },
+      {
+        "slug": "eu6b4inst",
+        "name": "EU6B4-INST"
+      },
+      {
+        "slug": "eu6b4instsl",
+        "name": "EU6B4-INST-SL"
+      },
+      {
+        "slug": "eu7abgru",
+        "name": "EU7A-BG-RU"
+      },
+      {
+        "slug": "eu7a1inst",
+        "name": "EU7A1-INST"
+      },
+      {
+        "slug": "eu7a1instbfa",
+        "name": "EU7A1-INST-BFA"
+      },
+      {
+        "slug": "eu7a2inst",
+        "name": "EU7A2-INST"
+      },
+      {
+        "slug": "eu7a2instbfa",
+        "name": "EU7A2-INST-BFA"
+      },
+      {
+        "slug": "eu7a3inst",
+        "name": "EU7A3-INST"
+      },
+      {
+        "slug": "eu7a3instbfa",
+        "name": "EU7A3-INST-BFA"
+      },
+      {
+        "slug": "eu7a4inst",
+        "name": "EU7A4-INST"
+      },
+      {
+        "slug": "eu7a4instsl",
+        "name": "EU7A4-INST-SL"
+      },
+      {
+        "slug": "eu7b1inst",
+        "name": "EU7B1-INST"
+      },
+      {
+        "slug": "eu7b1instbfa",
+        "name": "EU7B1-INST-BFA"
+      },
+      {
+        "slug": "eu7b2inst",
+        "name": "EU7B2-INST"
+      },
+      {
+        "slug": "eu7b2instbfa",
+        "name": "EU7B2-INST-BFA"
+      },
+      {
+        "slug": "eu7b3inst",
+        "name": "EU7B3-INST"
+      },
+      {
+        "slug": "eu7b3instbfa",
+        "name": "EU7B3-INST-BFA"
+      },
+      {
+        "slug": "eu7b4inst",
+        "name": "EU7B4-INST"
+      },
+      {
+        "slug": "eu7b4instsl",
+        "name": "EU7B4-INST-SL"
+      },
+      {
+        "slug": "eversong",
+        "name": "Eversong"
+      },
+      {
+        "slug": "executus",
+        "name": "Executus"
+      },
+      {
+        "slug": "exodar",
+        "name": "Exodar"
+      },
+      {
+        "slug": "festung-der-stürme",
+        "name": "Festung der Stürme"
+      },
+      {
+        "slug": "fordragon",
+        "name": "Fordragon"
+      },
+      {
+        "slug": "forscherliga",
+        "name": "Forscherliga"
+      },
+      {
+        "slug": "frostmane",
+        "name": "Frostmane"
+      },
+      {
+        "slug": "frostmourne",
+        "name": "Frostmourne"
+      },
+      {
+        "slug": "frostwhisper",
+        "name": "Frostwhisper"
+      },
+      {
+        "slug": "frostwolf",
+        "name": "Frostwolf"
+      },
+      {
+        "slug": "galakrond",
+        "name": "Galakrond"
+      },
+      {
+        "slug": "garona",
+        "name": "Garona"
+      },
+      {
+        "slug": "garrosh",
+        "name": "Garrosh"
+      },
+      {
+        "slug": "genjuros",
+        "name": "Genjuros"
+      },
+      {
+        "slug": "ghostlands",
+        "name": "Ghostlands"
+      },
+      {
+        "slug": "gilneas",
+        "name": "Gilneas"
+      },
+      {
+        "slug": "goldrinn",
+        "name": "Goldrinn"
+      },
+      {
+        "slug": "gordunni",
+        "name": "Gordunni"
+      },
+      {
+        "slug": "gorgonnash",
+        "name": "Gorgonnash"
+      },
+      {
+        "slug": "greymane",
+        "name": "Greymane"
+      },
+      {
+        "slug": "grim-batol",
+        "name": "Grim Batol"
+      },
+      {
+        "slug": "grom",
+        "name": "Grom"
+      },
+      {
+        "slug": "guldan",
+        "name": "Gul'dan"
+      },
+      {
+        "slug": "hakkar",
+        "name": "Hakkar"
+      },
+      {
+        "slug": "haomarush",
+        "name": "Haomarush"
+      },
+      {
+        "slug": "hellfire",
+        "name": "Hellfire"
+      },
+      {
+        "slug": "hellscream",
+        "name": "Hellscream"
+      },
+      {
+        "slug": "howling-fjord",
+        "name": "Howling Fjord"
+      },
+      {
+        "slug": "hyjal",
+        "name": "Hyjal"
+      },
+      {
+        "slug": "illidan",
+        "name": "Illidan"
+      },
+      {
+        "slug": "jaedenar",
+        "name": "Jaedenar"
+      },
+      {
+        "slug": "kaelthas",
+        "name": "Kael'thas"
+      },
+      {
+        "slug": "karazhan",
+        "name": "Karazhan"
+      },
+      {
+        "slug": "kargath",
+        "name": "Kargath"
+      },
+      {
+        "slug": "kazzak",
+        "name": "Kazzak"
+      },
+      {
+        "slug": "kelthuzad",
+        "name": "Kel'Thuzad"
+      },
+      {
+        "slug": "khadgar",
+        "name": "Khadgar"
+      },
+      {
+        "slug": "khaz-modan",
+        "name": "Khaz Modan"
+      },
+      {
+        "slug": "khazgoroth",
+        "name": "Khaz'goroth"
+      },
+      {
+        "slug": "kiljaeden",
+        "name": "Kil'jaeden"
+      },
+      {
+        "slug": "kilrogg",
+        "name": "Kilrogg"
+      },
+      {
+        "slug": "kirin-tor",
+        "name": "Kirin Tor"
+      },
+      {
+        "slug": "korgall",
+        "name": "Kor'gall"
+      },
+      {
+        "slug": "kragjin",
+        "name": "Krag'jin"
+      },
+      {
+        "slug": "krasus",
+        "name": "Krasus"
+      },
+      {
+        "slug": "kul-tiras",
+        "name": "Kul Tiras"
+      },
+      {
+        "slug": "kult-der-verdammten",
+        "name": "Kult der Verdammten"
+      },
+      {
+        "slug": "la-croisade-écarlate",
+        "name": "La Croisade écarlate"
+      },
+      {
+        "slug": "laughing-skull",
+        "name": "Laughing Skull"
+      },
+      {
+        "slug": "les-clairvoyants",
+        "name": "Les Clairvoyants"
+      },
+      {
+        "slug": "les-sentinelles",
+        "name": "Les Sentinelles"
+      },
+      {
+        "slug": "lich-king",
+        "name": "Lich King"
+      },
+      {
+        "slug": "lightbringer",
+        "name": "Lightbringer"
+      },
+      {
+        "slug": "lightnings-blade",
+        "name": "Lightning's Blade"
+      },
+      {
+        "slug": "lordaeron",
+        "name": "Lordaeron"
+      },
+      {
+        "slug": "los-errantes",
+        "name": "Los Errantes"
+      },
+      {
+        "slug": "lothar",
+        "name": "Lothar"
+      },
+      {
+        "slug": "madmortem",
+        "name": "Madmortem"
+      },
+      {
+        "slug": "magtheridon",
+        "name": "Magtheridon"
+      },
+      {
+        "slug": "malganis",
+        "name": "Mal'Ganis"
+      },
+      {
+        "slug": "malfurion",
+        "name": "Malfurion"
+      },
+      {
+        "slug": "malorne",
+        "name": "Malorne"
+      },
+      {
+        "slug": "malygos",
+        "name": "Malygos"
+      },
+      {
+        "slug": "mannoroth",
+        "name": "Mannoroth"
+      },
+      {
+        "slug": "marécage-de-zangar",
+        "name": "Marécage de Zangar"
+      },
+      {
+        "slug": "mazrigos",
+        "name": "Mazrigos"
+      },
+      {
+        "slug": "medivh",
+        "name": "Medivh"
+      },
+      {
+        "slug": "minahonda",
+        "name": "Minahonda"
+      },
+      {
+        "slug": "moonglade",
+        "name": "Moonglade"
+      },
+      {
+        "slug": "mugthol",
+        "name": "Mug'thol"
+      },
+      {
+        "slug": "nagrand",
+        "name": "Nagrand"
+      },
+      {
+        "slug": "nathrezim",
+        "name": "Nathrezim"
+      },
+      {
+        "slug": "naxxramas",
+        "name": "Naxxramas"
+      },
+      {
+        "slug": "nazjatar",
+        "name": "Nazjatar"
+      },
+      {
+        "slug": "nefarian",
+        "name": "Nefarian"
+      },
+      {
+        "slug": "nemesis",
+        "name": "Nemesis"
+      },
+      {
+        "slug": "neptulon",
+        "name": "Neptulon"
+      },
+      {
+        "slug": "nerzhul",
+        "name": "Ner'zhul"
+      },
+      {
+        "slug": "nerathor",
+        "name": "Nera'thor"
+      },
+      {
+        "slug": "nethersturm",
+        "name": "Nethersturm"
+      },
+      {
+        "slug": "nordrassil",
+        "name": "Nordrassil"
+      },
+      {
+        "slug": "norgannon",
+        "name": "Norgannon"
+      },
+      {
+        "slug": "nozdormu",
+        "name": "Nozdormu"
+      },
+      {
+        "slug": "onyxia",
+        "name": "Onyxia"
+      },
+      {
+        "slug": "outland",
+        "name": "Outland"
+      },
+      {
+        "slug": "perenolde",
+        "name": "Perenolde"
+      },
+      {
+        "slug": "pozzo-delleternità",
+        "name": "Pozzo dell'Eternità"
+      },
+      {
+        "slug": "proudmoore",
+        "name": "Proudmoore"
+      },
+      {
+        "slug": "quelthalas",
+        "name": "Quel'Thalas"
+      },
+      {
+        "slug": "ragnaros",
+        "name": "Ragnaros"
+      },
+      {
+        "slug": "rajaxx",
+        "name": "Rajaxx"
+      },
+      {
+        "slug": "rashgarroth",
+        "name": "Rashgarroth"
+      },
+      {
+        "slug": "ravencrest",
+        "name": "Ravencrest"
+      },
+      {
+        "slug": "ravenholdt",
+        "name": "Ravenholdt"
+      },
+      {
+        "slug": "razuvious",
+        "name": "Razuvious"
+      },
+      {
+        "slug": "rdb-eu",
+        "name": "RDB EU"
+      },
+      {
+        "slug": "rexxar",
+        "name": "Rexxar"
+      },
+      {
+        "slug": "runetotem",
+        "name": "Runetotem"
+      },
+      {
+        "slug": "sanguino",
+        "name": "Sanguino"
+      },
+      {
+        "slug": "sargeras",
+        "name": "Sargeras"
+      },
+      {
+        "slug": "saurfang",
+        "name": "Saurfang"
+      },
+      {
+        "slug": "scarshield-legion",
+        "name": "Scarshield Legion"
+      },
+      {
+        "slug": "senjin",
+        "name": "Sen'jin"
+      },
+      {
+        "slug": "shadowsong",
+        "name": "Shadowsong"
+      },
+      {
+        "slug": "shattered-halls",
+        "name": "Shattered Halls"
+      },
+      {
+        "slug": "shattered-hand",
+        "name": "Shattered Hand"
+      },
+      {
+        "slug": "shattrath",
+        "name": "Shattrath"
+      },
+      {
+        "slug": "shendralar",
+        "name": "Shen'dralar"
+      },
+      {
+        "slug": "silvermoon",
+        "name": "Silvermoon"
+      },
+      {
+        "slug": "sinstralis",
+        "name": "Sinstralis"
+      },
+      {
+        "slug": "skullcrusher",
+        "name": "Skullcrusher"
+      },
+      {
+        "slug": "soulflayer",
+        "name": "Soulflayer"
+      },
+      {
+        "slug": "spinebreaker",
+        "name": "Spinebreaker"
+      },
+      {
+        "slug": "sporeggar",
+        "name": "Sporeggar"
+      },
+      {
+        "slug": "steamwheedle-cartel",
+        "name": "Steamwheedle Cartel"
+      },
+      {
+        "slug": "stormrage",
+        "name": "Stormrage"
+      },
+      {
+        "slug": "stormreaver",
+        "name": "Stormreaver"
+      },
+      {
+        "slug": "stormscale",
+        "name": "Stormscale"
+      },
+      {
+        "slug": "sunstrider",
+        "name": "Sunstrider"
+      },
+      {
+        "slug": "suramar",
+        "name": "Suramar"
+      },
+      {
+        "slug": "sylvanas",
+        "name": "Sylvanas"
+      },
+      {
+        "slug": "taerar",
+        "name": "Taerar"
+      },
+      {
+        "slug": "talnivarr",
+        "name": "Talnivarr"
+      },
+      {
+        "slug": "tarren-mill",
+        "name": "Tarren Mill"
+      },
+      {
+        "slug": "teldrassil",
+        "name": "Teldrassil"
+      },
+      {
+        "slug": "temple-noir",
+        "name": "Temple noir"
+      },
+      {
+        "slug": "terenas",
+        "name": "Terenas"
+      },
+      {
+        "slug": "terokkar",
+        "name": "Terokkar"
+      },
+      {
+        "slug": "terrordar",
+        "name": "Terrordar"
+      },
+      {
+        "slug": "the-maelstrom",
+        "name": "The Maelstrom"
+      },
+      {
+        "slug": "the-shatar",
+        "name": "The Sha'tar"
+      },
+      {
+        "slug": "the-venture-co",
+        "name": "The Venture Co"
+      },
+      {
+        "slug": "theradras",
+        "name": "Theradras"
+      },
+      {
+        "slug": "thermaplugg",
+        "name": "Thermaplugg"
+      },
+      {
+        "slug": "thrall",
+        "name": "Thrall"
+      },
+      {
+        "slug": "throkferoth",
+        "name": "Throk'Feroth"
+      },
+      {
+        "slug": "thunderhorn",
+        "name": "Thunderhorn"
+      },
+      {
+        "slug": "tichondrius",
+        "name": "Tichondrius"
+      },
+      {
+        "slug": "tirion",
+        "name": "Tirion"
+      },
+      {
+        "slug": "todeswache",
+        "name": "Todeswache"
+      },
+      {
+        "slug": "trollbane",
+        "name": "Trollbane"
+      },
+      {
+        "slug": "turalyon",
+        "name": "Turalyon"
+      },
+      {
+        "slug": "twilights-hammer",
+        "name": "Twilight's Hammer"
+      },
+      {
+        "slug": "twisting-nether",
+        "name": "Twisting Nether"
+      },
+      {
+        "slug": "tyrande",
+        "name": "Tyrande"
+      },
+      {
+        "slug": "uldaman",
+        "name": "Uldaman"
+      },
+      {
+        "slug": "ulduar",
+        "name": "Ulduar"
+      },
+      {
+        "slug": "uldum",
+        "name": "Uldum"
+      },
+      {
+        "slug": "ungoro",
+        "name": "Un'Goro"
+      },
+      {
+        "slug": "varimathras",
+        "name": "Varimathras"
+      },
+      {
+        "slug": "vashj",
+        "name": "Vashj"
+      },
+      {
+        "slug": "veklor",
+        "name": "Vek'lor"
+      },
+      {
+        "slug": "veknilash",
+        "name": "Vek'nilash"
+      },
+      {
+        "slug": "voljin",
+        "name": "Vol'jin"
+      },
+      {
+        "slug": "wildhammer",
+        "name": "Wildhammer"
+      },
+      {
+        "slug": "wrathbringer",
+        "name": "Wrathbringer"
+      },
+      {
+        "slug": "xavius",
+        "name": "Xavius"
+      },
+      {
+        "slug": "ysera",
+        "name": "Ysera"
+      },
+      {
+        "slug": "ysondre",
+        "name": "Ysondre"
+      },
+      {
+        "slug": "zenedar",
+        "name": "Zenedar"
+      },
+      {
+        "slug": "zirkel-des-cenarius",
+        "name": "Zirkel des Cenarius"
+      },
+      {
+        "slug": "zuljin",
+        "name": "Zul'jin"
+      },
+      {
+        "slug": "zuluhed",
+        "name": "Zuluhed"
+      },
+      {
+        "slug": "zzzrdb-eu",
+        "name": "zzz_RDB EU"
+      }
+    ]
+  }
+}

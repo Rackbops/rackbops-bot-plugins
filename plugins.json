@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-06T07:59:09.860Z",
+  "generatedAt": "2026-09-06T16:24:15.697Z",
   "plugins": [
     {
       "name": "warbandeer",
@@ -36,6 +36,67 @@
           "publishedAt": "2026-09-04T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/warbandeer-v1.0.0",
           "notes": "### Added\n\n- Warbandeer desktop-app character linking, ported from the bot's baked-in connector\n  (`rackbops-discord-bot#3`, PR #92) as the first published plugin: the `/link` and `/unlink`\n  slash commands and the HTTP ingest endpoint (`POST /link`, `POST /characters`), gated behind\n  `WARBANDEER_INGEST_PORT` (unset = connector off). Behaviour is identical to the baked-in\n  connector; see the bot's `docs/adr/0001`–`0003` for the transport, auth, and storage design."
+        }
+      ]
+    },
+    {
+      "name": "wow",
+      "package": "@rackbops/plugin-wow",
+      "version": "1.0.0",
+      "description": "World of Warcraft features: Darkmoon Faire schedule, resets, realm up/down watch, and /transmog import strings (/dmf, /reset, /status, /transmog)",
+      "hostApiVersion": 1,
+      "intents": [],
+      "commands": [
+        "dmf",
+        "reset",
+        "status",
+        "transmog"
+      ],
+      "env": [
+        {
+          "key": "WOW_REGION",
+          "format": "^(us|eu)$",
+          "description": "Blizzard region: us or eu (default us). Sets the reset times and the Darkmoon Faire timezone default.",
+          "required": false,
+          "secret": false
+        },
+        {
+          "key": "WOW_REALM",
+          "format": "^[a-z0-9àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ-]{1,40}$",
+          "description": "Realm slug whose up/down status /status reports and the realm watch announces; blank tracks no realm.",
+          "required": false,
+          "secret": false
+        },
+        {
+          "key": "DMF_TIMEZONE",
+          "format": "^[A-Za-z0-9+_-]+(/[A-Za-z0-9+_-]+){0,2}$",
+          "description": "IANA time zone for Darkmoon Faire timing (default from WOW_REGION). Validated as a real zone by the plugin at load.",
+          "required": false,
+          "secret": false
+        },
+        {
+          "key": "BLIZZARD_CLIENT_ID",
+          "format": "^\\S+$",
+          "description": "Blizzard API client id (needed for /status, /transmog, and the realm watch).",
+          "required": false,
+          "secret": true
+        },
+        {
+          "key": "BLIZZARD_CLIENT_SECRET",
+          "format": "^\\S+$",
+          "description": "Blizzard API client secret.",
+          "required": false,
+          "secret": true
+        }
+      ],
+      "adminUrl": "https://cdn.jsdelivr.net/npm/@rackbops/plugin-wow@1.0.0/dist/admin.js",
+      "adminApiVersion": 1,
+      "releases": [
+        {
+          "version": "1.0.0",
+          "publishedAt": "2026-09-06T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/wow-v1.0.0",
+          "notes": "### Added\n\n- World of Warcraft features, ported from the bot's baked-in code\n  (`rackbops-discord-bot#107`): the `/dmf`, `/reset`, `/status`, and `/transmog`\n  slash commands; the Darkmoon Faire, weekly-reset, and realm up/down\n  announcements; and a realm-chooser admin-panel tab (via the plugin admin-UI\n  contract, `rackbops-discord-bot#123`) with a region-filtered realm dropdown and\n  a Darkmoon Faire timezone picker. Behaviour is identical to the baked-in code;\n  the dedup state lives in the plugin's own `data/wow.json`, seeded once from the\n  bot's `state.json` so an existing instance never re-announces after the move."
         }
       ]
     }
