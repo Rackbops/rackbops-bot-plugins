@@ -1,0 +1,59 @@
+{
+  "name": "@rackbops/plugin-wow",
+  "version": "1.0.0",
+  "description": "World of Warcraft features: Darkmoon Faire schedule, resets, realm up/down watch, and /transmog import strings (/dmf, /reset, /status, /transmog)",
+  "type": "module",
+  "main": "dist/plugin.js",
+  "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rackbops/rackbops-bot-plugins.git",
+    "directory": "plugins/wow"
+  },
+  "peerDependencies": {
+    "discord.js": "^14.27.0"
+  },
+  "botPlugin": {
+    "hostApiVersion": 1,
+    "adminApiVersion": 1,
+    "intents": [],
+    "commands": ["dmf", "reset", "status", "transmog"],
+    "env": [
+      {
+        "key": "WOW_REGION",
+        "format": "^(us|eu)$",
+        "required": false,
+        "secret": false,
+        "description": "Blizzard region: us or eu (default us). Sets the reset times and the Darkmoon Faire timezone default."
+      },
+      {
+        "key": "WOW_REALM",
+        "format": "^[a-z0-9àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ-]{1,40}$",
+        "required": false,
+        "secret": false,
+        "description": "Realm slug whose up/down status /status reports and the realm watch announces; blank tracks no realm."
+      },
+      {
+        "key": "DMF_TIMEZONE",
+        "format": "^[A-Za-z0-9+_-]+(/[A-Za-z0-9+_-]+){0,2}$",
+        "required": false,
+        "secret": false,
+        "description": "IANA time zone for Darkmoon Faire timing (default from WOW_REGION). Validated as a real zone by the plugin at load."
+      },
+      {
+        "key": "BLIZZARD_CLIENT_ID",
+        "format": "^\\S+$",
+        "required": false,
+        "secret": true,
+        "description": "Blizzard API client id (needed for /status, /transmog, and the realm watch)."
+      },
+      {
+        "key": "BLIZZARD_CLIENT_SECRET",
+        "format": "^\\S+$",
+        "required": false,
+        "secret": true,
+        "description": "Blizzard API client secret."
+      }
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+[
+  {
+    "options": [],
+    "name": "dmf",
+    "description": "Darkmoon Faire schedule",
+    "type": 1
+  },
+  {
+    "options": [],
+    "name": "reset",
+    "description": "Next daily and weekly reset times",
+    "type": 1
+  },
+  {
+    "options": [],
+    "name": "status",
+    "description": "Realm status",
+    "type": 1
+  },
+  {
+    "options": [
+      {
+        "type": 3,
+        "name": "character",
+        "description": "Character name",
+        "required": true
+      },
+      {
+        "type": 3,
+        "name": "realm",
+        "description": "Realm, e.g. \"Argent Dawn\"",
+        "required": true
+      }
+    ],
+    "name": "transmog",
+    "description": "Get a /customset import string for a character's transmog",
+    "type": 1
+  }
+]
