@@ -1,5 +1,5 @@
 import { config } from "./config.js";
-import { blizzardConfigured, blizzardToken } from "./blizzard.js";
+import { blizzardConfigured, blizzardGet } from "./blizzard.js";
 
 // Connected-realm status via the Blizzard Game Data API (client-credentials OAuth).
 // The token itself moved to ./blizzard once a second caller (the character profile read
@@ -23,6 +23,15 @@ export function decideRealmTransition(
   return next === "DOWN" ? "down" : "up";
 }
 
+/** The Blizzard connected-realm search URL, keyed on realm slug. Shared by `realmExists` and
+ * `realmStatus` — the only two callers. */
+export function connectedRealmSearchUrl(slug: string): string {
+  return (
+    `https://${config.region}.api.blizzard.com/data/wow/search/connected-realm` +
+    `?namespace=dynamic-${config.region}&realms.slug=${encodeURIComponent(slug)}&_pageSize=1`
+  );
+}
+
 /**
  * Whether `slug` names a realm in the configured region.
  *
@@ -33,14 +42,15 @@ export function decideRealmTransition(
  *
  * **Fails open.** If this check can't complete, it reports `true` — an outage or a rate limit must
  * not turn "we couldn't ask" into "your realm is wrong", which would send someone chasing a typo
- * that isn't there.
+ * that isn't there. That collapses "couldn't ask" and "exists" into one boolean, which is fine for
+ * this function's one caller (`transmog.ts` just picks between two error messages) but would be
+ * wrong for a caller that needs to tell them apart. Deliberately left a boolean rather than a
+ * `"exists" | "missing" | "unknown"` tri-state until a second caller actually needs that
+ * distinction — don't build it speculatively.
  */
 export async function realmExists(slug: string): Promise<boolean> {
-  const url =
-    `https://${config.region}.api.blizzard.com/data/wow/search/connected-realm` +
-    `?namespace=dynamic-${config.region}&realms.slug=${slug}&_pageSize=1`;
   try {
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${await blizzardToken()}` } });
+    const res = await blizzardGet(connectedRealmSearchUrl(slug));
     if (!res.ok) return true;
     const data = (await res.json()) as { results?: unknown[] };
     return (data.results?.length ?? 0) > 0;
@@ -90,7 +100,7 @@ async function fetchRealmIndex(region: string): Promise<RealmIndexEntry[]> {
   const url =
     `https://${region}.api.blizzard.com/data/wow/realm/index` +
     `?namespace=dynamic-${region}&locale=en_US`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${await blizzardToken()}` } });
+  const res = await blizzardGet(url);
   if (!res.ok) throw new Error(`Blizzard realm index failed: ${res.status}`);
   const data = (await res.json()) as { realms?: RealmIndexEntry[] };
   const realms = data.realms ?? [];
@@ -125,10 +135,9 @@ export function _resetRealmIndex(): void {
 }
 
 export async function realmStatus(): Promise<RealmStatus> {
-  const url =
-    `https://${config.region}.api.blizzard.com/data/wow/search/connected-realm` +
-    `?namespace=dynamic-${config.region}&realms.slug=${config.realmSlug}&_pageSize=1`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${await blizzardToken()}` } });
+  // String(...): config.realmSlug is optional in the type even though realmWatchConfigured()
+  // guards every real caller; matches the old template literal's coercion of undefined -> "undefined".
+  const res = await blizzardGet(connectedRealmSearchUrl(String(config.realmSlug)));
   if (!res.ok) throw new Error(`Blizzard realm query failed: ${res.status}`);
   const data = (await res.json()) as {
     results: { data: { status: { type: RealmStatus } } }[];

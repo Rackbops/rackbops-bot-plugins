@@ -1,5 +1,5 @@
 import { config } from "./config.js";
-import { blizzardToken } from "./blizzard.js";
+import { blizzardGet } from "./blizzard.js";
 import { realmExists, resolveCanonicalSlug } from "./realm.js";
 
 // Build a `/customset v1 …` outfit import string from a character's equipment, for the case the
@@ -273,7 +273,7 @@ export async function fetchTransmog(character: string, realm: string): Promise<O
     `https://${config.region}.api.blizzard.com/profile/wow/character/${slug}/${name}/equipment` +
     `?namespace=profile-${config.region}&locale=en_US`;
 
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${await blizzardToken()}` } });
+  const res = await blizzardGet(url);
   if (res.status === 404) {
     // Blizzard returns the same 404 for a character that doesn't exist and a realm that doesn't
     // exist (verified against the live API), so a single message would have to name both causes
