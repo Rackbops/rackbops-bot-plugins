@@ -33,3 +33,8 @@ export async function blizzardToken(): Promise<string> {
 export function _resetBlizzardToken(): void {
   token = undefined;
 }
+
+/** Authorized GET against any Blizzard endpoint. Response handling stays with each caller. */
+export async function blizzardGet(url: string): Promise<Response> {
+  return fetch(url, { headers: { Authorization: `Bearer ${await blizzardToken()}` } });
+}
