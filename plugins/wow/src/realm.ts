@@ -11,8 +11,10 @@ export function realmWatchConfigured(): boolean {
 }
 
 // Decide what (if anything) to announce given the last-known status and a fresh reading.
-// A missing `prev` is the first observation: seed it silently so a fresh install or a
-// restart never posts a phantom transition. `null` = announce nothing.
+// A missing `prev` is the first-ever reading (no stored status): seed it silently, never a
+// phantom. After that, status persists across restarts, so a genuine transition that happened
+// while offline is announced on the next reading -- a real, if late, transition, not a
+// phantom. `null` = announce nothing.
 export function decideRealmTransition(
   prev: RealmStatus | undefined,
   next: RealmStatus,
