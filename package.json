@@ -3,7 +3,7 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.2",
   "description": "Plugins for rackbops-discord-bot, published as npm bundles + a Plugin Index (plugins.json)",
   "scripts": {
     "check": "bunx tsc --noEmit",
