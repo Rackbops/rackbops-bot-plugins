@@ -1,6 +1,6 @@
 {
   "name": "@rackbops/plugin-wow",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "World of Warcraft features: Darkmoon Faire schedule, resets, realm up/down watch, and /transmog import strings (/dmf, /reset, /status, /transmog)",
   "type": "module",
   "main": "dist/plugin.js",
