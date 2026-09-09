@@ -45,6 +45,22 @@ export function plannedBuilds(name: string, hasAdmin: boolean): BuildSpec[] {
   return builds;
 }
 
+/**
+ * A `bun build` that exits 0 but writes nothing (or an empty file) is the other half of the #28
+ * jsDelivr-404 failure mode -- generate-index's guards catch a *missing* admin source, but a build
+ * that silently produces nothing would still emit a working-looking `adminUrl`. Only the browser
+ * (admin) build is checked: it's the one the panel actually fetches by URL and has no other
+ * consumer to notice an empty file; the bun-target server bundle fails loudly at `import` time
+ * either way. Pure over an injected root so it's unit-tested against a real temp file without
+ * spawning a build.
+ */
+export async function assertNonEmptyBuildOutput(outfile: string, root: URL): Promise<void> {
+  const file = Bun.file(new URL(outfile, root));
+  if (!(await file.exists()) || file.size === 0) {
+    throw new Error(`${outfile}: admin build produced no output (or an empty file) -- refusing to ship a broken bundle`);
+  }
+}
+
 // process.execPath, not the bare string "bun" -- see generate-index.test.ts for why. Exits the
 // process on a non-zero build (fail-fast), so a broken plugin never ships a stale dist.
 async function runBuild(spec: BuildSpec): Promise<void> {
@@ -63,6 +79,7 @@ async function runBuild(spec: BuildSpec): Promise<void> {
   );
   const exitCode = await proc.exited;
   if (exitCode !== 0) process.exit(exitCode);
+  if (spec.target === "browser") await assertNonEmptyBuildOutput(spec.outfile, ROOT);
 }
 
 /** The build specs for one plugin, reading whether it ships an admin bundle from `root`. Separated

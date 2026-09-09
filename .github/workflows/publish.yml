@@ -48,11 +48,9 @@ jobs:
       # any tag; this is belt-and-suspenders for a tag pushed at an unexpected commit.
       - run: bun run generate-index -- --check
 
-      # Publishing uses OIDC trusted publishing, not a token: npm revoked classic tokens (2025-12-09)
-      # and retired bypass-2FA CI tokens (2026-07-31). `bun publish` does not support OIDC
-      # (oven-sh/bun#22423), so the publish step runs `npm publish`; install/test/build stay on Bun
-      # above. A Trusted Publisher for each package must be configured on npmjs.com
-      # (GitHub Actions / Rackbops / rackbops-bot-plugins / publish.yml) — see README.md.
+      # #28: generate-index's files-allowlist guard and build-plugins' non-empty-output assert both
+      # run earlier in this same job (bun run build / generate-index --check above) -- this is the
+      # last line of defense, on the REAL tarball npm would actually publish, right before it does.
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
@@ -61,6 +59,24 @@ jobs:
       - name: Ensure npm supports OIDC trusted publishing (>= 11.5.1)
         run: npm install -g npm@latest
 
+      - name: Verify the published tarball will carry dist/admin.js (if this plugin declares one)
+        run: |
+          cd "plugins/${{ steps.tag.outputs.name }}"
+          HAS_ADMIN=$(node -p "require('./package.json').botPlugin?.adminApiVersion !== undefined")
+          if [ "$HAS_ADMIN" = "true" ]; then
+            if ! npm pack --dry-run 2>&1 | grep -qF "dist/admin.js"; then
+              echo "plugins/${{ steps.tag.outputs.name }}: declares adminApiVersion but the published tarball (npm pack --dry-run) does not list dist/admin.js" >&2
+              exit 1
+            fi
+          fi
+
+      # Publishing uses OIDC trusted publishing, not a token: npm revoked classic tokens (2025-12-09)
+      # and retired bypass-2FA CI tokens (2026-07-31). `bun publish` does not support OIDC
+      # (oven-sh/bun#22423), so the publish step runs `npm publish`; install/test/build stay on Bun
+      # above. A Trusted Publisher for each package must be configured on npmjs.com
+      # (GitHub Actions / Rackbops / rackbops-bot-plugins / publish.yml) — see README.md. (setup-node
+      # + the npm upgrade already ran above, ahead of the pack-check step, so the same npm version
+      # that verified the tarball is the one that publishes it.)
       - name: Publish to npm (OIDC trusted publishing)
         run: cd "plugins/${{ steps.tag.outputs.name }}" && npm publish --access public
 
