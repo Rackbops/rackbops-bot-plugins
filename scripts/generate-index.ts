@@ -29,6 +29,7 @@ interface PluginPackageJson {
   name?: unknown;
   version?: unknown;
   description?: unknown;
+  files?: unknown;
   botPlugin?: {
     hostApiVersion?: unknown;
     intents?: unknown;
@@ -105,6 +106,23 @@ function parseIntents(value: unknown, pluginName: string): number[] {
 }
 
 /**
+ * npm's `files` allowlist decides what actually ships in the published tarball -- independent of
+ * what's on disk or what `generate-index` derives. A plugin declaring `adminApiVersion` with a
+ * `files` array that doesn't cover `dist` (or `dist/admin.js` specifically) would publish a
+ * tarball missing the admin bundle even though the build produced it locally: the manifest's
+ * derived `adminUrl` then 404s at the panel. `undefined` means npm's own default -- include
+ * everything not gitignored/npmignored -- so that case always covers it. Normalises a leading
+ * `./` and a trailing `/` on each entry so `["./dist/"]` matches the same as `["dist"]`.
+ */
+export function filesAllowlistCoversAdminBundle(files: string[] | undefined): boolean {
+  if (files === undefined) return true;
+  return files.some((f) => {
+    const normalized = f.replace(/^\.\//, "").replace(/\/+$/, "");
+    return normalized === "dist" || normalized === "dist/admin.js";
+  });
+}
+
+/**
  * A plugin opts into an admin-panel tab by declaring `botPlugin.adminApiVersion` (a number). When it
  * does, the manifest entry carries that version PLUS a DERIVED `adminUrl` — the jsDelivr-npm URL of
  * the admin bundle that rides inside the published package (`dist/admin.js`). Derived, never
@@ -117,6 +135,7 @@ function parseAdmin(
   packageName: string,
   version: string,
   pluginName: string,
+  files: string[] | undefined,
 ): { adminUrl: string; adminApiVersion: number } | undefined {
   // A built admin bundle with no declaration is a harmless orphan (no adminUrl -> the panel shows no
   // tab); only the reverse must be caught -- a declared version whose source is MISSING would put an
@@ -130,6 +149,12 @@ function parseAdmin(
     throw new Error(
       `${pluginName}: botPlugin.adminApiVersion is declared but src/admin/index.ts is missing -- the ` +
         `manifest would advertise an admin bundle that never gets built`,
+    );
+  }
+  if (!filesAllowlistCoversAdminBundle(files)) {
+    throw new Error(
+      `${pluginName}: botPlugin.adminApiVersion is declared but package.json's "files" allowlist does ` +
+        `not include "dist" or "dist/admin.js" -- the published tarball would not carry the admin bundle`,
     );
   }
   return {
@@ -245,6 +270,7 @@ export async function buildIndex(
     // Read from the same source dir the manifest is generated over, so a declared admin bundle whose
     // source is absent is caught here (parseAdmin), not silently shipped as a 404-ing adminUrl.
     const hasAdminEntry = await Bun.file(new URL("src/admin/index.ts", dir)).exists();
+    const files = pkg.files === undefined ? undefined : requireStringArray(pkg.files, `${name}: package.json files`);
     // Fixed key order so `--check`'s JSON comparison is stable across runs. The optional admin fields
     // (present only when the plugin advertises an admin bundle) sit between `env` and `releases`;
     // spreading `undefined` contributes nothing, so a plugin without them emits exactly as before.
@@ -257,7 +283,7 @@ export async function buildIndex(
       intents: parseIntents(bp.intents, name),
       commands,
       env: parseEnv(bp.env, name),
-      ...parseAdmin(bp.adminApiVersion, hasAdminEntry, packageName, version, name),
+      ...parseAdmin(bp.adminApiVersion, hasAdminEntry, packageName, version, name, files),
       releases: parseChangelogReleases(changelog, name, version),
     });
   }

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { plannedBuilds, pluginBuildSpecs } from "./build-plugins.js";
+import { assertNonEmptyBuildOutput, plannedBuilds, pluginBuildSpecs } from "./build-plugins.js";
 
 // build-plugins guards its CLI behind `import.meta.main`, so importing it here runs no build —
 // only the pure `plannedBuilds` decision is exercised.
@@ -27,6 +27,52 @@ describe("plannedBuilds", () => {
     // The server bundle is unchanged and still comes first.
     expect(builds[0].target).toBe("bun");
     expect(builds[0].externals).toEqual(["discord.js"]);
+  });
+});
+
+// #28: the other half of the jsDelivr-404 failure mode -- generate-index's guards catch a missing
+// admin *source*, but a `bun build` that exits 0 while writing nothing (or an empty file) would
+// still leave a working-looking dist/admin.js absent. Exercised directly against real temp files,
+// without spawning an actual `bun build`.
+describe("assertNonEmptyBuildOutput", () => {
+  test("resolves when the built file exists and is non-empty", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "assertbuild-"));
+    try {
+      await mkdir(join(tmp, "plugins", "wow", "dist"), { recursive: true });
+      await writeFile(join(tmp, "plugins", "wow", "dist", "admin.js"), "console.log(1);\n");
+      const root = new URL(pathToFileURL(tmp).href + "/");
+      await expect(assertNonEmptyBuildOutput("plugins/wow/dist/admin.js", root)).resolves.toBeUndefined();
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("throws when the build produced an empty file", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "assertbuild-"));
+    try {
+      await mkdir(join(tmp, "plugins", "wow", "dist"), { recursive: true });
+      await writeFile(join(tmp, "plugins", "wow", "dist", "admin.js"), "");
+      const root = new URL(pathToFileURL(tmp).href + "/");
+      // Mutation: dropping the `file.size === 0` half of the check turns this red.
+      await expect(assertNonEmptyBuildOutput("plugins/wow/dist/admin.js", root)).rejects.toThrow(
+        /admin build produced no output \(or an empty file\)/,
+      );
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  test("throws when the build produced no file at all", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "assertbuild-"));
+    try {
+      const root = new URL(pathToFileURL(tmp).href + "/");
+      // Mutation: dropping the `!(await file.exists())` half of the check turns this red.
+      await expect(assertNonEmptyBuildOutput("plugins/wow/dist/admin.js", root)).rejects.toThrow(
+        /admin build produced no output \(or an empty file\)/,
+      );
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
   });
 });
 

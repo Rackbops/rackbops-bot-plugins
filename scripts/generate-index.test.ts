@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { buildIndex, parseChangelogReleases, sameIgnoringGeneratedAt, sortByName } from "./generate-index.js";
+import { buildIndex, filesAllowlistCoversAdminBundle, parseChangelogReleases, sameIgnoringGeneratedAt, sortByName } from "./generate-index.js";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const PLUGINS_JSON = new URL("../plugins.json", import.meta.url);
@@ -43,10 +43,11 @@ async function withPlugins<T>(
   }
 }
 
-const pkg = (name: string, over: Record<string, unknown> = {}): unknown => ({
+const pkg = (name: string, over: Record<string, unknown> = {}, files?: string[]): unknown => ({
   name: `@rackbops/plugin-${name}`,
   version: "1.0.0",
   description: `The ${name} plugin`,
+  ...(files !== undefined ? { files } : {}),
   botPlugin: { hostApiVersion: 1, commands: [name], env: [], ...over },
 });
 
@@ -164,6 +165,56 @@ describe("buildIndex", () => {
     await expect(
       withPlugins({ wow: { pkg: pkg("wow", { adminApiVersion: 1 }), changelog: changelog() } }, (dir) => buildIndex(dir, fixedNow)),
     ).rejects.toThrow(/adminApiVersion is declared but src\/admin\/index\.ts is missing/);
+  });
+
+  // #28: a plugin can pass the src/admin/index.ts check above and still publish a tarball that
+  // never carries dist/admin.js, if package.json's own `files` allowlist excludes it.
+  test("rejects adminApiVersion declared with a files allowlist the published tarball wouldn't carry the bundle in", async () => {
+    await expect(
+      withPlugins(
+        { wow: { pkg: pkg("wow", { adminApiVersion: 1 }, ["dist/plugin.js"]), changelog: changelog(), adminEntry: true } },
+        (dir) => buildIndex(dir, fixedNow),
+      ),
+      // Mutation: dropping the filesAllowlistCoversAdminBundle guard emits an adminUrl anyway.
+    ).rejects.toThrow(/wow: botPlugin\.adminApiVersion is declared but package\.json's "files" allowlist does not include/);
+  });
+
+  test("accepts adminApiVersion when files covers dist, or when files is absent entirely", async () => {
+    const index = await withPlugins(
+      {
+        withdist: { pkg: pkg("withdist", { adminApiVersion: 1 }, ["dist"]), changelog: changelog(), adminEntry: true },
+        nofiles: { pkg: pkg("nofiles", { adminApiVersion: 1 }), changelog: changelog(), adminEntry: true },
+      },
+      (dir) => buildIndex(dir, fixedNow),
+    );
+    expect(index.plugins.find((p) => p.name === "withdist")?.adminUrl).toBe(
+      "https://cdn.jsdelivr.net/npm/@rackbops/plugin-withdist@1.0.0/dist/admin.js",
+    );
+    expect(index.plugins.find((p) => p.name === "nofiles")?.adminUrl).toBe(
+      "https://cdn.jsdelivr.net/npm/@rackbops/plugin-nofiles@1.0.0/dist/admin.js",
+    );
+  });
+});
+
+describe("filesAllowlistCoversAdminBundle", () => {
+  test('["dist"] -> true', () => {
+    expect(filesAllowlistCoversAdminBundle(["dist"])).toBe(true);
+  });
+  test('["./dist/"] -> true (normalises leading ./ and trailing /)', () => {
+    expect(filesAllowlistCoversAdminBundle(["./dist/"])).toBe(true);
+  });
+  test('["dist/admin.js"] -> true (bundle listed specifically)', () => {
+    expect(filesAllowlistCoversAdminBundle(["dist/admin.js"])).toBe(true);
+  });
+  test("undefined -> true (npm's own default includes everything)", () => {
+    expect(filesAllowlistCoversAdminBundle(undefined)).toBe(true);
+  });
+  test('["dist/plugin.js"] -> false (server bundle listed, not the admin one or the whole dir)', () => {
+    // Mutation: loosening the check (e.g. matching any "dist/*" prefix) turns this true.
+    expect(filesAllowlistCoversAdminBundle(["dist/plugin.js"])).toBe(false);
+  });
+  test('["lib"] -> false', () => {
+    expect(filesAllowlistCoversAdminBundle(["lib"])).toBe(false);
   });
 });
 

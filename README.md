@@ -162,7 +162,9 @@ export function mountAdmin(root: HTMLElement, api: AdminApi): () => void {
 ```
 
 `build-plugins.ts` builds this to `dist/admin.js` with `bun build --target browser` (no discord.js --
-the admin UI uses `AdminApi`, not the gateway).
+the admin UI uses `AdminApi`, not the gateway). If `package.json` declares a `files` allowlist, it
+must include `dist` (or `dist/admin.js` specifically) -- `generate-index` refuses to derive an
+`adminUrl` for a tarball that wouldn't actually carry the bundle.
 
 The admin panel that consumes this bundle is the bot's own admin UI (child 2 of the epic, now built).
 It mounts the **installed** version's bundle, not the manifest's current one -- a tab configures the
