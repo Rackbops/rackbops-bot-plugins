@@ -165,11 +165,22 @@ export function mountAdmin(root: HTMLElement, api: AdminApi): () => void {
 the admin UI uses `AdminApi`, not the gateway).
 
 The admin panel that consumes this bundle is the bot's own admin UI (child 2 of the epic, now built).
-It fetches the bundle via the manifest's `adminUrl`, serves it same-origin, and mounts it in the
-plugin's tab **only when `adminApiVersion` matches the panel's** -- and it keeps authority: `setEnv` is
-scoped to this plugin's own keys and re-validated server-side, so a bundle can only ever change its own
-config. `warbandeer` ships the first such tab (its ingest-port + connector status). Contract + design:
-[rackbops-discord-bot#123](https://github.com/Rackbops/rackbops-discord-bot/issues/123).
+It mounts the **installed** version's bundle, not the manifest's current one -- a tab configures the
+code that's actually running, so the panel fetches `dist/admin.js` from the plugin's own published
+package at that specific version (falling back to the manifest's `adminUrl` only when the installed
+version equals the current one) -- and keeps authority: `setEnv` is scoped to this plugin's own keys
+and re-validated server-side, so a bundle can only ever change its own config. `adminApiVersion` is
+checked against the bundle actually being served: the manifest's declared value when that's the
+current version, otherwise the imported module's own exported value -- either way a mismatch skips
+mounting instead of running code built against a different `AdminApi` shape. A published version
+that predates a plugin's first admin bundle (or was built without one) makes the panel show a
+dedicated note naming the installed and latest versions rather than an error; keep
+`"files": ["dist"]` in
+`package.json` (the default above already has it) so `dist/admin.js` lands in the published tarball
+alongside `dist/plugin.js` -- a package that trims `files` down to just the bot bundle silently
+breaks its own admin tab. `warbandeer` ships the first such tab (its ingest-port + connector
+status). Contract + design: [rackbops-discord-bot#123](https://github.com/Rackbops/rackbops-discord-bot/issues/123),
+installed-version pinning: [rackbops-discord-bot#165](https://github.com/Rackbops/rackbops-discord-bot/issues/165).
 
 ## Testing
 
