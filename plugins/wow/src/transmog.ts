@@ -178,6 +178,33 @@ export function realmSlug(realm: string): string {
 }
 
 /**
+ * Rejects an empty or hyphen-only slug BEFORE `fetchTransmog` ever calls Blizzard, naming the
+ * realm as typed rather than letting it reach the character-not-found reply (bot#55 item 1). A
+ * non-Latin-script realm name — Cyrillic, CJK, anything outside `realmSlug`'s accepted charset —
+ * strips to nothing under its heuristic: `Гордунни` (no Latin characters at all) strips to `""`;
+ * `Ревущий фьорд` (one Latin-adjacent space between two Cyrillic words) strips to a bare `"-"`.
+ * Neither is ever a realm Blizzard's API could match, so there's nothing to gain from the round
+ * trip — and the 404 that trip would produce can't tell "empty realm" apart from "no such
+ * character", which is exactly the bug this function exists to head off.
+ *
+ * **No name -> slug map for non-Latin realm names in v1.** The plugin's own embedded realm list
+ * (`plugins/wow/src/admin/realms.json`, 707 US+EU realms) was checked for localized names —
+ * verified: every entry's `name` is plain English/Latin-1, zero Cyrillic or other non-Latin-1
+ * characters anywhere in the file — so there is nothing to resolve `Гордунни` -> `gordunni`
+ * *from*. The hint is the whole of v1; a future localized source could add a direct map ahead of
+ * this check without changing this function's shape or its callers.
+ */
+export function slugOrReason(realmInput: string): { slug: string } | { reason: string } {
+  const slug = realmSlug(realmInput);
+  if (/^-*$/.test(slug)) {
+    return {
+      reason: `Realm **${realmInput}** isn't recognised — use the English realm name as shown on the character-select screen.`,
+    };
+  }
+  return { slug };
+}
+
+/**
  * Whether a realm-index match (#32) is worth retrying the equipment fetch with: only if it found
  * something, and only if it's actually different from the slug that already failed — otherwise
  * `fetchTransmog` would recurse forever re-deriving the same failing slug from the same input.
@@ -267,7 +294,12 @@ export class TransmogLookupError extends Error {
  * string that is merely stale.
  */
 export async function fetchTransmog(character: string, realm: string): Promise<OutfitResult> {
-  const slug = realmSlug(realm);
+  // bot#55 item 1: an empty/hyphen-only slug (a non-Latin realm name realmSlug can't represent)
+  // is rejected here, before any fetch, naming the realm as typed — see slugOrReason's own
+  // docstring for why the round trip is pointless and why v1 has no name->slug map to try first.
+  const resolved = slugOrReason(realm);
+  if ("reason" in resolved) throw new TransmogLookupError(resolved.reason);
+  const slug = resolved.slug;
   const name = encodeURIComponent(character.trim().toLowerCase());
   const url =
     `https://${config.region}.api.blizzard.com/profile/wow/character/${slug}/${name}/equipment` +

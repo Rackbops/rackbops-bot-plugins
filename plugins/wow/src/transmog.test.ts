@@ -5,6 +5,7 @@ import type { EquipmentResponse } from "./transmog.js";
 import {
   buildCustomSet,
   realmSlug,
+  slugOrReason,
   formatTransmogReply,
   OUTFIT_VALUE_COUNT,
   pickRetrySlug,
@@ -253,6 +254,48 @@ describe("realmSlug", () => {
   });
 });
 
+describe("slugOrReason (bot#55 item 1)", () => {
+  test("a Cyrillic realm name with nothing realmSlug can keep is rejected, naming the realm as typed", () => {
+    const result = slugOrReason("Гордунни");
+    expect(result).toHaveProperty("reason");
+    if ("reason" in result) {
+      expect(result.reason).toContain("Гордунни");
+      expect(result.reason).toContain("isn't recognised");
+      expect(result.reason).toContain("English realm name");
+    }
+  });
+
+  test("a two-word Cyrillic realm name that strips to a bare hyphen is also rejected", () => {
+    // "Ревущий фьорд" has one Latin-adjacent space between two Cyrillic words — realmSlug turns
+    // that space into a hyphen, then strips both words entirely, leaving just "-". Not a realm
+    // Blizzard's slug charset could ever produce, so this must be caught the same as fully empty.
+    const result = slugOrReason("Ревущий фьорд");
+    expect(result).toHaveProperty("reason");
+    if ("reason" in result) expect(result.reason).toContain("Ревущий фьорд");
+  });
+
+  // v1 has no name -> slug map for non-Latin realms (realms.json carries no localized names —
+  // see slugOrReason's own docstring); this pins that absence isn't accidental regression bait —
+  // a future map landing here should update this test, not silently start passing it by luck.
+  test("v1: even a realm with a known English counterpart (Gordunni) has no map to resolve through — still the hint", () => {
+    const result = slugOrReason("Гордунни"); // Blizzard's actual slug is "gordunni", but nothing here can know that yet
+    expect(result).toHaveProperty("reason");
+  });
+
+  // #32's cases (already covered end-to-end by realmSlug's own describe block above) must still
+  // resolve to a slug here, not be swept up by the empty/hyphen-only check.
+  test("Latin realms with hyphens/apostrophes resolve to a slug, unaffected (#32)", () => {
+    expect(slugOrReason("Argent Dawn")).toEqual({ slug: "argent-dawn" });
+    expect(slugOrReason("Kil'jaeden")).toEqual({ slug: "kiljaeden" });
+    expect(slugOrReason("Azjol-Nerub")).toEqual({ slug: "azjol-nerub" });
+    expect(slugOrReason("aggra-português")).toEqual({ slug: "aggra-português" });
+  });
+
+  test("an already-hyphenated realm name is not itself mistaken for hyphen-only", () => {
+    expect(slugOrReason("Aggra (Português)")).toEqual({ slug: "aggra-português" });
+  });
+});
+
 describe("pickRetrySlug", () => {
   // #32: fetchTransmog recurses with the retry slug, so this must never hand back a slug equal
   // to the one that just failed — that would recurse forever re-deriving the same dead end.
@@ -337,5 +380,46 @@ describe("fetchTransmog — realm-index retry (#32)", () => {
 
     const result = await fetchTransmog("Testchar", "Argent Dawn");
     expect(result.code.startsWith("/customset v1 ")).toBe(true);
+  });
+});
+
+describe("fetchTransmog — rejects an unrecognised realm before any fetch (bot#55 item 1)", () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+
+  beforeEach(() => {
+    fetchCalls = 0;
+    // Counts calls rather than mocking any route — the whole point of this guard is that NOTHING
+    // gets fetched, not even the OAuth token request that every other path needs first.
+    globalThis.fetch = (async (_input: string | URL | Request): Promise<Response> => {
+      fetchCalls += 1;
+      throw new Error("fetch must not be called for an unrecognised realm");
+    }) as typeof fetch;
+    _resetBlizzardToken();
+    _resetRealmIndex();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  // The load-bearing mutation guard from the issue's own table: removing slugOrReason's early
+  // return in fetchTransmog would let this reach the (throwing, in this test) fetch and fail with
+  // the wrong error shape, or — with a real fetch — the wrong reply (blaming the character instead
+  // of naming the realm, the exact bug bot#55 item 1 exists to fix).
+  test("an empty-slugging realm (Гордунни) never reaches fetch, and the reply names the realm", async () => {
+    await expect(fetchTransmog("Testchar", "Гордунни")).rejects.toThrow(TransmogLookupError);
+    expect(fetchCalls).toBe(0);
+    try {
+      await fetchTransmog("Testchar", "Гордунни");
+    } catch (err) {
+      expect(err).toBeInstanceOf(TransmogLookupError);
+      expect((err as TransmogLookupError).message).toContain("Гордунни");
+    }
+  });
+
+  test("a hyphen-only-slugging realm (Ревущий фьорд) never reaches fetch either", async () => {
+    await expect(fetchTransmog("Testchar", "Ревущий фьорд")).rejects.toThrow(TransmogLookupError);
+    expect(fetchCalls).toBe(0);
   });
 });
