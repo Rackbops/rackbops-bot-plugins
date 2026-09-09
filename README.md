@@ -127,6 +127,49 @@ export function createPlugin(host: HostApi): Plugin {
 `import type` only -- the contract is a vendored `.d.ts` with no runtime twin, so a runtime `import`
 from it fails (see [`CONTEXT.md`](CONTEXT.md)).
 
+### Buttons, selects and modals (optional)
+
+A plugin can ship its own buttons, select menus and modals -- richer interaction than a slash
+command alone -- by returning `interactions` from `createPlugin` (`PluginInteractionHandler` in
+[`packages/api/contract.d.ts`](packages/api/contract.d.ts)):
+
+```ts
+import { MessageFlags } from "discord.js";
+
+export function createPlugin(host: HostApi): Plugin {
+  return {
+    commands: [/* ... */],
+    async interactions(interaction) {
+      // interaction.customId is the FULL id, e.g. "my-plugin:confirm:abc123" -- the host strips
+      // nothing. Reply or defer yourself; a throw is logged and isolated by the host.
+      await interaction.reply({ content: "Confirmed!", flags: MessageFlags.Ephemeral });
+    },
+  };
+}
+```
+
+**The `<name>:` rule.** The host routes a component/modal interaction to a plugin by an exact
+split of `customId` on the FIRST colon: whatever comes before it must equal this plugin's own
+manifest `name` exactly (not a prefix of it -- `"wowie:x"` does not match a plugin named `"wow"`).
+Compose your own `customId`s as `<your-plugin-name>:<whatever you need>` (`:` is a legal separator
+in a Discord custom id, and nothing else in this scheme reserves it) -- e.g. `wow:realm:pick`.
+`report:` is reserved by the bot's own core `/report` modal; `generate-index` refuses to publish a
+plugin literally named `report` for exactly this reason.
+
+**Reply obligations are yours.** The host calls your handler and otherwise gets out of the way --
+it does not defer or reply on your behalf. Discord requires a reply/defer within 3 seconds of the
+interaction arriving; a handler that throws before replying gets a best-effort ephemeral
+"something went wrong" reply from the host (skipped if you'd already replied/deferred), but that is
+a safety net, not something to rely on -- reply yourself, and promptly.
+
+**Only a `running` plugin is dispatched to** -- one whose `activate()` hasn't resolved yet (or
+threw) never receives an interaction, even if its `customId` prefix matches.
+
+`test-host.ts`'s `makeFakeInteraction(customId, overrides?)` builds a minimal fake
+`MessageComponentInteraction`/`ModalSubmitInteraction` (`customId`, `replied`, `deferred`,
+`reply()`) for exercising your own `interactions` handler directly in tests, without a real host or
+gateway.
+
 ### Bundling
 
 `scripts/build-plugins.ts` builds `src/index.ts` to `dist/plugin.js` with
