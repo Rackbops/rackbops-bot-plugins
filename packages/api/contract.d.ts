@@ -5,6 +5,8 @@
 // type-check plugins against it. Design: docs/adr/0004-plugins-fetched-from-a-published-manifest.md.
 import type {
   ChatInputCommandInteraction,
+  MessageComponentInteraction,
+  ModalSubmitInteraction,
   RESTPostAPIChatInputApplicationCommandsJSONBody,
   SlashCommandBuilder,
 } from "discord.js";
@@ -204,6 +206,16 @@ export interface TickCheck {
   run(): Promise<void>;
 }
 
+/**
+ * Called for any component/modal interaction whose `customId` starts with `<name>:` (the plugin's
+ * manifest name + colon) — the host strips nothing, the plugin sees the full id. The plugin must
+ * reply/defer itself; a throw is logged and isolated (the host sends a best-effort ephemeral error
+ * reply on the plugin's behalf only if it hasn't replied/deferred yet).
+ */
+export type PluginInteractionHandler = (
+  interaction: MessageComponentInteraction | ModalSubmitInteraction,
+) => Promise<void>;
+
 export interface Plugin {
   commands?: readonly PluginCommand[];
   ticks?: readonly TickCheck[];
@@ -218,6 +230,7 @@ export interface Plugin {
    * to release (no servers, no long-lived handles) can omit it.
    */
   dispose?(): Promise<void>;
+  interactions?: PluginInteractionHandler;
 }
 
 /**

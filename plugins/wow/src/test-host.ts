@@ -5,6 +5,7 @@
 // of warbandeer's test-host, with the fake host's default name set to "wow".
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
+import type { MessageComponentInteraction, ModalSubmitInteraction } from "discord.js";
 import type { HostApi, HostStorage } from "../../../packages/api/contract.js";
 
 async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
@@ -77,4 +78,23 @@ export function makeFakeHost(overrides: Partial<HostApi> = {}): HostApi {
     announce: async () => {},
     ...overrides,
   };
+}
+
+/**
+ * #185: a minimal fake component/modal interaction for exercising a plugin's own `interactions`
+ * handler in tests -- only the shape the host's real dispatch actually touches (`customId`,
+ * `replied`/`deferred`, `reply()`), matching the bot repo's own host.test.ts fake so a plugin's
+ * test and the host's own tests exercise the contract the same way.
+ */
+export function makeFakeInteraction(
+  customId: string,
+  overrides: Partial<{ replied: boolean; deferred: boolean; reply: (opts: unknown) => Promise<unknown> }> = {},
+): MessageComponentInteraction | ModalSubmitInteraction {
+  return {
+    customId,
+    replied: false,
+    deferred: false,
+    reply: async () => {},
+    ...overrides,
+  } as unknown as MessageComponentInteraction;
 }
