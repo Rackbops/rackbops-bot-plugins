@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.0] - 2026-09-09
+
+### Added
+
+- `dispose()` (`rackbops-discord-bot#184`): the ingest server this plugin's `activate()` opens is
+  now closed on the way out — a `docker stop`, a self-update's retire, `SIGINT` — instead of being
+  left listening until the process is killed out from under it. No behaviour change if the
+  connector was never configured (`WARBANDEER_INGEST_PORT` unset) or never started.
+
 ## [1.1.0] - 2026-09-06
 
 ### Added

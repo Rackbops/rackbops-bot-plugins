@@ -209,6 +209,15 @@ export interface Plugin {
   ticks?: readonly TickCheck[];
   /** Runs once, inside the bot's `activate()`, after `takeOver()`. All side effects (files, servers) belong here. */
   activate?(): Promise<void>;
+  /**
+   * `activate()`'s counterpart (#184) — runs once, on the way out: a `docker stop`, a self-update's
+   * retire, `SIGINT`. Release whatever `activate()` acquired here (servers, handles, timers). Must
+   * not throw — the host isolates a throw and continues disposing the rest — and is bounded by the
+   * host's own shutdown grace, so a slow or wedged `dispose` loses the remainder of its cleanup
+   * rather than delaying the process past the daemon's own SIGKILL. Optional: a plugin with nothing
+   * to release (no servers, no long-lived handles) can omit it.
+   */
+  dispose?(): Promise<void>;
 }
 
 /**

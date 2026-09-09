@@ -25,6 +25,11 @@ export function createPlugin(host: HostApi): Plugin {
   // the plugin). `/link` reports "not configured" vs "failed to start" off this + the running flag.
   setConnectorConfigured(port !== undefined);
 
+  // Captured only on a SUCCESSFUL activate() — stays undefined if the port was never configured,
+  // or if startWarbandeerServer threw (the try/catch below never assigns it). dispose() below is a
+  // no-op in either case: there is nothing this plugin instance opened that it needs to close.
+  let stopServer: (() => void) | undefined;
+
   return {
     commands: [
       {
@@ -60,7 +65,8 @@ export function createPlugin(host: HostApi): Plugin {
       // feature disabled (warbandeerServerRunning() stays false).
       if (port !== undefined) {
         try {
-          startWarbandeerServer(port);
+          const server = startWarbandeerServer(port);
+          stopServer = server.stop;
         } catch (err) {
           host.log.error(
             `connector failed to start on :${port} — the bot keeps running without it; /link will report the feature disabled. ` +
@@ -68,6 +74,16 @@ export function createPlugin(host: HostApi): Plugin {
             err,
           );
         }
+      }
+    },
+    // #184: the host calls this once, on the way out — a docker stop, a self-update's retire,
+    // SIGINT — inside its own shutdown grace. Closes the ingest server activate() opened, if it
+    // ever did; must not throw (the host isolates a throw and continues disposing other plugins,
+    // but there is nothing to isolate here — server.stop() itself doesn't throw).
+    async dispose() {
+      if (stopServer !== undefined) {
+        stopServer();
+        host.log.info("ingest server stopped");
       }
     },
   };
