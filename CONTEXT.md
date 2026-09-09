@@ -12,7 +12,8 @@ change that used it, and read from here before going back to the source.
 - **`rackbops-discord-bot`'s `src/plugins/contract.ts` @ `main`** -- the host<->plugin contract.
   This repo vendors it verbatim into `packages/api/contract.d.ts`; `scripts/check-contract.ts`
   re-fetches the upstream file on every CI run and fails on any diff. Last verified identical:
-  2026-09-04 (initial scaffold commit).
+  2026-09-09 (re-vendored for `rackbops-discord-bot#184`'s optional `Plugin.dispose?()`, a
+  compatible addition -- `check-contract` confirmed the match against upstream `main` @ `2dd4d10`).
 - **`rackbops-discord-bot`'s `README.md:82`** -- "the daemon fetches the build context itself,
   with no credentials" -- the reason this repo is public (verified 2026-09-04).
 
