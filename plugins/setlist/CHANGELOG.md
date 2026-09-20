@@ -20,7 +20,9 @@
   suffix costs nothing. A song setlist.fm marks as a cover is searched under the ORIGINAL
   artist, since a band that covers a song live has usually never released it. Matches that
   are not confident are named back to the user rather than silently trusted, and songs played
-  from tape (walk-on and interlude music) are skipped with the count reported.
+  from tape (walk-on and interlude music) are skipped with the count reported. A medley, which
+  setlist.fm records as one slash-separated entry, is split into its parts, because no track is
+  named after the whole medley and the entry would otherwise match nothing at all.
 
   Connecting uses the standard authorization-code flow. The callback is served by the
   plugin's own HTTP listener on `SETLIST_CALLBACK_PORT`, reachable only through the bot's
