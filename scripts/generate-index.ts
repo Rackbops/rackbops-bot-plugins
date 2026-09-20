@@ -227,8 +227,13 @@ export function parseChangelogReleases(
 export async function buildIndex(
   pluginsDir: URL = DEFAULT_PLUGINS_DIR,
   now: () => Date = () => new Date(),
+  listDirs: (dir: URL) => Promise<string[]> = pluginDirNames,
 ): Promise<PluginIndex> {
-  const names = await pluginDirNames(pluginsDir);
+  // Sort the iteration, not just the output (sortByName at the end): `readdir` order is not portable
+  // (NTFS returns it sorted, ext4 does not), so an unsorted iteration makes every fail-fast `throw`
+  // below — and the command-owner assignment — blame whichever plugin the filesystem yielded first.
+  // The comparator mirrors sortByName's exactly (names match NAME_RE, so ordering is identical).
+  const names = [...(await listDirs(pluginsDir))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const plugins: PluginIndexEntry[] = [];
   const commandOwner = new Map<string, string>();
 
