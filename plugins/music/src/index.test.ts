@@ -28,14 +28,14 @@ const FULL_ENV = {
 };
 
 describe("createPlugin", () => {
-  test("registers exactly the two commands the manifest declares", () => {
+  test("registers exactly the three commands the manifest declares", () => {
     const plugin = createPlugin(makeFakeHost());
-    expect((plugin.commands ?? []).map((c) => c.name)).toEqual(["setlist", "spotify"]);
+    expect((plugin.commands ?? []).map((c) => c.name)).toEqual(["setlist", "spotify", "party"]);
   });
 
   test("loads with a completely empty env -- enabled is not the same as configured", () => {
     expect(() => createPlugin(makeFakeHost({ env: {} }))).not.toThrow();
-    expect((createPlugin(makeFakeHost({ env: {} })).commands ?? []).length).toBe(2);
+    expect((createPlugin(makeFakeHost({ env: {} })).commands ?? []).length).toBe(3);
   });
 
   test("throws on a SET but invalid value, so the host skips just this plugin", () => {

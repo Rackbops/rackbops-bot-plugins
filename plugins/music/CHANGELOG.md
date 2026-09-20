@@ -1,5 +1,50 @@
 # Changelog
 
+## [1.2.0] - 2026-09-20
+
+### Added
+
+- A listening party: `/party start` opens one in a channel, a Join button puts anyone else in it,
+  and `/party add <query>` queues a track and starts the music. Everyone hears it on their OWN
+  Spotify, at the same point in the same track, so it works while people are in a voice chat --
+  which Spotify's own Listen Along refuses to do. `/party skip`, `/party status`, `/party leave`
+  and `/party stop` round it out.
+
+  **The bot is the sequencer; Spotify's queue is never used.** Each member's player is told
+  exactly which track to be on and where, one explicit URI at a time. Handing Spotify a playlist
+  context instead would let each member's own shuffle and repeat settings decide what came next,
+  and a member who skipped on their phone could never be brought back in line. Track boundaries
+  ride on the plugin's own timer rather than the host's shared 60-second tick, since that tick
+  runs every plugin's checks in sequence and is the wrong place to land a track change; the tick
+  is used only to repair -- it re-arms a timer lost to a restart and pulls back a member who has
+  drifted more than three seconds.
+
+  A member who PAUSES is left alone rather than restarted: the bot never fights the person
+  holding the phone. A member whose player stops answering twice is dropped from the party with a
+  note saying why. Stopping a party stops the bot steering; it does not silence anyone's Spotify.
+
+  **Playback scopes are asked for only when someone actually wants a party.** `/spotify connect`
+  still requests just the two playlist scopes, and `/party` mints its own link for
+  `user-read-playback-state` and `user-modify-playback-state` when a caller hasn't granted them.
+  The grant Spotify reports is recorded on the connection and checked BEFORE a call, so a
+  connection made before this feature existed produces a one-click reconnect prompt rather than
+  a raw 403; an insufficient-scope error is still translated the same way as a backstop, since a
+  user can narrow a grant in their Spotify settings at any time.
+
+### Known limits
+
+- **A party needs Spotify Premium and an awake player, for everyone in it.** Playback control is
+  Premium-only, and Spotify rejects a command to an account with no active device -- the party
+  makes one rescue attempt by transferring to an idle device, and otherwise tells the person to
+  open Spotify and press play once. Members are capped by the app's permanent five-account
+  ceiling, recorded under 1.0.0, since a party and a playlist are the same Spotify app.
+- Sync is approximate. Each member gets their own HTTP round trip, so a few hundred milliseconds
+  of spread between the first and last is expected; the party corrects only drift beyond three
+  seconds, because a re-issued play is an audible jump rather than a nudge.
+- A party survives a bot restart -- its state is on disk and the tick re-arms the timer -- but
+  its CHAT messages go quiet until someone runs a `/party` command again, because a plugin can
+  only reach an arbitrary channel through a client borrowed from a live interaction.
+
 ## [1.1.0] - 2026-09-20
 
 ### Added

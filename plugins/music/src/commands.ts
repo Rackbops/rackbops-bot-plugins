@@ -5,6 +5,8 @@
 
 import {
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   MessageFlags,
   StringSelectMenuBuilder,
   type ChatInputCommandInteraction,
@@ -16,14 +18,29 @@ import type { PluginCommand } from "../../../packages/api/contract.js";
 import type { MusicConfig } from "./config.js";
 import { parseDateOption, parseSetlistUrl, type SetlistFmClient, type Setlist } from "./setlistfm.js";
 import type { SpotifyClient } from "./spotify.js";
-import { authorizeUrl } from "./spotify.js";
-import { buildPlaylist } from "./build.js";
-import type { BuildOutcome } from "./build.js";
+import { authorizeUrl, hasScopes, PARTY_SCOPES } from "./spotify.js";
+import { pickBestTrack } from "./matching.js";
+import { buildPlaylist, type BuildOutcome } from "./build.js";
+import { accessTokenFor } from "./tokens.js";
+import {
+  addMember,
+  closeParty,
+  commitParties,
+  currentTrack,
+  enqueue,
+  getParty,
+  openParty,
+  partiesState,
+  removeMember,
+  type Party,
+  type PartyTrack,
+} from "./party.js";
+import type { MemberOutcome, PartyRunner } from "./runner.js";
+import { rememberClient } from "./notify.js";
 import {
   beginPendingAuth,
   commit,
   generateStateToken,
-  putConnection,
   removeConnection,
   musicState,
 } from "./store.js";
@@ -43,6 +60,8 @@ interface Wiring {
   /** Whether the callback server actually bound its port -- minting a connect link that lands on
    *  nothing is worse than saying the feature is off. */
   serverRunning: () => boolean;
+  /** Built in `createPlugin` alongside the clients; absent only when Spotify isn't configured. */
+  runner?: PartyRunner;
 }
 
 let wiring: Wiring | undefined;
@@ -182,34 +201,6 @@ export function formatPickPrompt(artistName: string, shown: number, total: numbe
 // ---------------------------------------------------------------------------------------------------
 // Shared plumbing
 // ---------------------------------------------------------------------------------------------------
-
-/**
- * Trades the caller's stored refresh token for a usable access token, persisting a rotated refresh
- * token when Spotify issues one. A refresh that fails is almost always a revoked or superseded
- * grant, so the dead connection is DROPPED here -- leaving it in place would make every later
- * command fail the same way with no hint that reconnecting is the fix.
- */
-async function accessTokenFor(
-  spotify: SpotifyClient,
-  discordUserId: string,
-): Promise<{ ok: true; accessToken: string } | { ok: false; error: string }> {
-  const connection = musicState().connections[discordUserId];
-  if (connection === undefined) {
-    return { ok: false, error: "You haven't connected Spotify yet -- run `/spotify connect` first." };
-  }
-  const refreshed = await spotify.refresh(connection.refreshToken);
-  if (!refreshed.ok) {
-    await commit(removeConnection(musicState(), discordUserId));
-    return {
-      ok: false,
-      error: `Your Spotify connection is no longer valid (${refreshed.error}). Run \`/spotify connect\` to reconnect.`,
-    };
-  }
-  if (refreshed.value.refreshToken !== undefined) {
-    await commit(putConnection(musicState(), discordUserId, refreshed.value.refreshToken, Date.now()));
-  }
-  return { ok: true, accessToken: refreshed.value.accessToken };
-}
 
 async function replyEphemeral(interaction: ChatInputCommandInteraction, content: string): Promise<void> {
   if (interaction.deferred || interaction.replied) await interaction.editReply({ content });
@@ -433,8 +424,6 @@ async function handlePick(interaction: MessageComponentInteraction | ModalSubmit
   });
 }
 
-export const musicInteractions = handlePick;
-
 // ---------------------------------------------------------------------------------------------------
 // /spotify
 // ---------------------------------------------------------------------------------------------------
@@ -492,6 +481,320 @@ async function handleSpotify(interaction: ChatInputCommandInteraction): Promise<
 }
 
 // ---------------------------------------------------------------------------------------------------
+// /party
+// ---------------------------------------------------------------------------------------------------
+
+/** The Join button's custom id. The host routes every `music:` component to this plugin. */
+export const PARTY_JOIN_ID = "music:party-join";
+
+function joinRow(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(PARTY_JOIN_ID).setLabel("Join the party").setStyle(ButtonStyle.Primary),
+  );
+}
+
+/**
+ * Mints a connect link that asks for the PARTY scopes rather than the playlist ones.
+ *
+ * This is the incremental half of the scope decision: `/spotify connect` keeps asking for the
+ * minimum a playlist needs, and only someone who actually wants a party is shown a consent screen
+ * mentioning playback control.
+ */
+async function partyConnectLink(config: MusicConfig, discordUserId: string): Promise<string | undefined> {
+  if (config.spotify === undefined) return undefined;
+  const stateToken = generateStateToken();
+  await commit(beginPendingAuth(musicState(), stateToken, discordUserId, Date.now(), PARTY_SCOPES));
+  return authorizeUrl(config.spotify, stateToken, PARTY_SCOPES);
+}
+
+/**
+ * Everything `/party` needs before it can touch someone's player: the feature configured, the
+ * caller connected, and the playback scopes actually granted. A missing scope is answered with a
+ * fresh link, never with the 403 it would otherwise become.
+ */
+async function requirePartyAccess(
+  discordUserId: string,
+): Promise<
+  { ok: true; spotify: SpotifyClient; runner: PartyRunner; accessToken: string } | { ok: false; message: string }
+> {
+  const { config, spotify, runner, serverRunning } = required();
+  if (spotify === undefined || runner === undefined) {
+    return { ok: false, message: formatNotConfigured(config.missing) };
+  }
+  const token = await accessTokenFor(spotify, discordUserId);
+  if (!token.ok) return { ok: false, message: token.error };
+  if (!hasScopes(token.scopes, PARTY_SCOPES)) {
+    if (!serverRunning()) {
+      return {
+        ok: false,
+        message:
+          "A party needs permission to control your Spotify, and the connect server isn't running " +
+          "so a link would go nowhere. An admin needs to check `MUSIC_CALLBACK_PORT`.",
+      };
+    }
+    const link = await partyConnectLink(config, discordUserId);
+    return {
+      ok: false,
+      message:
+        link === undefined
+          ? formatNotConfigured(config.missing)
+          : `Spotify needs one more permission before the bot can play to your player. ` +
+            `[Grant it here](${link}) -- it takes one click, and it replaces your existing connection.`,
+    };
+  }
+  return { ok: true, spotify, runner, accessToken: token.accessToken };
+}
+
+/** The reply after a play attempt: who it reached, and what each of the others should do. */
+export function formatOutcomes(outcomes: readonly MemberOutcome[]): string {
+  const played = outcomes.filter((o) => o.ok).length;
+  const head = played === 1 ? "Playing for 1 person." : `Playing for ${played} people.`;
+  const problems = outcomes
+    .filter((o) => !o.ok)
+    .map((o) => `<@${o.discordUserId}>: ${o.error ?? "their Spotify didn't take the command"}`);
+  if (problems.length === 0) return head;
+  return clip(`${head}\n${problems.join("\n")}`, MAX_REPLY_LENGTH);
+}
+
+export function formatPartyStatus(party: Party, now: number): string {
+  const track = currentTrack(party);
+  const members = party.members.map((id) => `<@${id}>`).join(", ");
+  if (track === undefined || party.trackStartedAt === undefined) {
+    return clip(
+      `The party is open but nothing is playing. ${party.queue.length} track(s) queued.\nIn the party: ${members}`,
+      MAX_REPLY_LENGTH,
+    );
+  }
+  const elapsed = Math.floor((now - party.trackStartedAt) / 1000);
+  const total = Math.floor(track.durationMs / 1000);
+  const remaining = party.queue.length - party.index - 1;
+  return clip(
+    `**${track.name}** -- ${track.artist}\n` +
+      `${formatClock(elapsed)} / ${formatClock(total)}, ${remaining} more queued\n` +
+      `In the party: ${members}`,
+    MAX_REPLY_LENGTH,
+  );
+}
+
+function formatClock(seconds: number): string {
+  const safe = Math.max(0, seconds);
+  return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+
+async function handlePartyStart(interaction: ChatInputCommandInteraction, guildId: string): Promise<void> {
+  if (getParty(partiesState(), guildId) !== undefined) {
+    await replyEphemeral(interaction, "There's already a party in this server. `/party status` shows it.");
+    return;
+  }
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const access = await requirePartyAccess(interaction.user.id);
+  if (!access.ok) {
+    await interaction.editReply({ content: access.message });
+    return;
+  }
+  const party: Party = {
+    guildId,
+    channelId: interaction.channelId,
+    hostId: interaction.user.id,
+    members: [interaction.user.id],
+    queue: [],
+    index: 0,
+  };
+  await commitParties(openParty(partiesState(), party));
+  // Not ephemeral: the Join button has to be visible to everyone else in the channel.
+  await interaction.editReply({ content: "Party started. Queue something with `/party add`." });
+  await interaction.followUp({
+    content:
+      `<@${interaction.user.id}> started a listening party. Press Join and your own Spotify plays along ` +
+      "-- you'll need Spotify Premium and `/spotify connect`.",
+    components: [joinRow()],
+  });
+}
+
+async function handlePartyAdd(interaction: ChatInputCommandInteraction, guildId: string): Promise<void> {
+  const party = getParty(partiesState(), guildId);
+  if (party === undefined) {
+    await replyEphemeral(interaction, "No party here yet -- `/party start` opens one.");
+    return;
+  }
+  await interaction.deferReply();
+  const access = await requirePartyAccess(interaction.user.id);
+  if (!access.ok) {
+    await interaction.editReply({ content: access.message });
+    return;
+  }
+  const query = interaction.options.getString("query", true);
+  // The access check already refreshed a token for this caller; searching with a second one would
+  // be a pointless extra round trip to Spotify's token endpoint.
+  const found = await access.spotify.searchTracks(access.accessToken, query);
+  if (!found.ok) {
+    await interaction.editReply({ content: `Spotify search failed: ${found.error}` });
+    return;
+  }
+  // The same scorer `/setlist` uses, so "the wrong live version" is wrong in exactly one place.
+  const match = pickBestTrack({ name: query, artist: "" }, found.value);
+  if (match === undefined) {
+    await interaction.editReply({ content: `Nothing on Spotify matched "${query}".` });
+    return;
+  }
+  if (match.track.durationMs === undefined) {
+    await interaction.editReply({
+      content: "Spotify didn't say how long that track is, so the party can't time it. Try another version.",
+    });
+    return;
+  }
+  const track: PartyTrack = {
+    uri: match.track.uri,
+    name: match.track.name,
+    artist: match.track.artistNames[0] ?? "Unknown artist",
+    durationMs: match.track.durationMs,
+  };
+  await commitParties(enqueue(partiesState(), guildId, [track]));
+
+  // The first track added to an idle party starts it -- otherwise "start" and "add" both look like
+  // the thing that begins the music, and people run them in the wrong order.
+  const idle = party.trackStartedAt === undefined && party.index >= party.queue.length;
+  if (!idle) {
+    await interaction.editReply({ content: `Queued **${track.name}** -- ${track.artist}.` });
+    return;
+  }
+  const outcomes = await access.runner.start(guildId);
+  await interaction.editReply({ content: `**${track.name}** -- ${track.artist}\n${formatOutcomes(outcomes)}` });
+}
+
+async function handlePartySkip(interaction: ChatInputCommandInteraction, guildId: string): Promise<void> {
+  const party = getParty(partiesState(), guildId);
+  if (party === undefined) {
+    await replyEphemeral(interaction, "No party here.");
+    return;
+  }
+  if (!party.members.includes(interaction.user.id)) {
+    await replyEphemeral(interaction, "Only people in the party can skip.");
+    return;
+  }
+  const access = await requirePartyAccess(interaction.user.id);
+  if (!access.ok) {
+    await replyEphemeral(interaction, access.message);
+    return;
+  }
+  await interaction.deferReply();
+  const next = party.queue[party.index + 1];
+  if (next === undefined) {
+    await interaction.editReply({ content: "That was the last track. `/party add` something else." });
+    return;
+  }
+  // A skip and a track ending naturally are the same transition, so both go through the runner's
+  // one advance path -- there is no second place that decides what "next" means.
+  const outcomes = await access.runner.skip(guildId);
+  await interaction.editReply({ content: `Skipped to **${next.name}** -- ${next.artist}\n${formatOutcomes(outcomes)}` });
+}
+
+async function handlePartyLeave(interaction: ChatInputCommandInteraction, guildId: string): Promise<void> {
+  const party = getParty(partiesState(), guildId);
+  if (party === undefined || !party.members.includes(interaction.user.id)) {
+    await replyEphemeral(interaction, "You're not in a party here.");
+    return;
+  }
+  const wasHost = party.hostId === interaction.user.id;
+  await commitParties(removeMember(partiesState(), guildId, interaction.user.id));
+  const { runner } = required();
+  if (wasHost) runner?.stop(guildId);
+  await replyEphemeral(
+    interaction,
+    wasHost
+      ? "You started it, so leaving ended the party. Your Spotify keeps playing whatever it's on."
+      : "Left the party. Your Spotify keeps playing whatever it's on.",
+  );
+}
+
+async function handlePartyStop(interaction: ChatInputCommandInteraction, guildId: string): Promise<void> {
+  const party = getParty(partiesState(), guildId);
+  if (party === undefined) {
+    await replyEphemeral(interaction, "No party here.");
+    return;
+  }
+  if (party.hostId !== interaction.user.id) {
+    await replyEphemeral(interaction, "Only whoever started the party can stop it.");
+    return;
+  }
+  const { runner } = required();
+  runner?.stop(guildId);
+  await commitParties(closeParty(partiesState(), guildId));
+  // Nobody's playback is paused: the bot stops steering, and each player carries on. Silencing
+  // everyone's phone from a Discord command is a worse surprise than the music continuing.
+  await interaction.reply({ content: "Party over. Everyone's Spotify keeps playing where it is." });
+}
+
+async function handleParty(interaction: ChatInputCommandInteraction): Promise<void> {
+  // Borrow the live client while we legitimately have one, so a later timer can post in the
+  // party's channel -- see notify.ts for why this is the only way a plugin can do that.
+  rememberClient(interaction.client);
+  const guildId = interaction.guildId;
+  if (guildId === null) {
+    await replyEphemeral(interaction, "A listening party only makes sense in a server.");
+    return;
+  }
+  const subcommand = interaction.options.getSubcommand();
+  if (subcommand === "start") return handlePartyStart(interaction, guildId);
+  if (subcommand === "add") return handlePartyAdd(interaction, guildId);
+  if (subcommand === "skip") return handlePartySkip(interaction, guildId);
+  if (subcommand === "leave") return handlePartyLeave(interaction, guildId);
+  if (subcommand === "stop") return handlePartyStop(interaction, guildId);
+
+  const party = getParty(partiesState(), guildId);
+  await replyEphemeral(
+    interaction,
+    party === undefined ? "No party here. `/party start` opens one." : formatPartyStatus(party, Date.now()),
+  );
+}
+
+/** The Join button on a party's own message. */
+async function handlePartyJoin(
+  interaction: MessageComponentInteraction | ModalSubmitInteraction,
+): Promise<void> {
+  rememberClient(interaction.client);
+  const guildId = interaction.guildId;
+  if (guildId === null) {
+    await interaction.reply({ content: "That button only works in a server.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  const party = getParty(partiesState(), guildId);
+  if (party === undefined) {
+    await interaction.reply({ content: "That party has ended.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const access = await requirePartyAccess(interaction.user.id);
+  if (!access.ok) {
+    await interaction.editReply({ content: access.message });
+    return;
+  }
+  await commitParties(addMember(partiesState(), guildId, interaction.user.id));
+  // Mid-track joiners are dropped in at the right position rather than at 0:00.
+  const outcome = await access.runner.syncMember(guildId, interaction.user.id);
+  await interaction.editReply({
+    content: outcome.ok
+      ? "You're in. Your Spotify should be playing along."
+      : `Joined, but your Spotify didn't take the command: ${outcome.error ?? "unknown reason"}`,
+  });
+}
+
+/**
+ * Every component interaction whose `customId` starts with `music:` arrives here -- the host routes
+ * the prefix, not the individual control, so this plugin's one dispatcher has to tell its own
+ * controls apart. The party's Join button is a fixed id; everything else falls through to the
+ * `/setlist` picker, which answers an id it does not recognise rather than leaving Discord to show
+ * "interaction failed".
+ */
+export async function musicInteractions(
+  interaction: MessageComponentInteraction | ModalSubmitInteraction,
+): Promise<void> {
+  if (interaction.customId === PARTY_JOIN_ID) return handlePartyJoin(interaction);
+  return handlePick(interaction);
+}
+
+// ---------------------------------------------------------------------------------------------------
 // The command table
 // ---------------------------------------------------------------------------------------------------
 
@@ -530,6 +833,30 @@ export function musicCommands(): PluginCommand[] {
           .addSubcommand((s) => s.setName("disconnect").setDescription("Remove the bot's access to your Spotify"))
           .addSubcommand((s) => s.setName("status").setDescription("Check whether your Spotify is connected")),
       handle: handleSpotify,
+    },
+    {
+      name: "party",
+      build: (builder: SlashCommandBuilder) =>
+        builder
+          .setDescription("Listen to the same thing at the same time, on everyone's own Spotify")
+          .addSubcommand((s) => s.setName("start").setDescription("Open a listening party in this channel"))
+          .addSubcommand((s) =>
+            s
+              .setName("add")
+              .setDescription("Queue a track (and start the party if it isn't playing yet)")
+              .addStringOption((o) =>
+                o
+                  .setName("query")
+                  .setDescription("Track name, or track and artist")
+                  .setRequired(true)
+                  .setMaxLength(200),
+              ),
+          )
+          .addSubcommand((s) => s.setName("skip").setDescription("Skip to the next queued track"))
+          .addSubcommand((s) => s.setName("status").setDescription("What's playing and who's listening"))
+          .addSubcommand((s) => s.setName("leave").setDescription("Leave the party"))
+          .addSubcommand((s) => s.setName("stop").setDescription("End the party (whoever started it)")),
+      handle: handleParty,
     },
   ];
 }
