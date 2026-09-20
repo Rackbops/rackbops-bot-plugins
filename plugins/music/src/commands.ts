@@ -1,14 +1,24 @@
 // The Discord-facing layer for /setlist and /spotify. The reply TEXT is built by pure exported
-// functions (`formatBuildReply`, `formatNotConfigured`) so `commands.test.ts` asserts on wording and
-// the 2000-character ceiling without a Discord client; the handlers themselves are thin plumbing.
+// functions (`formatBuildReply`, `formatNotConfigured`, `formatPickPrompt`) so `commands.test.ts`
+// asserts on wording and the 2000-character ceiling without a Discord client; the handlers
+// themselves are thin plumbing.
 
-import { MessageFlags, type ChatInputCommandInteraction, type SlashCommandBuilder } from "discord.js";
+import {
+  ActionRowBuilder,
+  MessageFlags,
+  StringSelectMenuBuilder,
+  type ChatInputCommandInteraction,
+  type MessageComponentInteraction,
+  type ModalSubmitInteraction,
+  type SlashCommandBuilder,
+} from "discord.js";
 import type { PluginCommand } from "../../../packages/api/contract.js";
 import type { MusicConfig } from "./config.js";
-import { parseSetlistUrl, type SetlistFmClient, type Setlist } from "./setlistfm.js";
+import { parseDateOption, parseSetlistUrl, type SetlistFmClient, type Setlist } from "./setlistfm.js";
 import type { SpotifyClient } from "./spotify.js";
 import { authorizeUrl } from "./spotify.js";
-import { buildPlaylist, type BuildOutcome } from "./build.js";
+import { buildPlaylist } from "./build.js";
+import type { BuildOutcome } from "./build.js";
 import {
   beginPendingAuth,
   commit,
@@ -22,6 +32,9 @@ import {
 const MAX_REPLY_LENGTH = 2000;
 /** How many names to list before saying "and N more" -- a 30-song setlist must not wall-of-text. */
 const MAX_LISTED = 8;
+/** Discord's own ceiling on a string select menu, and on an option's label and description. */
+const MAX_CHOICES = 25;
+const MAX_CHOICE_TEXT = 100;
 
 interface Wiring {
   config: MusicConfig;
@@ -61,10 +74,18 @@ function listNames(names: readonly string[]): string {
   return `${names.slice(0, MAX_LISTED).join(", ")} and ${names.length - MAX_LISTED} more`;
 }
 
-function describeShow(setlist: Setlist): string {
-  const where = [setlist.venueName, setlist.cityName, setlist.countryName]
+function clip(text: string, limit: number): string {
+  return text.length <= limit ? text : `${text.slice(0, limit - 3)}...`;
+}
+
+function whereOf(setlist: Setlist): string {
+  return [setlist.venueName, setlist.cityName, setlist.countryName]
     .filter((p) => p !== undefined && p !== "")
     .join(", ");
+}
+
+function describeShow(setlist: Setlist): string {
+  const where = whereOf(setlist);
   return where === "" ? setlist.artistName : `${setlist.artistName} - ${where}`;
 }
 
@@ -106,6 +127,59 @@ export function formatBuildReply(setlist: Setlist, outcome: BuildOutcome): strin
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Choosing between same-day shows
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * The select menu's `customId`. The host routes any component id starting with `music:` to this
+ * plugin, so the prefix is load-bearing rather than decorative.
+ *
+ * The invoking user's id is carried in it because the `/setlist` reply is PUBLIC -- anyone in the
+ * channel can see the menu and click it. The playlist is built on the clicker's behalf, with the
+ * clicker's Spotify grant, so a stranger clicking would either build a playlist in their account
+ * they never asked for or, far more often, be told to connect Spotify by a command they never ran.
+ * Binding the menu to its owner answers both.
+ */
+const PICKER_PREFIX = "music:setlist-pick";
+
+export function pickerCustomId(discordUserId: string): string {
+  return `${PICKER_PREFIX}:${discordUserId}`;
+}
+
+/** The owning user id, or `undefined` if this isn't one of our pickers at all. */
+export function parsePickerCustomId(customId: string): string | undefined {
+  if (!customId.startsWith(`${PICKER_PREFIX}:`)) return undefined;
+  const owner = customId.slice(PICKER_PREFIX.length + 1);
+  return owner === "" ? undefined : owner;
+}
+
+/**
+ * One menu row for one candidate show. The LABEL is the venue and city, because that is the only
+ * thing that actually distinguishes a festival slot from the club show the same night -- the artist
+ * and the date are identical across every option by construction, so repeating them there would
+ * make all of them look the same. The description carries the song count and the tour, which is
+ * what separates two genuine duplicate entries for one gig.
+ */
+export function choiceFor(setlist: Setlist): { label: string; description: string; value: string } {
+  const where = whereOf(setlist);
+  const songs = `${setlist.songs.length} song${setlist.songs.length === 1 ? "" : "s"}`;
+  return {
+    label: clip(where === "" ? setlist.artistName : where, MAX_CHOICE_TEXT),
+    description: clip(setlist.tourName === undefined ? songs : `${songs} - ${setlist.tourName}`, MAX_CHOICE_TEXT),
+    value: setlist.id,
+  };
+}
+
+/**
+ * The prompt above the menu. `total` is how many shows setlist.fm actually returned, so a day with
+ * more candidates than Discord will show in one menu says so rather than quietly dropping the rest.
+ */
+export function formatPickPrompt(artistName: string, shown: number, total: number): string {
+  const head = `setlist.fm has ${total} ${artistName} shows on that date. Pick the one you were at:`;
+  return total > shown ? `${head}\n(Showing the first ${shown}.)` : head;
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Shared plumbing
 // ---------------------------------------------------------------------------------------------------
 
@@ -142,28 +216,123 @@ async function replyEphemeral(interaction: ChatInputCommandInteraction, content:
   else await interaction.reply({ content, flags: MessageFlags.Ephemeral });
 }
 
+/**
+ * Searches, creates and fills the playlist, reporting each failure through `edit` rather than
+ * throwing. Shared by the slash command and the picker: both arrive here with a resolved setlist
+ * and an already-open (deferred or updated) Discord response to write into.
+ */
+async function buildInto(
+  setlist: Setlist,
+  discordUserId: string,
+  edit: (content: string) => Promise<void>,
+): Promise<void> {
+  const { config, spotify } = required();
+  if (spotify === undefined) {
+    await edit(formatNotConfigured(config.missing));
+    return;
+  }
+  const token = await accessTokenFor(spotify, discordUserId);
+  if (!token.ok) {
+    await edit(token.error);
+    return;
+  }
+  const built = await buildPlaylist(spotify, token.accessToken, setlist);
+  if (!built.ok) {
+    await edit(built.error);
+    return;
+  }
+  await edit(formatBuildReply(setlist, built.outcome));
+}
+
 // ---------------------------------------------------------------------------------------------------
 // /setlist
 // ---------------------------------------------------------------------------------------------------
 
+/** Either we know which show to build, or the user has to say, or we have a sentence for them. */
+type Resolution =
+  | { kind: "one"; setlist: Setlist }
+  | { kind: "choose"; artistName: string; setlists: Setlist[]; total: number }
+  | { kind: "error"; error: string };
+
+/**
+ * An artist and a date, where more than one answer is normal (a festival slot and a club show the
+ * same night; setlist.fm's own duplicate entries for one gig). Shows with no song list are dropped
+ * before the menu rather than offered -- picking one could only produce an empty playlist -- but
+ * they are still COUNTED, so "there are shows, just no setlists on them yet" reads differently from
+ * "there is no such show".
+ */
+async function resolveByDate(
+  setlistFm: SetlistFmClient,
+  artist: string,
+  date: string,
+): Promise<Resolution> {
+  const apiDate = parseDateOption(date);
+  if (apiDate === undefined) {
+    return {
+      kind: "error",
+      error: "I couldn't read that date. Write it as `2026-09-08` or `08-09-2026`.",
+    };
+  }
+
+  const found = await setlistFm.showsOn(artist, apiDate);
+  if (!found.ok) return { kind: "error", error: found.error };
+
+  if (found.setlists.length === 0) {
+    return { kind: "error", error: `setlist.fm has no "${artist}" show on ${apiDate}.` };
+  }
+  const withSongs = found.setlists.filter((s) => s.songs.length > 0);
+  if (withSongs.length === 0) {
+    const count = found.setlists.length;
+    return {
+      kind: "error",
+      error:
+        `setlist.fm has ${count} "${artist}" show${count === 1 ? "" : "s"} on ${apiDate}, but ` +
+        "none with a song list filled in yet.",
+    };
+  }
+  if (withSongs.length === 1) return { kind: "one", setlist: withSongs[0]! };
+  return {
+    kind: "choose",
+    artistName: withSongs[0]!.artistName,
+    setlists: withSongs.slice(0, MAX_CHOICES),
+    total: withSongs.length,
+  };
+}
+
 /**
  * A `url` is parsed to an id locally first, so an obvious typo is answered instantly instead of
- * costing a setlist.fm round trip. An `artist` goes straight to search. The caller has already
- * checked that at least one of the two is present.
+ * costing a setlist.fm round trip -- and it wins over the other two, since a link names exactly one
+ * show and leaves nothing to search for. An `artist` with a `date` searches that day; an `artist`
+ * alone falls back to their latest filled-in show. The caller has already checked that at least one
+ * usable combination is present.
  */
 async function resolveSetlist(
   setlistFm: SetlistFmClient,
   url: string | null,
   artist: string | null,
-): Promise<{ ok: true; setlist: Setlist } | { ok: false; error: string }> {
+  date: string | null,
+): Promise<Resolution> {
   if (url !== null) {
     const id = parseSetlistUrl(url);
     if (id === undefined) {
-      return { ok: false, error: "That doesn't look like a setlist.fm link. Paste the URL of a setlist page." };
+      return { kind: "error", error: "That doesn't look like a setlist.fm link. Paste the URL of a setlist page." };
     }
-    return setlistFm.getSetlist(id);
+    const one = await setlistFm.getSetlist(id);
+    return one.ok ? { kind: "one", setlist: one.setlist } : { kind: "error", error: one.error };
   }
-  return setlistFm.latestForArtist(artist ?? "");
+
+  if (date !== null) return resolveByDate(setlistFm, artist ?? "", date);
+
+  const latest = await setlistFm.latestForArtist(artist ?? "");
+  return latest.ok ? { kind: "one", setlist: latest.setlist } : { kind: "error", error: latest.error };
+}
+
+function pickerRow(discordUserId: string, setlists: readonly Setlist[]): ActionRowBuilder<StringSelectMenuBuilder> {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(pickerCustomId(discordUserId))
+    .setPlaceholder("Which show?")
+    .addOptions(setlists.map(choiceFor));
+  return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
 }
 
 async function handleSetlist(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -175,8 +344,16 @@ async function handleSetlist(interaction: ChatInputCommandInteraction): Promise<
 
   const url = interaction.options.getString("url");
   const artist = interaction.options.getString("artist");
+  const date = interaction.options.getString("date");
   if (url === null && artist === null) {
-    await replyEphemeral(interaction, "Give me either a setlist.fm `url` or an `artist` name.");
+    // A lone `date` gets the specific diagnosis rather than the generic one: the user asked for
+    // something reasonable, it just isn't a search setlist.fm can run.
+    await replyEphemeral(
+      interaction,
+      date === null
+        ? "Give me either a setlist.fm `url` or an `artist` name."
+        : "A `date` needs an `artist` to go with it -- setlist.fm can't search a day on its own.",
+    );
     return;
   }
 
@@ -184,26 +361,79 @@ async function handleSetlist(interaction: ChatInputCommandInteraction): Promise<
   // 3-second initial-response window -- defer before any of it starts.
   await interaction.deferReply();
 
-  const resolved = await resolveSetlist(setlistFm, url, artist);
+  const resolved = await resolveSetlist(setlistFm, url, artist, date);
 
-  if (!resolved.ok) {
+  if (resolved.kind === "error") {
     await interaction.editReply({ content: resolved.error });
     return;
   }
 
-  const token = await accessTokenFor(spotify, interaction.user.id);
-  if (!token.ok) {
-    await interaction.editReply({ content: token.error });
+  if (resolved.kind === "choose") {
+    await interaction.editReply({
+      content: formatPickPrompt(resolved.artistName, resolved.setlists.length, resolved.total),
+      components: [pickerRow(interaction.user.id, resolved.setlists)],
+    });
     return;
   }
 
-  const built = await buildPlaylist(spotify, token.accessToken, resolved.setlist);
-  if (!built.ok) {
-    await interaction.editReply({ content: built.error });
+  await buildInto(resolved.setlist, interaction.user.id, async (content) => {
+    await interaction.editReply({ content });
+  });
+}
+
+/**
+ * The picker's other half. The chosen show is re-fetched by id rather than held in memory between
+ * the two interactions: the menu can be clicked minutes later, across a redeploy or a self-update,
+ * and a cache that empties on restart would turn that into an unexplained failure. One extra
+ * setlist.fm call is the cheaper side of that trade.
+ */
+async function handlePick(interaction: MessageComponentInteraction | ModalSubmitInteraction): Promise<void> {
+  const owner = parsePickerCustomId(interaction.customId);
+  if (owner === undefined || !interaction.isStringSelectMenu()) {
+    // Something else under the `music:` prefix -- a control from an older version of the plugin
+    // still sitting in a channel. Say so rather than letting Discord show "interaction failed".
+    await interaction.reply({
+      content: "That control is from an older version of the bot. Run `/setlist` again for a fresh one.",
+      flags: MessageFlags.Ephemeral,
+    });
     return;
   }
-  await interaction.editReply({ content: formatBuildReply(resolved.setlist, built.outcome) });
+
+  if (interaction.user.id !== owner) {
+    await interaction.reply({
+      content: "That menu belongs to whoever ran the command. Run `/setlist` yourself to build your own playlist.",
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const { config, setlistFm } = required();
+  if (setlistFm === undefined) {
+    await interaction.reply({ content: formatNotConfigured(config.missing), flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  const chosen = interaction.values[0];
+  if (chosen === undefined) {
+    await interaction.reply({ content: "Nothing was picked.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  // `update` both answers Discord inside its 3-second window and takes the menu away, so the show
+  // can't be picked a second time while the first build is still running.
+  await interaction.update({ content: "Building the playlist...", components: [] });
+
+  const one = await setlistFm.getSetlist(chosen);
+  if (!one.ok) {
+    await interaction.editReply({ content: one.error });
+    return;
+  }
+  await buildInto(one.setlist, interaction.user.id, async (content) => {
+    await interaction.editReply({ content });
+  });
 }
+
+export const musicInteractions = handlePick;
 
 // ---------------------------------------------------------------------------------------------------
 // /spotify
@@ -281,6 +511,13 @@ export function musicCommands(): PluginCommand[] {
               .setDescription("Artist name -- uses their most recent show with a filled-in setlist")
               .setRequired(false)
               .setMaxLength(100),
+          )
+          .addStringOption((o) =>
+            o
+              .setName("date")
+              .setDescription("With an artist: the night you were there, as 2026-09-08 or 08-09-2026")
+              .setRequired(false)
+              .setMaxLength(10),
           ),
       handle: handleSetlist,
     },

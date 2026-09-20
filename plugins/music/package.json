@@ -1,6 +1,6 @@
 {
   "name": "@rackbops/plugin-music",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Music features: setlist.fm setlists turned into Spotify playlists, and the Spotify account link (/setlist, /spotify)",
   "type": "module",
   "main": "dist/plugin.js",

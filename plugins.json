@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-20T20:42:02.714Z",
+  "generatedAt": "2026-09-20T21:00:30.553Z",
   "plugins": [
     {
       "name": "music",
       "package": "@rackbops/plugin-music",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "description": "Music features: setlist.fm setlists turned into Spotify playlists, and the Spotify account link (/setlist, /spotify)",
       "hostApiVersion": 1,
       "intents": [],
@@ -51,6 +51,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "1.1.0",
+          "publishedAt": "2026-09-20T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/music-v1.1.0",
+          "notes": "### Added\n\n- `/setlist artist:<name> date:<date>` builds the playlist from the show on a particular night,\n  rather than only the artist's most recent one. The date is accepted as `2026-09-08` or\n  `08-09-2026` and sent on in setlist.fm's own `dd-MM-yyyy`, which its search parameter requires\n  -- an ISO date there matches nothing, silently.\n\n  A band can play a festival slot in the afternoon and a club show the same night, and setlist.fm\n  also carries genuine duplicate entries for one gig, so an artist-and-date search can honestly\n  have more than one answer. Every match is shown in a menu, labelled by venue with the song count\n  and tour beside it, and the user picks; nothing is guessed. One match is used straight away.\n  Shows with no song list yet are counted but not offered, so \"there were two shows, neither\n  written up\" reads differently from \"there was no show\".\n\n  The menu is bound to whoever ran the command. The `/setlist` reply is public, so anyone in the\n  channel can see the menu -- the playlist is built with the clicker's own Spotify grant, and a\n  bystander clicking would get a playlist they never asked for or be told to connect an account by\n  a command they never ran. The chosen show is re-fetched by id when it is clicked rather than\n  held in memory, so the menu still works across a restart or a self-update.\n\n### Fixed\n\n- setlist.fm rate limits and server errors are now retried instead of being handed straight to the\n  user. A `Retry-After` is obeyed when the server sends one, otherwise the wait doubles from half\n  a second; three retries at most, and no wait longer than five seconds -- past that, and for a\n  `Retry-After` in whole minutes, it gives up at once rather than holding a Discord reply open on\n  a spinner. Only 429 and 5xx are retried: every other 4xx is a statement about the request, so\n  repeating it unchanged would only waste the user's time. A transport failure is not retried\n  either, the ten-second timeout having already been spent.\n- A search returning a single result now reads it. setlist.fm's JSON comes from an XML schema and\n  a one-element collection arrives as a bare object rather than a list -- the same wrinkle already\n  guarded for a setlist's `sets.set` in 1.0.0, but the search results themselves were still being\n  read as an array only, so a one-result search looked like no results at all."
+        },
         {
           "version": "1.0.0",
           "publishedAt": "2026-09-20T00:00:00.000Z",

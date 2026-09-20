@@ -1,6 +1,6 @@
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { resolveConfig } from "./config.js";
-import { initCommands, musicCommands } from "./commands.js";
+import { initCommands, musicCommands, musicInteractions } from "./commands.js";
 import { createSetlistFmClient } from "./setlistfm.js";
 import { createSpotifyClient } from "./spotify.js";
 import { createRateLimiter, startCallbackServer } from "./server.js";
@@ -36,6 +36,11 @@ export function createPlugin(host: HostApi): Plugin {
 
   return {
     commands: musicCommands(),
+
+    // The host routes every component interaction whose `customId` starts with `music:` here. Today
+    // that is only `/setlist`'s same-day show picker; the handler answers anything else it doesn't
+    // recognise rather than leaving Discord to show "interaction failed".
+    interactions: musicInteractions,
 
     async activate() {
       await initStore(host);

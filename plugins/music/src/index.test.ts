@@ -52,15 +52,23 @@ describe("createPlugin", () => {
     expect(() => createPlugin(makeFakeHost({ env: FULL_ENV, dataDir: "/nonexistent-dir/deeper" }))).not.toThrow();
   });
 
-  test("/setlist takes url and artist, both optional", () => {
+  test("/setlist takes url, artist and date, all optional", () => {
     const plugin = createPlugin(makeFakeHost());
     const setlist = (plugin.commands ?? []).find((c) => c.name === "setlist")!;
     const body = setlist.build(new SlashCommandBuilder().setName("setlist")).toJSON();
     expect(body.description).toBe("Turn a setlist.fm setlist into a Spotify playlist");
+    // Every option is optional: `date` is only meaningful WITH `artist`, and Discord has no way to
+    // express that pairing, so the handler checks the combination and says so in words instead.
     expect(body.options?.map((o) => [o.name, o.required ?? false])).toEqual([
       ["url", false],
       ["artist", false],
+      ["date", false],
     ]);
+  });
+
+  test("the plugin handles its own component interactions, for the same-day show picker", () => {
+    const plugin = createPlugin(makeFakeHost());
+    expect(typeof plugin.interactions).toBe("function");
   });
 
   test("/spotify offers connect, disconnect and status", () => {
