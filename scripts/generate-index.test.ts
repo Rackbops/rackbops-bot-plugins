@@ -111,6 +111,24 @@ describe("buildIndex", () => {
     ).rejects.toThrow(/command "shared" is declared by both "alpha" and "beta"/);
   });
 
+  test("iterates directories in sorted order regardless of the lister's order", async () => {
+    // `readdir` order is not portable (NTFS sorts, ext4 does not), and the plugin the fail-fast throw
+    // blames is chosen by iteration order. Inject a lister that yields the reverse of sorted so this
+    // pins iteration order deterministically on every filesystem: sorted iteration reaches "alpha"
+    // first, so it owns "shared" and "beta" is the one blamed. Mutation: dropping the sort in
+    // buildIndex makes the error read `both "beta" and "alpha"` and this fails.
+    const reversed = async (): Promise<string[]> => ["beta", "alpha"];
+    await expect(
+      withPlugins(
+        {
+          alpha: { pkg: pkg("alpha", { commands: ["shared"] }), changelog: changelog() },
+          beta: { pkg: pkg("beta", { commands: ["shared"] }), changelog: changelog() },
+        },
+        (dir) => buildIndex(dir, fixedNow, reversed),
+      ),
+    ).rejects.toThrow(/command "shared" is declared by both "alpha" and "beta"/);
+  });
+
   test("rejects a current version with no CHANGELOG section", async () => {
     await expect(
       withPlugins({ alpha: { pkg: pkg("alpha", {}), changelog: changelog("0.9.0") } }, (dir) => buildIndex(dir, fixedNow)),
