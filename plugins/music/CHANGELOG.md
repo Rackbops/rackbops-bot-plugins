@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.1.0] - 2026-09-20
+
+### Added
+
+- `/setlist artist:<name> date:<date>` builds the playlist from the show on a particular night,
+  rather than only the artist's most recent one. The date is accepted as `2026-09-08` or
+  `08-09-2026` and sent on in setlist.fm's own `dd-MM-yyyy`, which its search parameter requires
+  -- an ISO date there matches nothing, silently.
+
+  A band can play a festival slot in the afternoon and a club show the same night, and setlist.fm
+  also carries genuine duplicate entries for one gig, so an artist-and-date search can honestly
+  have more than one answer. Every match is shown in a menu, labelled by venue with the song count
+  and tour beside it, and the user picks; nothing is guessed. One match is used straight away.
+  Shows with no song list yet are counted but not offered, so "there were two shows, neither
+  written up" reads differently from "there was no show".
+
+  The menu is bound to whoever ran the command. The `/setlist` reply is public, so anyone in the
+  channel can see the menu -- the playlist is built with the clicker's own Spotify grant, and a
+  bystander clicking would get a playlist they never asked for or be told to connect an account by
+  a command they never ran. The chosen show is re-fetched by id when it is clicked rather than
+  held in memory, so the menu still works across a restart or a self-update.
+
+### Fixed
+
+- setlist.fm rate limits and server errors are now retried instead of being handed straight to the
+  user. A `Retry-After` is obeyed when the server sends one, otherwise the wait doubles from half
+  a second; three retries at most, and no wait longer than five seconds -- past that, and for a
+  `Retry-After` in whole minutes, it gives up at once rather than holding a Discord reply open on
+  a spinner. Only 429 and 5xx are retried: every other 4xx is a statement about the request, so
+  repeating it unchanged would only waste the user's time. A transport failure is not retried
+  either, the ten-second timeout having already been spent.
+- A search returning a single result now reads it. setlist.fm's JSON comes from an XML schema and
+  a one-element collection arrives as a bare object rather than a list -- the same wrinkle already
+  guarded for a setlist's `sets.set` in 1.0.0, but the search results themselves were still being
+  read as an array only, so a one-result search looked like no results at all.
+
 ## [1.0.0] - 2026-09-20
 
 ### Added

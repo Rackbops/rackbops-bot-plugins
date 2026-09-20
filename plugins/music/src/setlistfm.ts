@@ -218,11 +218,70 @@ export function toSetlist(raw: unknown): Setlist | undefined {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Date parsing
+// ---------------------------------------------------------------------------------------------------
+
+function pad2(value: number): string {
+  return value < 10 ? `0${value}` : String(value);
+}
+
+/**
+ * Normalises a date a user typed into the `dd-MM-yyyy` that setlist.fm's `date` search parameter
+ * requires. That format is the API's, not a choice: `?date=2026-09-08` silently matches nothing.
+ *
+ * Two spellings are accepted and no others, because every other separator ordering is genuinely
+ * ambiguous: `yyyy-MM-dd` (ISO, what most people type) and `dd-MM-yyyy` (what setlist.fm itself
+ * prints on every setlist page, so it is what someone copying from the site will paste). A
+ * four-digit leading group means the first is a year; anything else is read day-first. `03-04-2026`
+ * is therefore always 3 April, matching the site -- there is no reading of it as 4 March, which is
+ * why `MM-dd-yyyy` is not accepted at all rather than guessed at.
+ *
+ * The result is round-tripped through a real calendar date, so `31-02-2026` is rejected instead of
+ * rolling over into March. Returns `undefined` rather than throwing: an unreadable date is a normal
+ * user typo the caller answers with a sentence.
+ */
+export function parseDateOption(input: string): string | undefined {
+  const trimmed = input.trim();
+  let year: number;
+  let month: number;
+  let day: number;
+
+  const iso = trimmed.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  const dmy = trimmed.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (iso !== null) {
+    year = Number(iso[1]);
+    month = Number(iso[2]);
+    day = Number(iso[3]);
+  } else if (dmy !== null) {
+    day = Number(dmy[1]);
+    month = Number(dmy[2]);
+    year = Number(dmy[3]);
+  } else {
+    return undefined;
+  }
+
+  const asDate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    asDate.getUTCFullYear() !== year ||
+    asDate.getUTCMonth() !== month - 1 ||
+    asDate.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+  return `${pad2(day)}-${pad2(month)}-${year}`;
+}
+
+// ---------------------------------------------------------------------------------------------------
 // The client
 // ---------------------------------------------------------------------------------------------------
 
 export type SetlistFmResult =
   | { ok: true; setlist: Setlist }
+  | { ok: false; error: string };
+
+/** Several setlists at once -- an artist+date search, where more than one match is normal. */
+export type SetlistListResult =
+  | { ok: true; setlists: Setlist[] }
   | { ok: false; error: string };
 
 export interface SetlistFmClient {
@@ -234,10 +293,24 @@ export interface SetlistFmClient {
    * empty ones rather than returning a playlist of nothing.
    */
   latestForArtist(artistName: string): Promise<SetlistFmResult>;
+  /**
+   * EVERY setlist that artist has on that date (`dd-MM-yyyy`, see `parseDateOption`), in the order
+   * setlist.fm returns them, including ones with no songs on them yet.
+   *
+   * Deliberately not narrowed to one: a band can play a festival slot in the afternoon and a club
+   * show the same night, and setlist.fm also carries genuine duplicate entries for one gig. Either
+   * way there is no rule that picks the right one, so the caller puts the choice to the user rather
+   * than this guessing. An empty list means nothing matched -- which is a normal answer, not an
+   * error.
+   */
+  showsOn(artistName: string, date: string): Promise<SetlistListResult>;
 }
 
 /** Injected so tests drive the client without a network; production passes the global `fetch`. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+
+/** Injected for the same reason as `FetchLike` -- so the retry tests below don't actually wait. */
+export type SleepLike = (ms: number) => Promise<void>;
 
 /**
  * Maps a setlist.fm HTTP status onto a sentence a Discord user can act on. 404 is by far the most
@@ -250,49 +323,158 @@ function describeStatus(status: number): string {
   return `setlist.fm returned HTTP ${status}`;
 }
 
-export function createSetlistFmClient(apiKey: string, fetchImpl: FetchLike = fetch): SetlistFmClient {
-  async function get(path: string): Promise<{ ok: true; body: unknown } | { ok: false; error: string }> {
-    let response: Response;
-    try {
-      response = await fetchImpl(`${API_BASE}${path}`, {
-        headers: { "x-api-key": apiKey, Accept: "application/json" },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    } catch (err) {
-      const timedOut = err instanceof Error && err.name === "TimeoutError";
-      return { ok: false, error: timedOut ? "setlist.fm took too long to answer" : "couldn't reach setlist.fm" };
+/**
+ * Whether a status is worth trying again. 429 is setlist.fm's documented rate limit (the free
+ * tier is a small number of requests per second, and one `/setlist` can fire two calls back to
+ * back), and a 5xx is the server having a moment. Every other 4xx is a statement about the
+ * REQUEST -- a bad key, a missing id -- and repeating it unchanged only wastes the user's time.
+ */
+export function isRetryable(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+/**
+ * Reads a `Retry-After` header into milliseconds. Both forms in RFC 9110 are accepted: a count of
+ * seconds (what setlist.fm sends) and an HTTP-date. Returns `undefined` when the header is absent
+ * or unreadable, which the caller treats as "back off on your own schedule" rather than as an
+ * error -- a malformed header must not be the reason a request fails.
+ */
+export function parseRetryAfter(value: string | null, now: number): number | undefined {
+  if (value === null) return undefined;
+  const trimmed = value.trim();
+  if (trimmed === "") return undefined;
+  if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
+  const at = Date.parse(trimmed);
+  if (Number.isNaN(at)) return undefined;
+  return Math.max(0, at - now);
+}
+
+/** Attempts AFTER the first one, for a retryable status. */
+const MAX_RETRIES = 3;
+/** The first backoff step; each retry after that doubles it. */
+const BACKOFF_BASE_MS = 500;
+/**
+ * The longest this will sit on any one retry. A `/setlist` runs behind a deferred Discord reply,
+ * so a long sleep is not a crash -- but it is an unexplained silence, and setlist.fm answers a
+ * sustained rate-limit with a `Retry-After` in whole minutes. Past this, giving up immediately and
+ * telling the user to try again in a minute beats making them watch a spinner for it.
+ */
+const MAX_BACKOFF_MS = 5_000;
+
+/**
+ * How long to wait before retry number `attempt` (0-based), or `undefined` to stop retrying now.
+ *
+ * A server-supplied `Retry-After` wins over our own backoff -- it is the only number that knows
+ * when the limit actually lifts -- but one longer than `MAX_BACKOFF_MS` ends the retries instead
+ * of being clamped down to it: hammering the endpoint again before the server said we could is
+ * exactly what the header exists to prevent.
+ */
+export function retryDelay(attempt: number, retryAfterMs: number | undefined): number | undefined {
+  if (retryAfterMs !== undefined) return retryAfterMs > MAX_BACKOFF_MS ? undefined : retryAfterMs;
+  return Math.min(BACKOFF_BASE_MS * 2 ** attempt, MAX_BACKOFF_MS);
+}
+
+const defaultSleep: SleepLike = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export function createSetlistFmClient(
+  apiKey: string,
+  fetchImpl: FetchLike = fetch,
+  sleepImpl: SleepLike = defaultSleep,
+): SetlistFmClient {
+  type GetResult =
+    | { ok: true; body: unknown }
+    | { ok: false; error: string; status?: number };
+
+  /**
+   * One GET, retried on a rate limit or a server error. A transport failure (a timeout, a DNS or
+   * TLS error) is NOT retried: the 10-second timeout has already been spent, and the failures that
+   * reach here are the ones a second immediate attempt does not fix.
+   *
+   * `status` is carried on the failure so a caller can tell setlist.fm's "nothing matched" 404
+   * apart from a real error -- the search endpoints answer an empty result set with 404 rather
+   * than an empty list.
+   */
+  async function get(path: string): Promise<GetResult> {
+    let lastStatus = 0;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+      let response: Response;
+      try {
+        response = await fetchImpl(`${API_BASE}${path}`, {
+          headers: { "x-api-key": apiKey, Accept: "application/json" },
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+      } catch (err) {
+        const timedOut = err instanceof Error && err.name === "TimeoutError";
+        return { ok: false, error: timedOut ? "setlist.fm took too long to answer" : "couldn't reach setlist.fm" };
+      }
+
+      if (response.ok) {
+        try {
+          return { ok: true, body: await response.json() };
+        } catch {
+          return { ok: false, error: "setlist.fm sent a response we couldn't read" };
+        }
+      }
+
+      lastStatus = response.status;
+      if (!isRetryable(response.status)) {
+        return { ok: false, error: describeStatus(response.status), status: response.status };
+      }
+      if (attempt === MAX_RETRIES) break;
+
+      const delay = retryDelay(attempt, parseRetryAfter(response.headers.get("Retry-After"), Date.now()));
+      if (delay === undefined) break;
+      await sleepImpl(delay);
     }
-    if (!response.ok) return { ok: false, error: describeStatus(response.status) };
-    try {
-      return { ok: true, body: await response.json() };
-    } catch {
-      return { ok: false, error: "setlist.fm sent a response we couldn't read" };
+
+    return { ok: false, error: describeStatus(lastStatus), status: lastStatus };
+  }
+
+  /** The shared shape of both search calls: a page of setlists, already validated. */
+  async function search(query: string): Promise<SetlistListResult> {
+    const result = await get(`/search/setlists?${query}&p=1`);
+    if (!result.ok) {
+      // A search that matched nothing answers 404, not an empty page -- so for a SEARCH that is a
+      // result, not a failure. (`getSetlist`'s own 404 stays a failure: an id either exists or the
+      // user mistyped it.)
+      if (result.status === 404) return { ok: true, setlists: [] };
+      return { ok: false, error: result.error };
     }
+    const body = result.body as { setlist?: unknown };
+    const setlists: Setlist[] = [];
+    // `setlist` has the same one-element-is-not-an-array exposure as `sets.set` -- see `asList`.
+    for (const candidate of asList(body.setlist)) {
+      const setlist = toSetlist(candidate);
+      if (setlist !== undefined) setlists.push(setlist);
+    }
+    return { ok: true, setlists };
   }
 
   return {
     async getSetlist(id) {
       const result = await get(`/setlist/${encodeURIComponent(id)}`);
-      if (!result.ok) return result;
+      if (!result.ok) return { ok: false, error: result.error };
       const setlist = toSetlist(result.body);
       return setlist ? { ok: true, setlist } : { ok: false, error: "setlist.fm sent a setlist we couldn't read" };
     },
 
     async latestForArtist(artistName) {
-      const result = await get(`/search/setlists?artistName=${encodeURIComponent(artistName)}&p=1`);
-      if (!result.ok) return result;
-      const body = result.body as { setlist?: unknown };
-      const candidates = Array.isArray(body.setlist) ? body.setlist : [];
-      for (const candidate of candidates) {
-        const setlist = toSetlist(candidate);
-        if (setlist && setlist.songs.length > 0) return { ok: true, setlist };
+      const found = await search(`artistName=${encodeURIComponent(artistName)}`);
+      if (!found.ok) return { ok: false, error: found.error };
+      for (const setlist of found.setlists) {
+        if (setlist.songs.length > 0) return { ok: true, setlist };
       }
       return {
         ok: false,
-        error: candidates.length === 0
+        error: found.setlists.length === 0
           ? `no setlists on setlist.fm for "${artistName}"`
           : `setlist.fm has shows for "${artistName}" but none with a song list filled in yet`,
       };
+    },
+
+    async showsOn(artistName, date) {
+      return search(`artistName=${encodeURIComponent(artistName)}&date=${encodeURIComponent(date)}`);
     },
   };
 }
