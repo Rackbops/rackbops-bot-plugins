@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createSetlistFmClient, flattenSetlist, parseSetlistUrl, toSetlist } from "./setlistfm.js";
+import { createSetlistFmClient, flattenSetlist, parseSetlistUrl, splitMedley, toSetlist } from "./setlistfm.js";
 
 /** A response builder, so each test says only what it is actually about. */
 function json(body: unknown, status = 200): Response {
@@ -17,6 +17,35 @@ const BEATLES = {
     set: [
       { name: "Main set", song: [{ name: "Hey Jude" }, { name: "Twist and Shout", cover: { name: "The Top Notes" } }] },
       { encore: 1, song: [{ name: "Yesterday" }] },
+    ],
+  },
+};
+
+/**
+ * Epica at AFAS Live, Amsterdam, 20 September 2024 -- transcribed from the public setlist.fm page
+ * (https://www.setlist.fm/setlist/epica/2024/afas-live-amsterdam-netherlands-1ba8a1cc.html) into the
+ * shape the API returns. A real show, chosen because one entry is a genuine four-song medley: the
+ * case that silently cost four tracks before `splitMedley` existed.
+ */
+const EPICA = {
+  id: "1ba8a1cc",
+  eventDate: "20-09-2024",
+  url: "https://www.setlist.fm/setlist/epica/2024/afas-live-amsterdam-netherlands-1ba8a1cc.html",
+  artist: { name: "Epica" },
+  venue: { name: "AFAS Live", city: { name: "Amsterdam", country: { name: "Netherlands" } } },
+  tour: { name: "The Symphonic Synergy Tour" },
+  sets: {
+    set: [
+      { song: [{ name: "Storm the Sorrow" }] },
+      {
+        song: [
+          {
+            name: "Universal Death Squad / The Last Crusade / The Phantom Agony / Design Your Universe",
+            info: "Symphonic synergy medley",
+          },
+        ],
+      },
+      { encore: 2, song: [{ name: "Chevaliers de Sangreal", tape: true, cover: { name: "Hans Zimmer" } }] },
     ],
   },
 };
@@ -77,8 +106,91 @@ describe("flattenSetlist", () => {
     expect(songs.map((s) => s.name)).toEqual(["Kept"]);
   });
 
+  test("a medley entry becomes one song per part, in order, inline in the set", () => {
+    const { songs } = flattenSetlist(EPICA);
+    expect(songs.map((s) => s.name)).toEqual([
+      "Storm the Sorrow",
+      "Universal Death Squad",
+      "The Last Crusade",
+      "The Phantom Agony",
+      "Design Your Universe",
+    ]);
+  });
+
+  test("every part of a medley inherits the entry's cover credit", () => {
+    const { songs } = flattenSetlist({
+      artist: { name: "Band" },
+      sets: { set: [{ song: [{ name: "A Side / B Side", cover: { name: "The Originals" } }] }] },
+    });
+    expect(songs).toEqual([
+      { name: "A Side", searchArtist: "The Originals", isCover: true },
+      { name: "B Side", searchArtist: "The Originals", isCover: true },
+    ]);
+  });
+
+  test("a tape medley is still one tape, counted once and not split", () => {
+    const { songs, tapeCount } = flattenSetlist({
+      artist: { name: "Band" },
+      sets: { set: [{ song: [{ name: "Outro A / Outro B", tape: true }] }] },
+    });
+    expect(songs).toEqual([]);
+    expect(tapeCount).toBe(1);
+  });
+
+  test("a single set sent as a bare object, not an array, still yields its songs", () => {
+    const { songs } = flattenSetlist({
+      artist: { name: "Band" },
+      sets: { set: { song: [{ name: "Only Song" }] } },
+    });
+    expect(songs.map((s) => s.name)).toEqual(["Only Song"]);
+  });
+
+  test("a single song sent as a bare object, not an array, still yields it", () => {
+    const { songs } = flattenSetlist({
+      artist: { name: "Band" },
+      sets: { set: [{ song: { name: "Only Song" } }] },
+    });
+    expect(songs.map((s) => s.name)).toEqual(["Only Song"]);
+  });
+
+  test("a set or sets wrapper sent as a string yields nothing, and does not throw", () => {
+    expect(flattenSetlist({ artist: { name: "Band" }, sets: { set: "" } })).toEqual({ songs: [], tapeCount: 0 });
+    expect(flattenSetlist({ artist: { name: "Band" }, sets: "nonsense" as never })).toEqual({
+      songs: [],
+      tapeCount: 0,
+    });
+  });
+
   test("a setlist with no sets at all yields nothing, not a throw", () => {
     expect(flattenSetlist({ artist: { name: "Band" } })).toEqual({ songs: [], tapeCount: 0 });
+  });
+});
+
+describe("splitMedley", () => {
+  test("splits a slash-separated medley into its parts", () => {
+    expect(splitMedley("Universal Death Squad / The Last Crusade / The Phantom Agony")).toEqual([
+      "Universal Death Squad",
+      "The Last Crusade",
+      "The Phantom Agony",
+    ]);
+  });
+
+  test("leaves an ordinary title alone", () => {
+    expect(splitMedley("Storm the Sorrow")).toEqual(["Storm the Sorrow"]);
+  });
+
+  test("does NOT split an unspaced slash, which is usually part of the real title", () => {
+    expect(splitMedley("Zoo Station/The Fly")).toEqual(["Zoo Station/The Fly"]);
+    expect(splitMedley("Sirens - Of Blood and Water")).toEqual(["Sirens - Of Blood and Water"]);
+  });
+
+  test("tolerates ragged spacing and a trailing separator", () => {
+    expect(splitMedley("A  /  B")).toEqual(["A", "B"]);
+    expect(splitMedley("A / B / ")).toEqual(["A", "B"]);
+  });
+
+  test("a name that is nothing but separators falls back to the original, never an empty list", () => {
+    expect(splitMedley(" / ")).toEqual([" / "]);
   });
 });
 

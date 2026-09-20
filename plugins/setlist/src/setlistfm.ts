@@ -100,6 +100,54 @@ function str(value: unknown): string | undefined {
 }
 
 /**
+ * Reads a setlist.fm collection that is documented as an array but is not reliably one.
+ *
+ * The JSON is serialised from an XML schema, and a one-element collection comes back as the bare
+ * element instead of a list. It is a long-standing, unannounced inconsistency: a 2016 report on
+ * setlist.fm's own API forum ("Modeling results in java class") describes `set` arriving as an
+ * object "for the most part", "in some instances ... a String", and "in other instances ... an
+ * array", with no staff answer. Not reproduced here -- this plugin has never run against a live
+ * key -- but the cost of being wrong is one-sided, which is why it is guarded rather than argued
+ * about.
+ *
+ * Being wrong the old way is SILENT: a non-array `set` yielded zero songs while `toSetlist` still
+ * returned a perfectly valid setlist, and `latestForArtist` skips zero-song setlists as unfilled
+ * stubs -- so a real gig was walked straight past with no error and nothing to diagnose.
+ *
+ * A bare string is accepted into the list for shape's sake but carries no song data either way, so
+ * it still yields nothing. Only the object case actually recovers songs.
+ */
+function asList(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (value === undefined || value === null) return [];
+  return [value];
+}
+
+/**
+ * Splits a medley entry into its parts.
+ *
+ * setlist.fm has no medley field: its editing guidelines put a medley on ONE line with the songs
+ * separated by slashes, so a four-song medley arrives as a single entry named
+ * `"Universal Death Squad / The Last Crusade / The Phantom Agony / Design Your Universe"`. Left
+ * whole, that string is one Spotify query, and `matching.ts` scores it against nothing: its
+ * `titleScore` needs the CANDIDATE title to contain the query, and no track is named after the
+ * whole medley -- so every part of it scores 0 and the entry matches nothing at all. Four songs
+ * the band played vanish from the playlist with nothing to show for them. Split, each part is an
+ * exact title and matches `high`.
+ *
+ * Only a SPACED slash splits. That is what setlist.fm's own convention produces, and an unspaced
+ * one is far more often part of a real title -- "Zoo Station/The Fly", "Ac/Dc" -- which must stay
+ * whole. A one-part result is just the title, so a non-medley entry passes through untouched.
+ */
+export function splitMedley(name: string): string[] {
+  const parts = name
+    .split(/\s+\/\s+/)
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+  return parts.length > 0 ? parts : [name];
+}
+
+/**
  * Flattens setlist.fm's nested `sets.set[].song[]` into one ordered list, in stage order (main set
  * first, then each encore), and resolves each song's search artist.
  *
@@ -107,18 +155,21 @@ function str(value: unknown): string | undefined {
  * a song with no name (setlist.fm allows a blank entry to mark "something was played here"), and a
  * `tape` song (counted separately -- see `Setlist.tapeCount`). `with` (a guest performer) is
  * deliberately ignored: the recording is still the main artist's.
+ *
+ * One entry can yield more than one song: a medley is one setlist.fm entry but several tracks --
+ * see `splitMedley`. Each part inherits the entry's cover credit, since the whole medley is
+ * credited to the one original artist.
  */
 export function flattenSetlist(raw: RawSetlist): { songs: SetlistSong[]; tapeCount: number } {
   const performingArtist = str(raw.artist?.name) ?? "";
-  const sets = Array.isArray(raw.sets?.set) ? raw.sets.set : [];
+  const sets = asList(raw.sets?.set);
   const songs: SetlistSong[] = [];
   let tapeCount = 0;
 
   for (const oneSet of sets) {
     if (typeof oneSet !== "object" || oneSet === null) continue;
-    const entries = (oneSet as { song?: unknown }).song;
-    if (!Array.isArray(entries)) continue;
-    for (const entry of entries) {
+    // `song` has the same exposure as `set`: a one-song set arrives as a bare object.
+    for (const entry of asList((oneSet as { song?: unknown }).song)) {
       if (typeof entry !== "object" || entry === null) continue;
       const song = entry as { name?: unknown; tape?: unknown; cover?: { name?: unknown } };
       const name = str(song.name);
@@ -128,11 +179,13 @@ export function flattenSetlist(raw: RawSetlist): { songs: SetlistSong[]; tapeCou
         continue;
       }
       const coverArtist = str(song.cover?.name);
-      songs.push({
-        name,
-        searchArtist: coverArtist ?? performingArtist,
-        isCover: coverArtist !== undefined,
-      });
+      for (const part of splitMedley(name)) {
+        songs.push({
+          name: part,
+          searchArtist: coverArtist ?? performingArtist,
+          isCover: coverArtist !== undefined,
+        });
+      }
     }
   }
   return { songs, tapeCount };
