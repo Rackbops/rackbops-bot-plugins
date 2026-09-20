@@ -4,7 +4,7 @@
 
 import { MessageFlags, type ChatInputCommandInteraction, type SlashCommandBuilder } from "discord.js";
 import type { PluginCommand } from "../../../packages/api/contract.js";
-import type { SetlistConfig } from "./config.js";
+import type { MusicConfig } from "./config.js";
 import { parseSetlistUrl, type SetlistFmClient, type Setlist } from "./setlistfm.js";
 import type { SpotifyClient } from "./spotify.js";
 import { authorizeUrl } from "./spotify.js";
@@ -15,7 +15,7 @@ import {
   generateStateToken,
   putConnection,
   removeConnection,
-  setlistState,
+  musicState,
 } from "./store.js";
 
 /** Discord rejects a message body over this; every formatter below clips to stay under it. */
@@ -24,7 +24,7 @@ const MAX_REPLY_LENGTH = 2000;
 const MAX_LISTED = 8;
 
 interface Wiring {
-  config: SetlistConfig;
+  config: MusicConfig;
   setlistFm?: SetlistFmClient;
   spotify?: SpotifyClient;
   /** Whether the callback server actually bound its port -- minting a connect link that lands on
@@ -119,20 +119,20 @@ async function accessTokenFor(
   spotify: SpotifyClient,
   discordUserId: string,
 ): Promise<{ ok: true; accessToken: string } | { ok: false; error: string }> {
-  const connection = setlistState().connections[discordUserId];
+  const connection = musicState().connections[discordUserId];
   if (connection === undefined) {
     return { ok: false, error: "You haven't connected Spotify yet -- run `/spotify connect` first." };
   }
   const refreshed = await spotify.refresh(connection.refreshToken);
   if (!refreshed.ok) {
-    await commit(removeConnection(setlistState(), discordUserId));
+    await commit(removeConnection(musicState(), discordUserId));
     return {
       ok: false,
       error: `Your Spotify connection is no longer valid (${refreshed.error}). Run \`/spotify connect\` to reconnect.`,
     };
   }
   if (refreshed.value.refreshToken !== undefined) {
-    await commit(putConnection(setlistState(), discordUserId, refreshed.value.refreshToken, Date.now()));
+    await commit(putConnection(musicState(), discordUserId, refreshed.value.refreshToken, Date.now()));
   }
   return { ok: true, accessToken: refreshed.value.accessToken };
 }
@@ -214,7 +214,7 @@ async function handleSpotify(interaction: ChatInputCommandInteraction): Promise<
   const subcommand = interaction.options.getSubcommand();
 
   if (subcommand === "status") {
-    const connection = setlistState().connections[interaction.user.id];
+    const connection = musicState().connections[interaction.user.id];
     await replyEphemeral(
       interaction,
       connection === undefined
@@ -225,11 +225,11 @@ async function handleSpotify(interaction: ChatInputCommandInteraction): Promise<
   }
 
   if (subcommand === "disconnect") {
-    if (setlistState().connections[interaction.user.id] === undefined) {
+    if (musicState().connections[interaction.user.id] === undefined) {
       await replyEphemeral(interaction, "Spotify wasn't connected to your Discord account.");
       return;
     }
-    await commit(removeConnection(setlistState(), interaction.user.id));
+    await commit(removeConnection(musicState(), interaction.user.id));
     await replyEphemeral(
       interaction,
       "Disconnected. The bot has forgotten your Spotify token -- you can also revoke it at " +
@@ -247,13 +247,13 @@ async function handleSpotify(interaction: ChatInputCommandInteraction): Promise<
     await replyEphemeral(
       interaction,
       "The Spotify callback server isn't running, so a connect link would go nowhere. " +
-        "An admin needs to check `SETLIST_CALLBACK_PORT` and the bot's logs.",
+        "An admin needs to check `MUSIC_CALLBACK_PORT` and the bot's logs.",
     );
     return;
   }
 
   const stateToken = generateStateToken();
-  await commit(beginPendingAuth(setlistState(), stateToken, interaction.user.id, Date.now()));
+  await commit(beginPendingAuth(musicState(), stateToken, interaction.user.id, Date.now()));
   await replyEphemeral(
     interaction,
     `[Connect your Spotify account](${authorizeUrl(config.spotify, stateToken)})\n` +
@@ -265,7 +265,7 @@ async function handleSpotify(interaction: ChatInputCommandInteraction): Promise<
 // The command table
 // ---------------------------------------------------------------------------------------------------
 
-export function setlistCommands(): PluginCommand[] {
+export function musicCommands(): PluginCommand[] {
   return [
     {
       name: "setlist",

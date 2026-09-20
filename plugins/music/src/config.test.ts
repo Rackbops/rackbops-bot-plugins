@@ -6,7 +6,7 @@ const FULL = {
   SPOTIFY_CLIENT_ID: "cid",
   SPOTIFY_CLIENT_SECRET: "csecret",
   SPOTIFY_REDIRECT_URI: "https://bot.example.com/spotify/callback",
-  SETLIST_CALLBACK_PORT: "8787",
+  MUSIC_CALLBACK_PORT: "8787",
 };
 
 describe("resolveConfig", () => {
@@ -32,7 +32,7 @@ describe("resolveConfig", () => {
       "SPOTIFY_CLIENT_ID",
       "SPOTIFY_CLIENT_SECRET",
       "SPOTIFY_REDIRECT_URI",
-      "SETLIST_CALLBACK_PORT",
+      "MUSIC_CALLBACK_PORT",
     ]);
   });
 
@@ -64,13 +64,13 @@ describe("resolveConfig", () => {
   });
 
   test("a non-numeric or out-of-range port throws, naming the key", () => {
-    expect(() => resolveConfig({ ...FULL, SETLIST_CALLBACK_PORT: "no" })).toThrow(/SETLIST_CALLBACK_PORT/);
-    expect(() => resolveConfig({ ...FULL, SETLIST_CALLBACK_PORT: "70000" })).toThrow(/SETLIST_CALLBACK_PORT/);
-    expect(() => resolveConfig({ ...FULL, SETLIST_CALLBACK_PORT: "0" })).toThrow(/SETLIST_CALLBACK_PORT/);
+    expect(() => resolveConfig({ ...FULL, MUSIC_CALLBACK_PORT: "no" })).toThrow(/MUSIC_CALLBACK_PORT/);
+    expect(() => resolveConfig({ ...FULL, MUSIC_CALLBACK_PORT: "70000" })).toThrow(/MUSIC_CALLBACK_PORT/);
+    expect(() => resolveConfig({ ...FULL, MUSIC_CALLBACK_PORT: "0" })).toThrow(/MUSIC_CALLBACK_PORT/);
   });
 
   test("a valid edge-of-range port is accepted", () => {
-    expect(resolveConfig({ SETLIST_CALLBACK_PORT: "65535" }).callbackPort).toBe(65535);
-    expect(resolveConfig({ SETLIST_CALLBACK_PORT: "1" }).callbackPort).toBe(1);
+    expect(resolveConfig({ MUSIC_CALLBACK_PORT: "65535" }).callbackPort).toBe(65535);
+    expect(resolveConfig({ MUSIC_CALLBACK_PORT: "1" }).callbackPort).toBe(1);
   });
 });

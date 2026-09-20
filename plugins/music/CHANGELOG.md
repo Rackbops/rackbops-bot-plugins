@@ -4,13 +4,19 @@
 
 ### Added
 
-- A `setlist` plugin that turns a setlist.fm show into a Spotify playlist.
+- A `music` plugin. Its first feature turns a setlist.fm show into a Spotify playlist.
 
   `/setlist url:<setlist.fm link>` builds a playlist from that show; `/setlist artist:<name>`
   uses the artist's most recent show that actually has a song list filled in (setlist.fm is
   full of stubs, so empty ones are skipped rather than returning a playlist of nothing).
   `/spotify connect`, `/spotify disconnect` and `/spotify status` manage the caller's own
   Spotify link.
+
+  Named `music`, not `setlist`, for the domain rather than the one feature -- the same way `wow`
+  covers four unrelated commands. The plugin already owns the Spotify account link, which any
+  later music feature would share rather than duplicate, and a plugin's name is the `PLUGINS=`
+  token, the log prefix and the `data/plugins/<name>` directory, so it is fixed the moment this
+  publishes.
 
   Each song is matched by searching Spotify and SCORING the results, not by taking the first
   hit: since Spotify's February 2026 dev-mode changes capped `limit` at 10, a page of ten
@@ -25,7 +31,7 @@
   named after the whole medley and the entry would otherwise match nothing at all.
 
   Connecting uses the standard authorization-code flow. The callback is served by the
-  plugin's own HTTP listener on `SETLIST_CALLBACK_PORT`, reachable only through the bot's
+  plugin's own HTTP listener on `MUSIC_CALLBACK_PORT`, reachable only through the bot's
   opt-in `cloudflared` sidecar (the same route warbandeer's ingest endpoint uses,
   `rackbops-discord-bot` ADR-0001) -- `docker-compose.yml` publishes no host port for it. The
   OAuth `state` token is single-use and expires in ten minutes, so a leaked callback URL
@@ -45,7 +51,7 @@
   Discord members, so a large server is fine as long as at most five people connect. Spotify's
   own "User not registered in the Developer Dashboard" error is surfaced verbatim when the
   sixth person tries, because that message is the whole diagnosis.
-- A Spotify refresh token is stored in plaintext in `data/setlist.json`. Unlike warbandeer's
+- A Spotify refresh token is stored in plaintext in `data/music.json`. Unlike warbandeer's
   Device Tokens, which are only ever compared and so can be hashed, a refresh token has to be
   replayed to Spotify, so the bot must hold the real value. It is never logged and never put in
   a Discord reply, and `data/` should be treated as being as sensitive as the config `.env`.

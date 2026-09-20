@@ -70,9 +70,9 @@ export function makeRealStorage(): HostStorage {
  * the filesystem; only activate() does, and tests that reach activate pass a real temp dataDir). */
 export function makeFakeHost(overrides: Partial<HostApi> = {}): HostApi {
   return {
-    name: "setlist",
+    name: "music",
     env: {},
-    dataDir: "/tmp/setlist-fake-datadir",
+    dataDir: "/tmp/music-fake-datadir",
     log: { info() {}, warn() {}, error() {} },
     storage: makeRealStorage(),
     announce: async () => {},

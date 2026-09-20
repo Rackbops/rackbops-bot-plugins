@@ -24,7 +24,7 @@ const FULL_ENV = {
   SPOTIFY_CLIENT_ID: "cid",
   SPOTIFY_CLIENT_SECRET: "csecret",
   SPOTIFY_REDIRECT_URI: "https://bot.example.com/spotify/callback",
-  SETLIST_CALLBACK_PORT: "8787",
+  MUSIC_CALLBACK_PORT: "8787",
 };
 
 describe("createPlugin", () => {
@@ -39,8 +39,8 @@ describe("createPlugin", () => {
   });
 
   test("throws on a SET but invalid value, so the host skips just this plugin", () => {
-    expect(() => createPlugin(makeFakeHost({ env: { SETLIST_CALLBACK_PORT: "nope" } }))).toThrow(
-      /SETLIST_CALLBACK_PORT/,
+    expect(() => createPlugin(makeFakeHost({ env: { MUSIC_CALLBACK_PORT: "nope" } }))).toThrow(
+      /MUSIC_CALLBACK_PORT/,
     );
     expect(() => createPlugin(makeFakeHost({ env: { SPOTIFY_REDIRECT_URI: "http://insecure/cb" } }))).toThrow(
       /must be an https:\/\/ URL/,
@@ -80,10 +80,10 @@ describe("createPlugin", () => {
 
 describe("activate / dispose", () => {
   test("with no callback port configured, no server is started and dispose is a no-op", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "setlist-activate-"));
+    const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
     try {
       const host = makeFakeHost({
-        env: { ...FULL_ENV, SETLIST_CALLBACK_PORT: undefined },
+        env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: undefined },
         dataDir: dir,
         storage: makeRealStorage(),
       });
@@ -96,10 +96,10 @@ describe("activate / dispose", () => {
   });
 
   test("activate binds the callback server and dispose closes it", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "setlist-activate-"));
+    const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
     try {
       const host = makeFakeHost({
-        env: { ...FULL_ENV, SETLIST_CALLBACK_PORT: String(freePort()) },
+        env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: String(freePort()) },
         dataDir: dir,
         storage: makeRealStorage(),
       });
@@ -112,12 +112,12 @@ describe("activate / dispose", () => {
   });
 
   test("a callback server that fails to bind is logged, not thrown -- the bot must stay up", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "setlist-activate-"));
+    const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
     const errors: string[] = [];
     try {
       // Port 1 is privileged; binding it as a non-root user fails.
       const host = makeFakeHost({
-        env: { ...FULL_ENV, SETLIST_CALLBACK_PORT: "1" },
+        env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: "1" },
         dataDir: dir,
         storage: makeRealStorage(),
         log: { info() {}, warn() {}, error: (m) => errors.push(m) },
@@ -134,18 +134,18 @@ describe("activate / dispose", () => {
   });
 
   test("activate creates the store file, so a first run persists from the start", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "setlist-activate-"));
+    const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
     try {
       const host = makeFakeHost({
-        env: { ...FULL_ENV, SETLIST_CALLBACK_PORT: undefined },
+        env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: undefined },
         dataDir: dir,
         storage: makeRealStorage(),
       });
       const plugin = createPlugin(host);
       await plugin.activate?.();
-      const { commit, putConnection, setlistState } = await import("./store.js");
-      await commit(putConnection(setlistState(), "u1", "RT", 1));
-      expect(await Bun.file(join(dir, "setlist.json")).exists()).toBe(true);
+      const { commit, putConnection, musicState } = await import("./store.js");
+      await commit(putConnection(musicState(), "u1", "RT", 1));
+      expect(await Bun.file(join(dir, "music.json")).exists()).toBe(true);
       await plugin.dispose?.();
     } finally {
       await rm(dir, { recursive: true, force: true });

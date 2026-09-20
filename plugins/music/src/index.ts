@@ -1,18 +1,21 @@
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { resolveConfig } from "./config.js";
-import { initCommands, setlistCommands } from "./commands.js";
+import { initCommands, musicCommands } from "./commands.js";
 import { createSetlistFmClient } from "./setlistfm.js";
 import { createSpotifyClient } from "./spotify.js";
 import { createRateLimiter, startCallbackServer } from "./server.js";
-import { commit, initStore, putConnection, redeemPendingAuth, setlistState } from "./store.js";
+import { commit, initStore, putConnection, redeemPendingAuth, musicState } from "./store.js";
 
 /**
- * The setlist plugin: `/setlist` turns a setlist.fm show into a Spotify playlist, `/spotify`
- * connects and disconnects the caller's Spotify account.
+ * The music plugin: `/setlist` turns a setlist.fm show into a Spotify playlist, `/spotify`
+ * connects and disconnects the caller's Spotify account. Named for the domain rather than the one
+ * feature, like `wow` -- it already owns the Spotify account link, which any later music feature
+ * would share, and the name is the `PLUGINS=` token and the `data/plugins/<name>` directory, so it
+ * cannot be changed once this ships.
  *
  * `createPlugin` is pure -- it resolves and validates the five env keys (throwing only on a value
  * that is SET but unusable, so the host skips just this plugin and logs why) and builds the two API
- * clients, which are themselves inert until called. All I/O -- loading `setlist.json`, binding the
+ * clients, which are themselves inert until called. All I/O -- loading `music.json`, binding the
  * OAuth callback port -- happens in `activate()`, after the host's `takeOver()`.
  *
  * Every piece of config is optional and independently absent: no setlist.fm key means `/setlist`
@@ -32,7 +35,7 @@ export function createPlugin(host: HostApi): Plugin {
   initCommands({ config, setlistFm, spotify, serverRunning: () => serverRunning });
 
   return {
-    commands: setlistCommands(),
+    commands: musicCommands(),
 
     async activate() {
       await initStore(host);
@@ -47,7 +50,7 @@ export function createPlugin(host: HostApi): Plugin {
           callbackPath: config.spotify.callbackPath,
           rateLimiter: createRateLimiter({ windowMs: 60_000, max: 30 }),
           redeemState: async (stateToken) => {
-            const redeemed = redeemPendingAuth(setlistState(), stateToken, Date.now());
+            const redeemed = redeemPendingAuth(musicState(), stateToken, Date.now());
             // Persisted either way: the token is consumed on a failed redemption too, so a leaked
             // callback URL cannot be replayed.
             await commit(redeemed.state);
@@ -62,7 +65,7 @@ export function createPlugin(host: HostApi): Plugin {
           },
           exchangeCode: (code) => spotifyClient.exchangeCode(code),
           saveConnection: async (discordUserId, refreshToken) => {
-            await commit(putConnection(setlistState(), discordUserId, refreshToken, Date.now()));
+            await commit(putConnection(musicState(), discordUserId, refreshToken, Date.now()));
             // The user id is safe to log; the refresh token never is.
             host.log.info(`connected Spotify for discord user ${discordUserId}`);
           },

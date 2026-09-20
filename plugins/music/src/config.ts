@@ -10,7 +10,7 @@ export interface SpotifyAppConfig {
   callbackPath: string;
 }
 
-export interface SetlistConfig {
+export interface MusicConfig {
   setlistFmKey?: string;
   spotify?: SpotifyAppConfig;
   callbackPort?: number;
@@ -35,12 +35,12 @@ function present(value: string | undefined): string | undefined {
  * half-configured state an operator passes through while filling the panel in, so `spotify` stays
  * undefined and `missing` names what is still needed.
  */
-export function resolveConfig(env: Readonly<Record<string, string | undefined>>): SetlistConfig {
+export function resolveConfig(env: Readonly<Record<string, string | undefined>>): MusicConfig {
   const setlistFmKey = present(env.SETLISTFM_API_KEY);
   const clientId = present(env.SPOTIFY_CLIENT_ID);
   const clientSecret = present(env.SPOTIFY_CLIENT_SECRET);
   const redirectUriRaw = present(env.SPOTIFY_REDIRECT_URI);
-  const portRaw = present(env.SETLIST_CALLBACK_PORT);
+  const portRaw = present(env.MUSIC_CALLBACK_PORT);
 
   let redirectUri: URL | undefined;
   if (redirectUriRaw !== undefined) {
@@ -58,7 +58,7 @@ export function resolveConfig(env: Readonly<Record<string, string | undefined>>)
   if (portRaw !== undefined) {
     const n = Number(portRaw);
     if (!Number.isInteger(n) || n <= 0 || n > 65535) {
-      throw new Error(`SETLIST_CALLBACK_PORT must be a valid port number, got "${portRaw}"`);
+      throw new Error(`MUSIC_CALLBACK_PORT must be a valid port number, got "${portRaw}"`);
     }
     callbackPort = n;
   }
@@ -68,9 +68,9 @@ export function resolveConfig(env: Readonly<Record<string, string | undefined>>)
   if (clientId === undefined) missing.push("SPOTIFY_CLIENT_ID");
   if (clientSecret === undefined) missing.push("SPOTIFY_CLIENT_SECRET");
   if (redirectUri === undefined) missing.push("SPOTIFY_REDIRECT_URI");
-  if (callbackPort === undefined) missing.push("SETLIST_CALLBACK_PORT");
+  if (callbackPort === undefined) missing.push("MUSIC_CALLBACK_PORT");
 
-  const config: SetlistConfig = { missing };
+  const config: MusicConfig = { missing };
   if (setlistFmKey !== undefined) config.setlistFmKey = setlistFmKey;
   if (clientId !== undefined && clientSecret !== undefined && redirectUri !== undefined) {
     config.spotify = {

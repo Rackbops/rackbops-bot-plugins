@@ -14,14 +14,14 @@ import {
   redeemPendingAuth,
   removeConnection,
   resetStoreForTest,
-  setlistState,
-  type SetlistState,
+  musicState,
+  type MusicState,
 } from "./store.js";
 import { makeFakeHost, makeRealStorage } from "./test-host.js";
 
 const NOW = 1_700_000_000_000;
 
-function withPending(token: string, discordUserId: string, expiresAt: number): SetlistState {
+function withPending(token: string, discordUserId: string, expiresAt: number): MusicState {
   return { connections: {}, pending: { [token]: { discordUserId, expiresAt } } };
 }
 
@@ -75,7 +75,7 @@ describe("pending handshakes", () => {
   });
 
   test("pruning drops only what has actually expired", () => {
-    const state: SetlistState = {
+    const state: MusicState = {
       connections: {},
       pending: { dead: { discordUserId: "a", expiresAt: NOW - 1 }, alive: { discordUserId: "b", expiresAt: NOW + 1 } },
     };
@@ -118,30 +118,30 @@ describe("generateStateToken", () => {
 
 describe("the host-backed singleton", () => {
   test("initStore reads an existing file and commit round-trips through real atomic writes", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "setlist-store-"));
+    const dir = await mkdtemp(join(tmpdir(), "music-store-"));
     try {
       const storage = makeRealStorage();
       const host = makeFakeHost({ dataDir: dir, storage });
       await initStore(host);
-      expect(setlistState()).toEqual(freshState());
+      expect(musicState()).toEqual(freshState());
 
-      await commit(putConnection(setlistState(), "user1", "RT1", NOW));
+      await commit(putConnection(musicState(), "user1", "RT1", NOW));
       // A second init, as a restarted bot would do, must see the persisted connection.
       resetStoreForTest(freshState());
       await initStore(host);
-      expect(setlistState().connections.user1).toEqual({ refreshToken: "RT1", connectedAt: NOW });
+      expect(musicState().connections.user1).toEqual({ refreshToken: "RT1", connectedAt: NOW });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
   });
 
   test("a file missing its maps is repaired rather than throwing on first access", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "setlist-store-"));
+    const dir = await mkdtemp(join(tmpdir(), "music-store-"));
     try {
-      await Bun.write(join(dir, "setlist.json"), JSON.stringify({ connections: null }));
+      await Bun.write(join(dir, "music.json"), JSON.stringify({ connections: null }));
       await initStore(makeFakeHost({ dataDir: dir, storage: makeRealStorage() }));
-      expect(setlistState().connections).toEqual({});
-      expect(setlistState().pending).toEqual({});
+      expect(musicState().connections).toEqual({});
+      expect(musicState().pending).toEqual({});
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

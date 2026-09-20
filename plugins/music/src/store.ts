@@ -1,4 +1,4 @@
-// The plugin's own persistent state in `${dataDir}/setlist.json`: who has connected Spotify, and
+// The plugin's own persistent state in `${dataDir}/music.json`: who has connected Spotify, and
 // which OAuth handshakes are in flight. Every state transition is a PURE function over a state
 // value (`beginPendingAuth`, `redeemPendingAuth`, ...) so `store.test.ts` exercises expiry,
 // single-use and replacement as plain data; the module-level singleton and the host-backed writer
@@ -26,14 +26,14 @@ export interface PendingAuth {
   expiresAt: number;
 }
 
-export interface SetlistState {
+export interface MusicState {
   /** Discord user id -> their Spotify connection. */
   connections: Record<string, Connection>;
   /** OAuth `state` token -> the handshake it belongs to. */
   pending: Record<string, PendingAuth>;
 }
 
-export function freshState(): SetlistState {
+export function freshState(): MusicState {
   return { connections: {}, pending: {} };
 }
 
@@ -46,7 +46,7 @@ export function freshState(): SetlistState {
  * grows when someone runs `/spotify connect`, so sweeping at those two moments is enough to keep it
  * from accumulating abandoned handshakes forever.
  */
-export function prunePending(state: SetlistState, now: number): SetlistState {
+export function prunePending(state: MusicState, now: number): MusicState {
   const pending: Record<string, PendingAuth> = {};
   for (const [token, entry] of Object.entries(state.pending)) {
     if (entry.expiresAt > now) pending[token] = entry;
@@ -61,11 +61,11 @@ export function prunePending(state: SetlistState, now: number): SetlistState {
  * thought better of.
  */
 export function beginPendingAuth(
-  state: SetlistState,
+  state: MusicState,
   stateToken: string,
   discordUserId: string,
   now: number,
-): SetlistState {
+): MusicState {
   const swept = prunePending(state, now);
   const pending: Record<string, PendingAuth> = {};
   for (const [token, entry] of Object.entries(swept.pending)) {
@@ -76,37 +76,37 @@ export function beginPendingAuth(
 }
 
 export type RedeemResult =
-  | { ok: true; discordUserId: string; state: SetlistState }
-  | { ok: false; reason: "unknown" | "expired"; state: SetlistState };
+  | { ok: true; discordUserId: string; state: MusicState }
+  | { ok: false; reason: "unknown" | "expired"; state: MusicState };
 
 /**
  * Consumes a handshake token. Single-use: the token is removed whether or not it was still valid,
  * so a callback URL that leaks (a shared browser's history, a referrer header) cannot be replayed
  * to attach someone else's Spotify account to the original user's Discord id.
  */
-export function redeemPendingAuth(state: SetlistState, stateToken: string, now: number): RedeemResult {
+export function redeemPendingAuth(state: MusicState, stateToken: string, now: number): RedeemResult {
   const swept = prunePending(state, now);
   const entry = state.pending[stateToken];
   const { [stateToken]: _removed, ...rest } = swept.pending;
-  const without: SetlistState = { ...swept, pending: rest };
+  const without: MusicState = { ...swept, pending: rest };
   if (entry === undefined) return { ok: false, reason: "unknown", state: without };
   if (entry.expiresAt <= now) return { ok: false, reason: "expired", state: without };
   return { ok: true, discordUserId: entry.discordUserId, state: without };
 }
 
 export function putConnection(
-  state: SetlistState,
+  state: MusicState,
   discordUserId: string,
   refreshToken: string,
   now: number,
-): SetlistState {
+): MusicState {
   return {
     ...state,
     connections: { ...state.connections, [discordUserId]: { refreshToken, connectedAt: now } },
   };
 }
 
-export function removeConnection(state: SetlistState, discordUserId: string): SetlistState {
+export function removeConnection(state: MusicState, discordUserId: string): MusicState {
   const { [discordUserId]: _removed, ...rest } = state.connections;
   return { ...state, connections: rest };
 }
@@ -115,34 +115,34 @@ export function removeConnection(state: SetlistState, discordUserId: string): Se
 // The live singleton
 // ---------------------------------------------------------------------------------------------------
 
-let current: SetlistState = freshState();
-let writer: { save: (data: SetlistState) => Promise<void> } | undefined;
+let current: MusicState = freshState();
+let writer: { save: (data: MusicState) => Promise<void> } | undefined;
 
-export function setlistState(): SetlistState {
+export function musicState(): MusicState {
   return current;
 }
 
 /** Replaces the live state and persists it through the host's serialized atomic writer. */
-export async function commit(next: SetlistState): Promise<void> {
+export async function commit(next: MusicState): Promise<void> {
   current = next;
   if (writer) await writer.save(current);
 }
 
 /** Loads (or creates) `setlist.json`. Runs in `activate()`, never in `createPlugin`. */
 export async function initStore(host: HostApi): Promise<void> {
-  const path = `${host.dataDir}/setlist.json`;
-  current = await host.storage.readJsonOrFresh<SetlistState>(path, freshState, "setlist");
+  const path = `${host.dataDir}/music.json`;
+  current = await host.storage.readJsonOrFresh<MusicState>(path, freshState, "music");
   // A file written by an older version, or one hand-edited into the wrong shape, must not make
   // every later access throw on a missing map.
   if (typeof current.connections !== "object" || current.connections === null) current.connections = {};
   if (typeof current.pending !== "object" || current.pending === null) current.pending = {};
-  writer = host.storage.createJsonWriter<SetlistState>(path);
+  writer = host.storage.createJsonWriter<MusicState>(path);
 }
 
 /** Test seam: point the singleton at a given state and storage without a real `HostApi`. */
-export function resetStoreForTest(state: SetlistState, storage?: HostStorage, path?: string): void {
+export function resetStoreForTest(state: MusicState, storage?: HostStorage, path?: string): void {
   current = state;
-  writer = storage && path ? storage.createJsonWriter<SetlistState>(path) : undefined;
+  writer = storage && path ? storage.createJsonWriter<MusicState>(path) : undefined;
 }
 
 /**

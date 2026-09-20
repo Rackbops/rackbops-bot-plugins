@@ -123,7 +123,7 @@ export async function handleCallback(req: Request, clientIp: string, deps: Callb
 }
 
 /**
- * Started from `activate()` only when SETLIST_CALLBACK_PORT is set -- absent config means no server
+ * Started from `activate()` only when MUSIC_CALLBACK_PORT is set -- absent config means no server
  * at all, matching warbandeer's fail-closed rule. `CF-Connecting-IP` is trusted for the same reason
  * and with the same caveat as warbandeer's: Cloudflare's edge sets it for anything that genuinely
  * transits its network, and nothing else can reach this port today, but a future container on the
@@ -144,6 +144,6 @@ export function startCallbackServer(
     },
   });
   const boundPort = server.port ?? port;
-  console.log(`[setlist] Spotify callback server listening on :${boundPort}${deps.callbackPath}`);
+  console.log(`[music] Spotify callback server listening on :${boundPort}${deps.callbackPath}`);
   return { port: boundPort, stop: () => server.stop() };
 }
