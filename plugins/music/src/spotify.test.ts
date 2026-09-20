@@ -1,5 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { authorizeUrl, chunkUris, createSpotifyClient, MAX_URIS_PER_ADD, toTrackCandidates } from "./spotify.js";
+import {
+  authorizeUrl,
+  chunkUris,
+  classifyPlayerError,
+  createSpotifyClient,
+  hasScopes,
+  MAX_URIS_PER_ADD,
+  PARTY_SCOPES,
+  SPOTIFY_SCOPES,
+  toTrackCandidates,
+} from "./spotify.js";
 
 const CONFIG = {
   clientId: "cid",
@@ -143,7 +153,7 @@ describe("createSpotifyClient", () => {
   test("a non-JSON error body still yields the status, not a crash", async () => {
     const client = createSpotifyClient(CONFIG, async () => new Response("<html>502</html>", { status: 502 }));
     const result = await client.searchTracks("AT", "q");
-    expect(result).toEqual({ ok: false, error: "Spotify returned HTTP 502" });
+    expect(result).toEqual({ ok: false, error: "Spotify returned HTTP 502", status: 502 });
   });
 
   test("searchTracks asks for the dev-mode-legal limit of 10", async () => {
@@ -205,5 +215,39 @@ describe("createSpotifyClient", () => {
     });
     await client.addTracks("AT", "PL 1/x", ["spotify:track:a"]);
     expect(seen).toBe("https://api.spotify.com/v1/playlists/PL%201%2Fx/items");
+  });
+});
+
+describe("scopes", () => {
+  test("a connection that recorded no scopes is treated as playlist-only, never as party-capable", () => {
+    expect(hasScopes(undefined, SPOTIFY_SCOPES)).toBe(true);
+    expect(hasScopes(undefined, PARTY_SCOPES)).toBe(false);
+  });
+
+  test("the granted set is compared as a set, since Spotify returns its own order", () => {
+    expect(hasScopes("user-modify-playback-state playlist-modify-public playlist-modify-private user-read-playback-state", PARTY_SCOPES)).toBe(true);
+    expect(hasScopes("playlist-modify-private playlist-modify-public user-read-playback-state", PARTY_SCOPES)).toBe(false);
+  });
+
+  test("the party link asks for the playback scopes; /spotify connect still does not", () => {
+    expect(new URL(authorizeUrl(CONFIG, "S1")).searchParams.get("scope")).toBe(SPOTIFY_SCOPES);
+    expect(authorizeUrl(CONFIG, "S1")).not.toContain("user-modify-playback-state");
+    expect(new URL(authorizeUrl(CONFIG, "S1", PARTY_SCOPES)).searchParams.get("scope")).toBe(PARTY_SCOPES);
+  });
+});
+
+describe("classifyPlayerError", () => {
+  test("403 splits on the message: a free account is not a missing scope", () => {
+    expect(classifyPlayerError(403, "Player command failed: Premium required")).toBe("premium");
+    expect(classifyPlayerError(403, "Insufficient client scope")).toBe("scope");
+  });
+
+  test("404 on a player call means no active device, not a missing endpoint", () => {
+    expect(classifyPlayerError(404, "Player command failed: No active device found")).toBe("no-device");
+    expect(classifyPlayerError(undefined, "NO_ACTIVE_DEVICE")).toBe("no-device");
+  });
+
+  test("a network failure, which carries no status, is nobody's fault in particular", () => {
+    expect(classifyPlayerError(undefined, "couldn't reach Spotify")).toBe("other");
   });
 });

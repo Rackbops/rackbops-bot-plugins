@@ -19,11 +19,20 @@ export interface Connection {
   refreshToken: string;
   /** ms epoch, for `/spotify status`. */
   connectedAt: number;
+  /**
+   * The space-separated scopes Spotify says this grant carries, recorded so a feature can check
+   * before it calls. Absent on a connection made before scopes were recorded, which is playlist-only
+   * by construction -- `hasScopes` treats it that way rather than guessing.
+   */
+  scopes?: string;
 }
 
 export interface PendingAuth {
   discordUserId: string;
   expiresAt: number;
+  /** What this handshake asked Spotify for, so the callback can record a grant even if Spotify's
+   *  token response omits `scope`. */
+  scopes?: string;
 }
 
 export interface MusicState {
@@ -65,18 +74,21 @@ export function beginPendingAuth(
   stateToken: string,
   discordUserId: string,
   now: number,
+  scopes?: string,
 ): MusicState {
   const swept = prunePending(state, now);
   const pending: Record<string, PendingAuth> = {};
   for (const [token, entry] of Object.entries(swept.pending)) {
     if (entry.discordUserId !== discordUserId) pending[token] = entry;
   }
-  pending[stateToken] = { discordUserId, expiresAt: now + PENDING_AUTH_TTL_MS };
+  const entry: PendingAuth = { discordUserId, expiresAt: now + PENDING_AUTH_TTL_MS };
+  if (scopes !== undefined) entry.scopes = scopes;
+  pending[stateToken] = entry;
   return { ...swept, pending };
 }
 
 export type RedeemResult =
-  | { ok: true; discordUserId: string; state: MusicState }
+  | { ok: true; discordUserId: string; scopes?: string; state: MusicState }
   | { ok: false; reason: "unknown" | "expired"; state: MusicState };
 
 /**
@@ -91,18 +103,30 @@ export function redeemPendingAuth(state: MusicState, stateToken: string, now: nu
   const without: MusicState = { ...swept, pending: rest };
   if (entry === undefined) return { ok: false, reason: "unknown", state: without };
   if (entry.expiresAt <= now) return { ok: false, reason: "expired", state: without };
-  return { ok: true, discordUserId: entry.discordUserId, state: without };
+  const redeemed: RedeemResult = { ok: true, discordUserId: entry.discordUserId, state: without };
+  if (entry.scopes !== undefined) redeemed.scopes = entry.scopes;
+  return redeemed;
 }
 
+/**
+ * Records (or rotates) a connection. `scopes` left out KEEPS whatever the stored connection already
+ * had -- the token-rotation path knows nothing new about the grant, and dropping the recorded
+ * scopes there would silently demote a party-capable connection back to playlist-only on the next
+ * refresh.
+ */
 export function putConnection(
   state: MusicState,
   discordUserId: string,
   refreshToken: string,
   now: number,
+  scopes?: string,
 ): MusicState {
+  const next: Connection = { refreshToken, connectedAt: now };
+  const carried = scopes ?? state.connections[discordUserId]?.scopes;
+  if (carried !== undefined) next.scopes = carried;
   return {
     ...state,
-    connections: { ...state.connections, [discordUserId]: { refreshToken, connectedAt: now } },
+    connections: { ...state.connections, [discordUserId]: next },
   };
 }
 

@@ -14,6 +14,12 @@ export interface TrackCandidate {
   artistNames: string[];
   /** 0-100 as Spotify reports it; used only to break ties between otherwise equal candidates. */
   popularity: number;
+  /**
+   * Track length in ms. Nothing in this module reads it -- it rides along because the listening
+   * party has to know when a track ends to start the next one, and `/search` is where the number
+   * comes from. Optional so a candidate built by an older caller (or a test) stays valid.
+   */
+  durationMs?: number;
 }
 
 export interface SongQuery {

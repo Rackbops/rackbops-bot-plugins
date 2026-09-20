@@ -4,6 +4,10 @@ import { initCommands, musicCommands, musicInteractions } from "./commands.js";
 import { createSetlistFmClient } from "./setlistfm.js";
 import { createSpotifyClient } from "./spotify.js";
 import { createRateLimiter, startCallbackServer } from "./server.js";
+import { initParties, type Party } from "./party.js";
+import { notifyParty } from "./notify.js";
+import { createPartyRunner, realScheduler, type PartyRunner } from "./runner.js";
+import { accessTokenFor } from "./tokens.js";
 import { commit, initStore, putConnection, redeemPendingAuth, musicState } from "./store.js";
 
 /**
@@ -32,18 +36,49 @@ export function createPlugin(host: HostApi): Plugin {
   let serverRunning = false;
   let stopServer: (() => void) | undefined;
 
-  initCommands({ config, setlistFm, spotify, serverRunning: () => serverRunning });
+  // The party's clock. Track boundaries ride on the runner's own timers rather than the host's
+  // 60-second tick -- that tick is shared with every other plugin and runs its checks in sequence,
+  // so it is the wrong place to land a track change. The tick below only repairs: it re-arms a
+  // timer lost to a restart and corrects a member who has drifted.
+  let runner: PartyRunner | undefined;
+  if (spotify !== undefined) {
+    const client = spotify;
+    runner = createPartyRunner({
+      spotify: client,
+      accessTokenFor: (discordUserId) => accessTokenFor(client, discordUserId),
+      now: () => Date.now(),
+      schedule: realScheduler,
+      notify: (party: Party, message: string) => notifyParty(party, message),
+      log: host.log,
+    });
+  }
+
+  initCommands({ config, setlistFm, spotify, runner, serverRunning: () => serverRunning });
+
+  const activeRunner = runner;
 
   return {
     commands: musicCommands(),
 
-    // The host routes every component interaction whose `customId` starts with `music:` here. Today
-    // that is only `/setlist`'s same-day show picker; the handler answers anything else it doesn't
-    // recognise rather than leaving Discord to show "interaction failed".
+    ticks:
+      activeRunner === undefined
+        ? []
+        : [
+            {
+              name: "party-sweep",
+              run: () => activeRunner.sweep(),
+            },
+          ],
+
+    // The host routes every component interaction whose `customId` starts with `music:` here --
+    // `/setlist`'s same-day show picker and the party's Join button both. `musicInteractions` tells
+    // them apart and answers an id it doesn't recognise rather than leaving Discord to show
+    // "interaction failed".
     interactions: musicInteractions,
 
     async activate() {
       await initStore(host);
+      await initParties(host);
 
       // Fail closed: no port, or an incomplete Spotify app, means no listener at all rather than a
       // port bound for a flow that cannot complete.
@@ -59,7 +94,14 @@ export function createPlugin(host: HostApi): Plugin {
             // Persisted either way: the token is consumed on a failed redemption too, so a leaked
             // callback URL cannot be replayed.
             await commit(redeemed.state);
-            if (redeemed.ok) return { ok: true, discordUserId: redeemed.discordUserId };
+            if (redeemed.ok) {
+              const answer: { ok: true; discordUserId: string; scopes?: string } = {
+                ok: true,
+                discordUserId: redeemed.discordUserId,
+              };
+              if (redeemed.scopes !== undefined) answer.scopes = redeemed.scopes;
+              return answer;
+            }
             return {
               ok: false,
               error:
@@ -69,8 +111,8 @@ export function createPlugin(host: HostApi): Plugin {
             };
           },
           exchangeCode: (code) => spotifyClient.exchangeCode(code),
-          saveConnection: async (discordUserId, refreshToken) => {
-            await commit(putConnection(musicState(), discordUserId, refreshToken, Date.now()));
+          saveConnection: async (discordUserId, refreshToken, scopes) => {
+            await commit(putConnection(musicState(), discordUserId, refreshToken, Date.now(), scopes));
             // The user id is safe to log; the refresh token never is.
             host.log.info(`connected Spotify for discord user ${discordUserId}`);
           },
@@ -91,6 +133,9 @@ export function createPlugin(host: HostApi): Plugin {
     },
 
     async dispose() {
+      // Timers first: a fired-mid-shutdown advance would try to play on players the bot is about to
+      // stop steering, and `dispose` is bounded, so it must not wait on a Spotify round trip.
+      activeRunner?.stopAll();
       if (stopServer !== undefined) {
         serverRunning = false;
         stopServer();

@@ -52,6 +52,11 @@ function fakeSpotify(
       addedUris.push(...uris);
       return { ok: true, value: uris.length };
     },
+    // The player half exists for the listening party; nothing in the playlist build path calls it.
+    play: async () => ({ ok: false, error: "not used" }),
+    playbackState: async () => ({ ok: false, error: "not used" }),
+    devices: async () => ({ ok: false, error: "not used" }),
+    transfer: async () => ({ ok: false, error: "not used" }),
     ...overrides,
   };
   return { client, created, addedUris };

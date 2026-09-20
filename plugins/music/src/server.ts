@@ -42,10 +42,13 @@ export interface CallbackDeps {
   /** The path component of SPOTIFY_REDIRECT_URI -- the only path this server answers on. */
   callbackPath: string;
   /** Consumes the `state` token, yielding the Discord user who started the handshake. */
-  redeemState(stateToken: string): Promise<{ ok: true; discordUserId: string } | { ok: false; error: string }>;
-  exchangeCode(code: string): Promise<Result<{ accessToken: string; refreshToken: string }>>;
-  /** Persists the connection. Never logs or echoes the refresh token. */
-  saveConnection(discordUserId: string, refreshToken: string): Promise<void>;
+  redeemState(
+    stateToken: string,
+  ): Promise<{ ok: true; discordUserId: string; scopes?: string } | { ok: false; error: string }>;
+  exchangeCode(code: string): Promise<Result<{ accessToken: string; refreshToken: string; scopes?: string }>>;
+  /** Persists the connection. Never logs or echoes the refresh token. `scopes` is what Spotify says
+   *  the grant carries, so a later feature can check for its own scope before it calls. */
+  saveConnection(discordUserId: string, refreshToken: string, scopes?: string): Promise<void>;
   rateLimiter: RateLimiter;
 }
 
@@ -118,7 +121,14 @@ export async function handleCallback(req: Request, clientIp: string, deps: Callb
   const exchanged = await deps.exchangeCode(code);
   if (!exchanged.ok) return page("Couldn't finish connecting", exchanged.error, 502);
 
-  await deps.saveConnection(redeemed.discordUserId, exchanged.value.refreshToken);
+  // Spotify's own answer wins; the scopes the handshake ASKED for are the fallback, for the case
+  // where a token response omits `scope` -- recording nothing there would leave a genuinely
+  // party-capable connection looking playlist-only until the user reconnected for no reason.
+  await deps.saveConnection(
+    redeemed.discordUserId,
+    exchanged.value.refreshToken,
+    exchanged.value.scopes ?? redeemed.scopes,
+  );
   return page("Spotify connected", "You can close this tab and go back to Discord.", 200);
 }
 

@@ -147,3 +147,23 @@ describe("the host-backed singleton", () => {
     }
   });
 });
+
+describe("recorded scopes", () => {
+  test("a rotation keeps the recorded scopes -- otherwise a refresh would demote the connection", () => {
+    const granted = putConnection(freshState(), "user1", "RT1", NOW, "a b");
+    const rotated = putConnection(granted, "user1", "RT2", NOW + 5);
+    expect(rotated.connections.user1?.scopes).toBe("a b");
+  });
+
+  test("a new grant replaces the old one, so narrowing in Spotify's settings is noticed", () => {
+    const granted = putConnection(freshState(), "user1", "RT1", NOW, "a b");
+    const narrowed = putConnection(granted, "user1", "RT1", NOW + 5, "a");
+    expect(narrowed.connections.user1?.scopes).toBe("a");
+  });
+
+  test("the scopes a handshake asked for survive to its redemption", () => {
+    const state = beginPendingAuth(freshState(), "TOK", "user1", NOW, "a b");
+    const redeemed = redeemPendingAuth(state, "TOK", NOW + 1);
+    expect(redeemed.ok && redeemed.scopes).toBe("a b");
+  });
+});
