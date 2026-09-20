@@ -1,0 +1,58 @@
+{
+  "name": "@rackbops/plugin-music",
+  "version": "1.0.0",
+  "description": "Music features: setlist.fm setlists turned into Spotify playlists, and the Spotify account link (/setlist, /spotify)",
+  "type": "module",
+  "main": "dist/plugin.js",
+  "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rackbops/rackbops-bot-plugins.git",
+    "directory": "plugins/music"
+  },
+  "peerDependencies": {
+    "discord.js": "^14.27.0"
+  },
+  "botPlugin": {
+    "hostApiVersion": 1,
+    "intents": [],
+    "commands": ["setlist", "spotify"],
+    "env": [
+      {
+        "key": "SETLISTFM_API_KEY",
+        "format": "^\\S+$",
+        "required": false,
+        "secret": true,
+        "description": "setlist.fm API key (free for non-commercial use, requested from your setlist.fm account settings); unset = /setlist reports the feature unconfigured."
+      },
+      {
+        "key": "SPOTIFY_CLIENT_ID",
+        "format": "^\\S+$",
+        "required": false,
+        "secret": true,
+        "description": "Spotify app client id from developer.spotify.com; unset = /spotify and /setlist report the feature unconfigured."
+      },
+      {
+        "key": "SPOTIFY_CLIENT_SECRET",
+        "format": "^\\S+$",
+        "required": false,
+        "secret": true,
+        "description": "Spotify app client secret."
+      },
+      {
+        "key": "SPOTIFY_REDIRECT_URI",
+        "format": "^https://[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]+$",
+        "required": false,
+        "secret": false,
+        "description": "The public HTTPS callback URL, reachable through the Cloudflare Tunnel, registered verbatim as a Redirect URI on the Spotify app. Its path is what the callback server answers on."
+      },
+      {
+        "key": "MUSIC_CALLBACK_PORT",
+        "format": "^([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$",
+        "required": false,
+        "secret": false,
+        "description": "Port the Spotify OAuth callback server binds inside the container; unset = no callback server, so /spotify connect reports the feature disabled."
+      }
+    ]
+  }
+}
