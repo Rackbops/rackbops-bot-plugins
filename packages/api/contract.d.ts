@@ -13,8 +13,12 @@ import type {
 
 /**
  * Bumped when `HostApi`/`Plugin` change incompatibly. A Plugin Index entry declaring a different
- * value is skipped with a reason and never loaded. Integer equality on purpose — every plugin is
- * built against one exact host API — a range can come later if plugins ever outlive host versions.
+ * value is skipped with a reason: its current version is never installed or loaded. That does not
+ * always mean the plugin as a whole is never loaded (#222): when the entry needs a NEWER host than
+ * this one, an older version pinned in `PLUGINS` or recorded in the previous boot's `state.json` is
+ * kept running instead, provided the entry declares no intents — the exact conditions are in
+ * `selectPlugins`, `src/plugins/registry.ts`. Integer equality on purpose — every plugin is built
+ * against one exact host API — a range can come later if plugins ever outlive host versions.
  */
 export const HOST_API_VERSION = 1;
 
@@ -57,7 +61,13 @@ export interface PluginIndexEntry {
   description: string;
   /** Must equal `HOST_API_VERSION` to be installable; a newer plugin that needs a newer host is reported, not installed. */
   hostApiVersion: number;
-  /** `GatewayIntentBits` values as numbers, so the JSON needs no discord.js; unioned into the Client before construction. */
+  /** `GatewayIntentBits` values as numbers, so the JSON needs no discord.js; unioned into the Client before construction.
+   *  RESERVED for a future event seam: declaring one gives the plugin NO gateway events today. The host owns every
+   *  gateway listener and passes a plugin only the interactions addressed to it (its slash commands, and component/modal
+   *  interactions whose `customId` starts with `<name>:`), whatever intents it declares. What a declared intent does do
+   *  is widen the gateway subscription of the WHOLE bot (it joins the one shared Client), privileged intents included,
+   *  and a privileged one the operator has not enabled is a login failure (see `selectPlugins`, `src/plugins/registry.ts`).
+   *  Declare none. */
   intents?: number[];
   /** Bare slash-command names the bundle contributes; uniqueness (core + every enabled plugin) is checked BEFORE any code loads. */
   commands: string[];
@@ -189,7 +199,12 @@ export interface HostApi {
   readonly dataDir: string;
   readonly log: PluginLog;
   readonly storage: HostStorage;
-  /** Posts to `ANNOUNCE_CHANNEL_ID`, through the bot's own send path (mention-safe defaults apply). */
+  /** Posts `message` wherever the operator has routed this plugin's announcements (ADR-0006, `src/routing/post.ts`): every
+   *  channel its routing names, or `ANNOUNCE_CHANNEL_ID` when it names none — the plugin does not choose. Each channel is
+   *  posted through its registered webhook when it has a working one, and as the bot otherwise (a webhook that times out may
+   *  already have delivered, so the fallback can put a second copy there); mention-safe defaults apply on both paths.
+   *  Rejects only when EVERY target failed, with the first error, so a plugin that retries after a rejection does not
+   *  repost to the channels that did get the message. */
   announce(message: string): Promise<void>;
 }
 
@@ -200,7 +215,22 @@ export interface PluginCommand {
   handle(interaction: ChatInputCommandInteraction): Promise<void>;
 }
 
-/** One scheduler check, run inside the bot's guarded tick with the core checks; failures are isolated per check. */
+/**
+ * One scheduler check, run inside the bot's guarded tick with the core checks; failures are isolated per check.
+ *
+ * What the host does with a plugin's tick (#217, `pluginTicks` in `src/plugins/host.ts`):
+ * - Each call is waited on for at most `PLUGIN_TICK_TIMEOUT_MS` (currently 30 s). Past that the host stops WAITING
+ *   and logs the overrun as this plugin's failure; it cannot cancel the call, which keeps running.
+ * - A tick is skipped, with a warning, while its own previous call is still pending, so it never runs concurrently
+ *   with itself. That guard is per tick, not per plugin: the plugin's OTHER ticks keep running, concurrently with
+ *   the abandoned call.
+ * - A call that is merely slow recovers once it settles; one that never settles silences that one tick until the
+ *   bot restarts.
+ * - A restart, or a SIGTERM/SIGINT stop, does not wait for an abandoned call. A tick that announces should
+ *   therefore write its dedup key BEFORE it announces: an overrun past the timeout that coincides with a restart or
+ *   a stop can otherwise post the announcement a second time after the restart. Cancelling the call properly
+ *   (an `AbortSignal` in `run`) is tracked in #248.
+ */
 export interface TickCheck {
   name: string;
   run(): Promise<void>;

@@ -69,8 +69,11 @@ later, inside `activate()`.
   `[name]` log prefix, and the bot's `data/plugins/<name>` directory. **Renaming a shipped plugin
   orphans deployed config and data** -- treat it as permanent.
 - The `botPlugin` block is everything the host needs before login: `hostApiVersion` (must equal the
-  bot's `HOST_API_VERSION`, currently `1`), the gateway `intents` the plugin needs (raw
-  `GatewayIntentBits` numbers, so the manifest needs no discord.js), the bare `commands` it
+  bot's `HOST_API_VERSION`, currently `1`), the gateway `intents` field (RESERVED for a future event
+  seam -- raw `GatewayIntentBits` numbers, so the manifest needs no discord.js -- and grants the
+  plugin NO gateway events today: the host owns every gateway listener and hands a plugin only the
+  interactions addressed to it, whatever intents it declares. Declaring one still widens the gateway
+  subscription of the WHOLE bot, privileged intents included -- declare none), the bare `commands` it
   contributes (unique across core + every enabled plugin), and its `env` keys.
 - `repository` (with the monorepo `directory`) is **required**: OIDC trusted publishing signs an npm
   provenance statement, and the registry rejects the publish (E422) unless `repository.url` matches
@@ -171,6 +174,25 @@ The shared testkit's `makeFakeInteraction(customId, overrides?)` (imported as
 `MessageComponentInteraction`/`ModalSubmitInteraction` (`customId`, `replied`, `deferred`,
 `reply()`) for exercising your own `interactions` handler directly in tests, without a real host or
 gateway.
+
+### Scheduler checks (optional)
+
+A plugin can run its own periodic checks by returning `ticks` from `createPlugin` (`TickCheck` in
+[`packages/api/contract.d.ts`](packages/api/contract.d.ts)): `{ name, run(): Promise<void> }`. The
+host runs each check inside its own guarded scheduler tick, alongside the core checks, isolating
+failures per check -- but the isolation has sharp edges:
+
+- **The 30 s bound (`PLUGIN_TICK_TIMEOUT_MS`) is on the host's WAIT, not on your call.** Past that
+  bound the host stops waiting and logs the overrun as your check's failure; it cannot cancel a call
+  that is still running.
+- **The no-overlap guard is per tick, not per plugin.** Your check is skipped, with a warning, while
+  its own previous call is still pending -- your OTHER ticks keep running concurrently with the
+  abandoned call.
+- **A call that is merely slow recovers once it settles; one that never settles silences that one
+  tick until the bot restarts.**
+- **Write your dedup key before you announce.** A restart or stop does not wait for an abandoned
+  call, so an overrun that coincides with one can post your announcement a second time after the
+  restart -- write the dedup key first so a duplicate run recognizes it already posted.
 
 ### Bundling
 
