@@ -13,7 +13,7 @@ import {
   validateAccountLabel,
   validateCharacterPayload,
 } from "./characters.js";
-import { makeRealStorage } from "./test-host.js";
+import { makeRealStorage } from "../../../packages/testkit/index.js";
 
 const realisticCharacter = {
   realm: "Argent Dawn",

@@ -16,7 +16,7 @@ import {
   upsertLinkedAccount,
   verifyToken,
 } from "./links.js";
-import { makeRealStorage } from "./test-host.js";
+import { makeRealStorage } from "../../../packages/testkit/index.js";
 
 const empty = (): LinksState => ({ pending: [], accounts: {} });
 

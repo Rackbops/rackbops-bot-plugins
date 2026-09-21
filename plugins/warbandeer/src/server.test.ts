@@ -12,7 +12,7 @@ import {
 } from "./server.js";
 import { initCharacters, loadCharacterSnapshotsFrom } from "./characters.js";
 import { mintLinkCode, removeLinkedAccount, type LinksState } from "./links.js";
-import { makeRealStorage } from "./test-host.js";
+import { makeRealStorage } from "../../../packages/testkit/index.js";
 
 describe("createRateLimiter", () => {
   test("allows up to max calls within the window, then rejects", () => {

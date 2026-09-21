@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SlashCommandBuilder } from "discord.js";
 import { createPlugin } from "./index.js";
-import { makeFakeHost, makeRealStorage } from "./test-host.js";
+import { makeFakeHost, makeRealStorage } from "../../../packages/testkit/index.js";
 
 /**
  * A port that is free right now. The plugin's own config deliberately REFUSES port 0 (the manifest
@@ -29,31 +29,31 @@ const FULL_ENV = {
 
 describe("createPlugin", () => {
   test("registers exactly the three commands the manifest declares", () => {
-    const plugin = createPlugin(makeFakeHost());
+    const plugin = createPlugin(makeFakeHost({ name: "music" }));
     expect((plugin.commands ?? []).map((c) => c.name)).toEqual(["setlist", "spotify", "party"]);
   });
 
   test("loads with a completely empty env -- enabled is not the same as configured", () => {
-    expect(() => createPlugin(makeFakeHost({ env: {} }))).not.toThrow();
-    expect((createPlugin(makeFakeHost({ env: {} })).commands ?? []).length).toBe(3);
+    expect(() => createPlugin(makeFakeHost({ name: "music", env: {} }))).not.toThrow();
+    expect((createPlugin(makeFakeHost({ name: "music", env: {} })).commands ?? []).length).toBe(3);
   });
 
   test("throws on a SET but invalid value, so the host skips just this plugin", () => {
-    expect(() => createPlugin(makeFakeHost({ env: { MUSIC_CALLBACK_PORT: "nope" } }))).toThrow(
+    expect(() => createPlugin(makeFakeHost({ name: "music", env: { MUSIC_CALLBACK_PORT: "nope" } }))).toThrow(
       /MUSIC_CALLBACK_PORT/,
     );
-    expect(() => createPlugin(makeFakeHost({ env: { SPOTIFY_REDIRECT_URI: "http://insecure/cb" } }))).toThrow(
+    expect(() => createPlugin(makeFakeHost({ name: "music", env: { SPOTIFY_REDIRECT_URI: "http://insecure/cb" } }))).toThrow(
       /must be an https:\/\/ URL/,
     );
   });
 
   test("createPlugin performs no I/O -- it must be safe to call before takeOver()", () => {
     // A dataDir that cannot exist: anything touching the filesystem here would throw.
-    expect(() => createPlugin(makeFakeHost({ env: FULL_ENV, dataDir: "/nonexistent-dir/deeper" }))).not.toThrow();
+    expect(() => createPlugin(makeFakeHost({ name: "music", env: FULL_ENV, dataDir: "/nonexistent-dir/deeper" }))).not.toThrow();
   });
 
   test("/setlist takes url, artist and date, all optional", () => {
-    const plugin = createPlugin(makeFakeHost());
+    const plugin = createPlugin(makeFakeHost({ name: "music" }));
     const setlist = (plugin.commands ?? []).find((c) => c.name === "setlist")!;
     const body = setlist.build(new SlashCommandBuilder().setName("setlist")).toJSON();
     expect(body.description).toBe("Turn a setlist.fm setlist into a Spotify playlist");
@@ -67,19 +67,19 @@ describe("createPlugin", () => {
   });
 
   test("the plugin handles its own component interactions, for the same-day show picker", () => {
-    const plugin = createPlugin(makeFakeHost());
+    const plugin = createPlugin(makeFakeHost({ name: "music" }));
     expect(typeof plugin.interactions).toBe("function");
   });
 
   test("/spotify offers connect, disconnect and status", () => {
-    const plugin = createPlugin(makeFakeHost());
+    const plugin = createPlugin(makeFakeHost({ name: "music" }));
     const spotify = (plugin.commands ?? []).find((c) => c.name === "spotify")!;
     const body = spotify.build(new SlashCommandBuilder().setName("spotify")).toJSON();
     expect(body.options?.map((o) => o.name)).toEqual(["connect", "disconnect", "status"]);
   });
 
   test("the host's namespaced builder is respected -- the plugin never sets its own name", () => {
-    const plugin = createPlugin(makeFakeHost());
+    const plugin = createPlugin(makeFakeHost({ name: "music" }));
     const setlist = (plugin.commands ?? []).find((c) => c.name === "setlist")!;
     const body = setlist.build(new SlashCommandBuilder().setName("prefix-setlist")).toJSON();
     expect(body.name).toBe("prefix-setlist");
@@ -90,7 +90,7 @@ describe("activate / dispose", () => {
   test("with no callback port configured, no server is started and dispose is a no-op", async () => {
     const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
     try {
-      const host = makeFakeHost({
+      const host = makeFakeHost({ name: "music",
         env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: undefined },
         dataDir: dir,
         storage: makeRealStorage(),
@@ -106,7 +106,7 @@ describe("activate / dispose", () => {
   test("activate binds the callback server and dispose closes it", async () => {
     const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
     try {
-      const host = makeFakeHost({
+      const host = makeFakeHost({ name: "music",
         env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: String(freePort()) },
         dataDir: dir,
         storage: makeRealStorage(),
@@ -124,7 +124,7 @@ describe("activate / dispose", () => {
     const errors: string[] = [];
     try {
       // Port 1 is privileged; binding it as a non-root user fails.
-      const host = makeFakeHost({
+      const host = makeFakeHost({ name: "music",
         env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: "1" },
         dataDir: dir,
         storage: makeRealStorage(),
@@ -144,7 +144,7 @@ describe("activate / dispose", () => {
   test("activate creates the store file, so a first run persists from the start", async () => {
     const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
     try {
-      const host = makeFakeHost({
+      const host = makeFakeHost({ name: "music",
         env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: undefined },
         dataDir: dir,
         storage: makeRealStorage(),

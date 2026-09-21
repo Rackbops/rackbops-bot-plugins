@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeFakeHost } from "./test-host.js";
+import { makeFakeHost } from "../../../packages/testkit/index.js";
 import { initWowConfig } from "./config.js";
 import { initWowStore, wowState, _resetWowStore } from "./store.js";
 import { checkRealm, checkDmf, checkWeeklyReset, _resetRealmPollThrottle } from "./ticks.js";
@@ -38,7 +38,7 @@ beforeEach(async () => {
     BLIZZARD_CLIENT_ID: "id",
     BLIZZARD_CLIENT_SECRET: "secret",
   });
-  await initWowStore(makeFakeHost({ dataDir: dir })); // fresh install → wowState() === {}
+  await initWowStore(makeFakeHost({ name: "wow", dataDir: dir })); // fresh install → wowState() === {}
 });
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -48,7 +48,7 @@ afterEach(() => {
 describe("checkRealm", () => {
   test("seeds silently, announces only on a transition, and persists the status so it never re-announces", async () => {
     const announced: string[] = [];
-    const host = makeFakeHost({ dataDir: dir, announce: async (m) => void announced.push(m) });
+    const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async (m) => void announced.push(m) });
 
     mockRealm("UP");
     await checkRealm(host);
@@ -82,7 +82,7 @@ describe("checkRealm", () => {
   });
 
   test("the poll throttle skips a second call within the gap before any fetch", async () => {
-    const host = makeFakeHost({ dataDir: dir });
+    const host = makeFakeHost({ name: "wow", dataDir: dir });
     mockRealm("UP");
     await checkRealm(host);
     // No throttle reset — the next call must return early without touching fetch.
@@ -98,14 +98,14 @@ describe("checkRealm", () => {
     globalThis.fetch = (async () => {
       throw new Error("should not fetch when unconfigured");
     }) as unknown as typeof fetch;
-    await expect(checkRealm(makeFakeHost({ dataDir: dir }))).resolves.toBeUndefined();
+    await expect(checkRealm(makeFakeHost({ name: "wow", dataDir: dir }))).resolves.toBeUndefined();
   });
 });
 
 describe("checkDmf", () => {
   test("announces the open Faire at a fixed instant and persists the key so it never re-announces", async () => {
     const announced: string[] = [];
-    const host = makeFakeHost({ dataDir: dir, announce: async (m) => void announced.push(m) });
+    const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async (m) => void announced.push(m) });
     // config.dmfTimezone is America/Los_Angeles (the us default from beforeEach). One day into
     // September 2026's Faire window is guaranteed active, regardless of DST.
     const w = dmfWindow(2026, 8, "America/Los_Angeles");
@@ -128,7 +128,7 @@ describe("checkDmf", () => {
 
   test("does not re-announce a Faire whose key is already stored (dedup)", async () => {
     const announced: string[] = [];
-    const host = makeFakeHost({ dataDir: dir, announce: async (m) => void announced.push(m) });
+    const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async (m) => void announced.push(m) });
     // Store the CURRENT window's key so decideDmfAnnouncement returns null whether or not a Faire is
     // open right now — deterministic across every run date.
     wowState().dmfAnnouncedFor = dmfKey(currentOrNextDmf().window);
@@ -140,7 +140,7 @@ describe("checkDmf", () => {
 describe("checkWeeklyReset", () => {
   test("announces the weekly reset inside the 10-minute window and persists the key so it never re-announces", async () => {
     const announced: string[] = [];
-    const host = makeFakeHost({ dataDir: dir, announce: async (m) => void announced.push(m) });
+    const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async (m) => void announced.push(m) });
     // config.region is "us" (beforeEach) → weekly reset Tuesday 15:00 UTC. Anchor to the most recent
     // reset and step 5 minutes past it — inside the announce window — derived, so no hand-computed day.
     const last = lastWeeklyReset(new Date("2026-09-16T20:00:00Z"));
@@ -158,7 +158,7 @@ describe("checkWeeklyReset", () => {
 
   test("stays silent well outside the 10-minute post-reset window", async () => {
     const announced: string[] = [];
-    const host = makeFakeHost({ dataDir: dir, announce: async (m) => void announced.push(m) });
+    const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async (m) => void announced.push(m) });
     const last = lastWeeklyReset(new Date("2026-09-16T20:00:00Z"));
     const wellAfter = new Date(last.getTime() + 30 * 60 * 1000); // 30 min > RESET_ANNOUNCE_WINDOW_MS
     await checkWeeklyReset(host, wellAfter);

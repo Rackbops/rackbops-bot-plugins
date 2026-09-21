@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createPlugin } from "./index.js";
-import { makeFakeHost } from "./test-host.js";
+import { makeFakeHost } from "../../../packages/testkit/index.js";
 import { startWarbandeerServer, warbandeerServerRunning } from "./server.js";
 
 function makeCapturingLog() {
@@ -21,7 +21,7 @@ function makeCapturingLog() {
 describe("dispose (#184)", () => {
   test("is a no-op when the connector was never configured (no WARBANDEER_INGEST_PORT)", async () => {
     const { log, calls } = makeCapturingLog();
-    const plugin = createPlugin(makeFakeHost({ env: {}, log }));
+    const plugin = createPlugin(makeFakeHost({ name: "warbandeer", env: {}, log }));
     await plugin.activate?.();
     await expect(plugin.dispose?.()).resolves.toBeUndefined();
     expect(calls.some((c) => c.message.includes("ingest server stopped"))).toBe(false);
@@ -29,7 +29,7 @@ describe("dispose (#184)", () => {
 
   test("is a no-op when dispose is called without activate ever having run", async () => {
     const { log } = makeCapturingLog();
-    const plugin = createPlugin(makeFakeHost({ env: { WARBANDEER_INGEST_PORT: "8787" }, log }));
+    const plugin = createPlugin(makeFakeHost({ name: "warbandeer", env: { WARBANDEER_INGEST_PORT: "8787" }, log }));
     await expect(plugin.dispose?.()).resolves.toBeUndefined();
   });
 
@@ -39,7 +39,7 @@ describe("dispose (#184)", () => {
     // activate() collides with a real EADDRINUSE — the same failure mode its own try/catch names.
     const blocker = startWarbandeerServer(0);
     try {
-      const plugin = createPlugin(makeFakeHost({ env: { WARBANDEER_INGEST_PORT: String(blocker.port) }, log }));
+      const plugin = createPlugin(makeFakeHost({ name: "warbandeer", env: { WARBANDEER_INGEST_PORT: String(blocker.port) }, log }));
       await plugin.activate?.();
       expect(calls.some((c) => c.level === "error" && c.message.includes("connector failed to start"))).toBe(true);
       await expect(plugin.dispose?.()).resolves.toBeUndefined();
@@ -62,7 +62,7 @@ describe("dispose (#184)", () => {
     const freePort = probe.port;
     probe.stop();
 
-    const plugin = createPlugin(makeFakeHost({ env: { WARBANDEER_INGEST_PORT: String(freePort) }, log }));
+    const plugin = createPlugin(makeFakeHost({ name: "warbandeer", env: { WARBANDEER_INGEST_PORT: String(freePort) }, log }));
     await plugin.activate?.();
     expect(warbandeerServerRunning()).toBe(true);
     const beforeDispose = await fetch(`http://localhost:${freePort}/nope`);

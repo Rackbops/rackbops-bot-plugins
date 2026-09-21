@@ -17,7 +17,7 @@ import {
   musicState,
   type MusicState,
 } from "./store.js";
-import { makeFakeHost, makeRealStorage } from "./test-host.js";
+import { makeFakeHost, makeRealStorage } from "../../../packages/testkit/index.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -121,7 +121,7 @@ describe("the host-backed singleton", () => {
     const dir = await mkdtemp(join(tmpdir(), "music-store-"));
     try {
       const storage = makeRealStorage();
-      const host = makeFakeHost({ dataDir: dir, storage });
+      const host = makeFakeHost({ name: "music", dataDir: dir, storage });
       await initStore(host);
       expect(musicState()).toEqual(freshState());
 
@@ -139,7 +139,7 @@ describe("the host-backed singleton", () => {
     const dir = await mkdtemp(join(tmpdir(), "music-store-"));
     try {
       await Bun.write(join(dir, "music.json"), JSON.stringify({ connections: null }));
-      await initStore(makeFakeHost({ dataDir: dir, storage: makeRealStorage() }));
+      await initStore(makeFakeHost({ name: "music", dataDir: dir, storage: makeRealStorage() }));
       expect(musicState().connections).toEqual({});
       expect(musicState().pending).toEqual({});
     } finally {
