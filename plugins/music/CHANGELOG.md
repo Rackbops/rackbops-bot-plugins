@@ -5,7 +5,7 @@
 ### Added
 
 - A match log: every `/setlist` build that actually ran -- fully matched, partly matched, or failed
-  -- is recorded in `match-log.json`, in the bot's `data/` directory beside `music.json` and
+  -- is recorded in `music-match-log.json`, in the bot's `data/` directory beside `music.json` and
   `parties.json`. It keeps the most recent 50 runs, oldest dropped first, and exists so the
   matching can be tuned against real setlists instead of guesses: until now a build kept only the
   winning track and threw away the candidates the search returned, their scores and the query that

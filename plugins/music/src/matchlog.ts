@@ -1,7 +1,7 @@
-// A rolling record of how each `/setlist` build matched its songs, kept in `match-log.json` beside
-// `music.json`. It exists because `findSong` used to keep only the winning track: after a build the
-// candidates Spotify returned, their scores and the query that hit were all gone, so the matching
-// heuristics had nothing real to be tuned against.
+// A rolling record of how each `/setlist` build matched its songs, kept in `music-match-log.json`
+// beside `music.json`. It exists because `findSong` used to keep only the winning track: after a
+// build the candidates Spotify returned, their scores and the query that hit were all gone, so the
+// matching heuristics had nothing real to be tuned against.
 //
 // Recording is best-effort by construction. Nothing here can fail, delay or alter the `/setlist`
 // reply -- `commands.ts` sends the reply first and calls `recordRun` afterwards, `recordRun` turns a
@@ -101,11 +101,18 @@ let log: PluginLog | undefined;
 let warnedUninitialized = false;
 
 /**
- * Loads `match-log.json` if there is one, else starts empty -- the file itself is first written by
- * the first recorded run. Runs in `activate()`, never in `createPlugin`.
+ * The file's name inside `host.dataDir`. That directory is flat and shared -- the bot's own files
+ * and every plugin's live directly in it -- so the name carries the plugin's, and because it is a
+ * data path it is permanent once shipped. `matchlog.test.ts` pins this exact string.
+ */
+export const MATCH_LOG_FILE = "music-match-log.json";
+
+/**
+ * Loads `music-match-log.json` if there is one, else starts empty -- the file itself is first
+ * written by the first recorded run. Runs in `activate()`, never in `createPlugin`.
  */
 export async function initMatchLog(host: HostApi): Promise<void> {
-  const path = `${host.dataDir}/match-log.json`;
+  const path = `${host.dataDir}/${MATCH_LOG_FILE}`;
   const loaded = await host.storage.readJsonOrFresh<MatchLogFile>(path, freshLog, "music:match-log");
   // A file hand-edited into the wrong shape, or written by some other version, must not make every
   // later append throw. It is a diagnostic log: starting it again loses nothing that matters.

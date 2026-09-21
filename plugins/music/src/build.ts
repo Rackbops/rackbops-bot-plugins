@@ -51,8 +51,9 @@ export interface QueryTrace {
 export type SongOutcome = MatchConfidence | "missing" | "error";
 
 /**
- * What the search did for one song -- the raw material of `match-log.json`. It is a record of the
- * search only: nothing in `buildPlaylist` reads it back, so it cannot change which track is picked.
+ * What the search did for one song -- the raw material of `music-match-log.json`. It is a record
+ * of the search only: nothing in `buildPlaylist` reads it back, so it cannot change which track is
+ * picked.
  */
 export interface SongTrace {
   name: string;

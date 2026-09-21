@@ -161,7 +161,7 @@ describe("activate / dispose", () => {
     }
   });
 
-  test("activate creates the match log, and a recorded run lands in match-log.json", async () => {
+  test("activate creates the match log, and a recorded run lands in music-match-log.json", async () => {
     const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
     try {
       resetMatchLogForTest({ v: 1, runs: [] });
@@ -183,7 +183,7 @@ describe("activate / dispose", () => {
         added: 1,
         songs: [{ name: "One", searchArtist: "Band", outcome: "high" }],
       });
-      const onDisk = (await Bun.file(join(dir, "match-log.json")).json()) as MatchLogFile;
+      const onDisk = (await Bun.file(join(dir, "music-match-log.json")).json()) as MatchLogFile;
       expect(onDisk.v).toBe(1);
       expect(onDisk.runs.map((r) => r.setlistId)).toEqual(["abc123"]);
       await plugin.dispose?.();
@@ -226,7 +226,7 @@ describe("activate / dispose", () => {
 
       // One song is on Spotify, one is not -- the reply says so, and the log says how.
       expect(edits.join("\n")).toContain("Added 1 of 2 songs.");
-      const onDisk = (await Bun.file(join(dir, "match-log.json")).json()) as MatchLogFile;
+      const onDisk = (await Bun.file(join(dir, "music-match-log.json")).json()) as MatchLogFile;
       expect(onDisk.runs).toHaveLength(1);
       const made = onDisk.runs[0]!;
       expect(made.setlistId).toBe("abc123");

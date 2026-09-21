@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BuildResult, SongTrace } from "./build.js";
 import {
   appendRun,
   initMatchLog,
+  MATCH_LOG_FILE,
   MAX_RUNS,
   recordRun,
   resetMatchLogForTest,
@@ -206,7 +207,12 @@ describe("recordRun", () => {
       await initMatchLog(host);
       await recordRun(run({ setlistId: "first" }));
       await recordRun(run({ setlistId: "second" }));
-      const onDisk = (await Bun.file(join(dir, "match-log.json")).json()) as MatchLogFile;
+      // The pin on the filename. It is a permanent data path inside a directory every plugin and the
+      // bot itself share, so the literal is spelled out here rather than read from the constant, and
+      // nothing else may be left beside it (a stray `.tmp`, or the file under a second name).
+      expect(MATCH_LOG_FILE).toBe("music-match-log.json");
+      expect(await readdir(dir)).toEqual(["music-match-log.json"]);
+      const onDisk = (await Bun.file(join(dir, "music-match-log.json")).json()) as MatchLogFile;
       expect(onDisk.v).toBe(1);
       expect(onDisk.runs.map((r) => r.setlistId)).toEqual(["first", "second"]);
 
@@ -214,7 +220,7 @@ describe("recordRun", () => {
       resetMatchLogForTest(fileOf([]));
       await initMatchLog(host);
       await recordRun(run({ setlistId: "third" }));
-      const reread = (await Bun.file(join(dir, "match-log.json")).json()) as MatchLogFile;
+      const reread = (await Bun.file(join(dir, "music-match-log.json")).json()) as MatchLogFile;
       expect(reread.runs.map((r) => r.setlistId)).toEqual(["first", "second", "third"]);
     });
   });
@@ -237,7 +243,7 @@ describe("recordRun", () => {
         throw new Error("ENOSPC: no space left on device");
       },
     });
-    resetMatchLogForTest(fileOf([]), failing, "/unused/match-log.json", log);
+    resetMatchLogForTest(fileOf([]), failing, "/unused/music-match-log.json", log);
     await expect(recordRun(run({ setlistId: "doomed" }))).resolves.toBeUndefined();
     expect(warns).toHaveLength(1);
     expect(warns[0]).toContain("doomed");
@@ -254,7 +260,7 @@ describe("recordRun", () => {
         throw new Error("EACCES");
       },
     });
-    resetMatchLogForTest(fileOf([]), failing, "/unused/match-log.json", log);
+    resetMatchLogForTest(fileOf([]), failing, "/unused/music-match-log.json", log);
     await expect(recordRun(run())).resolves.toBeUndefined();
     expect(warns).toHaveLength(1);
   });
@@ -276,10 +282,10 @@ describe("initMatchLog", () => {
   test("a malformed existing file is replaced, not thrown on", async () => {
     for (const malformed of [{ v: 1, runs: "nope" }, [], null, { v: 2, runs: [] }, { runs: [] }]) {
       await inTmpDir(async (dir) => {
-        await Bun.write(join(dir, "match-log.json"), JSON.stringify(malformed));
+        await Bun.write(join(dir, "music-match-log.json"), JSON.stringify(malformed));
         await initMatchLog(makeFakeHost({ name: "music", dataDir: dir, storage: makeRealStorage() }));
         await recordRun(run({ setlistId: "after-repair" }));
-        const onDisk = (await Bun.file(join(dir, "match-log.json")).json()) as MatchLogFile;
+        const onDisk = (await Bun.file(join(dir, "music-match-log.json")).json()) as MatchLogFile;
         expect(onDisk).toEqual({ v: 1, runs: [run({ setlistId: "after-repair" })] });
       });
     }
@@ -287,10 +293,10 @@ describe("initMatchLog", () => {
 
   test("an existing well-formed file is kept and appended to", async () => {
     await inTmpDir(async (dir) => {
-      await Bun.write(join(dir, "match-log.json"), JSON.stringify(fileOf([run({ setlistId: "kept" })])));
+      await Bun.write(join(dir, "music-match-log.json"), JSON.stringify(fileOf([run({ setlistId: "kept" })])));
       await initMatchLog(makeFakeHost({ name: "music", dataDir: dir, storage: makeRealStorage() }));
       await recordRun(run({ setlistId: "new" }));
-      const onDisk = (await Bun.file(join(dir, "match-log.json")).json()) as MatchLogFile;
+      const onDisk = (await Bun.file(join(dir, "music-match-log.json")).json()) as MatchLogFile;
       expect(onDisk.runs.map((r) => r.setlistId)).toEqual(["kept", "new"]);
     });
   });
