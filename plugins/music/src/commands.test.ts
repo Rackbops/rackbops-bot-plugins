@@ -422,14 +422,16 @@ function buildSpotify(overrides: Partial<SpotifyClient> = {}): SpotifyClient {
 function wireBuild(
   record: (run: MatchRun) => Promise<void>,
   spotify: SpotifyClient,
-  { connected = true }: { connected?: boolean } = {},
-): void {
-  const two = setlist({
-    songs: [
+  {
+    connected = true,
+    songs = [
       { name: "One", searchArtist: "Band", isCover: false },
       { name: "Two", searchArtist: "Band", isCover: false },
     ],
-  });
+    wired = true,
+  }: { connected?: boolean; songs?: Setlist["songs"]; wired?: boolean } = {},
+): void {
+  const two = setlist({ songs });
   resetStoreForTest(connected ? putConnection(freshState(), "user-1", "RT", 1) : freshState());
   initCommands({
     config: { setlistFmKey: "KEY", missing: [] },
@@ -440,7 +442,8 @@ function wireBuild(
     },
     spotify,
     serverRunning: () => true,
-    matchLog: { record },
+    // `wired: false` is a plugin whose match log was never handed over: builds must still work.
+    ...(wired ? { matchLog: { record } } : {}),
     now: () => STAMP,
   });
 }
@@ -525,6 +528,61 @@ describe("recording a build", () => {
     // The failure still propagates as it always did -- only the record is added.
     await expect(handleSetlist()(run.interaction)).rejects.toThrow("Unknown interaction");
     expect(recorded).toHaveLength(1);
+  });
+
+  test("the reply goes out before the record is written, so a slow recorder cannot delay it", async () => {
+    // Both arms: the success reply, and the failure text.
+    for (const search of [
+      buildSpotify(),
+      buildSpotify({ searchTracks: async () => ({ ok: true, value: [] }) }),
+    ]) {
+      const events: string[] = [];
+      wireBuild(async () => void events.push("record"), search);
+      const run = fakeCommand({ artist: "Band" });
+      const interaction = run.interaction as unknown as { editReply: (o: { content?: string }) => Promise<void> };
+      const realEdit = interaction.editReply;
+      interaction.editReply = async (opts) => {
+        events.push("reply");
+        await realEdit(opts);
+      };
+      await handleSetlist()(run.interaction);
+      expect(events).toEqual(["reply", "record"]);
+    }
+  });
+
+  test("a build with no match log wired replies normally and warns about nothing", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      wireBuild(async () => {}, buildSpotify(), { wired: false });
+      const run = fakeCommand({ artist: "Band" });
+      await handleSetlist()(run.interaction);
+      expect(shown(run)).toContain("Added 1 of 2 songs.");
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a setlist with no songs is recorded as a failed run with none", async () => {
+    const recorded: MatchRun[] = [];
+    wireBuild(async (run) => void recorded.push(run), buildSpotify(), { songs: [] });
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+    expect(shown(run)).toContain("no songs on it yet");
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({ ok: false, attempted: 0, added: 0, songs: [] });
+  });
+
+  test("nothing is recorded when the Spotify connection no longer refreshes", async () => {
+    const recorded: MatchRun[] = [];
+    wireBuild(
+      async (run) => void recorded.push(run),
+      buildSpotify({ refresh: async () => ({ ok: false, error: "Refresh token revoked" }) }),
+    );
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+    expect(shown(run)).toContain("no longer valid");
+    expect(recorded).toEqual([]);
   });
 
   test("nothing is recorded when Spotify is not connected", async () => {

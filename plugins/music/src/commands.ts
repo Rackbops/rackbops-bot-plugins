@@ -233,9 +233,10 @@ async function recordBuild(setlist: Setlist, built: BuildResult): Promise<void> 
  * throwing. Shared by the slash command and the picker: both arrive here with a resolved setlist
  * and an already-open (deferred or updated) Discord response to write into.
  *
- * A build that actually ran is recorded whichever way it ended -- and even when sending the reply
- * throws, since that is precisely when the log is the only account of what was searched. The
- * not-configured and token-failure paths return before any build and record nothing.
+ * A build that ran is recorded whether it succeeded or came back as a failure -- and even when
+ * sending the reply throws, since that is precisely when the log is the only account of what was
+ * searched. The not-configured and token-failure paths return before any build and record nothing.
+ * (`buildPlaylist` reports its failures as results; if it ever threw instead, nothing is recorded.)
  */
 async function buildInto(
   setlist: Setlist,

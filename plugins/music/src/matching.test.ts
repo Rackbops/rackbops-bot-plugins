@@ -75,6 +75,9 @@ describe("explainCandidate", () => {
     const breakdown = explainCandidate(song, candidate);
     expect(breakdown).toEqual({ title: 100, artist: 40, tieBreak: 0.5, penalty: 0, score: 140.5 });
     expect(breakdown.score).toBe(scoreCandidate(song, candidate));
+    // scoreCandidate delegates to explainCandidate, so the line above cannot fail on its own; this
+    // literal is the number the scorer returned before the log existed.
+    expect(scoreCandidate(song, candidate)).toBe(140.5);
   });
 
   test("parts reproduce scoreCandidate for a remaster-suffixed title", () => {
@@ -82,6 +85,7 @@ describe("explainCandidate", () => {
     const breakdown = explainCandidate(song, candidate);
     expect(breakdown).toEqual({ title: 72, artist: 40, tieBreak: 0.5, penalty: 0, score: 112.5 });
     expect(breakdown.score).toBe(scoreCandidate(song, candidate));
+    expect(scoreCandidate(song, candidate)).toBe(112.5);
   });
 
   test("parts reproduce scoreCandidate for a live-penalised title", () => {
@@ -89,6 +93,7 @@ describe("explainCandidate", () => {
     const breakdown = explainCandidate(song, candidate);
     expect(breakdown).toEqual({ title: 72, artist: 40, tieBreak: 0.5, penalty: 25, score: 87.5 });
     expect(breakdown.score).toBe(scoreCandidate(song, candidate));
+    expect(scoreCandidate(song, candidate)).toBe(87.5);
   });
 
   test("a title miss is all zeros", () => {
@@ -96,6 +101,13 @@ describe("explainCandidate", () => {
     const breakdown = explainCandidate(song, candidate);
     expect(breakdown).toEqual({ title: 0, artist: 0, tieBreak: 0, penalty: 0, score: 0 });
     expect(breakdown.score).toBe(scoreCandidate(song, candidate));
+  });
+
+  test("a penalty larger than the rest clamps the total at 0 and keeps the parts", () => {
+    const candidate = track("Hey Jude (Karaoke Version)", ["Karaoke Crew"]);
+    const breakdown = explainCandidate(song, candidate);
+    expect(breakdown).toEqual({ title: 72, artist: 0, tieBreak: 0.5, penalty: 100, score: 0 });
+    expect(scoreCandidate(song, candidate)).toBe(0);
   });
 });
 

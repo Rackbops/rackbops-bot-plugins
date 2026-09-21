@@ -104,7 +104,13 @@ function artistScore(candidateArtists: string[], wanted: string): number {
   return best;
 }
 
-/** The parts of one candidate's score, for the match log. `score` is what `scoreCandidate` returns. */
+/**
+ * The parts of one candidate's score, for the match log. `score` is what `scoreCandidate` returns.
+ * Read the total as the score and the parts as how it was reached, not as a sum to trust: a
+ * candidate whose title misses gets all zeros whatever its artist, and a penalty larger than the
+ * rest is clamped, so `score` is `max(0, title + artist + tieBreak - penalty)` and can be 0 while
+ * the parts are not.
+ */
 export interface ScoreBreakdown {
   title: number;
   artist: number;

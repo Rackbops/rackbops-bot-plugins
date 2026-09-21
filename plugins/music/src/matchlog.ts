@@ -4,8 +4,9 @@
 // heuristics had nothing real to be tuned against.
 //
 // Recording is best-effort by construction. Nothing here can fail, delay or alter the `/setlist`
-// reply -- `commands.ts` sends the reply first and calls `recordRun` afterwards, and `recordRun`
-// swallows every error into a log line.
+// reply -- `commands.ts` sends the reply first and calls `recordRun` afterwards, `recordRun` turns a
+// failed write into a log line instead of an exception, and `commands.ts` contains anything that
+// still escapes (a logger that itself throws, say).
 //
 // The log carries NO Discord user id and no token. It records what was searched and what came back,
 // never who asked.
@@ -32,7 +33,10 @@ export interface MatchRun {
   error?: string;
   /** Songs on the setlist we set out to find. */
   attempted: number;
-  /** Tracks actually added to the playlist -- 0 for a failed build. */
+  /**
+   * Tracks Spotify confirmed as added -- 0 for a failed build, including one that failed after the
+   * first batch of 100 had landed; the error text says how many made it.
+   */
   added: number;
   songs: SongTrace[];
 }
@@ -74,7 +78,9 @@ export function toMatchRun(setlist: Setlist, result: BuildResult, at: string): M
 
 /**
  * The one line a build leaves in the bot log. "loose" is `medium` plus `low`: matched, but not
- * confidently. ASCII only -- this reaches `docker logs` on hosts whose console may not be UTF-8.
+ * confidently. The wording and punctuation are ASCII, since this reaches `docker logs` on hosts
+ * whose console may not be UTF-8; the artist and any error text are interpolated as they arrived,
+ * so an accented artist name still appears accented.
  */
 export function summarize(run: MatchRun): string {
   const missing = run.songs.filter((s) => s.outcome === "missing").length;
@@ -94,7 +100,10 @@ let writer: { save: (data: MatchLogFile) => Promise<void> } | undefined;
 let log: PluginLog | undefined;
 let warnedUninitialized = false;
 
-/** Loads (or creates) `match-log.json`. Runs in `activate()`, never in `createPlugin`. */
+/**
+ * Loads `match-log.json` if there is one, else starts empty -- the file itself is first written by
+ * the first recorded run. Runs in `activate()`, never in `createPlugin`.
+ */
 export async function initMatchLog(host: HostApi): Promise<void> {
   const path = `${host.dataDir}/match-log.json`;
   const loaded = await host.storage.readJsonOrFresh<MatchLogFile>(path, freshLog, "music:match-log");
@@ -108,8 +117,9 @@ export async function initMatchLog(host: HostApi): Promise<void> {
 }
 
 /**
- * Appends one run, persists it and logs its summary line. Never throws: a full disk or a
- * permissions error is reported with `log.warn` and the build that triggered it carries on.
+ * Appends one run, persists it and logs its summary line. A failed write (a full disk, a
+ * permissions error) is reported with `log.warn` rather than thrown, and the build that triggered
+ * it carries on. A logger that itself throws is not guarded here; `commands.ts` contains that.
  *
  * The summary is logged BEFORE the write, so `docker logs` still shows the build when the write is
  * the thing that failed.

@@ -243,6 +243,7 @@ describe("buildPlaylist traces", () => {
     expect(result.ok).toBe(true);
     const two = result.songs[1]!;
     expect(two.outcome).toBe("missing");
+    expect(two.searchArtist).toBe("Band");
     expect(two.picked).toBeUndefined();
     expect(two.queries!.map((q) => q.query)).toEqual(['track:"Two" artist:"Band"', "Two Band"]);
     // Spotify's order is preserved, and a rejected karaoke upload keeps the parts that sank it.
@@ -271,6 +272,7 @@ describe("buildPlaylist traces", () => {
     expect(result.ok).toBe(true);
     const one = result.songs[0]!;
     expect(one.outcome).toBe("high");
+    expect(one.searchArtist).toBe("Band");
     expect(one.picked).toEqual({ name: "One", artists: ["Band"], uri: "spotify:track:one" });
     // The first query found nothing, so the second one is the hit.
     expect(one.hitQuery).toBe(1);
@@ -287,6 +289,37 @@ describe("buildPlaylist traces", () => {
     expect(one.picked?.artists).toEqual(["Someone Else"]);
     expect(one.queries).toHaveLength(1);
     expect(one.queries![0]!.candidates[0]).toMatchObject({ name: "One", title: 100, artist: 0, penalty: 0, score: 100.5 });
+  });
+
+  test("a medium match keeps its candidate lists too", async () => {
+    // "A Completely Different Band" contains the searched artist, so the match is partial-artist: medium.
+    const { client } = fakeSpotify({ One: [candidate("One", "A Completely Different Band")] });
+    const result = await buildPlaylist(client, "AT", setlist({ songs: [song("One")] }));
+    const one = result.songs[0]!;
+    expect(one.outcome).toBe("medium");
+    expect(one.queries).toHaveLength(1);
+    expect(one.queries![0]!.candidates[0]).toMatchObject({ name: "One", title: 100, artist: 22, score: 122.5 });
+  });
+
+  test("candidates are recorded in Spotify's order, not the order they scored in", async () => {
+    // The better candidate comes SECOND, so a log that sorted by score would put it first.
+    const live = candidate("Hey Jude - Live", "Someone Else");
+    const studio = candidate("Hey Jude", "Someone Else");
+    const { client } = fakeSpotify({}, { searchTracks: async () => ({ ok: true, value: [live, studio] }) });
+    const result = await buildPlaylist(client, "AT", setlist({ songs: [song("Hey Jude")] }));
+    const hey = result.songs[0]!;
+    expect(hey.outcome).toBe("low");
+    expect(hey.picked?.name).toBe("Hey Jude");
+    const listed = hey.queries![0]!.candidates;
+    expect(listed.map((c) => c.name)).toEqual(["Hey Jude - Live", "Hey Jude"]);
+    expect(listed.map((c) => c.score)).toEqual([47.5, 100.5]);
+  });
+
+  test("a cover is traced under the original artist it was searched for", async () => {
+    const { client } = fakeSpotify({ "Cover Song": [candidate("Cover Song", "The Originals")] });
+    const result = await buildPlaylist(client, "AT", setlist({ songs: [song("Cover Song", "The Originals", true)] }));
+    expect(result.songs[0]!.searchArtist).toBe("The Originals");
+    expect(result.songs[0]!.outcome).toBe("high");
   });
 
   test("an API error part-way returns the traces so far, the failing song marked error", async () => {
@@ -306,6 +339,7 @@ describe("buildPlaylist traces", () => {
       ["Two", "error"],
     ]);
     const failed = result.songs[1]!;
+    expect(failed.searchArtist).toBe("Band");
     expect(failed.error).toBe("Spotify returned HTTP 429");
     // The query that failed is recorded, with nothing returned for it.
     expect(failed.queries).toEqual([{ query: 'track:"Two" artist:"Band"', candidates: [] }]);

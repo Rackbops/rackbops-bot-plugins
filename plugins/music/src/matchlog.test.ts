@@ -82,12 +82,15 @@ afterEach(() => resetMatchLogForTest(fileOf([])));
 
 describe("appendRun", () => {
   test("appendRun keeps the newest 50 and drops the oldest", () => {
+    // The issue promises the most recent 50; the constant is asserted by value so that changing it
+    // is a decision a test notices rather than a number the loop below quietly follows.
+    expect(MAX_RUNS).toBe(50);
     let file = fileOf([]);
-    for (let i = 0; i < MAX_RUNS + 5; i += 1) file = appendRun(file, run({ setlistId: `id-${i}` }));
-    expect(file.runs).toHaveLength(MAX_RUNS);
+    for (let i = 0; i < 55; i += 1) file = appendRun(file, run({ setlistId: `id-${i}` }));
+    expect(file.runs).toHaveLength(50);
     // Oldest gone, newest last.
     expect(file.runs[0]!.setlistId).toBe("id-5");
-    expect(file.runs[MAX_RUNS - 1]!.setlistId).toBe(`id-${MAX_RUNS + 4}`);
+    expect(file.runs[49]!.setlistId).toBe("id-54");
   });
 
   test("appendRun does not modify the file it was given", () => {
@@ -154,6 +157,16 @@ describe("toMatchRun", () => {
     expect(made.added).toBe(0);
     expect(made.attempted).toBe(2);
     expect(made.songs).toEqual(songs);
+  });
+
+  test("toMatchRun counts attempted from the setlist, not from how many songs were traced", () => {
+    // A build that died on its first song traced one of the setlist's four.
+    const four = setlist({
+      songs: ["A", "B", "C", "D"].map((name) => ({ name, searchArtist: "Band", isCover: false })),
+    });
+    const made = toMatchRun(four, { ok: false, error: "x", songs: [trace("A", "error")] }, AT);
+    expect(made.attempted).toBe(4);
+    expect(made.songs).toHaveLength(1);
   });
 });
 
