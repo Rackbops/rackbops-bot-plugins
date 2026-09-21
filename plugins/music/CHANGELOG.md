@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.3.0] - 2026-09-20
+
+### Added
+
+- A match log: every `/setlist` build that actually ran -- fully matched, partly matched, or failed
+  -- is recorded in `match-log.json`, in the plugin's data directory beside `music.json` and
+  `parties.json`. It keeps the most recent 50 runs, oldest dropped first, and exists so the
+  matching can be tuned against real setlists instead of guesses: until now a build kept only the
+  winning track and threw away the candidates Spotify returned, their scores and the query that
+  found them.
+
+  Per run it records when, which setlist (id, link, artist, date, venue, city, tour), whether the
+  build succeeded, how many songs were attempted and how many were added, and one entry per song.
+  Per song: the title and the artist it was searched under, the outcome (`high`, `medium`, `low`,
+  `missing` or `error`), the track that was picked and which query found it. For every outcome
+  except `high` it also keeps each query that was issued, with the candidates Spotify returned for
+  it in Spotify's own order and each candidate's score split into its parts (title, artist,
+  tie-break, penalty, total). A `high` match keeps no candidate lists -- a confident match needs
+  no second look, and a 25-song setlist is around 500 candidates.
+
+  A build that fails part-way -- a Spotify error on song 12, or none of the songs found -- is
+  recorded too, with the error and the songs searched up to that point. Nothing is recorded when
+  no build ran, i.e. when Spotify isn't configured or the caller hasn't connected it.
+
+  Each build also leaves one line in the bot log, so `docker logs` shows builds happening:
+  `setlist <id> "<artist> <date>": added A/N, missing M, loose L`, with `-- failed: <error>`
+  appended when the build failed. "Loose" counts `medium` and `low` matches together.
+
+  **Matching is unchanged.** Scores, confidence, the queries tried and the reply text are exactly
+  what they were in 1.2.0; the log only records what the search already did.
+
+  **The log holds no Discord user id and no token** -- it records what was searched and what came
+  back, never who asked.
+
+  Recording is best-effort. It happens after the reply has been sent, and a failure to write the
+  file is logged as a warning and never reaches the `/setlist` reply.
+
 ## [1.2.0] - 2026-09-20
 
 ### Added

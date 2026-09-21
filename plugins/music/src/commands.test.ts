@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import type { ChatInputCommandInteraction, MessageComponentInteraction } from "discord.js";
 import {
   choiceFor,
@@ -13,8 +13,10 @@ import {
 } from "./commands.js";
 import type { SetlistFmClient, SetlistFmResult, SetlistListResult } from "./setlistfm.js";
 import type { SpotifyClient } from "./spotify.js";
-import { freshState, resetStoreForTest } from "./store.js";
+import { freshState, putConnection, resetStoreForTest } from "./store.js";
 import type { BuildOutcome } from "./build.js";
+import type { MatchRun } from "./matchlog.js";
+import type { TrackCandidate } from "./matching.js";
 import type { Setlist } from "./setlistfm.js";
 
 function setlist(overrides: Partial<Setlist> = {}): Setlist {
@@ -387,6 +389,182 @@ function wirePicker(getSetlist: SetlistFmClient["getSetlist"]): void {
     serverRunning: () => true,
   });
 }
+
+// ---------------------------------------------------------------------------------------------------
+// #45: every build that actually ran is written to the match log
+// ---------------------------------------------------------------------------------------------------
+
+const STAMP = new Date("2026-09-20T12:00:00.000Z");
+
+function track(name: string, artist = "Band"): TrackCandidate {
+  return { uri: `spotify:track:${name.toLowerCase()}`, name, artistNames: [artist], popularity: 50 };
+}
+
+function buildSpotify(overrides: Partial<SpotifyClient> = {}): SpotifyClient {
+  return {
+    exchangeCode: async () => ({ ok: false, error: "not used" }),
+    refresh: async () => ({ ok: true, value: { accessToken: "AT" } }),
+    searchTracks: async (_token, query) => ({
+      ok: true,
+      value: query.includes("One") ? [track("One")] : [],
+    }),
+    createPlaylist: async () => ({ ok: true, value: { id: "PL1", url: "https://open.spotify.com/playlist/PL1" } }),
+    addTracks: async (_token, _id, uris) => ({ ok: true, value: uris.length }),
+    play: async () => ({ ok: false, error: "not used" }),
+    playbackState: async () => ({ ok: false, error: "not used" }),
+    devices: async () => ({ ok: false, error: "not used" }),
+    transfer: async () => ({ ok: false, error: "not used" }),
+    ...overrides,
+  };
+}
+
+/** Wires a build that gets as far as Spotify, for a caller who has connected. */
+function wireBuild(
+  record: (run: MatchRun) => Promise<void>,
+  spotify: SpotifyClient,
+  { connected = true }: { connected?: boolean } = {},
+): void {
+  const two = setlist({
+    songs: [
+      { name: "One", searchArtist: "Band", isCover: false },
+      { name: "Two", searchArtist: "Band", isCover: false },
+    ],
+  });
+  resetStoreForTest(connected ? putConnection(freshState(), "user-1", "RT", 1) : freshState());
+  initCommands({
+    config: { setlistFmKey: "KEY", missing: [] },
+    setlistFm: {
+      getSetlist: async (): Promise<SetlistFmResult> => ({ ok: true, setlist: two }),
+      latestForArtist: async (): Promise<SetlistFmResult> => ({ ok: true, setlist: two }),
+      showsOn: async (): Promise<SetlistListResult> => ({ ok: true, setlists: [] }),
+    },
+    spotify,
+    serverRunning: () => true,
+    matchLog: { record },
+    now: () => STAMP,
+  });
+}
+
+describe("recording a build", () => {
+  test("a successful build records one run matching the outcome", async () => {
+    const recorded: MatchRun[] = [];
+    wireBuild(async (run) => void recorded.push(run), buildSpotify());
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+    // The reply is the usual one: one song found, one not.
+    expect(shown(run)).toContain("Added 1 of 2 songs.");
+    expect(recorded).toHaveLength(1);
+    const made = recorded[0]!;
+    expect(made.at).toBe(STAMP.toISOString());
+    expect(made.setlistId).toBe("abc123");
+    expect(made.ok).toBe(true);
+    expect(made.attempted).toBe(2);
+    expect(made.added).toBe(1);
+    expect(made.songs.map((s) => [s.name, s.outcome])).toEqual([
+      ["One", "high"],
+      ["Two", "missing"],
+    ]);
+  });
+
+  test("a failed build is recorded too", async () => {
+    const recorded: MatchRun[] = [];
+    // Nothing matches, so the build fails with "none of the songs...".
+    wireBuild(async (run) => void recorded.push(run), buildSpotify({ searchTracks: async () => ({ ok: true, value: [] }) }));
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+    expect(shown(run)).toContain("none of the songs");
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]!.ok).toBe(false);
+    expect(recorded[0]!.error).toContain("none of the songs");
+    expect(recorded[0]!.added).toBe(0);
+    expect(recorded[0]!.songs.map((s) => s.outcome)).toEqual(["missing", "missing"]);
+  });
+
+  test("a build picked from the same-day menu is recorded too", async () => {
+    const recorded: MatchRun[] = [];
+    wireBuild(async (run) => void recorded.push(run), buildSpotify());
+    const run = fakePick(pickerCustomId("user-1"), ["abc123"], "user-1");
+    await musicInteractions(run.interaction);
+    expect(run.edits[0]!.content).toContain("Added 1 of 2 songs.");
+    expect(recorded).toHaveLength(1);
+  });
+
+  test("a rejecting recorder never disturbs the reply", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const good = fakeCommand({ artist: "Band" });
+      wireBuild(async () => {
+        throw new Error("disk on fire");
+      }, buildSpotify());
+      await handleSetlist()(good.interaction);
+
+      const failed = fakeCommand({ artist: "Band" });
+      wireBuild(() => {
+        // Throws before it can even return a promise.
+        throw new Error("recorder exploded");
+      }, buildSpotify({ searchTracks: async () => ({ ok: true, value: [] }) }));
+      await handleSetlist()(failed.interaction);
+
+      // Exactly what an unrecorded build would have said, on both arms.
+      expect(good.edits).toEqual([{ content: expect.stringContaining("Added 1 of 2 songs.") }]);
+      expect(failed.edits).toEqual([{ content: "none of the songs on that setlist could be found on Spotify" }]);
+      // Never silent: the failure is reported somewhere.
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a build whose reply fails to send is still recorded", async () => {
+    const recorded: MatchRun[] = [];
+    wireBuild(async (run) => void recorded.push(run), buildSpotify());
+    const run = fakeCommand({ artist: "Band" });
+    (run.interaction as unknown as { editReply: () => Promise<void> }).editReply = async () => {
+      throw new Error("Unknown interaction");
+    };
+    // The failure still propagates as it always did -- only the record is added.
+    await expect(handleSetlist()(run.interaction)).rejects.toThrow("Unknown interaction");
+    expect(recorded).toHaveLength(1);
+  });
+
+  test("nothing is recorded when Spotify is not connected", async () => {
+    const recorded: MatchRun[] = [];
+    let searched = false;
+    wireBuild(
+      async (run) => void recorded.push(run),
+      buildSpotify({
+        searchTracks: async () => {
+          searched = true;
+          return { ok: true, value: [] };
+        },
+      }),
+      { connected: false },
+    );
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+    expect(shown(run)).toContain("/spotify connect");
+    expect(searched).toBe(false);
+    expect(recorded).toEqual([]);
+  });
+
+  test("nothing is recorded when Spotify isn't configured at all", async () => {
+    const recorded: MatchRun[] = [];
+    resetStoreForTest(freshState());
+    initCommands({
+      config: { setlistFmKey: "KEY", missing: ["SPOTIFY_CLIENT_ID"] },
+      setlistFm: {
+        getSetlist: async (): Promise<SetlistFmResult> => ({ ok: false, error: "not used here" }),
+        latestForArtist: async (): Promise<SetlistFmResult> => ({ ok: false, error: "not used here" }),
+        showsOn: async (): Promise<SetlistListResult> => ({ ok: true, setlists: [] }),
+      },
+      serverRunning: () => true,
+      matchLog: { record: async (r) => void recorded.push(r) },
+    });
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+    expect(recorded).toEqual([]);
+  });
+});
 
 describe("the show picker", () => {
   test("someone else's click is turned away, since the playlist would be built on their account", async () => {

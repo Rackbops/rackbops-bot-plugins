@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { buildQueries, normalize, pickBestTrack, scoreCandidate, type TrackCandidate } from "./matching.js";
+import {
+  buildQueries,
+  explainCandidate,
+  normalize,
+  pickBestTrack,
+  scoreCandidate,
+  type TrackCandidate,
+} from "./matching.js";
 
 function track(name: string, artists: string[], popularity = 50): TrackCandidate {
   return { uri: `spotify:track:${name.replace(/\W/g, "").toLowerCase()}`, name, artistNames: artists, popularity };
@@ -57,6 +64,38 @@ describe("scoreCandidate", () => {
     const obscure = scoreCandidate(song, track("Hey Jude", ["The Beatles"], 10));
     expect(popular).toBeGreaterThan(obscure);
     expect(popular - obscure).toBeLessThan(1);
+  });
+});
+
+describe("explainCandidate", () => {
+  const song = { name: "Hey Jude", artist: "The Beatles" };
+
+  test("parts reproduce scoreCandidate for an exact match", () => {
+    const candidate = track("Hey Jude", ["The Beatles"]);
+    const breakdown = explainCandidate(song, candidate);
+    expect(breakdown).toEqual({ title: 100, artist: 40, tieBreak: 0.5, penalty: 0, score: 140.5 });
+    expect(breakdown.score).toBe(scoreCandidate(song, candidate));
+  });
+
+  test("parts reproduce scoreCandidate for a remaster-suffixed title", () => {
+    const candidate = track("Hey Jude - Remastered 2015", ["The Beatles"]);
+    const breakdown = explainCandidate(song, candidate);
+    expect(breakdown).toEqual({ title: 72, artist: 40, tieBreak: 0.5, penalty: 0, score: 112.5 });
+    expect(breakdown.score).toBe(scoreCandidate(song, candidate));
+  });
+
+  test("parts reproduce scoreCandidate for a live-penalised title", () => {
+    const candidate = track("Hey Jude - Live at Wembley", ["The Beatles"]);
+    const breakdown = explainCandidate(song, candidate);
+    expect(breakdown).toEqual({ title: 72, artist: 40, tieBreak: 0.5, penalty: 25, score: 87.5 });
+    expect(breakdown.score).toBe(scoreCandidate(song, candidate));
+  });
+
+  test("a title miss is all zeros", () => {
+    const candidate = track("Let It Be", ["The Beatles"]);
+    const breakdown = explainCandidate(song, candidate);
+    expect(breakdown).toEqual({ title: 0, artist: 0, tieBreak: 0, penalty: 0, score: 0 });
+    expect(breakdown.score).toBe(scoreCandidate(song, candidate));
   });
 });
 

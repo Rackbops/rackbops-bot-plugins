@@ -3,7 +3,14 @@
 // a fake `SpotifyClient` with no Discord interaction anywhere near it.
 
 import type { Setlist, SetlistSong } from "./setlistfm.js";
-import { buildQueries, pickBestTrack, type Match } from "./matching.js";
+import {
+  buildQueries,
+  explainCandidate,
+  pickBestTrack,
+  type Match,
+  type MatchConfidence,
+  type ScoreBreakdown,
+} from "./matching.js";
 import type { SpotifyClient } from "./spotify.js";
 
 /** Spotify rejects a playlist name longer than this. */
@@ -28,7 +35,50 @@ export interface BuildOutcome {
   missing: string[];
 }
 
-export type BuildResult = { ok: true; outcome: BuildOutcome } | { ok: false; error: string };
+/** One track Spotify returned for a query, with how it scored. The match log's unit of evidence. */
+export interface CandidateTrace extends ScoreBreakdown {
+  name: string;
+  artists: string[];
+  uri: string;
+}
+
+/** One search that was issued, with everything Spotify returned for it, in Spotify's order. */
+export interface QueryTrace {
+  query: string;
+  candidates: CandidateTrace[];
+}
+
+export type SongOutcome = MatchConfidence | "missing" | "error";
+
+/**
+ * What the search did for one song -- the raw material of `match-log.json`. It is a record of the
+ * search only: nothing in `buildPlaylist` reads it back, so it cannot change which track is picked.
+ */
+export interface SongTrace {
+  name: string;
+  searchArtist: string;
+  outcome: SongOutcome;
+  picked?: { name: string; artists: string[]; uri: string };
+  /** Index, among the queries issued, of the one that produced the pick. */
+  hitQuery?: number;
+  /**
+   * Every query issued, in order. Omitted when the outcome is "high": a confident match needs no
+   * second look, and a 25-song setlist is ~500 candidates. On an "error" outcome the last entry is
+   * the query that failed, with no candidates.
+   */
+  queries?: QueryTrace[];
+  /** Present when the outcome is "error". */
+  error?: string;
+}
+
+/** Both arms carry `songs`: a failed build is exactly the one whose search record matters most. */
+export type BuildResult =
+  | { ok: true; outcome: BuildOutcome; songs: SongTrace[] }
+  | { ok: false; error: string; songs: SongTrace[] };
+
+export type FindSongResult =
+  | { ok: true; match?: Match; trace: SongTrace }
+  | { ok: false; error: string; trace: SongTrace };
 
 /**
  * `dd-MM-yyyy` (setlist.fm's format) -> `yyyy-MM-dd`. A playlist called "... (08-09-2026)" reads as
@@ -69,14 +119,42 @@ export async function findSong(
   spotify: SpotifyClient,
   accessToken: string,
   song: SetlistSong,
-): Promise<{ ok: true; match?: Match } | { ok: false; error: string }> {
-  for (const query of buildQueries({ name: song.name, artist: song.searchArtist })) {
+): Promise<FindSongResult> {
+  const wanted = { name: song.name, artist: song.searchArtist };
+  const queries: QueryTrace[] = [];
+  for (const query of buildQueries(wanted)) {
     const result = await spotify.searchTracks(accessToken, query);
-    if (!result.ok) return result;
-    const match = pickBestTrack({ name: song.name, artist: song.searchArtist }, result.value);
-    if (match !== undefined) return { ok: true, match };
+    if (!result.ok) {
+      queries.push({ query, candidates: [] });
+      return {
+        ok: false,
+        error: result.error,
+        trace: { name: song.name, searchArtist: song.searchArtist, outcome: "error", queries, error: result.error },
+      };
+    }
+    queries.push({
+      query,
+      candidates: result.value.map((c) => ({
+        name: c.name,
+        artists: c.artistNames,
+        uri: c.uri,
+        ...explainCandidate(wanted, c),
+      })),
+    });
+    const match = pickBestTrack(wanted, result.value);
+    if (match !== undefined) {
+      const trace: SongTrace = {
+        name: song.name,
+        searchArtist: song.searchArtist,
+        outcome: match.confidence,
+        picked: { name: match.track.name, artists: match.track.artistNames, uri: match.track.uri },
+        hitQuery: queries.length - 1,
+      };
+      if (match.confidence !== "high") trace.queries = queries;
+      return { ok: true, match, trace };
+    }
   }
-  return { ok: true };
+  return { ok: true, trace: { name: song.name, searchArtist: song.searchArtist, outcome: "missing", queries } };
 }
 
 /**
@@ -94,31 +172,33 @@ export async function buildPlaylist(
   setlist: Setlist,
 ): Promise<BuildResult> {
   if (setlist.songs.length === 0) {
-    return { ok: false, error: "that setlist has no songs on it yet" };
+    return { ok: false, error: "that setlist has no songs on it yet", songs: [] };
   }
 
   const resolved: ResolvedSong[] = [];
   const missing: string[] = [];
+  const songs: SongTrace[] = [];
   for (const song of setlist.songs) {
     const found = await findSong(spotify, accessToken, song);
-    if (!found.ok) return { ok: false, error: found.error };
+    songs.push(found.trace);
+    if (!found.ok) return { ok: false, error: found.error, songs };
     if (found.match === undefined) missing.push(song.name);
     else resolved.push({ song, match: found.match });
   }
 
   if (resolved.length === 0) {
-    return { ok: false, error: "none of the songs on that setlist could be found on Spotify" };
+    return { ok: false, error: "none of the songs on that setlist could be found on Spotify", songs };
   }
 
   const name = playlistName(setlist);
   const created = await spotify.createPlaylist(accessToken, name, playlistDescription(setlist));
-  if (!created.ok) return { ok: false, error: created.error };
+  if (!created.ok) return { ok: false, error: created.error, songs };
 
   // Duplicates are kept deliberately: a song played twice (a reprise, an encore repeat) is two
   // entries on the setlist, and the playlist mirrors the show rather than de-duplicating it.
   const uris = resolved.map((r) => r.match.track.uri);
   const added = await spotify.addTracks(accessToken, created.value.id, uris);
-  if (!added.ok) return { ok: false, error: added.error };
+  if (!added.ok) return { ok: false, error: added.error, songs };
 
   return {
     ok: true,
@@ -130,5 +210,6 @@ export async function buildPlaylist(
       uncertain: resolved.filter((r) => r.match.confidence !== "high"),
       missing,
     },
+    songs,
   };
 }

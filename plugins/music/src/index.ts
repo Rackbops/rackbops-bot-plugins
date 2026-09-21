@@ -4,6 +4,7 @@ import { initCommands, musicCommands, musicInteractions } from "./commands.js";
 import { createSetlistFmClient } from "./setlistfm.js";
 import { createSpotifyClient } from "./spotify.js";
 import { createRateLimiter, startCallbackServer } from "./server.js";
+import { initMatchLog, recordRun } from "./matchlog.js";
 import { initParties, type Party } from "./party.js";
 import { notifyParty } from "./notify.js";
 import { createPartyRunner, realScheduler, type PartyRunner } from "./runner.js";
@@ -53,7 +54,14 @@ export function createPlugin(host: HostApi): Plugin {
     });
   }
 
-  initCommands({ config, setlistFm, spotify, runner, serverRunning: () => serverRunning });
+  initCommands({
+    config,
+    setlistFm,
+    spotify,
+    runner,
+    serverRunning: () => serverRunning,
+    matchLog: { record: recordRun },
+  });
 
   const activeRunner = runner;
 
@@ -79,6 +87,7 @@ export function createPlugin(host: HostApi): Plugin {
     async activate() {
       await initStore(host);
       await initParties(host);
+      await initMatchLog(host);
 
       // Fail closed: no port, or an incomplete Spotify app, means no listener at all rather than a
       // port bound for a flow that cannot complete.

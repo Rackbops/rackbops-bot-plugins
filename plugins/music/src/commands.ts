@@ -20,7 +20,8 @@ import { parseDateOption, parseSetlistUrl, type SetlistFmClient, type Setlist } 
 import type { SpotifyClient } from "./spotify.js";
 import { authorizeUrl, hasScopes, PARTY_SCOPES } from "./spotify.js";
 import { pickBestTrack } from "./matching.js";
-import { buildPlaylist, type BuildOutcome } from "./build.js";
+import { buildPlaylist, type BuildOutcome, type BuildResult } from "./build.js";
+import { toMatchRun, type MatchRun } from "./matchlog.js";
 import { accessTokenFor } from "./tokens.js";
 import {
   addMember,
@@ -62,6 +63,10 @@ interface Wiring {
   serverRunning: () => boolean;
   /** Built in `createPlugin` alongside the clients; absent only when Spotify isn't configured. */
   runner?: PartyRunner;
+  /** Where a finished build is written for later tuning. Absent = nothing is recorded. */
+  matchLog?: { record: (run: MatchRun) => Promise<void> };
+  /** The clock stamped on a recorded run; a test seam, `new Date()` when absent. */
+  now?: () => Date;
 }
 
 let wiring: Wiring | undefined;
@@ -208,9 +213,29 @@ async function replyEphemeral(interaction: ChatInputCommandInteraction, content:
 }
 
 /**
+ * Writes one finished build to the match log. Best-effort in the strict sense: it runs only after
+ * the reply has gone out, and nothing it does -- a recorder that rejects, one that throws before
+ * returning a promise, a bad clock -- can reach the caller. `recordRun` already logs its own write
+ * failures; the `console.warn` here is for whatever never got that far, so it is never silent.
+ */
+async function recordBuild(setlist: Setlist, built: BuildResult): Promise<void> {
+  try {
+    const { matchLog, now } = required();
+    if (matchLog === undefined) return;
+    await matchLog.record(toMatchRun(setlist, built, (now?.() ?? new Date()).toISOString()));
+  } catch (err) {
+    console.warn(`[music] could not record the match log for setlist ${setlist.id}: ${String(err)}`);
+  }
+}
+
+/**
  * Searches, creates and fills the playlist, reporting each failure through `edit` rather than
  * throwing. Shared by the slash command and the picker: both arrive here with a resolved setlist
  * and an already-open (deferred or updated) Discord response to write into.
+ *
+ * A build that actually ran is recorded whichever way it ended -- and even when sending the reply
+ * throws, since that is precisely when the log is the only account of what was searched. The
+ * not-configured and token-failure paths return before any build and record nothing.
  */
 async function buildInto(
   setlist: Setlist,
@@ -228,11 +253,11 @@ async function buildInto(
     return;
   }
   const built = await buildPlaylist(spotify, token.accessToken, setlist);
-  if (!built.ok) {
-    await edit(built.error);
-    return;
+  try {
+    await edit(built.ok ? formatBuildReply(setlist, built.outcome) : built.error);
+  } finally {
+    await recordBuild(setlist, built);
   }
-  await edit(formatBuildReply(setlist, built.outcome));
 }
 
 // ---------------------------------------------------------------------------------------------------
