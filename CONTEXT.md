@@ -61,6 +61,13 @@ pin only needs to change in one place.
   (`https://cdn.jsdelivr.net/npm/<pkg>@<version>/dist/admin.js`), and `build-plugins` bundles
   `src/admin/index.ts` -> `dist/admin.js` (`--target browser`, no discord.js). Design + panel side:
   the epic [rackbops-discord-bot#123](https://github.com/Rackbops/rackbops-discord-bot/issues/123).
+- **`packages/testkit/index.ts` is the shared test-only module** -- `makeRealStorage` (a faithful copy
+  of the host's storage primitives, so the concurrency tests are meaningful), `makeFakeHost({ name })`
+  (name required; `dataDir` defaults to `/tmp/<name>-fake-datadir`), and `makeFakeInteraction`. It
+  replaced a per-plugin `src/test-host.ts` copy in each plugin (#34). Imported only by `*.test.ts`
+  (`../../../packages/testkit/index.js` from a plugin's `src/`); it is never published and never
+  bundled -- `build-plugins` bundles `src/index.ts` only, and `files: ["dist"]` keeps `src/` out of
+  the tarball -- so it touches no shipped artifact and no plugin version.
 - **Relative imports need a `.js` extension** (`tsconfig.json`'s `moduleResolution: NodeNext`).
   Import the vendored contract as `../packages/api/contract.js` (type-only) -- it resolves to
   `contract.d.ts`, and Bun resolves the `.js` specifier to the `.ts`/`.d.ts` source at runtime.

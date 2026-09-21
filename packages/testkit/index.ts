@@ -1,12 +1,16 @@
-// Test-only support: a faithful HostStorage implementation and a fake HostApi builder. The plugin
-// uses `host.storage` at runtime (the bot provides it — src/storage.ts), so it ships no storage of
-// its own; these are a copy of those primitives living in TEST code, so the plugin's tests exercise
+// Test-only support shared across every plugin: a faithful HostStorage implementation, a fake
+// HostApi builder, and a fake component/modal interaction builder. A plugin uses `host.storage` at
+// runtime (the bot provides it — rackbops-discord-bot's src/storage.ts), so it ships no storage of
+// its own; these are a copy of those primitives living in TEST code, so a plugin's tests exercise
 // real atomic writes and real read-modify-write serialization (the concurrency regression the bot's
 // server.test.ts/characters.test.ts guard) without importing across repos.
+//
+// This module is NOT published — it lives under packages/ (like packages/api/), is imported only by
+// `*.test.ts`, and never enters a plugin's `dist` bundle (build-plugins bundles src/index.ts only).
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import type { MessageComponentInteraction, ModalSubmitInteraction } from "discord.js";
-import type { HostApi, HostStorage } from "../../../packages/api/contract.js";
+import type { HostApi, HostStorage } from "../api/contract.js";
 
 async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
   mkdirSync(dirname(path), { recursive: true });
@@ -66,13 +70,17 @@ export function makeRealStorage(): HostStorage {
   };
 }
 
-/** A fake HostApi for tests. `dataDir` defaults to a throwaway string (createPlugin never touches
- * the filesystem; only activate() does, and tests that reach activate pass a real temp dataDir). */
-export function makeFakeHost(overrides: Partial<HostApi> = {}): HostApi {
+/**
+ * A fake HostApi for tests. `name` is required (it was the one field that differed between the
+ * per-plugin copies this replaced); `dataDir` defaults to a throwaway string derived from it
+ * (createPlugin never touches the filesystem; only activate() does, and tests that reach activate
+ * pass a real temp dataDir). Any field can be overridden, including `dataDir`.
+ */
+export function makeFakeHost(overrides: Partial<HostApi> & { name: string }): HostApi {
+  const { name } = overrides;
   return {
-    name: "music",
     env: {},
-    dataDir: "/tmp/music-fake-datadir",
+    dataDir: `/tmp/${name}-fake-datadir`,
     log: { info() {}, warn() {}, error() {} },
     storage: makeRealStorage(),
     announce: async () => {},
