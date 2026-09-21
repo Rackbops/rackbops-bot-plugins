@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SlashCommandBuilder } from "discord.js";
+import { SlashCommandBuilder, type ChatInputCommandInteraction } from "discord.js";
 import { createPlugin } from "./index.js";
+import { recordRun, resetMatchLogForTest, type MatchLogFile } from "./matchlog.js";
 import { makeFakeHost, makeRealStorage } from "../../../packages/testkit/index.js";
 
 /**
@@ -159,4 +160,125 @@ describe("activate / dispose", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  test("activate creates the match log, and a recorded run lands in music-match-log.json", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
+    try {
+      resetMatchLogForTest({ v: 1, runs: [] });
+      const host = makeFakeHost({ name: "music",
+        env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: undefined },
+        dataDir: dir,
+        storage: makeRealStorage(),
+      });
+      const plugin = createPlugin(host);
+      await plugin.activate?.();
+      await recordRun({
+        at: "2026-09-20T12:00:00.000Z",
+        setlistId: "abc123",
+        setlistUrl: "https://www.setlist.fm/setlist/band/2026/the-venue-abc123.html",
+        artist: "Band",
+        eventDate: "08-09-2026",
+        ok: true,
+        attempted: 1,
+        added: 1,
+        songs: [{ name: "One", searchArtist: "Band", outcome: "high" }],
+      });
+      const onDisk = (await Bun.file(join(dir, "music-match-log.json")).json()) as MatchLogFile;
+      expect(onDisk.v).toBe(1);
+      expect(onDisk.runs.map((r) => r.setlistId)).toEqual(["abc123"]);
+      await plugin.dispose?.();
+    } finally {
+      resetMatchLogForTest({ v: 1, runs: [] });
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a /setlist run through the plugin's own handler is recorded and summarised in the bot log", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
+    const restoreFetch = stubFetch();
+    try {
+      resetMatchLogForTest({ v: 1, runs: [] });
+      const infos: string[] = [];
+      const host = makeFakeHost({ name: "music",
+        env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: undefined },
+        dataDir: dir,
+        storage: makeRealStorage(),
+        log: { info: (m) => infos.push(m), warn() {}, error() {} },
+      });
+      const plugin = createPlugin(host);
+      await plugin.activate?.();
+      const { commit, putConnection, musicState } = await import("./store.js");
+      await commit(putConnection(musicState(), "user-1", "RT", 1));
+
+      const edits: string[] = [];
+      const interaction = {
+        user: { id: "user-1" },
+        deferred: false,
+        replied: false,
+        options: { getString: (name: string) => (name === "artist" ? "Band" : null) },
+        deferReply: async () => {},
+        editReply: async (opts: { content?: string }) => {
+          edits.push(opts.content ?? "");
+        },
+      };
+      const setlist = (plugin.commands ?? []).find((c) => c.name === "setlist")!;
+      await setlist.handle(interaction as unknown as ChatInputCommandInteraction);
+
+      // One song is on Spotify, one is not -- the reply says so, and the log says how.
+      expect(edits.join("\n")).toContain("Added 1 of 2 songs.");
+      const onDisk = (await Bun.file(join(dir, "music-match-log.json")).json()) as MatchLogFile;
+      expect(onDisk.runs).toHaveLength(1);
+      const made = onDisk.runs[0]!;
+      expect(made.setlistId).toBe("abc123");
+      expect(made.added).toBe(1);
+      expect(made.songs.map((s) => [s.name, s.outcome])).toEqual([
+        ["One", "high"],
+        ["Two", "missing"],
+      ]);
+      expect(infos).toContain('setlist abc123 "Band 08-09-2026": added 1/2, missing 1, loose 0');
+      await plugin.dispose?.();
+    } finally {
+      restoreFetch();
+      resetMatchLogForTest({ v: 1, runs: [] });
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
+
+/**
+ * Replaces the global `fetch` with a tiny setlist.fm + Spotify. `createPlugin` builds both clients
+ * with `fetch` as their default transport, so this is the one seam that lets a test drive the real
+ * command handler end to end without a network.
+ */
+function stubFetch(): () => void {
+  const real = globalThis.fetch;
+  const raw = {
+    id: "abc123",
+    eventDate: "08-09-2026",
+    url: "https://www.setlist.fm/setlist/band/2026/the-venue-abc123.html",
+    artist: { name: "Band" },
+    venue: { name: "The Venue", city: { name: "Leeds", country: { name: "United Kingdom" } } },
+    sets: { set: [{ song: [{ name: "One" }, { name: "Two" }] }] },
+  };
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.startsWith("https://api.setlist.fm/") && url.includes("/search/setlists")) {
+      return Response.json({ setlist: [raw] });
+    }
+    if (url.startsWith("https://api.setlist.fm/")) return Response.json(raw);
+    if (url.startsWith("https://accounts.spotify.com/api/token")) return Response.json({ access_token: "AT" });
+    if (url.startsWith("https://api.spotify.com/v1/search")) {
+      const query = new URL(url).searchParams.get("q") ?? "";
+      const items = query.includes("One")
+        ? [{ uri: "spotify:track:one", name: "One", artists: [{ name: "Band" }], popularity: 50 }]
+        : [];
+      return Response.json({ tracks: { items } });
+    }
+    if (url.startsWith("https://api.spotify.com/v1/me/playlists")) return Response.json({ id: "PL1" });
+    if (url.includes("/items")) return Response.json({ snapshot_id: "s" }, { status: 201 });
+    return new Response(`unexpected request: ${url}`, { status: 500 });
+  }) as unknown as typeof fetch;
+  return () => {
+    globalThis.fetch = real;
+  };
+}

@@ -104,18 +104,43 @@ function artistScore(candidateArtists: string[], wanted: string): number {
   return best;
 }
 
-/** Exported for the tests -- the score one candidate earns for one song. */
-export function scoreCandidate(song: SongQuery, candidate: TrackCandidate): number {
+/**
+ * The parts of one candidate's score, for the match log. `score` is what `scoreCandidate` returns.
+ * Read the total as the score and the parts as how it was reached, not as a sum to trust: a
+ * candidate whose title misses gets all zeros whatever its artist, and a penalty larger than the
+ * rest is clamped, so `score` is `max(0, title + artist + tieBreak - penalty)` and can be 0 while
+ * the parts are not.
+ */
+export interface ScoreBreakdown {
+  title: number;
+  artist: number;
+  tieBreak: number;
+  penalty: number;
+  score: number;
+}
+
+/**
+ * One candidate's score split into its parts. `scoreCandidate` is defined as this function's
+ * `score`, so the parts the match log records can never drift from the number that actually picked
+ * the track.
+ */
+export function explainCandidate(song: SongQuery, candidate: TrackCandidate): ScoreBreakdown {
   const songTitle = normalize(song.name);
   const candidateTitle = normalize(candidate.name);
   const title = titleScore(candidateTitle, songTitle);
   // A candidate whose title doesn't match at all is never the right track, however well the artist
   // lines up -- returning 0 here (rather than a small positive) is what lets pickBestTrack reject
   // an entire result page instead of shipping its least-bad row.
-  if (title === 0) return 0;
+  if (title === 0) return { title: 0, artist: 0, tieBreak: 0, penalty: 0, score: 0 };
   const artist = artistScore(candidate.artistNames.map(normalize), normalize(song.artist));
   const tieBreak = candidate.popularity / 100; // < 1, so it only ever separates equals
-  return Math.max(0, title + artist + tieBreak - variantPenalty(candidateTitle, songTitle));
+  const penalty = variantPenalty(candidateTitle, songTitle);
+  return { title, artist, tieBreak, penalty, score: Math.max(0, title + artist + tieBreak - penalty) };
+}
+
+/** Exported for the tests -- the score one candidate earns for one song. */
+export function scoreCandidate(song: SongQuery, candidate: TrackCandidate): number {
+  return explainCandidate(song, candidate).score;
 }
 
 /**
