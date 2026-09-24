@@ -228,6 +228,48 @@ failures per check -- but the isolation has sharp edges:
   tick that ignores its signal and overruns into a restart can still post twice -- write the dedup
   key first so a duplicate run recognizes it already posted.
 
+### HTTP routes (optional)
+
+A plugin that needs an endpoint (a webhook receiver, an OAuth callback) can serve it from the bot's
+own HTTP router (rackbops-discord-bot#220, its ADR-0007) instead of running a server of its own.
+Return `http` from `createPlugin` (`PluginHttpInfo` in
+[`packages/api/contract.d.ts`](packages/api/contract.d.ts)):
+
+```ts
+export function createPlugin(host: HostApi): Plugin {
+  return {
+    async http(request, { path, clientIp }) {
+      // Mounted at /<your-plugin-name>/ -- `path` has that prefix stripped: "/callback", or "/" for
+      // the bare mount. `request` is untouched: full URL, query, headers, body.
+      if (request.method === "GET" && path === "/callback") return new Response("ok");
+      return new Response("Not found", { status: 404 });
+    },
+  };
+}
+```
+
+- **The public URL is `https://<the instance's API hostname>/<your-plugin-name>/<path>`.** The
+  operator points one tunnel route per instance at the bot's `HTTP_PORT`, once, so a new plugin needs
+  no Cloudflare work. The listener runs only where the operator sets `HTTP_PORT`, so treat an absent
+  router the way you treat missing config: stay loaded, and say the feature is off.
+- **The host bounds your handler.** A body over 1 MiB, chunked or not, is answered `413` before your
+  code runs, and yours arrives already read into memory, so enforce your own tighter cap. A throw is answered `500` (never with your error text), a handler still
+  running after 10 s is answered `504` for you (the call is not cancelled), and a request that
+  arrives while your plugin is not running gets `503`.
+- **A request is not a critical section.** A restart does not wait for it, so write through
+  `host.storage` (its writes are atomic) and let the client retry.
+- `clientIp` is `CF-Connecting-IP`, falling back to the socket address. It is trustworthy only for
+  traffic that really came through the tunnel.
+- **Never redirect to `path`, or build an absolute URL from `request.url`, unchecked.**
+  `/<name>//evil.com` arrives as `path` `"//evil.com"`, which is a protocol-relative URL, and
+  `request.url` takes its host from the client's `Host` header.
+- **Every plugin shares one browser origin.** Scope any cookie to `Path=/<your-plugin-name>/`, and
+  treat HTML you serve as same-origin with every other installed plugin.
+- **A bot from before rackbops-discord-bot#220 ignores `http`**, and `HOST_API_VERSION` did not
+  move, so you can't require the router. Treat a missing route the way you treat missing config.
+- warbandeer and music still run their own `Bun.serve`. Moving one under the router changes its
+  public URL (a new Spotify redirect URI, a desktop-app update), so each does it in its own release.
+
 ### Bundling
 
 `scripts/build-plugins.ts` builds `src/index.ts` to `dist/plugin.js` with
