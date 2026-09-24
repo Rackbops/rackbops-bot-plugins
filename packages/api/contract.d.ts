@@ -289,7 +289,9 @@ export type PluginInteractionHandler = (
  */
 export interface PluginHttpInfo {
   /** The request path after `/<plugin-name>`: `"/"` for `/<name>` and `/<name>/`, `"/callback"` for
-   *  `/<name>/callback`. Still percent-encoded, exactly as it arrived. No query string. */
+   *  `/<name>/callback`. No query string. It is the path as the URL parser leaves it (dot segments
+   *  resolved, still percent-encoded). `/<name>//x` arrives as `"//x"`, a protocol-relative URL:
+   *  never redirect to it unchecked. */
   path: string;
   /** `CF-Connecting-IP`, falling back to the socket address, or `"unknown"`. Trustworthy only for
    *  what really came through Cloudflare's tunnel (ADR-0007 decision 2). */
@@ -315,11 +317,14 @@ export interface Plugin {
    * Serves HTTP under `/<plugin-name>/` on the bot's own listener (#220, ADR-0007), which runs only
    * when the operator sets `HTTP_PORT`, and is reached from outside only through the instance's
    * tunnel. Called only while the plugin is running, with the prefix already stripped
-   * (`info.path`); the untouched `request` carries the full URL, headers, query and body. The host
-   * caps a body at 1 MiB (enforce your own tighter limit), answers for you with `504` once you have
-   * taken 10 s (without cancelling the call), and with `500` if you throw. A request is not a
-   * critical section: a restart does not wait for it, so write through `HostStorage`. Optional: a
-   * plugin that serves no HTTP omits it.
+   * (`info.path`). `request` carries the full URL, headers, query and body, the body already read
+   * into memory and capped at 1 MiB (a bigger one is answered `413` before you are called; enforce
+   * your own tighter limit). Its host comes from the client's `Host` header, so never build an
+   * absolute URL from it. The host answers for you with `504` once you have taken 10 s (without
+   * cancelling the call), and with `500` if you throw. Every plugin shares one browser origin: scope a
+   * cookie to `Path=/<name>/`. A request is not a critical section: a restart does not wait for it, so
+   * write through `HostStorage`. Optional: a plugin that serves no HTTP omits it; a host from before
+   * #220 ignores it.
    */
   http?(request: Request, info: PluginHttpInfo): Promise<Response>;
 }
