@@ -82,6 +82,11 @@ later, inside `activate()`.
   possibly in a C locale -- **keep to the common subset: enumerate characters, never multibyte
   ranges** (`[A-Za-z0-9]`, not `[[:alpha:]]` or unicode ranges). `required` mirrors env-set's REQUIRED
   set; `secret` keys are never listed or edited by ops tooling.
+- `destinations` (optional, rackbops-discord-bot#219) names the places the plugin can post besides
+  its usual one: `[{ "name": "news", "description": "Headlines" }]`, each `name` following the
+  plugin-name rule and unique within the plugin. The operator maps each name to a channel per server
+  in the bot's admin panel, and `host.announce(message, "news")` posts there -- see the `announce`
+  row below. Absent = the plugin posts only where its routing says.
 - `adminApiVersion` (optional) opts the plugin into its own **admin-panel tab** -- see
   [Admin tab](#admin-tab-optional) below. Absent = no tab; the plugin's `env` keys still appear as
   generic fields in the panel's config section either way.
@@ -99,7 +104,7 @@ The bundle's single export is `createPlugin(host)` (`PluginModule` in
 | `dataDir` | the bot's one `data/` directory; put plugin-owned files directly under it |
 | `storage` | atomic-write / corrupt-tolerant JSON helpers (`readJsonOrFresh`, `writeJsonAtomic`, `createJsonWriter`, `createKeyedJsonMutator`) |
 | `log` | `console`-style logging with a `[name]` prefix |
-| `announce(msg)` | posts to the bot's announce channel through its mention-safe send path |
+| `announce(msg, destination?)` | posts wherever the operator routed this plugin (the channels its routing names, else the bot's announce channel), through a registered webhook or as the bot, mention-safe either way. With `destination` -- a name declared in `botPlugin.destinations` -- it posts to the channels mapped for that name instead; a name mapped nowhere, or not declared, posts exactly where `announce(msg)` would |
 
 Two rules the host relies on:
 
@@ -175,24 +180,53 @@ The shared testkit's `makeFakeInteraction(customId, overrides?)` (imported as
 `reply()`) for exercising your own `interactions` handler directly in tests, without a real host or
 gateway.
 
+### Autocomplete (optional)
+
+A command option built with `setAutocomplete(true)` gets its suggestions from the command's own
+`autocomplete(interaction)` (rackbops-discord-bot#287; `PluginCommand` in
+[`packages/api/contract.d.ts`](packages/api/contract.d.ts)):
+
+```ts
+{
+  name: "setlist",
+  build: (b) => b.setDescription("Show a setlist").addStringOption((o) => o.setName("band").setDescription("Band").setAutocomplete(true)),
+  async autocomplete(interaction) {
+    const typed = interaction.options.getFocused();
+    await interaction.respond(bands.filter((b) => b.startsWith(typed)).slice(0, 25).map((b) => ({ name: b, value: b })));
+  },
+  async handle(interaction) { /* ... */ },
+}
+```
+
+`await` the `respond`, with at most 25 choices, well within Discord's 3 s: the host stops waiting at
+2.5 s. The host calls it only where the command itself may run (the same routing gate, failing closed
+here) and only while the plugin is running. Where the handler is absent, throws, runs past 2.5 s, or
+returns without calling `respond`, the host answers with an empty list, so the picker closes cleanly;
+a command that asks for autocomplete without a handler also gets a warning in the bot's log.
+
 ### Scheduler checks (optional)
 
 A plugin can run its own periodic checks by returning `ticks` from `createPlugin` (`TickCheck` in
-[`packages/api/contract.d.ts`](packages/api/contract.d.ts)): `{ name, run(): Promise<void> }`. The
+[`packages/api/contract.d.ts`](packages/api/contract.d.ts)): `{ name, run(signal?): Promise<void> }`. The
 host runs each check inside its own guarded scheduler tick, alongside the core checks, isolating
 failures per check -- but the isolation has sharp edges:
 
-- **The 30 s bound (`PLUGIN_TICK_TIMEOUT_MS`) is on the host's WAIT, not on your call.** Past that
-  bound the host stops waiting and logs the overrun as your check's failure; it cannot cancel a call
-  that is still running.
+- **Honour the `AbortSignal` `run` is passed (rackbops-discord-bot#248).** The host aborts it at the
+  30 s bound (`PLUGIN_TICK_TIMEOUT_MS`) and when the bot is asked to stop (a restart, or a SIGTERM).
+  Pass it to `fetch`, and check `signal?.aborted` before each write or post, returning early if it is
+  set: a stop then waits for your call to bail (up to 5 s, `PLUGIN_TICK_ABORT_GRACE_MS`) before the
+  process exits, so your tick stops at a point of its choosing. A step already under way (an
+  `announce` in flight) is not itself cancelled and can still be cut off once the grace is spent. A
+  call that ignores the signal keeps running past the bound, and a stop exits under it once the grace
+  is spent. An abort listener must not throw -- it is reported as an uncaught exception.
 - **The no-overlap guard is per tick, not per plugin.** Your check is skipped, with a warning, while
   its own previous call is still pending -- your OTHER ticks keep running concurrently with the
   abandoned call.
 - **A call that is merely slow recovers once it settles; one that never settles silences that one
   tick until the bot restarts.**
-- **Write your dedup key before you announce.** A restart or stop does not wait for an abandoned
-  call, so an overrun that coincides with one can post your announcement a second time after the
-  restart -- write the dedup key first so a duplicate run recognizes it already posted.
+- **Write your dedup key before you announce.** A stop waits at most the grace for a call, so a
+  tick that ignores its signal and overruns into a restart can still post twice -- write the dedup
+  key first so a duplicate run recognizes it already posted.
 
 ### Bundling
 
