@@ -171,6 +171,44 @@ describe("buildIndex", () => {
     ]);
   });
 
+  test("emits destinations only when a plugin declares them, between env and the admin fields (rackbops-discord-bot#219)", async () => {
+    const index = await withPlugins(
+      {
+        feed: {
+          pkg: pkg("feed", { destinations: [{ name: "news", description: "Headlines" }], adminApiVersion: 1 }),
+          changelog: changelog(),
+          adminEntry: true,
+        },
+        plain: { pkg: pkg("plain"), changelog: changelog() },
+      },
+      (dir) => buildIndex(dir, fixedNow),
+    );
+    const feed = index.plugins.find((p) => p.name === "feed")!;
+    const plain = index.plugins.find((p) => p.name === "plain")!;
+    expect(feed.destinations).toEqual([{ name: "news", description: "Headlines" }]);
+    expect(Object.keys(feed)).toEqual([
+      "name", "package", "version", "description", "hostApiVersion",
+      "intents", "commands", "env", "destinations", "adminUrl", "adminApiVersion", "releases",
+    ]);
+    // Absent key, not an empty list: a plugin without destinations emits exactly as before.
+    expect("destinations" in plain).toBe(false);
+  });
+
+  test("rejects a malformed destinations declaration", async () => {
+    const cases: [unknown, RegExp][] = [
+      ["news", /destinations must be an array/],
+      [[null], /destinations\[0\] must be an object/],
+      [[{ name: "News", description: "d" }], /destinations\[0\]\.name "News" must match/],
+      [[{ name: "news" }], /destinations\[0\]\.description must be a non-empty string/],
+      [[{ name: "news", description: "a" }, { name: "news", description: "b" }], /declares "news" twice/],
+    ];
+    for (const [destinations, message] of cases) {
+      await expect(
+        withPlugins({ feed: { pkg: pkg("feed", { destinations }), changelog: changelog() } }, (dir) => buildIndex(dir, fixedNow)),
+      ).rejects.toThrow(message);
+    }
+  });
+
   test("rejects a non-number adminApiVersion", async () => {
     await expect(
       withPlugins({ wow: { pkg: pkg("wow", { adminApiVersion: "1" }), changelog: changelog() } }, (dir) => buildIndex(dir, fixedNow)),

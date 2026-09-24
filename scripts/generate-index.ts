@@ -10,7 +10,7 @@
 // extraction and validation are unit-tested without a subprocess; the CLI below is a thin wrapper.
 import { readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import type { PluginIndex, PluginIndexEntry, PluginEnvKey, PluginRelease } from "../packages/api/contract.js";
+import type { PluginDestination, PluginIndex, PluginIndexEntry, PluginEnvKey, PluginRelease } from "../packages/api/contract.js";
 
 const ROOT = new URL("../", import.meta.url);
 const DEFAULT_PLUGINS_DIR = new URL("plugins/", ROOT);
@@ -35,6 +35,7 @@ interface PluginPackageJson {
     intents?: unknown;
     commands?: unknown;
     env?: unknown;
+    destinations?: unknown;
     adminApiVersion?: unknown;
   };
 }
@@ -95,6 +96,32 @@ function parseEnv(value: unknown, pluginName: string): PluginEnvKey[] {
     }
     return key;
   });
+}
+
+/**
+ * `botPlugin.destinations` (rackbops-discord-bot#219): the named places a plugin can post, each
+ * `{ name, description }`, which the operator maps to a channel per server in the bot's admin panel.
+ * `name` follows the plugin-name rule and is unique within the plugin. Returns `undefined` when the
+ * key is absent, so a plugin without destinations emits exactly as before (absent key, not `[]`).
+ */
+function parseDestinations(value: unknown, pluginName: string): { destinations: PluginDestination[] } | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error(`${pluginName}: botPlugin.destinations must be an array`);
+  const seen = new Set<string>();
+  const destinations = value.map((raw, i) => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new Error(`${pluginName}: botPlugin.destinations[${i}] must be an object`);
+    }
+    const d = raw as Record<string, unknown>;
+    const name = requireString(d.name, `${pluginName}: botPlugin.destinations[${i}].name`);
+    if (!NAME_RE.test(name)) {
+      throw new Error(`${pluginName}: botPlugin.destinations[${i}].name "${name}" must match ${NAME_RE}`);
+    }
+    if (seen.has(name)) throw new Error(`${pluginName}: botPlugin.destinations declares "${name}" twice`);
+    seen.add(name);
+    return { name, description: requireString(d.description, `${pluginName}: botPlugin.destinations[${i}].description`) };
+  });
+  return { destinations };
 }
 
 function parseIntents(value: unknown, pluginName: string): number[] {
@@ -276,8 +303,8 @@ export async function buildIndex(
     // source is absent is caught here (parseAdmin), not silently shipped as a 404-ing adminUrl.
     const hasAdminEntry = await Bun.file(new URL("src/admin/index.ts", dir)).exists();
     const files = pkg.files === undefined ? undefined : requireStringArray(pkg.files, `${name}: package.json files`);
-    // Fixed key order so `--check`'s JSON comparison is stable across runs. The optional admin fields
-    // (present only when the plugin advertises an admin bundle) sit between `env` and `releases`;
+    // Fixed key order so `--check`'s JSON comparison is stable across runs. The optional `destinations`
+    // and admin fields (each present only when the plugin declares them) sit between `env` and `releases`;
     // spreading `undefined` contributes nothing, so a plugin without them emits exactly as before.
     plugins.push({
       name,
@@ -288,6 +315,7 @@ export async function buildIndex(
       intents: parseIntents(bp.intents, name),
       commands,
       env: parseEnv(bp.env, name),
+      ...parseDestinations(bp.destinations, name),
       ...parseAdmin(bp.adminApiVersion, hasAdminEntry, packageName, version, name, files),
       releases: parseChangelogReleases(changelog, name, version),
     });

@@ -4,6 +4,7 @@
 // come from data, never from plugin code), and the plugins repo vendors this file verbatim to
 // type-check plugins against it. Design: docs/adr/0004-plugins-fetched-from-a-published-manifest.md.
 import type {
+  AutocompleteInteraction,
   ChatInputCommandInteraction,
   MessageComponentInteraction,
   ModalSubmitInteraction,
@@ -43,6 +44,16 @@ export interface PluginEnvKey {
   description: string;
 }
 
+/**
+ * One named place a plugin can post (#219), declared in its manifest so the operator can map it to a
+ * channel per server in the admin panel. `name` is `^[a-z][a-z0-9-]*$` — what the plugin passes as
+ * `HostApi.announce`'s `destination`; `description` is what the panel shows beside the picker.
+ */
+export interface PluginDestination {
+  name: string;
+  description: string;
+}
+
 /** One published version, extracted from the plugin's CHANGELOG.md — what the update notification shows. */
 export interface PluginRelease {
   version: string;
@@ -72,6 +83,8 @@ export interface PluginIndexEntry {
   /** Bare slash-command names the bundle contributes; uniqueness (core + every enabled plugin) is checked BEFORE any code loads. */
   commands: string[];
   env: PluginEnvKey[];
+  /** Named places this plugin can post besides its main one (#219) — see `HostApi.announce`. Absent = none. */
+  destinations?: PluginDestination[];
   /** jsDelivr-npm URL of the plugin's admin bundle (`dist/admin.js`), DERIVED by the plugins repo's
    *  `generate-index` when a plugin advertises admin support (by declaring `botPlugin.adminApiVersion`).
    *  Absent = the plugin contributes no admin UI. The admin panel fetches it and serves it same-origin
@@ -204,8 +217,14 @@ export interface HostApi {
    *  posted through its registered webhook when it has a working one, and as the bot otherwise (a webhook that times out may
    *  already have delivered, so the fallback can put a second copy there); mention-safe defaults apply on both paths.
    *  Rejects only when EVERY target failed, with the first error, so a plugin that retries after a rejection does not
-   *  repost to the channels that did get the message. */
-  announce(message: string): Promise<void>;
+   *  repost to the channels that did get the message.
+   *
+   *  `destination` (#219) names one of the `destinations` the plugin's manifest declares — a second kind of post that
+   *  wants its own channel. The operator maps each name to a channel per server in the panel; the message goes to every
+   *  channel mapped for that name. Where the name is mapped nowhere, it posts exactly as it would without one, so a
+   *  destination is an option the operator can take up, never something that stops a post. A name the manifest does not
+   *  declare is logged and treated the same way. */
+  announce(message: string, destination?: string): Promise<void>;
 }
 
 export interface PluginCommand {
@@ -213,27 +232,45 @@ export interface PluginCommand {
   name: string;
   build(builder: SlashCommandBuilder): { toJSON(): RESTPostAPIChatInputApplicationCommandsJSONBody };
   handle(interaction: ChatInputCommandInteraction): Promise<void>;
+  /**
+   * Answers Discord's picker for an option this command built with `setAutocomplete(true)` (#287). The
+   * plugin reads the option being typed (`interaction.options.getFocused(true)`) and answers with
+   * `await interaction.respond(choices)` — at most 25, within Discord's 3 s (the host stops waiting at
+   * 2.5 s). It runs only where the command itself may run (the same routing gate as `handle`, failing
+   * closed here) and only while the plugin is running. Where it is absent, throws, or returns without
+   * calling `respond`, the host answers with an empty list, so the picker closes cleanly; a `respond`
+   * that Discord rejects (e.g. after its 3 s) is the plugin's own failure. Optional: a command with no
+   * autocomplete option omits it.
+   */
+  autocomplete?(interaction: AutocompleteInteraction): Promise<void>;
 }
 
 /**
  * One scheduler check, run inside the bot's guarded tick with the core checks; failures are isolated per check.
  *
- * What the host does with a plugin's tick (#217, `pluginTicks` in `src/plugins/host.ts`):
+ * What the host does with a plugin's tick (#217, #248, `pluginTicks` in `src/plugins/host.ts`):
  * - Each call is waited on for at most `PLUGIN_TICK_TIMEOUT_MS` (currently 30 s). Past that the host stops WAITING
- *   and logs the overrun as this plugin's failure; it cannot cancel the call, which keeps running.
+ *   and logs the overrun as this plugin's failure; it aborts the call's signal (below), but a call that ignores the
+ *   signal keeps running.
  * - A tick is skipped, with a warning, while its own previous call is still pending, so it never runs concurrently
  *   with itself. That guard is per tick, not per plugin: the plugin's OTHER ticks keep running, concurrently with
  *   the abandoned call.
  * - A call that is merely slow recovers once it settles; one that never settles silences that one tick until the
  *   bot restarts.
- * - A restart, or a SIGTERM/SIGINT stop, does not wait for an abandoned call. A tick that announces should
- *   therefore write its dedup key BEFORE it announces: an overrun past the timeout that coincides with a restart or
- *   a stop can otherwise post the announcement a second time after the restart. Cancelling the call properly
- *   (an `AbortSignal` in `run`) is tracked in #248.
+ * - `run` is passed an `AbortSignal` (#248). The host aborts it at the timeout, and when the bot is asked to stop (a
+ *   restart, or a SIGTERM/SIGINT). A restart or a stop then waits a few seconds (`PLUGIN_TICK_ABORT_GRACE_MS`, 5 s)
+ *   for every pending call to settle — including one the timeout abandoned — before it exits; no new call starts
+ *   once a stop is under way. A tick that honours the signal (pass it to `fetch`, check `signal.aborted` before a
+ *   write or a post, and return) therefore gets to stop at a point of its choosing — but only within the grace: a
+ *   step it has already started, such as an `announce` in flight, is not itself cancelled and can still be cut off
+ *   once the grace is spent. A tick that ignores the signal keeps working as before, and a stop exits under it once
+ *   the grace is spent, so a tick that announces should still write its dedup key BEFORE it announces. An abort
+ *   listener must not throw: like a throw from the plugin's own timer, it is reported as an uncaught exception. The parameter is optional to read: a plugin built before it
+ *   existed is unaffected.
  */
 export interface TickCheck {
   name: string;
-  run(): Promise<void>;
+  run(signal?: AbortSignal): Promise<void>;
 }
 
 /**
