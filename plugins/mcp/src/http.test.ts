@@ -340,7 +340,7 @@ describe("handleMcpHttp: POST /pair/redeem", () => {
   test("decision 6: a failed redeem (unknown/expired/reused code) logs the outcome, never the code", async () => {
     const { log, calls } = makeLog();
     const d = { ...deps(makeFakeHost({ name: "mcp" }), TOKEN), log };
-    const guessedCode = "X".repeat(26);
+    const guessedCode = "X".repeat(27);
 
     await handleMcpHttp(post("/pair/redeem", { code: guessedCode }), INFO("/pair/redeem"), d);
 
@@ -351,7 +351,7 @@ describe("handleMcpHttp: POST /pair/redeem", () => {
 
   test("an unknown code is 404 with the literal message", async () => {
     const host = makeFakeHost({ name: "mcp" });
-    const res = await handleMcpHttp(post("/pair/redeem", { code: "X".repeat(26) }), INFO("/pair/redeem"), deps(host, TOKEN));
+    const res = await handleMcpHttp(post("/pair/redeem", { code: "X".repeat(27) }), INFO("/pair/redeem"), deps(host, TOKEN));
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "invalid or expired code" });
   });
@@ -364,7 +364,8 @@ describe("handleMcpHttp: POST /pair/redeem", () => {
       post("/pair/redeem", {}),
       post("/pair/redeem", { code: 12345 }),
       post("/pair/redeem", { code: "short" }),
-      post("/pair/redeem", { code: "abcdefghjkmnpqrstvwxyz2345" }), // lowercase -- PAIR_CODE_RE is uppercase-only
+      post("/pair/redeem", { code: "abcdefghjkmnpqrstvwxyz23456" }), // lowercase -- PAIR_CODE_RE is uppercase-only
+      post("/pair/redeem", { code: "ABCDEFGHJKMNPQRSTVWXYZ2345" }), // round-3: 26 chars, the OLD (pre-fix) length -- must now be rejected
     ];
     for (const req of cases) {
       const res = await handleMcpHttp(req, INFO("/pair/redeem"), d);

@@ -126,7 +126,7 @@ async function handleGetDelivery(requestId: string, deps: HttpDeps): Promise<Res
  *  a miss here is worth a line the same way an auth failure already is (auth.ts). Same MAX_BODY_BYTES
  *  cap as handleCreateDelivery above, checked before the body is even parsed -- an original gap this
  *  route shipped with (review finding, round 2): nothing bounded how much this endpoint would buffer
- *  and JSON.parse before the 26-character code it actually needs ever gets validated. */
+ *  and JSON.parse before the 27-character code it actually needs ever gets validated. */
 async function handleRedeemPair(request: Request, deps: HttpDeps): Promise<Response> {
   const text = await request.text();
   if (new TextEncoder().encode(text).length > MAX_BODY_BYTES) return json(413, { error: "request body too large" });

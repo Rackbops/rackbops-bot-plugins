@@ -77,13 +77,13 @@ describe("agentCommand: register", () => {
 
 describe("agentCommand: pair", () => {
   test("issues a code and shows it once, with the literal warning", async () => {
-    const { store } = fakeStore({ pair: async () => ({ ok: true, code: "ABCDEFGHJKMNPQRSTVWXYZ2345" }) });
+    const { store } = fakeStore({ pair: async () => ({ ok: true, code: "ABCDEFGHJKMNPQRSTVWXYZ23456" }) });
     const { interaction, replies } = fakeInteraction("pair");
     await agentCommand(store).handle(interaction);
     expect(replies).toEqual([
       {
         content:
-          "Your pairing code: **ABCDEFGHJKMNPQRSTVWXYZ2345**\n\n" +
+          "Your pairing code: **ABCDEFGHJKMNPQRSTVWXYZ23456**\n\n" +
           "Valid 10 minutes, single use. Enter it only in `discord-mcp pair` or your connector's authorization page — never paste it anywhere else.",
         flags: MessageFlags.Ephemeral,
       },
@@ -123,7 +123,7 @@ describe("agentCommand: every reply is ephemeral, and only the addressed subcomm
   });
 
   test("pair never touches register/unregister/redeem/generationOf", async () => {
-    const { store, calls } = fakeStore({ pair: async () => ({ ok: true, code: "X".repeat(26) }) });
+    const { store, calls } = fakeStore({ pair: async () => ({ ok: true, code: "X".repeat(27) }) });
     const { interaction } = fakeInteraction("pair");
     await agentCommand(store).handle(interaction);
     expect(calls).toEqual(["pair"]);
@@ -149,7 +149,7 @@ describe("agentCommand: no handler makes a network call on the reply path", () =
       const register = fakeStore({ register: async () => ({ changed: true, generation: "g" }) });
       await agentCommand(register.store).handle(fakeInteraction("register").interaction);
 
-      const pair = fakeStore({ pair: async () => ({ ok: true, code: "X".repeat(26) }) });
+      const pair = fakeStore({ pair: async () => ({ ok: true, code: "X".repeat(27) }) });
       await agentCommand(pair.store).handle(fakeInteraction("pair").interaction);
 
       const unregister = fakeStore({ unregister: async () => ({ changed: true }) });

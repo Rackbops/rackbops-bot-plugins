@@ -7,8 +7,9 @@
 - Agent registration and pairing (`Rackbops/Tooling#743`, the first of five children split from
   `Rackbops/Tooling#737`): the `/agent register` | `pair` | `unregister` slash command, plus
   `POST /pair/redeem` and `GET /registration/{user_id}` under `/mcp/`. A registration mints a
-  random 128-bit `generation` id; `pair` issues a single-use, 10-minute pairing code (at most 5
-  live per user) that a connector redeems for the Discord user id and current generation;
+  random 128-bit `generation` id; `pair` issues a single-use, 10-minute pairing code (at least
+  128 bits, at most 5 live per user) that a connector redeems for the Discord user id and current
+  generation;
   `unregister` deletes the registration -- and with it every outstanding code -- in one write.
   Every register/pair/unregister/redeem is serialized against every other through the same keyed
   JSON mutator the delivery store uses, on one `registry.json` file.

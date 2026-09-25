@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { makeRealStorage } from "../../../packages/testkit/index.js";
 import {
   CODE_ALPHABET,
+  CODE_LENGTH,
   createRegistryStore,
   freshRegistry,
   generateCode,
@@ -38,11 +39,18 @@ describe("generateGeneration", () => {
 });
 
 describe("generateCode", () => {
-  test("exactly 26 characters, uppercase, from the declared alphabet", () => {
+  test("exactly 27 characters, uppercase, from the declared alphabet", () => {
     const code = generateCode();
-    expect(code).toHaveLength(26);
+    expect(code).toHaveLength(27);
     for (const ch of code) expect(CODE_ALPHABET.includes(ch)).toBe(true);
-    expect(code).toMatch(/^[A-Z2-9]{26}$/); // the wire contract's own validation regex
+    expect(code).toMatch(/^[A-Z2-9]{27}$/); // the wire contract's own validation regex
+  });
+
+  test("entropy is at least 128 bits (round-3 review: 26 characters fell ~0.42 bits short)", () => {
+    expect(CODE_LENGTH * Math.log2(CODE_ALPHABET.length)).toBeGreaterThanOrEqual(128);
+    const code = generateCode();
+    expect(code).toHaveLength(27);
+    expect(code).toMatch(/^[A-Z2-9]{27}$/);
   });
 
   test("never contains 0, 1, I, L, O or U -- the whole point of this alphabet", () => {
@@ -58,7 +66,7 @@ describe("generateCode", () => {
 
 describe("hashCode", () => {
   test("deterministic, and never equal to the code itself", () => {
-    const code = "ABCDEFGHJKMNPQRSTVWXYZ2345";
+    const code = "ABCDEFGHJKMNPQRSTVWXYZ23456";
     const hash = hashCode(code);
     expect(hash).toBe(hashCode(code));
     expect(hash).not.toBe(code);
@@ -273,9 +281,41 @@ describe("createRegistryStore: concurrency, over real storage", () => {
   test("unregister then pair refuses -- the codes and the registration are really gone", async () => {
     const now = () => new Date();
     await store.register(USER, NAME, now);
-    await store.unregister(USER);
+    await store.unregister(USER, now);
     const result = await store.pair(USER, NAME, now);
     expect(result).toEqual({ ok: false });
     expect(await store.generationOf(USER)).toBeUndefined();
+  });
+});
+
+describe("createRegistryStore: pruning uses the caller's own injected clock, not wall-clock time", () => {
+  let dir: string;
+  let store: RegistryStore;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mcp-registry-"));
+    store = createRegistryStore(dir, makeRealStorage());
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a code paired on a clock a day behind real time still redeems 5 minutes later on that SAME clock", async () => {
+    // round-3 review: mutate() used to prune with `new Date()` regardless of the caller's own `now`.
+    // Real time is ~1 day ahead of `virtualNow` here, so the OLD code would see this code as
+    // already-expired the moment redeem's own prune step ran -- even though, from this caller's own
+    // consistent clock, only 5 minutes have passed and the 10-minute TTL hasn't come close to firing.
+    // This is exactly the mutation that restores `new Date()` in mutate(): it makes this test fail.
+    const oneDayAgoMs = Date.now() - 24 * 60 * 60 * 1000;
+    const virtualNow = () => new Date(oneDayAgoMs);
+    const fiveMinutesLater = () => new Date(oneDayAgoMs + 5 * 60 * 1000);
+
+    await store.register(USER, NAME, virtualNow);
+    const paired = await store.pair(USER, NAME, virtualNow);
+    if (!paired.ok) throw new Error("unreachable");
+
+    const redeemed = await store.redeem(paired.code, fiveMinutesLater);
+    expect(redeemed.ok).toBe(true);
   });
 });

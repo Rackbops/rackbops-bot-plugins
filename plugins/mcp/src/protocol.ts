@@ -22,7 +22,7 @@ export const CONTENT_MAX = 2000;
 // composing it into the anchored routing regex is actively wrong (a regex's `^`/`$` land in `.source`
 // literally, so nesting one inside another produces un-satisfiable inner anchors) -- removed rather
 // than kept as an unused, never-reused export.
-export const PAIR_CODE_RE = /^[A-Z2-9]{26}$/;
+export const PAIR_CODE_RE = /^[A-Z2-9]{27}$/;
 
 // Mirrors package.json's botPlugin.destinations verbatim (Tooling#742 decision 1) -- kept as a
 // runtime constant because a plugin has no access to its own manifest at runtime; the two must be

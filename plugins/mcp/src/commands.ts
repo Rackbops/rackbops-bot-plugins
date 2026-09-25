@@ -39,7 +39,7 @@ async function handlePair(interaction: ChatInputCommandInteraction, store: Regis
 }
 
 async function handleUnregister(interaction: ChatInputCommandInteraction, store: RegistryStore): Promise<void> {
-  const { changed } = await store.unregister(interaction.user.id);
+  const { changed } = await store.unregister(interaction.user.id, () => new Date());
   await replyEphemeral(interaction, changed ? "Unregistered: your agents' tokens and DMs are revoked." : "You weren't registered.");
 }
 

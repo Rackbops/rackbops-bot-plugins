@@ -45,27 +45,11 @@ export function generateGeneration(): string {
 /** Decision 4's alphabet, verbatim -- 30 symbols (A-Z minus I/L/O/U, plus 2-9), chosen for
  *  human-unambiguous reading over a voice/DM channel. */
 export const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789";
-/**
- * Decision 4 itself is internally over-specified: it says both "16 random bytes" (128 bits) AND
- * "this 30-symbol alphabet, fixed length 26" (also the wire contract's own `^[A-Z2-9]{26}$`) --
- * but no encoding of a full 128-bit space into 26 characters from a 30-symbol alphabet can exist
- * (30^26 < 2^128, ~127.58 bits by log2(30) * 26 -- verified: 30^26 / 2^128 ~= 0.747), and 30 isn't
- * a power of 2, so there is no clean fixed-width bit-packing (standard base32's own 32-symbol
- * alphabet exists precisely because 32 is one) to reconcile "16 bytes in" with "this alphabet out"
- * either. The SAME "at least 128 bits" figure is also independently the parent acceptance bullet's
- * (#743) own wording for this code, not just decision 4's internal aside -- so this is a knowing,
- * disclosed ~0.42-bit shortfall against that literal acceptance criterion, not merely a same-decision
- * self-contradiction. Between the three, the alphabet and the fixed length are the two figures ALSO
- * pinned by the wire contract's own regex -- shared byte-for-shape with #744's tests -- so they are
- * taken as the controlling literal contract; "128 bits" is read as an approximate gloss that doesn't
- * survive contact with the other two, and the ~25%-smaller-than-true-128-bit keyspace is
- * security-immaterial at this scale (10-minute TTL, single use, no realistic guess rate approaches
- * exhausting 2^127.58 in that window). Implemented below as CODE_LENGTH independent, rejection-sampled
- * draws from CODE_ALPHABET -- not a bit-packing of a 16-byte buffer -- which is both simpler and
- * avoids the modulo bias a 30-into-256 packing would introduce. Named here, and in the PR that
- * introduced this file, rather than silently picked or silently checked off as met.
- */
-const CODE_LENGTH = 26;
+/** 27 * log2(30) ~= 132.5 bits, so ">= 128 bits" (decision 4 / the acceptance bullet's own figure)
+ *  genuinely holds -- corrected from an earlier 26-character revision that fell ~0.42 bits short
+ *  (round-3 review, Tooling#743). Each character is an independent, unbiased `randomInt(30)` draw,
+ *  not a bit-packing of a byte buffer. */
+export const CODE_LENGTH = 27;
 
 /** One code, drawn via `randomInt` (rejection-sampled, unbiased) rather than a modulo of
  *  `randomBytes` -- avoids the small bias a 256-values-into-30-buckets modulo would introduce. */
@@ -168,7 +152,7 @@ export function generationOf(registry: Registry, userId: string): string | undef
 export interface RegistryStore {
   register(userId: string, displayName: string, now: () => Date): Promise<RegisterOutcome>;
   pair(userId: string, displayName: string, now: () => Date): Promise<IssueCodeOutcome>;
-  unregister(userId: string): Promise<{ changed: boolean }>;
+  unregister(userId: string, now: () => Date): Promise<{ changed: boolean }>;
   redeem(code: string, now: () => Date): Promise<RedeemOutcome>;
   generationOf(userId: string): Promise<string | undefined>;
 }
@@ -184,13 +168,18 @@ export function createRegistryStore(dataDir: string, storage: HostStorage): Regi
   const mutator = storage.createKeyedJsonMutator<Registry>();
   const path = registryPath(dataDir);
 
-  async function mutate<T>(op: (pruned: Registry) => { registry: Registry; result: T }): Promise<T> {
+  // `now` is threaded all the way into the prune step -- pruning MUST use the same clock as the
+  // operation it runs alongside, or a caller with an injected/offset clock (every test in this repo,
+  // and any future caller that isn't real-time) sees its own writes pruned against a DIFFERENT clock
+  // than the one it reasoned about expiry with. Prune-then-mutate stays one atomic unit either way,
+  // since both happen synchronously inside the same mutator callback with no `await` between them.
+  async function mutate<T>(now: () => Date, op: (pruned: Registry) => { registry: Registry; result: T }): Promise<T> {
     let result!: T;
     await mutator.update(
       path,
       freshRegistry,
       (current) => {
-        const pruned = pruneRegistry(current, new Date());
+        const pruned = pruneRegistry(current, now());
         const outcome = op(pruned);
         result = outcome.result;
         return outcome.registry;
@@ -202,22 +191,22 @@ export function createRegistryStore(dataDir: string, storage: HostStorage): Regi
 
   return {
     register: (userId, displayName, now) =>
-      mutate((pruned) => {
+      mutate(now, (pruned) => {
         const { registry, outcome } = registerUser(pruned, userId, displayName, now());
         return { registry, result: outcome };
       }),
     pair: (userId, displayName, now) =>
-      mutate((pruned) => {
+      mutate(now, (pruned) => {
         const { registry, outcome } = issueCode(pruned, userId, displayName, now());
         return { registry, result: outcome };
       }),
-    unregister: (userId) =>
-      mutate((pruned) => {
+    unregister: (userId, now) =>
+      mutate(now, (pruned) => {
         const { registry, changed } = unregisterUser(pruned, userId);
         return { registry, result: { changed } };
       }),
     redeem: (code, now) =>
-      mutate((pruned) => {
+      mutate(now, (pruned) => {
         const { registry, outcome } = redeemCode(pruned, code, now());
         return { registry, result: outcome };
       }),
