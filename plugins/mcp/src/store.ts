@@ -7,8 +7,10 @@
 // itself (a declared-dependency boundary, not a sandbox).
 import { readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import type { HostStorage } from "../../../packages/api/contract.js";
+import type { HostStorage, PluginLog } from "../../../packages/api/contract.js";
 import type { DeliveryBody, DeliveryKind, PostTarget, StoredDelivery } from "./protocol.js";
+
+const NOOP_LOG: PluginLog = { info() {}, warn() {}, error() {} };
 
 /** Decision 6: files older than this are pruned by the tick. Deliberately a day past #735's own
  *  7-day idempotency-store window, so the bridge's record never expires before the service's does. */
@@ -49,7 +51,7 @@ export interface DeliveryStore {
   prune(now: () => Date): Promise<string[]>;
 }
 
-export function createDeliveryStore(dataDir: string, storage: HostStorage): DeliveryStore {
+export function createDeliveryStore(dataDir: string, storage: HostStorage, log: PluginLog = NOOP_LOG): DeliveryStore {
   const mutator = storage.createKeyedJsonMutator<StoredDelivery | null>();
 
   async function get(requestId: string): Promise<StoredDelivery | undefined> {
@@ -95,20 +97,35 @@ export function createDeliveryStore(dataDir: string, storage: HostStorage): Deli
     set,
     get,
     list,
+    // markPendingUnknown and prune each isolate one request_id's failure from the rest of the pass
+    // (the same class of gap the tick's own redrive loop had -- see index.ts) -- a read/write
+    // throwing for one id is logged and the pass moves on, rather than leaving every id after it in
+    // list()'s snapshot unvisited. For markPendingUnknown specifically, a record it never reaches
+    // stays "pending" forever: no caller retry and no drain in flight will ever resolve it, and the
+    // tick only ever re-drives "unknown" -- so a silently-incomplete pass here reproduces the exact
+    // stuck-forever shape #742's review already found and fixed once, in a different function.
     async markPendingUnknown() {
       for (const requestId of await list()) {
-        const current = await get(requestId);
-        if (current?.state === "pending") await set(requestId, { ...current, state: "unknown" });
+        try {
+          const current = await get(requestId);
+          if (current?.state === "pending") await set(requestId, { ...current, state: "unknown" });
+        } catch (err) {
+          log.error(`marking delivery ${requestId} unknown after restart failed`, err);
+        }
       }
     },
     async prune(now) {
       const cutoff = now().getTime() - PRUNE_AFTER_MS;
       const pruned: string[] = [];
       for (const requestId of await list()) {
-        const current = await get(requestId);
-        if (current !== undefined && new Date(current.createdAt).getTime() <= cutoff) {
-          await unlink(deliveryPath(dataDir, requestId));
-          pruned.push(requestId);
+        try {
+          const current = await get(requestId);
+          if (current !== undefined && new Date(current.createdAt).getTime() <= cutoff) {
+            await unlink(deliveryPath(dataDir, requestId));
+            pruned.push(requestId);
+          }
+        } catch (err) {
+          log.error(`pruning delivery ${requestId} failed`, err);
         }
       }
       return pruned;

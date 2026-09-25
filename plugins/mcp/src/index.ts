@@ -12,7 +12,7 @@ import { createDeliveryStore } from "./store.js";
  * unset or malformed value both just mean http.ts answers 503.
  */
 export function createPlugin(host: HostApi): Plugin {
-  const store = createDeliveryStore(host.dataDir, host.storage);
+  const store = createDeliveryStore(host.dataDir, host.storage, host.log);
   const limiter = createRateLimiter();
   // Shared with http.ts (below) so a caller's retry and this plugin's own re-drive tick can never
   // drain the SAME request_id at once -- see drain.ts's DrainLock doc comment for why that race is
