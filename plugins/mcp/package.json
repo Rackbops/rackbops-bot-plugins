@@ -1,0 +1,36 @@
+{
+  "name": "@rackbops/plugin-mcp",
+  "version": "0.1.0",
+  "description": "Bridge plugin for the Discord delivery MCP (Rackbops/discord-mcp): the service side of docs/bridge-protocol.md",
+  "type": "module",
+  "main": "dist/plugin.js",
+  "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rackbops/rackbops-bot-plugins.git",
+    "directory": "plugins/mcp"
+  },
+  "peerDependencies": {
+    "discord.js": "^14.27.0"
+  },
+  "botPlugin": {
+    "hostApiVersion": 1,
+    "intents": [],
+    "commands": [],
+    "env": [
+      {
+        "key": "MCP_BRIDGE_TOKEN",
+        "format": "^\\S{43,}$",
+        "required": false,
+        "secret": true,
+        "description": "Shared secret the Discord MCP service presents (>= 256 bits, base64url). Unset = the bridge answers 503."
+      }
+    ],
+    "destinations": [
+      { "name": "alerts", "description": "Time-sensitive findings and warnings" },
+      { "name": "deals", "description": "Notable deals or opportunities" },
+      { "name": "digest", "description": "Periodic summaries" },
+      { "name": "ops", "description": "Operational status and infrastructure notices" }
+    ]
+  }
+}

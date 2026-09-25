@@ -91,6 +91,12 @@ pin only needs to change in one place.
   step is `npm publish` while install/test/build stay Bun. A Trusted Publisher must be configured
   per package on npmjs.com, and npm requires the package to exist first -- bootstrap a new package
   with a one-time local placeholder `npm publish` + 2FA OTP, then CI/OIDC owns every real version.
+- **A plugin may use `node:fs` directly for what `HostStorage` doesn't cover.** `HostStorage`
+  (`contract.d.ts`) only reads/writes one JSON value per path; it has no directory-listing or delete
+  primitive. `plugins/mcp` (#742) lists and prunes its per-request delivery-state files with
+  `node:fs/promises`' `readdir`/`unlink` directly, alongside `host.storage` for the actual read/write
+  -- a plugin is a declared-dependency boundary, not a sandbox (contract.ts's own `HostApi` doc
+  comment), so this is expected, not a workaround.
 - **CI job names (`checks`, `test`) intentionally split lint/typecheck-shaped work from tests**,
   matching `/audit`'s "at least two jobs" requirement -- `rackbops-discord-bot`'s own `ci.yml`
   uses a single `checks` job and doesn't split this way; don't use that file as a reference for
