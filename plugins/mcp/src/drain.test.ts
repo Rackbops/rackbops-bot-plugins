@@ -261,6 +261,22 @@ describe("attemptDelivery: kind edit", () => {
     expect(delivery.calls.edit[0]!.message).toEqual({ content: "v2" });
   });
 
+  test("a re-drive of an already-applied seq re-applies (applied:true), not skipped like a lower seq", async () => {
+    // Decision 3: "An equal seq re-applies... only happens when a re-drive repeats an edit that had
+    // already applied, and the content is the same." This is what distinguishes the `<` comparison
+    // from a `<=` one -- `<=` would wrongly skip a re-drive of the SAME seq that already landed.
+    await seedDeliveredPost(REQUEST_ID);
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "mcp", ...delivery });
+
+    const first = await attemptDelivery(deps(host), "c".repeat(64), { kind: "edit", target: { messageRef: REQUEST_ID, seq: 2 }, body: { content: "v2" }, createdAt: NOW().toISOString() });
+    expect(first).toMatchObject({ applied: true });
+
+    const redrive = await attemptDelivery(deps(host), "c".repeat(64), { kind: "edit", target: { messageRef: REQUEST_ID, seq: 2 }, body: { content: "v2" }, createdAt: NOW().toISOString() });
+    expect(redrive).toMatchObject({ applied: true });
+    expect(delivery.calls.edit).toHaveLength(2); // the re-drive called host.edit again, not skipped
+  });
+
   test("concurrent seq 1 (slow fake edit) and seq 2, submitted in that order -- the queue serializes them, so the last content applied is v2", async () => {
     await seedDeliveredPost(REQUEST_ID);
     const edits: { message: { content?: string } }[] = [];
