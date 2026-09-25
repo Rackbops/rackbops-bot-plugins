@@ -1,7 +1,51 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-21T03:16:37.294Z",
+  "generatedAt": "2026-09-25T05:12:11.688Z",
   "plugins": [
+    {
+      "name": "mcp",
+      "package": "@rackbops/plugin-mcp",
+      "version": "0.1.0",
+      "description": "Bridge plugin for the Discord delivery MCP (Rackbops/discord-mcp): the service side of docs/bridge-protocol.md",
+      "hostApiVersion": 1,
+      "intents": [],
+      "commands": [],
+      "env": [
+        {
+          "key": "MCP_BRIDGE_TOKEN",
+          "format": "^\\S{43,}$",
+          "description": "Shared secret the Discord MCP service presents (>= 256 bits, base64url). Unset = the bridge answers 503.",
+          "required": false,
+          "secret": true
+        }
+      ],
+      "destinations": [
+        {
+          "name": "alerts",
+          "description": "Time-sensitive findings and warnings"
+        },
+        {
+          "name": "deals",
+          "description": "Notable deals or opportunities"
+        },
+        {
+          "name": "digest",
+          "description": "Periodic summaries"
+        },
+        {
+          "name": "ops",
+          "description": "Operational status and infrastructure notices"
+        }
+      ],
+      "releases": [
+        {
+          "version": "0.1.0",
+          "publishedAt": "2026-09-25T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/mcp-v0.1.0",
+          "notes": "### Added\n\n- The bridge plugin for the Discord delivery MCP (`Rackbops/Tooling#742`): the service side of\n  `docs/bridge-protocol.md` in [`Rackbops/discord-mcp`](https://github.com/Rackbops/discord-mcp) --\n  `GET /capabilities`, `POST /deliveries` and `GET /deliveries/{request_id}` under `/mcp/`, a bearer\n  token compared in constant time, async delivery with pending/delivered/failed/unknown states kept\n  one file per request, and a catch-up tick that re-drives a delivery a restart left `unknown`.\n  Declares the `alerts`, `deals`, `digest` and `ops` destinations. `send_dm`/`update_message` always\n  answer `CAPABILITY_UNAVAILABLE` in this version -- the recipient registry and edit ordering arrive\n  in `Rackbops/Tooling#737`."
+        }
+      ]
+    },
     {
       "name": "music",
       "package": "@rackbops/plugin-music",
