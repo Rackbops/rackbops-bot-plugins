@@ -118,7 +118,12 @@ async function handleGetDelivery(requestId: string, deps: HttpDeps): Promise<Res
 
 /** `POST /pair/redeem` (Tooling#743): a malformed body/code is 400 before the registry is ever
  *  touched; the registry's own "unknown, expired, used, or orphaned by an unregister" cases all
- *  answer the same 404 (decision 6) -- there is nothing left to distinguish once `redeem` returns. */
+ *  answer the same 404 (decision 6) -- there is nothing left to distinguish once `redeem` returns.
+ *  Decision 6: "log the outcome only, never the code" -- `validated.code` never reaches `deps.log`
+ *  on either branch below; the wire's own single 404 for every failure reason means this log line
+ *  is the only place a miss vs. a genuine reuse/expiry is distinguishable at all, for abuse
+ *  detection -- so unlike a malformed-body 400 (rejected before any user is even identifiable),
+ *  a miss here is worth a line the same way an auth failure already is (auth.ts). */
 async function handleRedeemPair(request: Request, deps: HttpDeps): Promise<Response> {
   let raw: unknown;
   try {
@@ -129,7 +134,11 @@ async function handleRedeemPair(request: Request, deps: HttpDeps): Promise<Respo
   const validated = validateRedeemRequest(raw);
   if (!validated.ok) return json(400, { error: "malformed request" });
   const outcome = await deps.registry.redeem(validated.code, deps.now);
-  if (!outcome.ok) return json(404, { error: "invalid or expired code" });
+  if (!outcome.ok) {
+    deps.log.warn("pair redeem: no matching unexpired code");
+    return json(404, { error: "invalid or expired code" });
+  }
+  deps.log.info(`pair redeem: succeeded for discord user ${outcome.discordUserId}`);
   return json(200, { discord_user_id: outcome.discordUserId, generation: outcome.generation });
 }
 
@@ -144,6 +153,12 @@ async function handleGetRegistration(userId: string, deps: HttpDeps): Promise<Re
 }
 
 const DELIVERY_ID_RE = /^\/deliveries\/([0-9a-f]{64})$/;
+// This path's own id-shape, independently declared -- matches DELIVERY_ID_RE's own precedent right
+// above (also its own literal copy of the character class, not composed from protocol.ts's
+// REQUEST_ID_RE). Composing a routing regex from a body-validation one is actively wrong, not just
+// duplicative: a regex's own `^`/`$` land in `.source` literally, so nesting one inside another
+// (`^/registration/(${re.source})$`) produces un-satisfiable inner anchors and silently 404s every
+// path (caught only by the test suite, not by tsc -- tried and reverted while building this route).
 const REGISTRATION_ID_RE = /^\/registration\/([1-9][0-9]{16,19})$/;
 
 export async function handleMcpHttp(request: Request, info: PluginHttpInfo, deps: HttpDeps): Promise<Response> {

@@ -11,13 +11,18 @@ export const MAX_BODY_BYTES = 64 * 1024;
 export const CONTENT_MIN = 1;
 export const CONTENT_MAX = 2000;
 
-// Tooling#743's own wire shapes, on the same /mcp/ surface. `PAIR_CODE_RE` is deliberately looser
-// than registry.ts's own CODE_ALPHABET (which excludes I/L/O/U) -- the wire only rejects a
-// structurally-wrong submission, never second-guesses which subset of A-Z the generator used.
-// `DISCORD_USER_ID_RE` is tighter than SNOWFLAKE_RE above (17-20 digits, no leading zero): the
-// plan's own literal pattern for a path segment, not reused for target.guild_id's looser one.
+// Tooling#743's own wire shape for POST /pair/redeem's body. Deliberately looser than registry.ts's
+// own CODE_ALPHABET (which excludes I/L/O/U) -- the wire only rejects a structurally-wrong
+// submission, never second-guesses which subset of A-Z the generator used. GET /registration/{user_id}
+// has no request body, so its own id-shape lives only at http.ts's routing regex (REGISTRATION_ID_RE)
+// -- matching this file's existing DELIVERY_ID_RE/REQUEST_ID_RE split, where a path parameter's shape
+// is checked once, at the route match, and a handler never re-validates what its own routing already
+// guaranteed. An earlier revision also exported a DISCORD_USER_ID_RE here for http.ts to reuse, but
+// nothing in protocol.ts's own body-validation ever needed it (no request body carries a user_id) and
+// composing it into the anchored routing regex is actively wrong (a regex's `^`/`$` land in `.source`
+// literally, so nesting one inside another produces un-satisfiable inner anchors) -- removed rather
+// than kept as an unused, never-reused export.
 export const PAIR_CODE_RE = /^[A-Z2-9]{26}$/;
-export const DISCORD_USER_ID_RE = /^[1-9][0-9]{16,19}$/;
 
 // Mirrors package.json's botPlugin.destinations verbatim (Tooling#742 decision 1) -- kept as a
 // runtime constant because a plugin has no access to its own manifest at runtime; the two must be

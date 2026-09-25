@@ -2,8 +2,9 @@
 // register/issueCode/unregister/redeemCode/generationOf/pruneRegistry -- plus a store wrapper
 // binding them to host.storage's keyed mutator on one file, which is what makes every register,
 // pair, unregister and redeem atomic and serialized against each other. Every lookup keyed by an
-// externally-supplied id (a Discord user id) goes through Object.hasOwn, matching this codebase's
-// own established rule against a bare obj[key] on an untrusted key (see routing/resolve.ts).
+// externally-supplied id (a Discord user id) goes through Object.hasOwn rather than a bare
+// obj[key], matching the convention the host repo (rackbops-discord-bot, src/routing/resolve.ts)
+// established for the same class of untrusted-key lookup -- not a file in this repo.
 import { createHash, randomBytes, randomInt } from "node:crypto";
 import { join } from "node:path";
 import type { HostStorage } from "../../../packages/api/contract.js";
@@ -48,15 +49,21 @@ export const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789";
  * Decision 4 itself is internally over-specified: it says both "16 random bytes" (128 bits) AND
  * "this 30-symbol alphabet, fixed length 26" (also the wire contract's own `^[A-Z2-9]{26}$`) --
  * but no encoding of a full 128-bit space into 26 characters from a 30-symbol alphabet can exist
- * (30^26 < 2^128, ~127.6 bits by log2(30) * 26), and 30 isn't a power of 2, so there is no clean
- * fixed-width bit-packing (standard base32's own 32-symbol alphabet exists precisely because 32 is
- * one) to reconcile "16 bytes in" with "this alphabet out" either. Between the two, the alphabet
- * and the fixed length are the two figures ALSO pinned by the wire contract's own regex, so they
- * are taken as the controlling literal contract; "16 random bytes" is read as an approximate gloss
- * that doesn't survive contact with the other two. Implemented below as CODE_LENGTH independent,
- * rejection-sampled draws from CODE_ALPHABET -- not a bit-packing of a 16-byte buffer -- which is
- * both simpler and avoids the modulo bias a 30-into-256 packing would introduce. Named here rather
- * than silently picked.
+ * (30^26 < 2^128, ~127.58 bits by log2(30) * 26 -- verified: 30^26 / 2^128 ~= 0.747), and 30 isn't
+ * a power of 2, so there is no clean fixed-width bit-packing (standard base32's own 32-symbol
+ * alphabet exists precisely because 32 is one) to reconcile "16 bytes in" with "this alphabet out"
+ * either. The SAME "at least 128 bits" figure is also independently the parent acceptance bullet's
+ * (#743) own wording for this code, not just decision 4's internal aside -- so this is a knowing,
+ * disclosed ~0.42-bit shortfall against that literal acceptance criterion, not merely a same-decision
+ * self-contradiction. Between the three, the alphabet and the fixed length are the two figures ALSO
+ * pinned by the wire contract's own regex -- shared byte-for-shape with #744's tests -- so they are
+ * taken as the controlling literal contract; "128 bits" is read as an approximate gloss that doesn't
+ * survive contact with the other two, and the ~25%-smaller-than-true-128-bit keyspace is
+ * security-immaterial at this scale (10-minute TTL, single use, no realistic guess rate approaches
+ * exhausting 2^127.58 in that window). Implemented below as CODE_LENGTH independent, rejection-sampled
+ * draws from CODE_ALPHABET -- not a bit-packing of a 16-byte buffer -- which is both simpler and
+ * avoids the modulo bias a 30-into-256 packing would introduce. Named here, and in the PR that
+ * introduced this file, rather than silently picked or silently checked off as met.
  */
 const CODE_LENGTH = 26;
 

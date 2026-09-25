@@ -64,6 +64,19 @@ function deps(host: HostApi, token: string | undefined): HttpDeps {
   return { host, store, registry, token, limiter, drainLock, now: () => new Date(NOW), log: { info() {}, warn() {}, error() {} } };
 }
 
+// Matches auth.test.ts's own makeLog() shape/convention.
+function makeLog() {
+  const calls: { level: "info" | "warn" | "error"; message: string }[] = [];
+  return {
+    log: {
+      info: (m: string) => calls.push({ level: "info", message: m }),
+      warn: (m: string) => calls.push({ level: "warn", message: m }),
+      error: (m: string) => calls.push({ level: "error", message: m }),
+    },
+    calls,
+  };
+}
+
 describe("handleMcpHttp: token and auth", () => {
   test("an unset token is 503, checked before auth -- even with no Authorization header at all", async () => {
     const host = makeFakeHost({ name: "mcp" });
@@ -299,6 +312,34 @@ describe("handleMcpHttp: POST /pair/redeem", () => {
     const second = await handleMcpHttp(post("/pair/redeem", { code: pairOutcome.code }), INFO("/pair/redeem"), d);
     expect(second.status).toBe(404);
     expect(await second.json()).toEqual({ error: "invalid or expired code" });
+  });
+
+  test("decision 6: a successful redeem logs the outcome, never the code", async () => {
+    const userId = "123456789012345678";
+    await registry.register(userId, "Ash", () => new Date());
+    const pairOutcome = await registry.pair(userId, "Ash", () => new Date());
+    if (!pairOutcome.ok) throw new Error("setup: pair failed");
+    const { log, calls } = makeLog();
+    const d = { ...deps(makeFakeHost({ name: "mcp" }), TOKEN), log };
+
+    await handleMcpHttp(post("/pair/redeem", { code: pairOutcome.code }), INFO("/pair/redeem"), d);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.level).toBe("info");
+    expect(calls[0]!.message).toContain(userId);
+    expect(calls[0]!.message).not.toContain(pairOutcome.code);
+  });
+
+  test("decision 6: a failed redeem (unknown/expired/reused code) logs the outcome, never the code", async () => {
+    const { log, calls } = makeLog();
+    const d = { ...deps(makeFakeHost({ name: "mcp" }), TOKEN), log };
+    const guessedCode = "X".repeat(26);
+
+    await handleMcpHttp(post("/pair/redeem", { code: guessedCode }), INFO("/pair/redeem"), d);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.level).toBe("warn");
+    expect(calls[0]!.message).not.toContain(guessedCode);
   });
 
   test("an unknown code is 404 with the literal message", async () => {
