@@ -1,18 +1,22 @@
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { createRateLimiter } from "./auth.js";
+import { agentCommand } from "./commands.js";
 import { createDrainLock, drainAndPersist } from "./drain.js";
 import { handleMcpHttp, type HttpDeps } from "./http.js";
+import { createRegistryStore } from "./registry.js";
 import { createDeliveryStore } from "./store.js";
 
 /**
- * The MCP bridge plugin (Tooling#742): the service side of docs/bridge-protocol.md, served under
- * `/mcp/`. `createPlugin` is pure -- it only reads `MCP_BRIDGE_TOKEN` and builds the (stateless
- * until activate()) store, rate limiter and drain lock; `MCP_BRIDGE_TOKEN`'s `format` is validated
- * by `ops/bot-ops.sh env-set` only, never here (contract.ts's own PluginEnvKey doc comment) -- an
+ * The MCP bridge plugin (Tooling#742/#743): the service side of docs/bridge-protocol.md, served
+ * under `/mcp/`, plus the `/agent` slash command and its two registration/pairing endpoints.
+ * `createPlugin` is pure -- it only reads `MCP_BRIDGE_TOKEN` and builds the (stateless until
+ * activate()) stores, rate limiter and drain lock; `MCP_BRIDGE_TOKEN`'s `format` is validated by
+ * `ops/bot-ops.sh env-set` only, never here (contract.ts's own PluginEnvKey doc comment) -- an
  * unset or malformed value both just mean http.ts answers 503.
  */
 export function createPlugin(host: HostApi): Plugin {
   const store = createDeliveryStore(host.dataDir, host.storage, host.log);
+  const registry = createRegistryStore(host.dataDir, host.storage);
   const limiter = createRateLimiter();
   // Shared with http.ts (below) so a caller's retry and this plugin's own re-drive tick can never
   // drain the SAME request_id at once -- see drain.ts's DrainLock doc comment for why that race is
@@ -28,6 +32,7 @@ export function createPlugin(host: HostApi): Plugin {
   const httpDeps: HttpDeps = {
     host,
     store,
+    registry,
     token: host.env.MCP_BRIDGE_TOKEN,
     limiter,
     drainLock,
@@ -36,6 +41,7 @@ export function createPlugin(host: HostApi): Plugin {
   };
 
   return {
+    commands: [agentCommand(registry)],
     async http(request, info) {
       return handleMcpHttp(request, info, httpDeps);
     },

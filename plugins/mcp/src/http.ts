@@ -3,12 +3,21 @@
 import type { HostApi, PluginHttpInfo, PluginLog } from "../../../packages/api/contract.js";
 import { checkAuth, type RateLimiter } from "./auth.js";
 import { drainAndPersist, type DrainLock } from "./drain.js";
-import { capabilitiesResponse, MAX_BODY_BYTES, toWireState, validateCreateRequest, type StoredDelivery } from "./protocol.js";
+import {
+  capabilitiesResponse,
+  MAX_BODY_BYTES,
+  toWireState,
+  validateCreateRequest,
+  validateRedeemRequest,
+  type StoredDelivery,
+} from "./protocol.js";
+import type { RegistryStore } from "./registry.js";
 import type { DeliveryStore } from "./store.js";
 
 export interface HttpDeps {
   host: HostApi;
   store: DeliveryStore;
+  registry: RegistryStore;
   token: string | undefined;
   limiter: RateLimiter;
   drainLock: DrainLock;
@@ -107,7 +116,35 @@ async function handleGetDelivery(requestId: string, deps: HttpDeps): Promise<Res
   return json(200, toWireState(value));
 }
 
+/** `POST /pair/redeem` (Tooling#743): a malformed body/code is 400 before the registry is ever
+ *  touched; the registry's own "unknown, expired, used, or orphaned by an unregister" cases all
+ *  answer the same 404 (decision 6) -- there is nothing left to distinguish once `redeem` returns. */
+async function handleRedeemPair(request: Request, deps: HttpDeps): Promise<Response> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await request.text());
+  } catch {
+    return json(400, { error: "malformed request" });
+  }
+  const validated = validateRedeemRequest(raw);
+  if (!validated.ok) return json(400, { error: "malformed request" });
+  const outcome = await deps.registry.redeem(validated.code, deps.now);
+  if (!outcome.ok) return json(404, { error: "invalid or expired code" });
+  return json(200, { discord_user_id: outcome.discordUserId, generation: outcome.generation });
+}
+
+/** `GET /registration/{user_id}` (Tooling#743). The path segment's own shape is enforced by
+ *  `REGISTRATION_ID_RE` below, the same way `DELIVERY_ID_RE` enforces the hex-64 shape for
+ *  deliveries -- a malformed user_id therefore never reaches this handler at all, falling through
+ *  to the generic catch-all 404 rather than this endpoint's specific "not registered" one. */
+async function handleGetRegistration(userId: string, deps: HttpDeps): Promise<Response> {
+  const generation = await deps.registry.generationOf(userId);
+  if (generation === undefined) return json(404, { error: "not registered" });
+  return json(200, { generation });
+}
+
 const DELIVERY_ID_RE = /^\/deliveries\/([0-9a-f]{64})$/;
+const REGISTRATION_ID_RE = /^\/registration\/([1-9][0-9]{16,19})$/;
 
 export async function handleMcpHttp(request: Request, info: PluginHttpInfo, deps: HttpDeps): Promise<Response> {
   // Decision 3: unset token is 503, checked BEFORE auth.
@@ -123,11 +160,19 @@ export async function handleMcpHttp(request: Request, info: PluginHttpInfo, deps
     if (request.method !== "POST") return json(405, { error: "method not allowed" });
     return handleCreateDelivery(request, deps);
   }
-  const match = DELIVERY_ID_RE.exec(info.path);
-  if (match) {
+  const deliveryMatch = DELIVERY_ID_RE.exec(info.path);
+  if (deliveryMatch) {
     if (request.method !== "GET") return json(405, { error: "method not allowed" });
-    return handleGetDelivery(match[1]!, deps);
+    return handleGetDelivery(deliveryMatch[1]!, deps);
   }
-  // Everything else, including the S3-reserved /pair/redeem and /registration/* (decision 2).
+  if (info.path === "/pair/redeem") {
+    if (request.method !== "POST") return json(405, { error: "method not allowed" });
+    return handleRedeemPair(request, deps);
+  }
+  const registrationMatch = REGISTRATION_ID_RE.exec(info.path);
+  if (registrationMatch) {
+    if (request.method !== "GET") return json(405, { error: "method not allowed" });
+    return handleGetRegistration(registrationMatch[1]!, deps);
+  }
   return json(404, { error: "not found" });
 }

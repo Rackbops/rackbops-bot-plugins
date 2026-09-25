@@ -11,6 +11,14 @@ export const MAX_BODY_BYTES = 64 * 1024;
 export const CONTENT_MIN = 1;
 export const CONTENT_MAX = 2000;
 
+// Tooling#743's own wire shapes, on the same /mcp/ surface. `PAIR_CODE_RE` is deliberately looser
+// than registry.ts's own CODE_ALPHABET (which excludes I/L/O/U) -- the wire only rejects a
+// structurally-wrong submission, never second-guesses which subset of A-Z the generator used.
+// `DISCORD_USER_ID_RE` is tighter than SNOWFLAKE_RE above (17-20 digits, no leading zero): the
+// plan's own literal pattern for a path segment, not reused for target.guild_id's looser one.
+export const PAIR_CODE_RE = /^[A-Z2-9]{26}$/;
+export const DISCORD_USER_ID_RE = /^[1-9][0-9]{16,19}$/;
+
 // Mirrors package.json's botPlugin.destinations verbatim (Tooling#742 decision 1) -- kept as a
 // runtime constant because a plugin has no access to its own manifest at runtime; the two must be
 // changed together, and generate-index's own duplicate/shape checks catch the manifest half drifting.
@@ -132,6 +140,18 @@ export function validateCreateRequest(raw: unknown): ValidatedCreate {
     return { ok: false, reason: `target.destination must be one of ${DESTINATION_NAMES.join(", ")}` };
   }
   return { ok: true, requestId, kind, target: { guildId, destination }, body: bodyResult.value };
+}
+
+export type ValidatedRedeem = { ok: true; code: string } | { ok: false };
+
+/** `POST /pair/redeem`'s body (Tooling#743): the wire contract names one 400 reason
+ *  ("malformed request") for every shape problem -- not JSON, no `code`, or `code` not matching
+ *  `PAIR_CODE_RE` -- so this collapses them to a single boolean rather than a `reason` string. */
+export function validateRedeemRequest(raw: unknown): ValidatedRedeem {
+  if (!isRecord(raw)) return { ok: false };
+  const code = raw.code;
+  if (typeof code !== "string" || !PAIR_CODE_RE.test(code)) return { ok: false };
+  return { ok: true, code };
 }
 
 /** Wire JSON for `GET /capabilities` (decision 4). `dm`/`edit` are `false` regardless of the host in
