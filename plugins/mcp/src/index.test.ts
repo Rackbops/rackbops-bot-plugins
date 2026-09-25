@@ -91,17 +91,26 @@ describe("activate", () => {
 });
 
 describe("the redrive tick", () => {
-  test("one entry's persistence failure does not abort the rest of the cycle -- a later entry still drains and prune still runs", async () => {
+  test("one entry's persistence failure does not abort the rest of the cycle -- every entry is still attempted and prune still runs", async () => {
     // Review finding (Tooling#742): the tick's per-entry work used to have a try/finally but no
     // catch, so one id's drainAndPersist throwing propagated out of the whole run(), skipping every
     // later id in that cycle's store.list() snapshot and the prune pass that follows.
+    //
+    // store.list()'s own contract is explicit that it returns ids "in no particular order" (store.ts),
+    // and real directory iteration order is filesystem-dependent (NTFS returns readdir sorted; ext4,
+    // used in CI, does not) -- so this cannot assert on "the entry AFTER the failing one still ran"
+    // via naming/sort order, or it could pass for the wrong reason on a filesystem that happens to
+    // process the non-failing id first. Instead it tracks every write ATTEMPT the flaky storage sees,
+    // which proves both ids were reached regardless of which one the loop hit first.
     const idA = "a".repeat(64);
     const idB = "b".repeat(64);
     const staleId = "c".repeat(64);
     const realStorage = makeRealStorage();
+    const attempted: string[] = [];
     const flakyStorage = {
       ...realStorage,
       writeJsonAtomic: async (path: string, data: unknown) => {
+        attempted.push(path);
         if (path.includes(idA)) throw new Error("disk full");
         return realStorage.writeJsonAtomic(path, data);
       },
@@ -118,13 +127,17 @@ describe("the redrive tick", () => {
     await externalStore.set(idA, { state: "unknown", kind: "post", target: TARGET, body: BODY, createdAt: new Date().toISOString() });
     await externalStore.set(idB, { state: "unknown", kind: "post", target: TARGET, body: BODY, createdAt: new Date().toISOString() });
     await externalStore.set(staleId, { state: "delivered", kind: "post", target: TARGET, body: BODY, createdAt: old, messageRef: null, url: null, delivery: null });
+    attempted.length = 0; // drop the three setup writes above; only the tick's own attempts matter
 
     const plugin = createPlugin(host);
-    await plugin.ticks![0]!.run(); // idA's write throws; idB comes right after it in store.list()'s order
+    await plugin.ticks![0]!.run();
 
-    // idB still drained despite idA's failure earlier in the same loop.
+    // Both ids were reached -- whichever the loop hit first, the other was not skipped because of it.
+    expect(attempted.some((p) => p.includes(idA))).toBe(true);
+    expect(attempted.some((p) => p.includes(idB))).toBe(true);
+    // idB's own write never fails, so it reaches "delivered" regardless of processing order.
     expect((await externalStore.get(idB))!.state).toBe("delivered");
-    // idA itself is left as it was (still "unknown" -- its own write never landed); not this test's
+    // idA itself is left as it was (still "unknown" -- its own write never lands); not this test's
     // point, but worth confirming nothing corrupted it either.
     expect((await externalStore.get(idA))!.state).toBe("unknown");
     // The prune pass after the loop still ran, despite idA's mid-loop throw.
