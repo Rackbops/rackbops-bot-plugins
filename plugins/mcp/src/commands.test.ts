@@ -136,3 +136,27 @@ describe("agentCommand: every reply is ephemeral, and only the addressed subcomm
     expect(calls).toEqual(["unregister"]);
   });
 });
+
+describe("agentCommand: no handler makes a network call on the reply path", () => {
+  test("register/pair/unregister never call fetch", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchCalls: unknown[] = [];
+    globalThis.fetch = (async (...args: unknown[]) => {
+      fetchCalls.push(args);
+      throw new Error("unexpected fetch call");
+    }) as unknown as typeof fetch;
+    try {
+      const register = fakeStore({ register: async () => ({ changed: true, generation: "g" }) });
+      await agentCommand(register.store).handle(fakeInteraction("register").interaction);
+
+      const pair = fakeStore({ pair: async () => ({ ok: true, code: "X".repeat(26) }) });
+      await agentCommand(pair.store).handle(fakeInteraction("pair").interaction);
+
+      const unregister = fakeStore({ unregister: async () => ({ changed: true }) });
+      await agentCommand(unregister.store).handle(fakeInteraction("unregister").interaction);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(fetchCalls).toEqual([]);
+  });
+});
