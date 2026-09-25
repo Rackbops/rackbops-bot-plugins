@@ -44,12 +44,20 @@ export function generateGeneration(): string {
 /** Decision 4's alphabet, verbatim -- 30 symbols (A-Z minus I/L/O/U, plus 2-9), chosen for
  *  human-unambiguous reading over a voice/DM channel. */
 export const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789";
-/** Decision 4: "fixed length 26" -- also the wire contract's own `^[A-Z2-9]{26}$` length. 26
- *  characters from this 30-symbol alphabet is ~127.6 bits (log2(30) * 26), not quite the "at least
- *  128 bits" the parent issue (#737) named -- 30^26 < 2^128, so no encoding of exactly 26 characters
- *  from an exactly-30-symbol alphabet can reach 128 bits; the plan's own literal decision (this
- *  alphabet, this length) is taken as authoritative over the parent issue's looser figure, per this
- *  epic's own rule that the plan wins where the two differ. Named here rather than silently picked. */
+/**
+ * Decision 4 itself is internally over-specified: it says both "16 random bytes" (128 bits) AND
+ * "this 30-symbol alphabet, fixed length 26" (also the wire contract's own `^[A-Z2-9]{26}$`) --
+ * but no encoding of a full 128-bit space into 26 characters from a 30-symbol alphabet can exist
+ * (30^26 < 2^128, ~127.6 bits by log2(30) * 26), and 30 isn't a power of 2, so there is no clean
+ * fixed-width bit-packing (standard base32's own 32-symbol alphabet exists precisely because 32 is
+ * one) to reconcile "16 bytes in" with "this alphabet out" either. Between the two, the alphabet
+ * and the fixed length are the two figures ALSO pinned by the wire contract's own regex, so they
+ * are taken as the controlling literal contract; "16 random bytes" is read as an approximate gloss
+ * that doesn't survive contact with the other two. Implemented below as CODE_LENGTH independent,
+ * rejection-sampled draws from CODE_ALPHABET -- not a bit-packing of a 16-byte buffer -- which is
+ * both simpler and avoids the modulo bias a 30-into-256 packing would introduce. Named here rather
+ * than silently picked.
+ */
 const CODE_LENGTH = 26;
 
 /** One code, drawn via `randomInt` (rejection-sampled, unbiased) rather than a modulo of
