@@ -63,8 +63,12 @@ pin only needs to change in one place.
   the epic [rackbops-discord-bot#123](https://github.com/Rackbops/rackbops-discord-bot/issues/123).
 - **`packages/testkit/index.ts` is the shared test-only module** -- `makeRealStorage` (a faithful copy
   of the host's storage primitives, so the concurrency tests are meaningful), `makeFakeHost({ name })`
-  (name required; `dataDir` defaults to `/tmp/<name>-fake-datadir`), and `makeFakeInteraction`. It
-  replaced a per-plugin `src/test-host.ts` copy in each plugin (#34). Imported only by `*.test.ts`
+  (name required; `dataDir` defaults to `/tmp/<name>-fake-datadir`; on its own it still has none of
+  `post`/`dm`/`edit`/`destinations` -- the pre-#736 degraded path), `makeFakeDelivery()` (#736: those
+  four as recorders returning a fixed `HostDelivery`/`[]`, spread into `makeFakeHost`'s overrides; its
+  own `calls` property is not part of `HostApi` and is read straight off the object this returns, not
+  off the host), and `makeFakeInteraction`. It replaced a per-plugin `src/test-host.ts` copy in each
+  plugin (#34). Imported only by `*.test.ts`
   (`../../../packages/testkit/index.js` from a plugin's `src/`); it is never published and never
   bundled -- `build-plugins` bundles `src/index.ts` only, and `files: ["dist"]` keeps `src/` out of
   the tarball -- so it touches no shipped artifact and no plugin version.

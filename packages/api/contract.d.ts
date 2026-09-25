@@ -54,6 +54,52 @@ export interface PluginDestination {
   description: string;
 }
 
+/** A single https link button (#736); `post`/`dm`/`edit` render at most 5, link-style only. */
+export interface HostLinkButton {
+  label: string;
+  url: string;
+}
+
+/** One field of a `HostCard` embed. */
+export interface HostCardField {
+  name: string;
+  value: string;
+  inline?: boolean;
+}
+
+/** The optional card (embed) `post`/`dm`/`edit` may attach to a message; built through discord.js's
+ *  `EmbedBuilder` so its own validators run too (decision 6, #736). */
+export interface HostCard {
+  title: string;
+  description?: string;
+  url?: string;
+  color?: number;
+  fields?: HostCardField[];
+  footer?: string;
+}
+
+/** What `post`/`dm`/`edit` accept. `buttons` is RESERVED for interactive components and refused today. */
+export interface HostMessage {
+  content: string;
+  card?: HostCard;
+  links?: HostLinkButton[];
+  buttons?: { customId: string; label: string }[];
+}
+
+/** A message `post`/`dm` delivered, and what `edit` needs to find it again. `guildId` is `null` for a DM. */
+export interface HostDelivery {
+  guildId: string | null;
+  channelId: string;
+  messageId: string;
+}
+
+/** One of this plugin's declared destinations as the operator has mapped it (`HostApi.destinations`). */
+export interface HostMappedDestination {
+  guildId: string;
+  guildName: string;
+  destination: string;
+}
+
 /** One published version, extracted from the plugin's CHANGELOG.md — what the update notification shows. */
 export interface PluginRelease {
   version: string;
@@ -225,6 +271,22 @@ export interface HostApi {
    *  destination is an option the operator can take up, never something that stops a post. A name the manifest does not
    *  declare is logged and treated the same way. */
   announce(message: string, destination?: string): Promise<void>;
+  /** Posts to the one channel the operator mapped for `destination` in `guildId` (never a default or
+   *  fallback route, unlike `announce`); rejects when the destination is undeclared or unmapped there.
+   *  Sends as the bot, never through a channel webhook (a link button is a component, which a plain
+   *  webhook cannot carry) — `announce` keeps its own webhook path unchanged. Optional: absent on a
+   *  host that predates it (#736), so `typeof host.post === "function"` is how a plugin feature-detects. */
+  post?(guildId: string, destination: string, message: HostMessage): Promise<HostDelivery>;
+  /** DMs `userId`; rejects cleanly (never throws a raw Discord error) when the recipient's DMs are
+   *  closed. Sends as the bot. Optional, like `post` (#736). */
+  dm?(userId: string, message: HostMessage): Promise<HostDelivery>;
+  /** Edits a message `post`/`dm` delivered. Refuses a message this bot did not author — a plugin
+   *  already reaches the live `Client` via `interaction.client`, so per-plugin ownership is not a
+   *  boundary the host can honestly enforce; a caller that needs that enforces it itself (#736). */
+  edit?(delivery: HostDelivery, message: Partial<HostMessage>): Promise<void>;
+  /** Where this plugin's declared `destinations` (its manifest) are mapped right now, across every
+   *  server it lives in. Optional, like `post` (#736). */
+  destinations?(): Promise<HostMappedDestination[]>;
 }
 
 export interface PluginCommand {
