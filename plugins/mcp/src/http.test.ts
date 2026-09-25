@@ -164,7 +164,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     expect(createdBody.existing).toBe(false);
     expect(createdBody.state.state).toBe("pending");
 
-    await flush();
+    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
 
     const fetched = await handleMcpHttp(get(`/deliveries/${REQUEST_ID}`), INFO(`/deliveries/${REQUEST_ID}`), d);
     expect(fetched.status).toBe(200);
@@ -207,7 +207,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     const d = deps(host, TOKEN);
 
     await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
-    await flush();
+    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
     const retry = await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
     expect(retry.status).toBe(202);
     const retryBody = (await retry.json()) as { state: { state: string }; existing: boolean };
@@ -229,16 +229,14 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     const d = deps(host, TOKEN);
 
     await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
-    await flush();
-    expect((await store.get(REQUEST_ID))!.state).toBe("failed");
+    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "failed");
 
     const retry = await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
     expect(retry.status).toBe(202);
     const retryBody = (await retry.json()) as { state: { state: string }; existing: boolean };
     expect(retryBody.existing).toBe(true);
     expect(retryBody.state.state).toBe("pending");
-    await flush();
-    expect((await store.get(REQUEST_ID))!.state).toBe("delivered");
+    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
     expect(attempts).toBe(2);
   });
 
@@ -251,7 +249,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     });
     const d = deps(host, TOKEN);
     await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
-    await flush();
+    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "failed");
     const firstCreatedAt = (await store.get(REQUEST_ID))!.createdAt;
 
     const laterDeps = { ...d, now: () => new Date(NOW + 60_000) };
