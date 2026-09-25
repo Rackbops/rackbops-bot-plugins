@@ -7,6 +7,13 @@ import type { HostCard, HostDelivery, HostLinkButton } from "../../../packages/a
 
 export const REQUEST_ID_RE = /^[0-9a-f]{64}$/;
 export const SNOWFLAKE_RE = /^[0-9]{5,25}$/;
+/** A Discord user id specifically (Tooling#746's `dm` target, matching `http.ts`'s own
+ *  `REGISTRATION_ID_RE` capture group, #743) -- tighter than `SNOWFLAKE_RE` (no leading zero, a
+ *  narrower 17-20 digit length): `guild_id`/`message_ref` reuse the looser `SNOWFLAKE_RE`/
+ *  `REQUEST_ID_RE` because nothing about THEIR wire contract calls for the tighter shape, but
+ *  `target.user_id`'s own 400 rule is exactly `^[1-9][0-9]{16,19}$` -- reusing `SNOWFLAKE_RE` here
+ *  would accept a value the documented contract (and `REGISTRATION_ID_RE`'s own precedent) rejects. */
+export const DISCORD_USER_ID_RE = /^[1-9][0-9]{16,19}$/;
 export const MAX_BODY_BYTES = 64 * 1024;
 export const CONTENT_MIN = 1;
 export const CONTENT_MAX = 2000;
@@ -25,11 +32,14 @@ export const DISPLAY_NAME_MAX = 100;
 // has no request body, so its own id-shape lives only at http.ts's routing regex (REGISTRATION_ID_RE)
 // -- matching this file's existing DELIVERY_ID_RE/REQUEST_ID_RE split, where a path parameter's shape
 // is checked once, at the route match, and a handler never re-validates what its own routing already
-// guaranteed. An earlier revision also exported a DISCORD_USER_ID_RE here for http.ts to reuse, but
-// nothing in protocol.ts's own body-validation ever needed it (no request body carries a user_id) and
-// composing it into the anchored routing regex is actively wrong (a regex's `^`/`$` land in `.source`
-// literally, so nesting one inside another produces un-satisfiable inner anchors) -- removed rather
-// than kept as an unused, never-reused export.
+// guaranteed. A #743 revision removed this file's own DISCORD_USER_ID_RE as unused, on the reasoning
+// that no request body carried a user_id yet, and that composing it into REGISTRATION_ID_RE's already-
+// anchored routing regex would have been wrong anyway (a regex's `^`/`$` land in `.source` literally,
+// so nesting one inside another produces un-satisfiable inner anchors). Tooling#746 reinstates the
+// constant above (DISCORD_USER_ID_RE) for its own reason: a dm's `target.user_id` now IS a request-body
+// field, with its own 400 rule matching REGISTRATION_ID_RE's capture group exactly -- round-1 review
+// caught an earlier revision of this file reusing the looser SNOWFLAKE_RE for it instead, which
+// silently accepted a leading-zero or 5-16-digit value the documented `^[1-9][0-9]{16,19}$` rejects.
 export const PAIR_CODE_RE = /^[A-Z2-9]{27}$/;
 
 // Mirrors package.json's botPlugin.destinations verbatim (Tooling#742 decision 1) -- kept as a
@@ -193,7 +203,7 @@ export function validateCreateRequest(raw: unknown): ValidatedCreate {
     if (!bodyResult.ok) return bodyResult;
     if (!isRecord(raw.target)) return { ok: false, reason: "target must be an object" };
     const userId = raw.target.user_id;
-    if (typeof userId !== "string" || !SNOWFLAKE_RE.test(userId)) {
+    if (typeof userId !== "string" || !DISCORD_USER_ID_RE.test(userId)) {
       return { ok: false, reason: "target.user_id must be a snowflake" };
     }
     return { ok: true, requestId, kind, target: { userId }, body: bodyResult.value };

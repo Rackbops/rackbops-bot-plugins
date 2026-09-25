@@ -359,12 +359,15 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     await waitUntil(async () => (await store.get(editRequestId))?.state === "delivered");
 
     const fetched = await handleMcpHttp(get(`/deliveries/${editRequestId}`), INFO(`/deliveries/${editRequestId}`), d);
-    const body = (await fetched.json()) as Record<string, unknown>;
-    expect(body).toMatchObject({
+    expect(fetched.status).toBe(200);
+    expect(await fetched.json()).toEqual({
       state: "delivered",
       kind: "edit",
       target: { message_ref: REQUEST_ID, seq: 2 },
+      body: { content: "v2" },
+      created_at: new Date(NOW).toISOString(),
       message_ref: REQUEST_ID,
+      url: "https://discord.com/channels/100000000000000001/200000000000000001/300000000000000001",
       applied: true,
     });
     expect(delivery.calls.edit).toHaveLength(1);

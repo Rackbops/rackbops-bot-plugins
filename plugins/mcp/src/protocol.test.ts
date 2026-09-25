@@ -169,6 +169,24 @@ describe("validateCreateRequest: dm", () => {
     }
   });
 
+  // Round-1 review: an earlier revision validated target.user_id against SNOWFLAKE_RE
+  // (/^[0-9]{5,25}$/, guild_id's own looser pattern) instead of the plan's own documented
+  // ^[1-9][0-9]{16,19}$ -- these values pass SNOWFLAKE_RE but must still be refused, and are the
+  // specific boundary the three cases above never exercised (all fail both regexes).
+  test("refuses a value SNOWFLAKE_RE would wrongly accept -- a leading zero, or short of 17 digits", () => {
+    for (const bad of ["01234567890123456", "1234567890123456", "12345"]) {
+      expect(validateCreateRequest(validDm({ target: { user_id: bad } }))).toEqual({
+        ok: false,
+        reason: "target.user_id must be a snowflake",
+      });
+    }
+  });
+
+  test("accepts user_id at both length boundaries, 17 and 20 digits", () => {
+    expect(validateCreateRequest(validDm({ target: { user_id: "12345678901234567" } }))).toMatchObject({ ok: true }); // 17
+    expect(validateCreateRequest(validDm({ target: { user_id: "12345678901234567890" } }))).toMatchObject({ ok: true }); // 20
+  });
+
   test("content is required for dm, exactly like post", () => {
     expect(validateCreateRequest(validDm({ body: {} }))).toEqual({
       ok: false,
@@ -237,21 +255,42 @@ describe("validateCreateRequest: edit", () => {
 });
 
 describe("capabilitiesResponse", () => {
-  test("dm/edit/targeted_post/cards each follow their own flag independently", () => {
-    expect(capabilitiesResponse({ post: true, dm: false, edit: false })).toMatchObject({ dm: false, edit: false, targeted_post: true, cards: true });
-    expect(capabilitiesResponse({ post: false, dm: false, edit: false })).toMatchObject({ dm: false, edit: false, targeted_post: false, cards: false });
-    expect(capabilitiesResponse({ post: false, dm: true, edit: false })).toMatchObject({ dm: true, edit: false, targeted_post: false, cards: false });
-    expect(capabilitiesResponse({ post: false, dm: false, edit: true })).toMatchObject({ dm: false, edit: true, targeted_post: false, cards: false });
-  });
+  const DESTINATIONS_WIRE = [
+    { destination: "alerts", description: "Time-sensitive findings and warnings" },
+    { destination: "deals", description: "Notable deals or opportunities" },
+    { destination: "digest", description: "Periodic summaries" },
+    { destination: "ops", description: "Operational status and infrastructure notices" },
+  ];
 
-  test("destinations lists all four declared names with descriptions", () => {
-    const result = capabilitiesResponse({ post: true, dm: false, edit: false });
-    expect(result.destinations).toEqual([
-      { destination: "alerts", description: "Time-sensitive findings and warnings" },
-      { destination: "deals", description: "Notable deals or opportunities" },
-      { destination: "digest", description: "Periodic summaries" },
-      { destination: "ops", description: "Operational status and infrastructure notices" },
-    ]);
+  test("matches the literal wire shape, full JSON, for every combination of flags", () => {
+    expect(capabilitiesResponse({ post: true, dm: false, edit: false })).toEqual({
+      dm: false,
+      targeted_post: true,
+      cards: true,
+      edit: false,
+      destinations: DESTINATIONS_WIRE,
+    });
+    expect(capabilitiesResponse({ post: false, dm: false, edit: false })).toEqual({
+      dm: false,
+      targeted_post: false,
+      cards: false,
+      edit: false,
+      destinations: DESTINATIONS_WIRE,
+    });
+    expect(capabilitiesResponse({ post: false, dm: true, edit: false })).toEqual({
+      dm: true,
+      targeted_post: false,
+      cards: false,
+      edit: false,
+      destinations: DESTINATIONS_WIRE,
+    });
+    expect(capabilitiesResponse({ post: false, dm: false, edit: true })).toEqual({
+      dm: false,
+      targeted_post: false,
+      cards: false,
+      edit: true,
+      destinations: DESTINATIONS_WIRE,
+    });
   });
 });
 
