@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { makeFakeHost, makeFakeInteraction, makeRealStorage } from "./index.js";
+import { makeFakeDelivery, makeFakeHost, makeFakeInteraction, makeRealStorage } from "./index.js";
 
 describe("makeFakeHost", () => {
   test("requires name and derives dataDir from it", () => {
@@ -19,6 +19,74 @@ describe("makeFakeHost", () => {
     const host = makeFakeHost({ name: "warbandeer", dataDir: "/somewhere/real", env: { A: "1" } });
     expect(host.dataDir).toBe("/somewhere/real");
     expect(host.env).toEqual({ A: "1" });
+  });
+
+  test("without makeFakeDelivery, the four #736 members are absent -- the degraded, pre-#736 path", () => {
+    const host = makeFakeHost({ name: "wow" });
+    expect(host.post).toBeUndefined();
+    expect(host.dm).toBeUndefined();
+    expect(host.edit).toBeUndefined();
+    expect(host.destinations).toBeUndefined();
+  });
+});
+
+describe("makeFakeDelivery (#736)", () => {
+  test("spreads into makeFakeHost's overrides, wiring all four members as functions", () => {
+    const host = makeFakeHost({ name: "wow", ...makeFakeDelivery() });
+    expect(typeof host.post).toBe("function");
+    expect(typeof host.dm).toBe("function");
+    expect(typeof host.edit).toBe("function");
+    expect(typeof host.destinations).toBe("function");
+  });
+
+  test("post records its call and returns the same fixed HostDelivery every time", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "wow", ...delivery });
+    const first = await host.post!("100000000000000000", "alerts", { content: "hi" });
+    const second = await host.post!("999999999999999999", "news", { content: "bye" });
+    expect(first).toEqual(second);
+    expect(delivery.calls.post).toEqual([
+      { guildId: "100000000000000000", destination: "alerts", message: { content: "hi" } },
+      { guildId: "999999999999999999", destination: "news", message: { content: "bye" } },
+    ]);
+  });
+
+  test("dm records its call and returns a fixed HostDelivery with a null guildId", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "wow", ...delivery });
+    const result = await host.dm!("42", { content: "hi" });
+    expect(result.guildId).toBeNull();
+    expect(delivery.calls.dm).toEqual([{ userId: "42", message: { content: "hi" } }]);
+  });
+
+  test("edit records its call and resolves with nothing", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "wow", ...delivery });
+    const sent = await host.post!("100000000000000000", "alerts", { content: "hi" });
+    await expect(host.edit!(sent, { content: "edited" })).resolves.toBeUndefined();
+    expect(delivery.calls.edit).toEqual([{ delivery: sent, message: { content: "edited" } }]);
+  });
+
+  test("destinations answers [] and counts its calls", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "wow", ...delivery });
+    expect(await host.destinations!()).toEqual([]);
+    expect(await host.destinations!()).toEqual([]);
+    expect(delivery.calls.destinations).toBe(2);
+  });
+
+  test("a test that needs a specific destinations list overrides it directly on makeFakeHost", async () => {
+    const mapped = [{ guildId: "1", guildName: "g", destination: "news" }];
+    const host = makeFakeHost({ name: "wow", ...makeFakeDelivery(), destinations: async () => mapped });
+    expect(await host.destinations!()).toEqual(mapped);
+  });
+
+  test("two instances never share recorded calls", async () => {
+    const a = makeFakeDelivery();
+    const b = makeFakeDelivery();
+    await a.dm("1", { content: "a" });
+    expect(a.calls.dm).toHaveLength(1);
+    expect(b.calls.dm).toHaveLength(0);
   });
 });
 

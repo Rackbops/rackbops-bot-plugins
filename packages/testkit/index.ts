@@ -10,7 +10,7 @@
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import type { MessageComponentInteraction, ModalSubmitInteraction } from "discord.js";
-import type { HostApi, HostStorage } from "../api/contract.js";
+import type { HostApi, HostDelivery, HostMappedDestination, HostMessage, HostStorage } from "../api/contract.js";
 
 async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
   mkdirSync(dirname(path), { recursive: true });
@@ -85,6 +85,73 @@ export function makeFakeHost(overrides: Partial<HostApi> & { name: string }): Ho
     storage: makeRealStorage(),
     announce: async () => {},
     ...overrides,
+  };
+}
+
+/** Fixed return values `makeFakeDelivery`'s recorders answer with -- deliberately the same every
+ *  call, so a test asserting on a delivery result has one well-known value to check against. */
+const FAKE_POST_DELIVERY: HostDelivery = { guildId: "100000000000000001", channelId: "200000000000000001", messageId: "300000000000000001" };
+const FAKE_DM_DELIVERY: HostDelivery = { guildId: null, channelId: "200000000000000002", messageId: "300000000000000002" };
+
+/**
+ * `post`/`dm`/`edit`/`destinations` recorders (#736) -- spread into `makeFakeHost`'s overrides so a
+ * plugin's test can exercise a host that has them wired, without a fake HostApi hand-rolling all
+ * four. `makeFakeHost` on its own still has none of the four (its defaults are unchanged), so a
+ * plugin's tests exercise the degraded, pre-#736 path unless this is explicitly added -- matching
+ * how a real host that predates them behaves.
+ *
+ * Each records its call in `calls`, a property of the object THIS returns, not of the four functions
+ * themselves. Spreading that object into `makeFakeHost`'s overrides does copy `calls` onto the host
+ * value too (a plain object spread copies every own key) -- but `makeFakeHost`'s `HostApi` return
+ * type has no `calls` field, so typed code can never read it back off the host either way. Read
+ * `delivery.calls` directly, from the object `makeFakeDelivery()` itself returned, as the example
+ * below does. Each answers with a fixed value: `post`/`dm` return the same `HostDelivery` every call (`FAKE_POST_DELIVERY` /
+ * `FAKE_DM_DELIVERY`), `edit` resolves with nothing (as the real one does), and `destinations`
+ * answers `[]` every call -- a test that needs a specific list overrides `destinations` itself on
+ * the object this returns, or on `makeFakeHost`'s overrides directly.
+ *
+ * ```ts
+ * const delivery = makeFakeDelivery();
+ * const host = makeFakeHost({ name: "myplugin", ...delivery });
+ * await host.post!(guildId, "alerts", { content: "hi" });
+ * expect(delivery.calls.post).toEqual([{ guildId, destination: "alerts", message: { content: "hi" } }]);
+ * ```
+ */
+export function makeFakeDelivery(): {
+  post: NonNullable<HostApi["post"]>;
+  dm: NonNullable<HostApi["dm"]>;
+  edit: NonNullable<HostApi["edit"]>;
+  destinations: NonNullable<HostApi["destinations"]>;
+  calls: {
+    post: { guildId: string; destination: string; message: HostMessage }[];
+    dm: { userId: string; message: HostMessage }[];
+    edit: { delivery: HostDelivery; message: Partial<HostMessage> }[];
+    destinations: number;
+  };
+} {
+  const calls = {
+    post: [] as { guildId: string; destination: string; message: HostMessage }[],
+    dm: [] as { userId: string; message: HostMessage }[],
+    edit: [] as { delivery: HostDelivery; message: Partial<HostMessage> }[],
+    destinations: 0,
+  };
+  return {
+    calls,
+    async post(guildId, destination, message) {
+      calls.post.push({ guildId, destination, message });
+      return FAKE_POST_DELIVERY;
+    },
+    async dm(userId, message) {
+      calls.dm.push({ userId, message });
+      return FAKE_DM_DELIVERY;
+    },
+    async edit(delivery, message) {
+      calls.edit.push({ delivery, message });
+    },
+    async destinations(): Promise<HostMappedDestination[]> {
+      calls.destinations += 1;
+      return [];
+    },
   };
 }
 

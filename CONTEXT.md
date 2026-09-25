@@ -63,8 +63,14 @@ pin only needs to change in one place.
   the epic [rackbops-discord-bot#123](https://github.com/Rackbops/rackbops-discord-bot/issues/123).
 - **`packages/testkit/index.ts` is the shared test-only module** -- `makeRealStorage` (a faithful copy
   of the host's storage primitives, so the concurrency tests are meaningful), `makeFakeHost({ name })`
-  (name required; `dataDir` defaults to `/tmp/<name>-fake-datadir`), and `makeFakeInteraction`. It
-  replaced a per-plugin `src/test-host.ts` copy in each plugin (#34). Imported only by `*.test.ts`
+  (name required; `dataDir` defaults to `/tmp/<name>-fake-datadir`; on its own it still has none of
+  `post`/`dm`/`edit`/`destinations` -- the pre-#736 degraded path), `makeFakeDelivery()` (#736: those
+  four as recorders -- `post`/`dm` return a fixed `HostDelivery`, `edit` resolves nothing, `destinations`
+  answers `[]` -- spread into `makeFakeHost`'s overrides; its own `calls` property isn't part of
+  `HostApi`'s type, so read it straight off the object `makeFakeDelivery()` itself returned, not off
+  the host -- the spread DOES copy it onto the host value too, it is just invisible to typed access
+  there), and `makeFakeInteraction`. It replaced a per-plugin `src/test-host.ts` copy in each
+  plugin (#34). Imported only by `*.test.ts`
   (`../../../packages/testkit/index.js` from a plugin's `src/`); it is never published and never
   bundled -- `build-plugins` bundles `src/index.ts` only, and `files: ["dist"]` keeps `src/` out of
   the tarball -- so it touches no shipped artifact and no plugin version.
