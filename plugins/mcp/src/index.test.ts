@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { ChatInputCommandInteraction } from "discord.js";
 import { makeFakeHost, makeRealStorage } from "../../../packages/testkit/index.js";
 import type { PluginHttpInfo } from "../../../packages/api/contract.js";
 import { createPlugin } from "./index.js";
@@ -40,6 +41,14 @@ async function waitUntil(check: () => boolean, timeoutMs = 2000): Promise<void> 
 
 const validDeliveryBody = () => ({ request_id: REQUEST_ID, kind: "post", target: { guild_id: GUILD, destination: "alerts" }, body: BODY });
 
+function fakeRegisterInteraction(userId: string): ChatInputCommandInteraction {
+  return {
+    user: { id: userId, globalName: "Ash", username: "ash123" },
+    options: { getSubcommand: () => "register" },
+    reply: async () => {},
+  } as unknown as ChatInputCommandInteraction;
+}
+
 let dir: string;
 let externalStore: DeliveryStore;
 
@@ -52,12 +61,14 @@ afterEach(() => {
 });
 
 describe("createPlugin", () => {
-  test("returns http, one redrive tick, activate and dispose", () => {
+  test("returns http, one redrive tick, the agent command, activate and dispose", () => {
     const host = makeFakeHost({ name: "mcp", dataDir: dir, env: { MCP_BRIDGE_TOKEN: TOKEN } });
     const plugin = createPlugin(host);
     expect(typeof plugin.http).toBe("function");
     expect(plugin.ticks).toHaveLength(1);
     expect(plugin.ticks![0]!.name).toBe("redrive");
+    expect(plugin.commands).toHaveLength(1);
+    expect(plugin.commands![0]!.name).toBe("agent");
     expect(typeof plugin.activate).toBe("function");
     expect(typeof plugin.dispose).toBe("function");
   });
@@ -74,6 +85,22 @@ describe("createPlugin", () => {
     const plugin = createPlugin(host);
     const res = await plugin.http!(new Request("http://bridge.local/capabilities", { headers: { authorization: `Bearer ${TOKEN}` } }), INFO("/capabilities"));
     expect(res.status).toBe(200);
+  });
+
+  test("the agent command and the HTTP routes share one registry: a command registration is visible through GET /registration/{user_id}", async () => {
+    const host = makeFakeHost({ name: "mcp", dataDir: dir, env: { MCP_BRIDGE_TOKEN: TOKEN } });
+    const plugin = createPlugin(host);
+    const userId = "123456789012345678";
+
+    await plugin.commands![0]!.handle(fakeRegisterInteraction(userId));
+
+    const res = await plugin.http!(
+      new Request(`http://bridge.local/registration/${userId}`, { headers: { authorization: `Bearer ${TOKEN}` } }),
+      INFO(`/registration/${userId}`),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { generation: string };
+    expect(typeof body.generation).toBe("string");
   });
 });
 

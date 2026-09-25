@@ -5,7 +5,10 @@ The bridge plugin for the Discord delivery MCP ([`Rackbops/discord-mcp`](https:/
 side of that repo's `docs/bridge-protocol.md` under `/mcp/` on the bot's own HTTP listener
 (rackbops-discord-bot's host-owned router, ADR-0007) -- `GET /capabilities`,
 `POST /deliveries` and `GET /deliveries/{request_id}` -- so the MCP service can hand it a message
-and get exactly one Discord post out of it, however many times it retries.
+and get exactly one Discord post out of it, however many times it retries. It also owns Discord-side
+agent identity ([Rackbops/Tooling#743](https://github.com/Rackbops/Tooling/issues/743)): the
+`/agent` slash command, and `POST /pair/redeem` + `GET /registration/{user_id}` under the same
+`/mcp/` path.
 
 ## What it does
 
@@ -15,7 +18,33 @@ and get exactly one Discord post out of it, however many times it retries.
 - A tick re-drives any delivery a restart left `unknown`, and prunes records older than 8 days.
 - `send_dm` and `update_message` are not implemented in this version -- every `kind: "dm"` or
   `"edit"` request is answered `CAPABILITY_UNAVAILABLE` immediately. The recipient registry and edit
-  ordering arrive in [Rackbops/Tooling#737](https://github.com/Rackbops/Tooling/issues/737).
+  ordering arrive in later children of [Rackbops/Tooling#737](https://github.com/Rackbops/Tooling/issues/737).
+- `/agent register` mints a Discord user a `generation` id; `/agent pair` issues a single-use,
+  10-minute pairing code (at least 128 bits, 27 characters; at most 5 live at once -- issuing a 6th
+  drops the oldest); a connector exchanges that code for the user's id and generation via
+  `POST /pair/redeem`; `/agent unregister` deletes the registration and every outstanding code in
+  one write.
+
+## Registration and pairing
+
+`POST /pair/redeem` -- exchanges a code from `/agent pair` for the Discord user id and generation:
+
+```
+request:  {"code":"ABCDEFGHJKMNPQRSTVWXYZ23456"}
+200:      {"discord_user_id":"123456789012345678","generation":"q1w2e3r4t5y6u7i8o9p0aZ"}
+404:      {"error":"invalid or expired code"}     (unknown, expired, already used, or issued before an unregister -- one answer for all)
+400:      {"error":"malformed request"}           (not JSON, no string `code`, or `code` not matching ^[A-Z2-9]{27}$)
+```
+
+`GET /registration/{user_id}` -- `{user_id}` must match `^[1-9][0-9]{16,19}$`, else `404`:
+
+```
+200:      {"generation":"q1w2e3r4t5y6u7i8o9p0aZ"}
+404:      {"error":"not registered"}
+```
+
+A `generation` changes only across a full unregister-then-register-again -- a connector holding a
+stale `generation` for a user has been revoked and re-paired since, not merely re-issued a code.
 
 ## Env
 

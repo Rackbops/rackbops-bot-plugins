@@ -1,15 +1,17 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-25T05:12:11.688Z",
+  "generatedAt": "2026-09-25T15:05:40.438Z",
   "plugins": [
     {
       "name": "mcp",
       "package": "@rackbops/plugin-mcp",
-      "version": "0.1.0",
-      "description": "Bridge plugin for the Discord delivery MCP (Rackbops/discord-mcp): the service side of docs/bridge-protocol.md",
+      "version": "0.2.0",
+      "description": "Bridge plugin for the Discord delivery MCP (Rackbops/discord-mcp): the service side of docs/bridge-protocol.md, plus /agent registration and pairing",
       "hostApiVersion": 1,
       "intents": [],
-      "commands": [],
+      "commands": [
+        "agent"
+      ],
       "env": [
         {
           "key": "MCP_BRIDGE_TOKEN",
@@ -38,6 +40,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "0.2.0",
+          "publishedAt": "2026-09-25T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/mcp-v0.2.0",
+          "notes": "### Added\n\n- Agent registration and pairing (`Rackbops/Tooling#743`, the first of five children split from\n  `Rackbops/Tooling#737`): the `/agent register` | `pair` | `unregister` slash command, plus\n  `POST /pair/redeem` and `GET /registration/{user_id}` under `/mcp/`. A registration mints a\n  random 128-bit `generation` id; `pair` issues a single-use, 10-minute pairing code (at least\n  128 bits, at most 5 live per user) that a connector redeems for the Discord user id and current\n  generation;\n  `unregister` deletes the registration -- and with it every outstanding code -- in one write.\n  Every register/pair/unregister/redeem is serialized against every other through the same keyed\n  JSON mutator the delivery store uses, on one `registry.json` file."
+        },
         {
           "version": "0.1.0",
           "publishedAt": "2026-09-25T00:00:00.000Z",

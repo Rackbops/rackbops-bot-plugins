@@ -7,6 +7,7 @@ import type { HostApi, PluginHttpInfo } from "../../../packages/api/contract.js"
 import { createRateLimiter, type RateLimiter } from "./auth.js";
 import { createDrainLock, type DrainLock } from "./drain.js";
 import { handleMcpHttp, type HttpDeps } from "./http.js";
+import { createRegistryStore, type RegistryStore } from "./registry.js";
 import { createDeliveryStore, type DeliveryStore } from "./store.js";
 
 const TOKEN = "a".repeat(43);
@@ -41,12 +42,14 @@ const validDeliveryBody = () => ({
 
 let dir: string;
 let store: DeliveryStore;
+let registry: RegistryStore;
 let limiter: RateLimiter;
 let drainLock: DrainLock;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mcp-http-"));
   store = createDeliveryStore(dir, makeRealStorage());
+  registry = createRegistryStore(dir, makeRealStorage());
   limiter = createRateLimiter();
   drainLock = createDrainLock();
 });
@@ -58,7 +61,20 @@ afterEach(() => {
 // No default for `token`: a JS default parameter also fires when the caller passes `undefined`
 // explicitly, which is exactly the value the "token unset" tests need to get through untouched.
 function deps(host: HostApi, token: string | undefined): HttpDeps {
-  return { host, store, token, limiter, drainLock, now: () => new Date(NOW), log: { info() {}, warn() {}, error() {} } };
+  return { host, store, registry, token, limiter, drainLock, now: () => new Date(NOW), log: { info() {}, warn() {}, error() {} } };
+}
+
+// Matches auth.test.ts's own makeLog() shape/convention.
+function makeLog() {
+  const calls: { level: "info" | "warn" | "error"; message: string }[] = [];
+  return {
+    log: {
+      info: (m: string) => calls.push({ level: "info", message: m }),
+      warn: (m: string) => calls.push({ level: "warn", message: m }),
+      error: (m: string) => calls.push({ level: "error", message: m }),
+    },
+    calls,
+  };
 }
 
 describe("handleMcpHttp: token and auth", () => {
@@ -267,15 +283,145 @@ describe("handleMcpHttp: validation and limits", () => {
   });
 });
 
-describe("handleMcpHttp: routing", () => {
-  test("the S3-reserved paths answer 404", async () => {
+describe("handleMcpHttp: POST /pair/redeem", () => {
+  test("an oversized body is 413, before it is even parsed (round 2 review finding: was missing entirely)", async () => {
     const host = makeFakeHost({ name: "mcp" });
-    for (const path of ["/pair/redeem", "/registration/42"]) {
-      const res = await handleMcpHttp(get(path), INFO(path), deps(host, TOKEN));
-      expect(res.status).toBe(404);
+    const huge = { code: "X".repeat(70_000) };
+    const res = await handleMcpHttp(post("/pair/redeem", huge), INFO("/pair/redeem"), deps(host, TOKEN));
+    expect(res.status).toBe(413);
+  });
+
+  test("redeeming a valid code returns the user id and generation, matching the literal wire shape", async () => {
+    const userId = "123456789012345678";
+    // Register/pair use real time directly; the redeem call below goes through deps(), whose `now`
+    // is the fixed PAST NOW constant (mutate() prunes with whichever clock each call is given,
+    // round-3 fix) -- that mismatch is harmless here specifically because a clock further in the
+    // past than a code's own creation time can never see it as expired (pruning only drops a code
+    // whose expiresAt is BEFORE `now`), so this stays a lenient no-op prune either way.
+    const registerOutcome = await registry.register(userId, "Ash", () => new Date());
+    const pairOutcome = await registry.pair(userId, "Ash", () => new Date());
+    if (!pairOutcome.ok) throw new Error("setup: pair failed");
+    const host = makeFakeHost({ name: "mcp" });
+
+    const res = await handleMcpHttp(post("/pair/redeem", { code: pairOutcome.code }), INFO("/pair/redeem"), deps(host, TOKEN));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ discord_user_id: userId, generation: registerOutcome.generation });
+  });
+
+  test("redeeming the same code twice: the second attempt is 404 (single-use)", async () => {
+    const userId = "123456789012345678";
+    await registry.register(userId, "Ash", () => new Date());
+    const pairOutcome = await registry.pair(userId, "Ash", () => new Date());
+    if (!pairOutcome.ok) throw new Error("setup: pair failed");
+    const d = deps(makeFakeHost({ name: "mcp" }), TOKEN);
+
+    const first = await handleMcpHttp(post("/pair/redeem", { code: pairOutcome.code }), INFO("/pair/redeem"), d);
+    expect(first.status).toBe(200);
+    const second = await handleMcpHttp(post("/pair/redeem", { code: pairOutcome.code }), INFO("/pair/redeem"), d);
+    expect(second.status).toBe(404);
+    expect(await second.json()).toEqual({ error: "invalid or expired code" });
+  });
+
+  test("decision 6: a successful redeem logs the outcome, never the code", async () => {
+    const userId = "123456789012345678";
+    await registry.register(userId, "Ash", () => new Date());
+    const pairOutcome = await registry.pair(userId, "Ash", () => new Date());
+    if (!pairOutcome.ok) throw new Error("setup: pair failed");
+    const { log, calls } = makeLog();
+    const d = { ...deps(makeFakeHost({ name: "mcp" }), TOKEN), log };
+
+    await handleMcpHttp(post("/pair/redeem", { code: pairOutcome.code }), INFO("/pair/redeem"), d);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.level).toBe("info");
+    expect(calls[0]!.message).toContain(userId);
+    expect(calls[0]!.message).not.toContain(pairOutcome.code);
+  });
+
+  test("decision 6: a failed redeem (unknown/expired/reused code) logs the outcome, never the code", async () => {
+    const { log, calls } = makeLog();
+    const d = { ...deps(makeFakeHost({ name: "mcp" }), TOKEN), log };
+    const guessedCode = "X".repeat(27);
+
+    await handleMcpHttp(post("/pair/redeem", { code: guessedCode }), INFO("/pair/redeem"), d);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.level).toBe("warn");
+    expect(calls[0]!.message).not.toContain(guessedCode);
+  });
+
+  test("an unknown code is 404 with the literal message", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const res = await handleMcpHttp(post("/pair/redeem", { code: "X".repeat(27) }), INFO("/pair/redeem"), deps(host, TOKEN));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "invalid or expired code" });
+  });
+
+  test("malformed bodies of every shape are all 400 with the literal message", async () => {
+    const d = deps(makeFakeHost({ name: "mcp" }), TOKEN);
+    const notJson = new Request("http://bridge.local/pair/redeem", { method: "POST", headers: { authorization: `Bearer ${TOKEN}` }, body: "{not json" });
+    const cases = [
+      notJson,
+      post("/pair/redeem", {}),
+      post("/pair/redeem", { code: 12345 }),
+      post("/pair/redeem", { code: "short" }),
+      post("/pair/redeem", { code: "abcdefghjkmnpqrstvwxyz23456" }), // lowercase -- PAIR_CODE_RE is uppercase-only
+      post("/pair/redeem", { code: "ABCDEFGHJKMNPQRSTVWXYZ2345" }), // round-3: 26 chars, the OLD (pre-fix) length -- must now be rejected
+    ];
+    for (const req of cases) {
+      const res = await handleMcpHttp(req, INFO("/pair/redeem"), d);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "malformed request" });
     }
   });
 
+  test("a non-POST method is 405", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const res = await handleMcpHttp(get("/pair/redeem"), INFO("/pair/redeem"), deps(host, TOKEN));
+    expect(res.status).toBe(405);
+  });
+});
+
+describe("handleMcpHttp: GET /registration/{user_id}", () => {
+  const USER_ID = "123456789012345678";
+
+  test("a registered user's generation is returned, matching the literal wire shape", async () => {
+    const outcome = await registry.register(USER_ID, "Ash", () => new Date(NOW));
+    const host = makeFakeHost({ name: "mcp" });
+
+    const res = await handleMcpHttp(get(`/registration/${USER_ID}`), INFO(`/registration/${USER_ID}`), deps(host, TOKEN));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ generation: outcome.generation });
+  });
+
+  test("a valid-shaped but unregistered user_id is 404 with the literal message", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const res = await handleMcpHttp(get(`/registration/${USER_ID}`), INFO(`/registration/${USER_ID}`), deps(host, TOKEN));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "not registered" });
+  });
+
+  test("a malformed user_id falls through to the generic catch-all 404, not this endpoint's own message", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const d = deps(host, TOKEN);
+    for (const badId of ["42", `0${"1".repeat(17)}`, "1".repeat(21)]) {
+      const path = `/registration/${badId}`;
+      const res = await handleMcpHttp(get(path), INFO(path), d);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "not found" });
+    }
+  });
+
+  test("a non-GET method on a valid-shaped path is 405", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const res = await handleMcpHttp(post(`/registration/${USER_ID}`), INFO(`/registration/${USER_ID}`), deps(host, TOKEN));
+    expect(res.status).toBe(405);
+  });
+});
+
+describe("handleMcpHttp: routing", () => {
   test("an entirely unknown path is 404", async () => {
     const host = makeFakeHost({ name: "mcp" });
     const res = await handleMcpHttp(get("/nope"), INFO("/nope"), deps(host, TOKEN));

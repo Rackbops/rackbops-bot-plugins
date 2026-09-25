@@ -3,12 +3,21 @@
 import type { HostApi, PluginHttpInfo, PluginLog } from "../../../packages/api/contract.js";
 import { checkAuth, type RateLimiter } from "./auth.js";
 import { drainAndPersist, type DrainLock } from "./drain.js";
-import { capabilitiesResponse, MAX_BODY_BYTES, toWireState, validateCreateRequest, type StoredDelivery } from "./protocol.js";
+import {
+  capabilitiesResponse,
+  MAX_BODY_BYTES,
+  toWireState,
+  validateCreateRequest,
+  validateRedeemRequest,
+  type StoredDelivery,
+} from "./protocol.js";
+import type { RegistryStore } from "./registry.js";
 import type { DeliveryStore } from "./store.js";
 
 export interface HttpDeps {
   host: HostApi;
   store: DeliveryStore;
+  registry: RegistryStore;
   token: string | undefined;
   limiter: RateLimiter;
   drainLock: DrainLock;
@@ -107,7 +116,56 @@ async function handleGetDelivery(requestId: string, deps: HttpDeps): Promise<Res
   return json(200, toWireState(value));
 }
 
+/** `POST /pair/redeem` (Tooling#743): a malformed body/code is 400 before the registry is ever
+ *  touched; the registry's own "unknown, expired, used, or orphaned by an unregister" cases all
+ *  answer the same 404 (decision 6) -- there is nothing left to distinguish once `redeem` returns.
+ *  Decision 6: "log the outcome only, never the code" -- `validated.code` never reaches `deps.log`
+ *  on either branch below; the wire's own single 404 for every failure reason means this log line
+ *  is the only place a miss vs. a genuine reuse/expiry is distinguishable at all, for abuse
+ *  detection -- so unlike a malformed-body 400 (rejected before any user is even identifiable),
+ *  a miss here is worth a line the same way an auth failure already is (auth.ts). Same MAX_BODY_BYTES
+ *  cap as handleCreateDelivery above, checked before the body is even parsed -- an original gap this
+ *  route shipped with (review finding, round 2): nothing bounded how much this endpoint would buffer
+ *  and JSON.parse before the 27-character code it actually needs ever gets validated. */
+async function handleRedeemPair(request: Request, deps: HttpDeps): Promise<Response> {
+  const text = await request.text();
+  if (new TextEncoder().encode(text).length > MAX_BODY_BYTES) return json(413, { error: "request body too large" });
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return json(400, { error: "malformed request" });
+  }
+  const validated = validateRedeemRequest(raw);
+  if (!validated.ok) return json(400, { error: "malformed request" });
+  const outcome = await deps.registry.redeem(validated.code, deps.now);
+  if (!outcome.ok) {
+    deps.log.warn("pair redeem: no matching unexpired code");
+    return json(404, { error: "invalid or expired code" });
+  }
+  deps.log.info(`pair redeem: succeeded for discord user ${outcome.discordUserId}`);
+  return json(200, { discord_user_id: outcome.discordUserId, generation: outcome.generation });
+}
+
+/** `GET /registration/{user_id}` (Tooling#743). The path segment's own shape is enforced by
+ *  `REGISTRATION_ID_RE` below, the same way `DELIVERY_ID_RE` enforces the hex-64 shape for
+ *  deliveries -- a malformed user_id therefore never reaches this handler at all, falling through
+ *  to the generic catch-all 404 rather than this endpoint's specific "not registered" one. */
+async function handleGetRegistration(userId: string, deps: HttpDeps): Promise<Response> {
+  const generation = await deps.registry.generationOf(userId);
+  if (generation === undefined) return json(404, { error: "not registered" });
+  return json(200, { generation });
+}
+
 const DELIVERY_ID_RE = /^\/deliveries\/([0-9a-f]{64})$/;
+// This path's own id-shape, independently declared -- matches DELIVERY_ID_RE's own precedent right
+// above (also its own literal copy of the character class, not composed from protocol.ts's
+// REQUEST_ID_RE). Composing a routing regex from a body-validation one is actively wrong, not just
+// duplicative: a regex's own `^`/`$` land in `.source` literally, so nesting one inside another
+// (`^/registration/(${re.source})$`) produces un-satisfiable inner anchors and silently 404s every
+// path (caught only by the test suite, not by tsc -- tried and reverted while building this route).
+const REGISTRATION_ID_RE = /^\/registration\/([1-9][0-9]{16,19})$/;
 
 export async function handleMcpHttp(request: Request, info: PluginHttpInfo, deps: HttpDeps): Promise<Response> {
   // Decision 3: unset token is 503, checked BEFORE auth.
@@ -123,11 +181,19 @@ export async function handleMcpHttp(request: Request, info: PluginHttpInfo, deps
     if (request.method !== "POST") return json(405, { error: "method not allowed" });
     return handleCreateDelivery(request, deps);
   }
-  const match = DELIVERY_ID_RE.exec(info.path);
-  if (match) {
+  const deliveryMatch = DELIVERY_ID_RE.exec(info.path);
+  if (deliveryMatch) {
     if (request.method !== "GET") return json(405, { error: "method not allowed" });
-    return handleGetDelivery(match[1]!, deps);
+    return handleGetDelivery(deliveryMatch[1]!, deps);
   }
-  // Everything else, including the S3-reserved /pair/redeem and /registration/* (decision 2).
+  if (info.path === "/pair/redeem") {
+    if (request.method !== "POST") return json(405, { error: "method not allowed" });
+    return handleRedeemPair(request, deps);
+  }
+  const registrationMatch = REGISTRATION_ID_RE.exec(info.path);
+  if (registrationMatch) {
+    if (request.method !== "GET") return json(405, { error: "method not allowed" });
+    return handleGetRegistration(registrationMatch[1]!, deps);
+  }
   return json(404, { error: "not found" });
 }
