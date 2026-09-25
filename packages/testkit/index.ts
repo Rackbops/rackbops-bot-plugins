@@ -100,9 +100,12 @@ const FAKE_DM_DELIVERY: HostDelivery = { guildId: null, channelId: "200000000000
  * plugin's tests exercise the degraded, pre-#736 path unless this is explicitly added -- matching
  * how a real host that predates them behaves.
  *
- * Each records its call in `calls` (kept OUTSIDE the four functions, not spread into the host, so it
- * stays a plain property on the object this returns for the test to read directly) and answers with
- * a fixed value: `post`/`dm` return the same `HostDelivery` every call (`FAKE_POST_DELIVERY` /
+ * Each records its call in `calls`, a property of the object THIS returns, not of the four functions
+ * themselves. Spreading that object into `makeFakeHost`'s overrides does copy `calls` onto the host
+ * value too (a plain object spread copies every own key) -- but `makeFakeHost`'s `HostApi` return
+ * type has no `calls` field, so typed code can never read it back off the host either way. Read
+ * `delivery.calls` directly, from the object `makeFakeDelivery()` itself returned, as the example
+ * below does. Each answers with a fixed value: `post`/`dm` return the same `HostDelivery` every call (`FAKE_POST_DELIVERY` /
  * `FAKE_DM_DELIVERY`), `edit` resolves with nothing (as the real one does), and `destinations`
  * answers `[]` every call -- a test that needs a specific list overrides `destinations` itself on
  * the object this returns, or on `makeFakeHost`'s overrides directly.
