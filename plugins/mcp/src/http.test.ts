@@ -284,6 +284,13 @@ describe("handleMcpHttp: validation and limits", () => {
 });
 
 describe("handleMcpHttp: POST /pair/redeem", () => {
+  test("an oversized body is 413, before it is even parsed (round 2 review finding: was missing entirely)", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const huge = { code: "X".repeat(70_000) };
+    const res = await handleMcpHttp(post("/pair/redeem", huge), INFO("/pair/redeem"), deps(host, TOKEN));
+    expect(res.status).toBe(413);
+  });
+
   test("redeeming a valid code returns the user id and generation, matching the literal wire shape", async () => {
     const userId = "123456789012345678";
     // Real time, not NOW: createRegistryStore's own mutate() prunes against wall-clock regardless of
