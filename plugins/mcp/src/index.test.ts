@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { makeFakeHost } from "../../../packages/testkit/index.js";
+import { makeFakeHost, makeRealStorage } from "../../../packages/testkit/index.js";
 import type { PluginHttpInfo } from "../../../packages/api/contract.js";
 import { createPlugin } from "./index.js";
 import { createDeliveryStore, type DeliveryStore } from "./store.js";
@@ -91,6 +91,46 @@ describe("activate", () => {
 });
 
 describe("the redrive tick", () => {
+  test("one entry's persistence failure does not abort the rest of the cycle -- a later entry still drains and prune still runs", async () => {
+    // Review finding (Tooling#742): the tick's per-entry work used to have a try/finally but no
+    // catch, so one id's drainAndPersist throwing propagated out of the whole run(), skipping every
+    // later id in that cycle's store.list() snapshot and the prune pass that follows.
+    const idA = "a".repeat(64);
+    const idB = "b".repeat(64);
+    const staleId = "c".repeat(64);
+    const realStorage = makeRealStorage();
+    const flakyStorage = {
+      ...realStorage,
+      writeJsonAtomic: async (path: string, data: unknown) => {
+        if (path.includes(idA)) throw new Error("disk full");
+        return realStorage.writeJsonAtomic(path, data);
+      },
+    };
+    const host = makeFakeHost({
+      name: "mcp",
+      dataDir: dir,
+      storage: flakyStorage,
+      env: { MCP_BRIDGE_TOKEN: TOKEN },
+      post: async () => ({ guildId: GUILD, channelId: "222222222222222222", messageId: "333333333333333333" }),
+    });
+    externalStore = createDeliveryStore(dir, realStorage);
+    const old = new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString(); // 9 days old -- past the 8-day prune window
+    await externalStore.set(idA, { state: "unknown", kind: "post", target: TARGET, body: BODY, createdAt: new Date().toISOString() });
+    await externalStore.set(idB, { state: "unknown", kind: "post", target: TARGET, body: BODY, createdAt: new Date().toISOString() });
+    await externalStore.set(staleId, { state: "delivered", kind: "post", target: TARGET, body: BODY, createdAt: old, messageRef: null, url: null, delivery: null });
+
+    const plugin = createPlugin(host);
+    await plugin.ticks![0]!.run(); // idA's write throws; idB comes right after it in store.list()'s order
+
+    // idB still drained despite idA's failure earlier in the same loop.
+    expect((await externalStore.get(idB))!.state).toBe("delivered");
+    // idA itself is left as it was (still "unknown" -- its own write never landed); not this test's
+    // point, but worth confirming nothing corrupted it either.
+    expect((await externalStore.get(idA))!.state).toBe("unknown");
+    // The prune pass after the loop still ran, despite idA's mid-loop throw.
+    expect(await externalStore.get(staleId)).toBeUndefined();
+  });
+
   test("delivers an unknown entry with no caller retry needed", async () => {
     const host = makeFakeHost({
       name: "mcp",
