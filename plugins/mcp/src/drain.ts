@@ -10,23 +10,35 @@ export type DrainOutcome =
 
 /**
  * Attempts one delivery of `body` to `target`, as `requestId`.
- * - `host.post` present: sends content, card and links as given, and stores the real Discord
- *   identifiers. `message_ref` is the request's own id (decision 5, literally) -- the caller already
- *   has it, and the real message/channel/guild ids travel in `delivery` and the built `url` instead.
- * - `host.post` absent: a card or links present is `CAPABILITY_UNAVAILABLE` with no Discord call --
- *   the service already folds them into `content` once it sees `cards: false`, so their presence
- *   here means a caller that skipped that folding. Content alone falls back to `host.announce`, which
- *   has no notion of a delivered message: `message_ref`/`url` are `null`.
- * - A rejection from either path is `UPSTREAM_UNAVAILABLE`; the thrown error is logged, the message
- *   content is not.
+ * - `kind !== "post"` (`dm`/`edit`): always `CAPABILITY_UNAVAILABLE`, with NO call to `host.post` or
+ *   `host.announce` -- this is the drain layer's own defense of decision 5's "dm/edit is immediately
+ *   CAPABILITY_UNAVAILABLE" guarantee, independent of `http.ts` already enforcing it at creation
+ *   time. Without this check here, a dm/edit record that somehow reached `unknown` (a process killed
+ *   between `reserve`'s unconditional `pending` write and the immediate-failure `set` that follows
+ *   it in `http.ts`, before the tick's next `activate()` ever runs) would be re-driven by the tick as
+ *   an ordinary `post` -- actually reaching Discord for a capability the bridge advertises as
+ *   unsupported (review finding, Tooling#742).
+ * - `kind === "post"`, `host.post` present: sends content, card and links as given, and stores the
+ *   real Discord identifiers. `message_ref` is the request's own id (decision 5, literally) -- the
+ *   caller already has it, and the real message/channel/guild ids travel in `delivery`/`url` instead.
+ * - `kind === "post"`, `host.post` absent: a card or links present is `CAPABILITY_UNAVAILABLE` with
+ *   no Discord call -- the service already folds them into `content` once it sees `cards: false`, so
+ *   their presence here means a caller that skipped that folding. Content alone falls back to
+ *   `host.announce`, which has no notion of a delivered message: `message_ref`/`url` are `null`.
+ * - A rejection from either delivery path is `UPSTREAM_UNAVAILABLE`; the thrown error is logged, the
+ *   message content is not.
  */
 export async function attemptDelivery(
   host: HostApi,
   requestId: string,
+  kind: DeliveryKind,
   target: PostTarget,
   body: DeliveryBody,
   log: PluginLog,
 ): Promise<DrainOutcome> {
+  if (kind !== "post") {
+    return { state: "failed", code: "CAPABILITY_UNAVAILABLE" };
+  }
   if (typeof host.post === "function") {
     try {
       const delivery = await host.post(target.guildId, target.destination, {
@@ -99,7 +111,7 @@ export async function drainAndPersist(
   setState: (requestId: string, value: StoredDelivery) => Promise<void>,
   log: PluginLog,
 ): Promise<void> {
-  const outcome = await attemptDelivery(host, requestId, entry.target, entry.body, log);
+  const outcome = await attemptDelivery(host, requestId, entry.kind, entry.target, entry.body, log);
   const next: StoredDelivery =
     outcome.state === "delivered"
       ? { ...entry, state: "delivered", messageRef: outcome.messageRef, url: outcome.url, delivery: outcome.delivery }

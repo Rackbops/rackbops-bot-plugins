@@ -294,3 +294,40 @@ describe("handleMcpHttp: routing", () => {
     expect(res.status).toBe(405);
   });
 });
+
+describe("handleMcpHttp: a throw from the initial state write does not strand the drain lock", () => {
+  // Review finding (Tooling#742): startDrain's initial store.set used to be unguarded, so a throw
+  // there skipped past the .finally() that releases the drain lock -- stranding it for that
+  // request_id forever (no retry or tick could ever drain it again short of a process restart).
+  test("the delivery still proceeds and the lock is released, even though the initial write failed", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "mcp", ...delivery });
+    let setCalls = 0;
+    const flakyStore: DeliveryStore = {
+      ...store,
+      set: async (id, value) => {
+        setCalls += 1;
+        if (setCalls === 1) throw new Error("disk full");
+        return store.set(id, value);
+      },
+    };
+    const d = { ...deps(host, TOKEN), store: flakyStore };
+
+    const created = await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
+    // Still 202: the failed initial write is logged, not propagated to the caller.
+    expect(created.status).toBe(202);
+
+    await flush();
+
+    // Proof the lock was actually released (not just that no error surfaced): a fresh tryStart for
+    // the SAME request_id succeeds. Under the bug this fails, because the lock, once acquired at
+    // the top of startDrain, was never reached by a release path when store.set threw.
+    expect(d.drainLock.tryStart(REQUEST_ID)).toBe(true);
+    d.drainLock.finish(REQUEST_ID);
+
+    // The delivery itself still completed, using the in-memory entry -- drainAndPersist's own
+    // (second, succeeding) store.set call is what actually lands the final state.
+    expect(delivery.calls.post).toHaveLength(1);
+    expect((await store.get(REQUEST_ID))!.state).toBe("delivered");
+  });
+});

@@ -23,16 +23,26 @@ function json(status: number, body: unknown): Response {
 /**
  * Claims `requestId` in `deps.drainLock`; on success, stores `entry` as the current state and kicks
  * off its delivery without awaiting it (the `202` goes out first, decision 5), releasing the lock
- * once the attempt settles either way. Returns whether the claim succeeded -- on `false` (the tick's
- * re-drive already holds this id) NOTHING is written or started; the caller must answer with the
- * unmodified existing state instead. The same lock, shared with the tick (index.ts), is what stops a
- * caller's retry and the tick's re-drive from ever draining one id at the same time: for a brand-new
- * reservation the claim always succeeds (the id cannot already be in flight anywhere), so this is
- * also the one place that writes the store for both a fresh `pending` and a `failed`/`unknown` reset.
+ * once the attempt settles either way -- INCLUDING if the initial write itself throws (a full disk,
+ * a permissions error): that write is not load-bearing for the delivery attempt (drain works from
+ * the in-memory `entry`, and drainAndPersist's own write corrects the file once the attempt settles),
+ * so a failure there is logged and the attempt proceeds anyway, rather than left to propagate
+ * uncaught -- which used to skip past the `.finally()` below entirely and strand the lock for that
+ * request_id forever (review finding, Tooling#742). Returns whether the claim succeeded -- on
+ * `false` (the tick's re-drive already holds this id) NOTHING is written or started; the caller must
+ * answer with the unmodified existing state instead. The same lock, shared with the tick (index.ts),
+ * is what stops a caller's retry and the tick's re-drive from ever draining one id at the same time:
+ * for a brand-new reservation the claim always succeeds (the id cannot already be in flight
+ * anywhere), so this is also the one place that writes the store for both a fresh `pending` and a
+ * `failed`/`unknown` reset.
  */
 async function startDrain(deps: HttpDeps, requestId: string, entry: Extract<StoredDelivery, { state: "pending" }>): Promise<boolean> {
   if (!deps.drainLock.tryStart(requestId)) return false;
-  await deps.store.set(requestId, entry);
+  try {
+    await deps.store.set(requestId, entry);
+  } catch (err) {
+    deps.log.error(`writing the initial state for delivery ${requestId} failed -- attempting delivery anyway`, err);
+  }
   void drainAndPersist(deps.host, requestId, entry, deps.store.set, deps.log)
     .catch((err) => deps.log.error(`delivery ${requestId} failed to persist`, err))
     .finally(() => deps.drainLock.finish(requestId));

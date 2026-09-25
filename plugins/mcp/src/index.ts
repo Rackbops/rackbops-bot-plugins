@@ -46,17 +46,25 @@ export function createPlugin(host: HostApi): Plugin {
          *  retrying it) and prunes anything 8+ days old. Honours `signal`/`disposed` BETWEEN
          *  deliveries, not mid-attempt -- `attemptDelivery` itself takes no signal, the same way
          *  `host.post`/`host.announce` take none. Skips (rather than waits for) an id the drain
-         *  lock says a caller's retry already claimed; that retry owns writing its outcome. */
+         *  lock says a caller's retry already claimed; that retry owns writing its outcome. Each
+         *  id is isolated in its own try/catch: one id's failure (a store read/write throwing) is
+         *  logged and the loop moves on, rather than aborting the whole tick and skipping every
+         *  later id plus the prune pass that follows (review finding, Tooling#742) -- the same
+         *  isolation `pluginTicks`/`activatePlugins` already apply per plugin, one level up. */
         async run(signal) {
           for (const requestId of await store.list()) {
             if (disposed || signal?.aborted === true) return;
-            const current = await store.get(requestId);
-            if (current === undefined || current.state !== "unknown") continue;
-            if (!drainLock.tryStart(requestId)) continue;
             try {
-              await drainAndPersist(host, requestId, current, store.set, host.log);
-            } finally {
-              drainLock.finish(requestId);
+              const current = await store.get(requestId);
+              if (current === undefined || current.state !== "unknown") continue;
+              if (!drainLock.tryStart(requestId)) continue;
+              try {
+                await drainAndPersist(host, requestId, current, store.set, host.log);
+              } finally {
+                drainLock.finish(requestId);
+              }
+            } catch (err) {
+              host.log.error(`redrive of delivery ${requestId} failed`, err);
             }
           }
           if (disposed || signal?.aborted === true) return;

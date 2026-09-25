@@ -22,7 +22,7 @@ describe("attemptDelivery: with host.post", () => {
   test("delivers, recording the exact arguments, and message_ref is the request's own id", async () => {
     const delivery = makeFakeDelivery();
     const host = makeFakeHost({ name: "mcp", ...delivery });
-    const result = await attemptDelivery(host, REQUEST_ID, TARGET, { content: "hi" }, makeLog().log);
+    const result = await attemptDelivery(host, REQUEST_ID, "post", TARGET, { content: "hi" }, makeLog().log);
 
     expect(delivery.calls.post).toEqual([{ guildId: TARGET.guildId, destination: TARGET.destination, message: { content: "hi" } }]);
     expect(result.state).toBe("delivered");
@@ -34,14 +34,14 @@ describe("attemptDelivery: with host.post", () => {
     const host = makeFakeHost({ name: "mcp", ...delivery });
     const card = { title: "t" };
     const links = [{ label: "l", url: "https://example.com" }];
-    await attemptDelivery(host, REQUEST_ID, TARGET, { content: "hi", card, links }, makeLog().log);
+    await attemptDelivery(host, REQUEST_ID, "post", TARGET, { content: "hi", card, links }, makeLog().log);
     expect(delivery.calls.post).toEqual([{ guildId: TARGET.guildId, destination: TARGET.destination, message: { content: "hi", card, links } }]);
   });
 
   test("the url is built from the returned HostDelivery, and delivery is carried through", async () => {
     const delivery = makeFakeDelivery();
     const host = makeFakeHost({ name: "mcp", ...delivery });
-    const result = await attemptDelivery(host, REQUEST_ID, TARGET, { content: "hi" }, makeLog().log);
+    const result = await attemptDelivery(host, REQUEST_ID, "post", TARGET, { content: "hi" }, makeLog().log);
     expect(result.state).toBe("delivered");
     if (result.state !== "delivered") throw new Error("unreachable");
     // makeFakeDelivery's fixed post-delivery value:
@@ -57,7 +57,7 @@ describe("attemptDelivery: with host.post", () => {
       },
     });
     const { log, calls } = makeLog();
-    const result = await attemptDelivery(host, REQUEST_ID, TARGET, { content: "secret content" }, log);
+    const result = await attemptDelivery(host, REQUEST_ID, "post", TARGET, { content: "secret content" }, log);
     expect(result).toEqual({ state: "failed", code: "UPSTREAM_UNAVAILABLE" });
     expect(calls).toHaveLength(1);
     expect(calls[0]!.message).not.toContain("secret content");
@@ -72,7 +72,7 @@ describe("attemptDelivery: without host.post (announce fallback)", () => {
       name: "mcp",
       announce: async (message, destination) => void announced.push([message, destination]),
     });
-    const result = await attemptDelivery(host, REQUEST_ID, TARGET, { content: "hi" }, makeLog().log);
+    const result = await attemptDelivery(host, REQUEST_ID, "post", TARGET, { content: "hi" }, makeLog().log);
     expect(announced).toEqual([["hi", "alerts"]]);
     expect(result).toEqual({ state: "delivered", messageRef: null, url: null, delivery: null });
   });
@@ -80,7 +80,7 @@ describe("attemptDelivery: without host.post (announce fallback)", () => {
   test("a card present with no host.post is CAPABILITY_UNAVAILABLE, with no announce call", async () => {
     const announced: unknown[] = [];
     const host = makeFakeHost({ name: "mcp", announce: async (m) => void announced.push(m) });
-    const result = await attemptDelivery(host, REQUEST_ID, TARGET, { content: "hi", card: { title: "t" } }, makeLog().log);
+    const result = await attemptDelivery(host, REQUEST_ID, "post", TARGET, { content: "hi", card: { title: "t" } }, makeLog().log);
     expect(result).toEqual({ state: "failed", code: "CAPABILITY_UNAVAILABLE" });
     expect(announced).toEqual([]);
   });
@@ -91,6 +91,7 @@ describe("attemptDelivery: without host.post (announce fallback)", () => {
     const result = await attemptDelivery(
       host,
       REQUEST_ID,
+      "post",
       TARGET,
       { content: "hi", links: [{ label: "l", url: "https://example.com" }] },
       makeLog().log,
@@ -102,7 +103,7 @@ describe("attemptDelivery: without host.post (announce fallback)", () => {
   test("an empty links array is treated the same as no links -- announce still runs", async () => {
     const announced: unknown[] = [];
     const host = makeFakeHost({ name: "mcp", announce: async (m) => void announced.push(m) });
-    const result = await attemptDelivery(host, REQUEST_ID, TARGET, { content: "hi", links: [] }, makeLog().log);
+    const result = await attemptDelivery(host, REQUEST_ID, "post", TARGET, { content: "hi", links: [] }, makeLog().log);
     expect(result.state).toBe("delivered");
     expect(announced).toEqual(["hi"]);
   });
@@ -115,10 +116,30 @@ describe("attemptDelivery: without host.post (announce fallback)", () => {
       },
     });
     const { log, calls } = makeLog();
-    const result = await attemptDelivery(host, REQUEST_ID, TARGET, { content: "secret content" }, log);
+    const result = await attemptDelivery(host, REQUEST_ID, "post", TARGET, { content: "secret content" }, log);
     expect(result).toEqual({ state: "failed", code: "UPSTREAM_UNAVAILABLE" });
     expect(calls[0]!.message).not.toContain("secret content");
   });
+});
+
+describe("attemptDelivery: kind dm/edit never actually deliver, whatever reaches the drain layer", () => {
+  // Review finding (Tooling#742): the drain layer used to be kind-blind -- a dm/edit record that
+  // somehow reached "unknown" (a process killed between reserve()'s unconditional pending write and
+  // the immediate-failure set that follows it in http.ts, before the tick's next activate() ever
+  // runs) would have been re-driven by the tick as an ordinary post, actually reaching Discord for a
+  // capability the bridge advertises as unsupported. This is the defense at the layer that actually
+  // calls host.post/announce, independent of http.ts already refusing dm/edit at creation time.
+  for (const kind of ["dm", "edit"] as const) {
+    test(`${kind}: CAPABILITY_UNAVAILABLE with no host.post or host.announce call, even with a fully-formed post-shaped target/body`, async () => {
+      const delivery = makeFakeDelivery();
+      const announced: unknown[] = [];
+      const host = makeFakeHost({ name: "mcp", ...delivery, announce: async (m) => void announced.push(m) });
+      const result = await attemptDelivery(host, REQUEST_ID, kind, TARGET, { content: "hi" }, makeLog().log);
+      expect(result).toEqual({ state: "failed", code: "CAPABILITY_UNAVAILABLE" });
+      expect(delivery.calls.post).toEqual([]);
+      expect(announced).toEqual([]);
+    });
+  }
 });
 
 describe("createDrainLock", () => {
@@ -169,6 +190,16 @@ describe("drainAndPersist", () => {
     const stored: Record<string, StoredDelivery> = {};
     await drainAndPersist(host, REQUEST_ID, entry, async (id, value) => void (stored[id] = value), makeLog().log);
     expect(stored[REQUEST_ID]).toEqual({ state: "failed", kind: "post", target: TARGET, body: { content: "hi" }, createdAt: entry.createdAt, code: "UPSTREAM_UNAVAILABLE" });
+  });
+
+  test("a dm/edit entry (however it got here -- e.g. the tick re-driving an unknown left by a crash) is refused without touching the host", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "mcp", ...delivery });
+    const dmEntry = { ...entry, kind: "dm" as const };
+    const stored: Record<string, StoredDelivery> = {};
+    await drainAndPersist(host, REQUEST_ID, dmEntry, async (id, value) => void (stored[id] = value), makeLog().log);
+    expect(stored[REQUEST_ID]).toEqual({ ...dmEntry, state: "failed", code: "CAPABILITY_UNAVAILABLE" });
+    expect(delivery.calls.post).toEqual([]);
   });
 
   test("does not manage the lock itself -- the caller must acquire and release it", async () => {
