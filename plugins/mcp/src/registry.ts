@@ -149,12 +149,22 @@ export function generationOf(registry: Registry, userId: string): string | undef
   return entryOf(registry, userId)?.generation;
 }
 
+export interface RecipientEntry {
+  userId: string;
+  displayName: string;
+  registeredAt: string; // ISO-8601
+}
+
 export interface RegistryStore {
   register(userId: string, displayName: string, now: () => Date): Promise<RegisterOutcome>;
   pair(userId: string, displayName: string, now: () => Date): Promise<IssueCodeOutcome>;
   unregister(userId: string, now: () => Date): Promise<{ changed: boolean }>;
   redeem(code: string, now: () => Date): Promise<RedeemOutcome>;
   generationOf(userId: string): Promise<string | undefined>;
+  /** Every registered user (Tooling#746, `GET /recipients`), in no particular order -- ordering and
+   *  capping is `protocol.ts`'s `recipientsResponse`'s job, matching `generationOf`'s own split
+   *  between a plain store read and the wire-shaping done elsewhere. */
+  listRecipients(): Promise<RecipientEntry[]>;
 }
 
 function registryPath(dataDir: string): string {
@@ -214,6 +224,15 @@ export function createRegistryStore(dataDir: string, storage: HostStorage): Regi
       // No pruning needed here -- generation is unrelated to codes/expiry, so a plain read suffices.
       const current = await storage.readJsonOrFresh<Registry>(path, freshRegistry, "mcp-registry");
       return generationOf(current, userId);
+    },
+    async listRecipients() {
+      // Same reasoning as generationOf: displayName/registeredAt are unrelated to code expiry, so a
+      // plain read (no pruning) suffices here too.
+      const current = await storage.readJsonOrFresh<Registry>(path, freshRegistry, "mcp-registry");
+      return Object.keys(current.users).map((userId) => {
+        const entry = current.users[userId]!;
+        return { userId, displayName: entry.displayName, registeredAt: entry.registeredAt };
+      });
     },
   };
 }

@@ -1,28 +1,27 @@
-// Routes docs/bridge-protocol.md's three endpoints under /mcp/ (Tooling#742 decisions 2-5). Wires
-// auth.ts, protocol.ts, store.ts and drain.ts together; owns no state of its own.
-import type { HostApi, PluginHttpInfo, PluginLog } from "../../../packages/api/contract.js";
+// Routes docs/bridge-protocol.md's endpoints under /mcp/ (Tooling#742 decisions 2-5, extended by
+// Tooling#746 with dm/edit delivery and GET /recipients). Wires auth.ts, protocol.ts, store.ts,
+// registry.ts and drain.ts together; owns no state of its own.
+import type { PluginHttpInfo } from "../../../packages/api/contract.js";
 import { checkAuth, type RateLimiter } from "./auth.js";
-import { drainAndPersist, type DrainLock } from "./drain.js";
+import { drainAndPersist, type DrainDeps, type DrainLock } from "./drain.js";
 import {
   capabilitiesResponse,
   MAX_BODY_BYTES,
+  recipientsResponse,
   toWireState,
   validateCreateRequest,
   validateRedeemRequest,
   type StoredDelivery,
 } from "./protocol.js";
-import type { RegistryStore } from "./registry.js";
-import type { DeliveryStore } from "./store.js";
 
-export interface HttpDeps {
-  host: HostApi;
-  store: DeliveryStore;
-  registry: RegistryStore;
+/** Extends `DrainDeps` (host/store/registry/editQueue/log) with what only HTTP needs -- auth and
+ *  retry bookkeeping -- so the one object index.ts builds is passed straight through to
+ *  `drainAndPersist`/`attemptDelivery` unchanged (Tooling#746 decision 8). */
+export interface HttpDeps extends DrainDeps {
   token: string | undefined;
   limiter: RateLimiter;
   drainLock: DrainLock;
   now: () => Date;
-  log: PluginLog;
 }
 
 function json(status: number, body: unknown): Response {
@@ -52,10 +51,18 @@ async function startDrain(deps: HttpDeps, requestId: string, entry: Extract<Stor
   } catch (err) {
     deps.log.error(`writing the initial state for delivery ${requestId} failed -- attempting delivery anyway`, err);
   }
-  void drainAndPersist(deps.host, requestId, entry, deps.store.set, deps.log)
+  void drainAndPersist(deps, requestId, entry)
     .catch((err) => deps.log.error(`delivery ${requestId} failed to persist`, err))
     .finally(() => deps.drainLock.finish(requestId));
   return true;
+}
+
+/** Whether `deps.host` currently supports `kind` (Tooling#746 decision 7): `post` always does (#742),
+ *  `dm`/`edit` follow whether `host.dm`/`host.edit` exist. */
+function hasCapability(deps: HttpDeps, kind: "post" | "dm" | "edit"): boolean {
+  if (kind === "post") return true;
+  if (kind === "dm") return typeof deps.host.dm === "function";
+  return typeof deps.host.edit === "function";
 }
 
 async function handleCreateDelivery(request: Request, deps: HttpDeps): Promise<Response> {
@@ -72,10 +79,10 @@ async function handleCreateDelivery(request: Request, deps: HttpDeps): Promise<R
   if (!validated.ok) return json(400, { error: validated.reason });
   const { requestId, kind, target, body } = validated;
 
-  if (kind !== "post") {
-    // Structurally valid, capability we don't have (decision 5's second bullet) -- still goes
-    // through reserve so a retry of the SAME request_id sees the same stored answer, not a second
-    // fresh evaluation, and existing:true/false is reported the same way as every other kind.
+  if (!hasCapability(deps, kind)) {
+    // Capability we don't have (decision 7) -- still goes through reserve so a retry of the SAME
+    // request_id sees the same stored answer, not a second fresh evaluation, and existing:true/false
+    // is reported the same way as every other kind.
     const { value, existing } = await deps.store.reserve(requestId, kind, target, body, deps.now);
     if (value.state === "pending" || value.state === "unknown") {
       const failed: StoredDelivery = { state: "failed", kind, target, body, createdAt: value.createdAt, code: "CAPABILITY_UNAVAILABLE" };
@@ -158,6 +165,14 @@ async function handleGetRegistration(userId: string, deps: HttpDeps): Promise<Re
   return json(200, { generation });
 }
 
+/** `GET /recipients` (Tooling#746): every registered user, ordered/capped/truncated by
+ *  `recipientsResponse` -- this handler owns no shaping of its own, matching how
+ *  `handleGetRegistration` above is a thin wrapper over the registry. */
+async function handleGetRecipients(deps: HttpDeps): Promise<Response> {
+  const entries = await deps.registry.listRecipients();
+  return json(200, recipientsResponse(entries));
+}
+
 const DELIVERY_ID_RE = /^\/deliveries\/([0-9a-f]{64})$/;
 // This path's own id-shape, independently declared -- matches DELIVERY_ID_RE's own precedent right
 // above (also its own literal copy of the character class, not composed from protocol.ts's
@@ -175,7 +190,14 @@ export async function handleMcpHttp(request: Request, info: PluginHttpInfo, deps
 
   if (info.path === "/capabilities") {
     if (request.method !== "GET") return json(405, { error: "method not allowed" });
-    return json(200, capabilitiesResponse(typeof deps.host.post === "function"));
+    return json(
+      200,
+      capabilitiesResponse({
+        post: typeof deps.host.post === "function",
+        dm: typeof deps.host.dm === "function",
+        edit: typeof deps.host.edit === "function",
+      }),
+    );
   }
   if (info.path === "/deliveries") {
     if (request.method !== "POST") return json(405, { error: "method not allowed" });
@@ -194,6 +216,10 @@ export async function handleMcpHttp(request: Request, info: PluginHttpInfo, deps
   if (registrationMatch) {
     if (request.method !== "GET") return json(405, { error: "method not allowed" });
     return handleGetRegistration(registrationMatch[1]!, deps);
+  }
+  if (info.path === "/recipients") {
+    if (request.method !== "GET") return json(405, { error: "method not allowed" });
+    return handleGetRecipients(deps);
   }
   return json(404, { error: "not found" });
 }

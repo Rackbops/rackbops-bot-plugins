@@ -117,6 +117,54 @@ describe("activate", () => {
   });
 });
 
+describe("edit ordering survives a restart", () => {
+  test("apply seq 2, recreate the plugin on the same dataDir, then send seq 1 -> applied:false", async () => {
+    // Tooling#746 decision 4: lastEditSeq persists on the original's own delivered record, not just
+    // in the EditQueue's in-memory state -- this is what a plugin restart (a brand new createPlugin
+    // call over the SAME dataDir) must not be able to forget.
+    const host = makeFakeHost({
+      name: "mcp",
+      dataDir: dir,
+      env: { MCP_BRIDGE_TOKEN: TOKEN },
+      post: async () => ({ guildId: GUILD, channelId: "222222222222222222", messageId: "333333333333333333" }),
+      edit: async () => {},
+    });
+    externalStore = createDeliveryStore(dir, host.storage);
+
+    async function waitForDelivered(requestId: string): Promise<void> {
+      const start = Date.now();
+      while ((await externalStore.get(requestId))?.state !== "delivered") {
+        if (Date.now() - start > 2000) throw new Error(`timed out waiting for ${requestId} to deliver`);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+
+    const plugin1 = createPlugin(host);
+    await plugin1.http!(post("/deliveries", validDeliveryBody()), INFO("/deliveries"));
+    await waitForDelivered(REQUEST_ID);
+
+    const editSeq2Id = "b".repeat(64);
+    await plugin1.http!(
+      post("/deliveries", { request_id: editSeq2Id, kind: "edit", target: { message_ref: REQUEST_ID, seq: 2 }, body: { content: "v2" } }),
+      INFO("/deliveries"),
+    );
+    await waitForDelivered(editSeq2Id);
+
+    // The "restart": a fresh plugin instance (fresh in-memory EditQueue/drainLock/registry-store
+    // object) over the exact same host.dataDir.
+    const plugin2 = createPlugin(host);
+    const editSeq1Id = "c".repeat(64);
+    await plugin2.http!(
+      post("/deliveries", { request_id: editSeq1Id, kind: "edit", target: { message_ref: REQUEST_ID, seq: 1 }, body: { content: "v1-again" } }),
+      INFO("/deliveries"),
+    );
+    await waitForDelivered(editSeq1Id);
+
+    const seq1Result = (await externalStore.get(editSeq1Id)) as { applied?: boolean };
+    expect(seq1Result.applied).toBe(false);
+  });
+});
+
 describe("the redrive tick", () => {
   test("one entry's persistence failure does not abort the rest of the cycle -- every entry is still attempted and prune still runs", async () => {
     // Review finding (Tooling#742): the tick's per-entry work used to have a try/finally but no

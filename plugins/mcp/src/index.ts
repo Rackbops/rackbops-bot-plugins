@@ -1,7 +1,7 @@
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { createRateLimiter } from "./auth.js";
 import { agentCommand } from "./commands.js";
-import { createDrainLock, drainAndPersist } from "./drain.js";
+import { createDrainLock, createEditQueue, drainAndPersist } from "./drain.js";
 import { handleMcpHttp, type HttpDeps } from "./http.js";
 import { createRegistryStore } from "./registry.js";
 import { createDeliveryStore } from "./store.js";
@@ -23,6 +23,10 @@ export function createPlugin(host: HostApi): Plugin {
   // real (the tick doesn't update the stored state until its attempt settles, so a retry racing it
   // would still see "unknown" and start a second attempt of its own).
   const drainLock = createDrainLock();
+  // Tooling#746 decision 3: serializes edit application per message_ref, shared the same way as
+  // drainLock above -- an HTTP-triggered edit and the tick's re-drive of an "unknown" edit must never
+  // read-modify-write the same original's lastEditSeq concurrently.
+  const editQueue = createEditQueue();
   // Flipped by dispose() (decision 6): the tick's re-drive loop checks this between deliveries so a
   // shutdown stops it from starting another once the grace period is spent. HTTP-triggered drains
   // need no equivalent guard -- the host stops routing new requests to this plugin before dispose()
@@ -33,6 +37,7 @@ export function createPlugin(host: HostApi): Plugin {
     host,
     store,
     registry,
+    editQueue,
     token: host.env.MCP_BRIDGE_TOKEN,
     limiter,
     drainLock,
@@ -65,7 +70,7 @@ export function createPlugin(host: HostApi): Plugin {
               if (current === undefined || current.state !== "unknown") continue;
               if (!drainLock.tryStart(requestId)) continue;
               try {
-                await drainAndPersist(host, requestId, current, store.set, host.log);
+                await drainAndPersist(httpDeps, requestId, current);
               } finally {
                 drainLock.finish(requestId);
               }

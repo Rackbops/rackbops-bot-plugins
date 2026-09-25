@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { makeFakeDelivery, makeFakeHost, makeRealStorage } from "../../../packages/testkit/index.js";
 import type { HostApi, PluginHttpInfo } from "../../../packages/api/contract.js";
 import { createRateLimiter, type RateLimiter } from "./auth.js";
-import { createDrainLock, type DrainLock } from "./drain.js";
+import { createDrainLock, createEditQueue, type DrainLock, type EditQueue } from "./drain.js";
 import { handleMcpHttp, type HttpDeps } from "./http.js";
 import { createRegistryStore, type RegistryStore } from "./registry.js";
 import { createDeliveryStore, type DeliveryStore } from "./store.js";
@@ -15,6 +15,7 @@ const CLIENT_IP = "10.0.0.1";
 const NOW = 1_700_000_000_000;
 const GUILD = "111111111111111111";
 const REQUEST_ID = "a".repeat(64);
+const USER_ID = "123456789012345678";
 const INFO = (path: string): PluginHttpInfo => ({ path, clientIp: CLIENT_IP });
 
 function post(path: string, body?: unknown, headers: Record<string, string> = {}): Request {
@@ -33,6 +34,18 @@ async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/** Polls `check` until it returns true or `timeoutMs` elapses -- a single `flush()` tick is enough
+ *  for a "post" drain (one host call, one store write), but dm/edit also touch the registry or a
+ *  second store path through real fs I/O, which a single `setTimeout(0)` cannot reliably outlast
+ *  (matches index.test.ts's own `waitUntil`, needed there for the same reason). */
+async function waitUntil(check: () => boolean | Promise<boolean>, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!(await check())) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitUntil timed out");
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
 const validDeliveryBody = () => ({
   request_id: REQUEST_ID,
   kind: "post",
@@ -45,6 +58,7 @@ let store: DeliveryStore;
 let registry: RegistryStore;
 let limiter: RateLimiter;
 let drainLock: DrainLock;
+let editQueue: EditQueue;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mcp-http-"));
@@ -52,6 +66,7 @@ beforeEach(() => {
   registry = createRegistryStore(dir, makeRealStorage());
   limiter = createRateLimiter();
   drainLock = createDrainLock();
+  editQueue = createEditQueue();
 });
 
 afterEach(() => {
@@ -61,7 +76,7 @@ afterEach(() => {
 // No default for `token`: a JS default parameter also fires when the caller passes `undefined`
 // explicitly, which is exactly the value the "token unset" tests need to get through untouched.
 function deps(host: HostApi, token: string | undefined): HttpDeps {
-  return { host, store, registry, token, limiter, drainLock, now: () => new Date(NOW), log: { info() {}, warn() {}, error() {} } };
+  return { host, store, registry, editQueue, token, limiter, drainLock, now: () => new Date(NOW), log: { info() {}, warn() {}, error() {} } };
 }
 
 // Matches auth.test.ts's own makeLog() shape/convention.
@@ -101,12 +116,12 @@ describe("handleMcpHttp: token and auth", () => {
 });
 
 describe("handleMcpHttp: GET /capabilities", () => {
-  test("reports targeted_post/cards true when host.post exists, and the declared destinations", async () => {
+  test("reports targeted_post/cards/dm/edit true when the host has all four", async () => {
     const host = makeFakeHost({ name: "mcp", ...makeFakeDelivery() });
     const res = await handleMcpHttp(get("/capabilities"), INFO("/capabilities"), deps(host, TOKEN));
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
-    expect(body).toMatchObject({ dm: false, edit: false, targeted_post: true, cards: true });
+    expect(body).toMatchObject({ dm: true, edit: true, targeted_post: true, cards: true });
     expect(body.destinations).toHaveLength(4);
   });
 
@@ -114,6 +129,20 @@ describe("handleMcpHttp: GET /capabilities", () => {
     const host = makeFakeHost({ name: "mcp" });
     const res = await handleMcpHttp(get("/capabilities"), INFO("/capabilities"), deps(host, TOKEN));
     expect(await res.json()).toMatchObject({ targeted_post: false, cards: false });
+  });
+
+  test("dm: true only when host.dm exists", async () => {
+    const withDm = makeFakeHost({ name: "mcp", ...makeFakeDelivery() });
+    expect(await (await handleMcpHttp(get("/capabilities"), INFO("/capabilities"), deps(withDm, TOKEN))).json()).toMatchObject({ dm: true });
+    const withoutDm = makeFakeHost({ name: "mcp" });
+    expect(await (await handleMcpHttp(get("/capabilities"), INFO("/capabilities"), deps(withoutDm, TOKEN))).json()).toMatchObject({ dm: false });
+  });
+
+  test("edit: true only when host.edit exists", async () => {
+    const withEdit = makeFakeHost({ name: "mcp", ...makeFakeDelivery() });
+    expect(await (await handleMcpHttp(get("/capabilities"), INFO("/capabilities"), deps(withEdit, TOKEN))).json()).toMatchObject({ edit: true });
+    const withoutEdit = makeFakeHost({ name: "mcp" });
+    expect(await (await handleMcpHttp(get("/capabilities"), INFO("/capabilities"), deps(withoutEdit, TOKEN))).json()).toMatchObject({ edit: false });
   });
 
   test("a non-GET method on /capabilities is 405", async () => {
@@ -135,7 +164,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     expect(createdBody.existing).toBe(false);
     expect(createdBody.state.state).toBe("pending");
 
-    await flush();
+    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
 
     const fetched = await handleMcpHttp(get(`/deliveries/${REQUEST_ID}`), INFO(`/deliveries/${REQUEST_ID}`), d);
     expect(fetched.status).toBe(200);
@@ -178,7 +207,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     const d = deps(host, TOKEN);
 
     await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
-    await flush();
+    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
     const retry = await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
     expect(retry.status).toBe(202);
     const retryBody = (await retry.json()) as { state: { state: string }; existing: boolean };
@@ -200,16 +229,14 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     const d = deps(host, TOKEN);
 
     await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
-    await flush();
-    expect((await store.get(REQUEST_ID))!.state).toBe("failed");
+    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "failed");
 
     const retry = await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
     expect(retry.status).toBe(202);
     const retryBody = (await retry.json()) as { state: { state: string }; existing: boolean };
     expect(retryBody.existing).toBe(true);
     expect(retryBody.state.state).toBe("pending");
-    await flush();
-    expect((await store.get(REQUEST_ID))!.state).toBe("delivered");
+    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
     expect(attempts).toBe(2);
   });
 
@@ -222,7 +249,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     });
     const d = deps(host, TOKEN);
     await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
-    await flush();
+    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "failed");
     const firstCreatedAt = (await store.get(REQUEST_ID))!.createdAt;
 
     const laterDeps = { ...d, now: () => new Date(NOW + 60_000) };
@@ -230,25 +257,118 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     expect((await store.get(REQUEST_ID))!.createdAt).toBe(firstCreatedAt);
   });
 
-  test("dm and edit are immediately CAPABILITY_UNAVAILABLE, with no host call at all", async () => {
-    const delivery = makeFakeDelivery();
+  test("dm/edit with no host capability -- immediately CAPABILITY_UNAVAILABLE, with no host call at all", async () => {
+    // Tooling#746 decision 7: a host that predates #736 (no host.dm/host.edit) still gets a clean
+    // 202/CAPABILITY_UNAVAILABLE for a structurally VALID dm/edit request, the same shape #742 always
+    // gave dm/edit unconditionally.
     const announced: unknown[] = [];
-    const host = makeFakeHost({ name: "mcp", ...delivery, announce: async (m) => void announced.push(m) });
+    const host = makeFakeHost({ name: "mcp", announce: async (m) => void announced.push(m) });
     const d = deps(host, TOKEN);
 
-    for (const kind of ["dm", "edit"]) {
-      const requestId = kind === "dm" ? "b".repeat(64) : "c".repeat(64);
-      const res = await handleMcpHttp(
-        post("/deliveries", { request_id: requestId, kind, target: {}, body: { content: "hi" } }),
-        INFO("/deliveries"),
-        d,
-      );
-      expect(res.status).toBe(202);
-      const body = (await res.json()) as { state: { state: string; code?: string } };
-      expect(body.state).toMatchObject({ state: "failed", code: "CAPABILITY_UNAVAILABLE" });
-    }
-    expect(delivery.calls.post).toEqual([]);
+    const dmRes = await handleMcpHttp(
+      post("/deliveries", { request_id: "b".repeat(64), kind: "dm", target: { user_id: USER_ID }, body: { content: "hi" } }),
+      INFO("/deliveries"),
+      d,
+    );
+    expect(dmRes.status).toBe(202);
+    expect(((await dmRes.json()) as { state: { state: string; code?: string } }).state).toMatchObject({ state: "failed", code: "CAPABILITY_UNAVAILABLE" });
+
+    const editRes = await handleMcpHttp(
+      post("/deliveries", { request_id: "c".repeat(64), kind: "edit", target: { message_ref: REQUEST_ID, seq: 1 }, body: { content: "hi" } }),
+      INFO("/deliveries"),
+      d,
+    );
+    expect(editRes.status).toBe(202);
+    expect(((await editRes.json()) as { state: { state: string; code?: string } }).state).toMatchObject({ state: "failed", code: "CAPABILITY_UNAVAILABLE" });
+
     expect(announced).toEqual([]);
+  });
+
+  test("dm literal round-trip: the POST 202 pending literal, then the GET delivered literal", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "mcp", ...delivery });
+    const d = deps(host, TOKEN);
+    await registry.register(USER_ID, "Roshne", () => new Date(NOW));
+    const dmRequestId = "b".repeat(64);
+
+    const created = await handleMcpHttp(
+      post("/deliveries", { request_id: dmRequestId, kind: "dm", target: { user_id: USER_ID }, body: { content: "hi" } }),
+      INFO("/deliveries"),
+      d,
+    );
+    expect(created.status).toBe(202);
+    expect(await created.json()).toEqual({
+      state: {
+        state: "pending",
+        kind: "dm",
+        target: { user_id: USER_ID },
+        body: { content: "hi" },
+        created_at: new Date(NOW).toISOString(),
+      },
+      existing: false,
+    });
+
+    await waitUntil(async () => (await store.get(dmRequestId))?.state === "delivered");
+
+    const fetched = await handleMcpHttp(get(`/deliveries/${dmRequestId}`), INFO(`/deliveries/${dmRequestId}`), d);
+    expect(fetched.status).toBe(200);
+    expect(await fetched.json()).toEqual({
+      state: "delivered",
+      kind: "dm",
+      target: { user_id: USER_ID },
+      body: { content: "hi" },
+      created_at: new Date(NOW).toISOString(),
+      message_ref: dmRequestId,
+      url: "https://discord.com/channels/@me/200000000000000002/300000000000000002",
+    });
+    expect(delivery.calls.dm).toHaveLength(1);
+  });
+
+  test("dm to an unregistered user: 202 pending, then failed{RECIPIENT_UNREACHABLE}, with no host.dm call", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "mcp", ...delivery });
+    const d = deps(host, TOKEN);
+    const dmRequestId = "b".repeat(64);
+
+    await handleMcpHttp(post("/deliveries", { request_id: dmRequestId, kind: "dm", target: { user_id: USER_ID }, body: { content: "hi" } }), INFO("/deliveries"), d);
+    await waitUntil(async () => (await store.get(dmRequestId))?.state === "failed");
+
+    const fetched = await handleMcpHttp(get(`/deliveries/${dmRequestId}`), INFO(`/deliveries/${dmRequestId}`), d);
+    const body = (await fetched.json()) as { state: string; code?: string };
+    expect(body).toMatchObject({ state: "failed", code: "RECIPIENT_UNREACHABLE" });
+    expect(delivery.calls.dm).toEqual([]);
+  });
+
+  test("edit literal round-trip: applies against the original post, GET shows applied:true", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "mcp", ...delivery });
+    const d = deps(host, TOKEN);
+
+    await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
+    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
+
+    const editRequestId = "b".repeat(64);
+    const created = await handleMcpHttp(
+      post("/deliveries", { request_id: editRequestId, kind: "edit", target: { message_ref: REQUEST_ID, seq: 2 }, body: { content: "v2" } }),
+      INFO("/deliveries"),
+      d,
+    );
+    expect(created.status).toBe(202);
+    await waitUntil(async () => (await store.get(editRequestId))?.state === "delivered");
+
+    const fetched = await handleMcpHttp(get(`/deliveries/${editRequestId}`), INFO(`/deliveries/${editRequestId}`), d);
+    expect(fetched.status).toBe(200);
+    expect(await fetched.json()).toEqual({
+      state: "delivered",
+      kind: "edit",
+      target: { message_ref: REQUEST_ID, seq: 2 },
+      body: { content: "v2" },
+      created_at: new Date(NOW).toISOString(),
+      message_ref: REQUEST_ID,
+      url: "https://discord.com/channels/100000000000000001/200000000000000001/300000000000000001",
+      applied: true,
+    });
+    expect(delivery.calls.edit).toHaveLength(1);
   });
 
   test("GET on an unknown request_id is 404", async () => {
@@ -421,6 +541,48 @@ describe("handleMcpHttp: GET /registration/{user_id}", () => {
   });
 });
 
+describe("handleMcpHttp: GET /recipients", () => {
+  test("matches the literal wire shape for one registered user", async () => {
+    await registry.register(USER_ID, "Roshne", () => new Date(NOW));
+    const host = makeFakeHost({ name: "mcp" });
+    const res = await handleMcpHttp(get("/recipients"), INFO("/recipients"), deps(host, TOKEN));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ items: [{ user_id: USER_ID, display_name: "Roshne" }] });
+  });
+
+  test("no registered users -- an empty items array", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const res = await handleMcpHttp(get("/recipients"), INFO("/recipients"), deps(host, TOKEN));
+    expect(await res.json()).toEqual({ items: [] });
+  });
+
+  test("101 registered users -- capped at 100, oldest first", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    for (let i = 0; i < 101; i++) {
+      const userId = String(100000000000000000n + BigInt(i));
+      await registry.register(userId, `user-${i}`, () => new Date(NOW + i * 1000));
+    }
+    const res = await handleMcpHttp(get("/recipients"), INFO("/recipients"), deps(host, TOKEN));
+    const body = (await res.json()) as { items: { user_id: string; display_name: string }[] };
+    expect(body.items).toHaveLength(100);
+    expect(body.items[0]!.display_name).toBe("user-0"); // oldest registration first
+  });
+
+  test("a display name over 100 characters is truncated to 100", async () => {
+    await registry.register(USER_ID, "x".repeat(150), () => new Date(NOW));
+    const host = makeFakeHost({ name: "mcp" });
+    const res = await handleMcpHttp(get("/recipients"), INFO("/recipients"), deps(host, TOKEN));
+    const body = (await res.json()) as { items: { display_name: string }[] };
+    expect(body.items[0]!.display_name).toHaveLength(100);
+  });
+
+  test("a non-GET method is 405", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const res = await handleMcpHttp(post("/recipients"), INFO("/recipients"), deps(host, TOKEN));
+    expect(res.status).toBe(405);
+  });
+});
+
 describe("handleMcpHttp: routing", () => {
   test("an entirely unknown path is 404", async () => {
     const host = makeFakeHost({ name: "mcp" });
@@ -463,7 +625,9 @@ describe("handleMcpHttp: a throw from the initial state write does not strand th
     // Still 202: the failed initial write is logged, not propagated to the caller.
     expect(created.status).toBe(202);
 
-    await flush();
+    // Real fs I/O (the flaky first write, then drainAndPersist's own second write), whose timing a
+    // single flush() tick cannot reliably outlast -- wait for the delivery to actually land.
+    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
 
     // Proof the lock was actually released (not just that no error surfaced): a fresh tryStart for
     // the SAME request_id succeeds. Under the bug this fails, because the lock, once acquired at
