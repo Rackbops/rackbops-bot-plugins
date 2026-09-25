@@ -293,9 +293,11 @@ describe("handleMcpHttp: POST /pair/redeem", () => {
 
   test("redeeming a valid code returns the user id and generation, matching the literal wire shape", async () => {
     const userId = "123456789012345678";
-    // Real time, not NOW: createRegistryStore's own mutate() prunes against wall-clock regardless of
-    // the `now` this call is given (registry.ts's own doc comment on the mutator), so seeding a code
-    // via the fixed historical NOW would land it already "expired" the moment redeem's prune runs.
+    // Register/pair use real time directly; the redeem call below goes through deps(), whose `now`
+    // is the fixed PAST NOW constant (mutate() prunes with whichever clock each call is given,
+    // round-3 fix) -- that mismatch is harmless here specifically because a clock further in the
+    // past than a code's own creation time can never see it as expired (pruning only drops a code
+    // whose expiresAt is BEFORE `now`), so this stays a lenient no-op prune either way.
     const registerOutcome = await registry.register(userId, "Ash", () => new Date());
     const pairOutcome = await registry.pair(userId, "Ash", () => new Date());
     if (!pairOutcome.ok) throw new Error("setup: pair failed");
