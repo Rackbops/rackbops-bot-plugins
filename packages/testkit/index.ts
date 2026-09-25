@@ -7,16 +7,72 @@
 //
 // This module is NOT published — it lives under packages/ (like packages/api/), is imported only by
 // `*.test.ts`, and never enters a plugin's `dist` bundle (build-plugins bundles src/index.ts only).
+import { randomBytes } from "node:crypto";
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import type { MessageComponentInteraction, ModalSubmitInteraction } from "discord.js";
 import type { HostApi, HostDelivery, HostMappedDestination, HostMessage, HostStorage } from "../api/contract.js";
 
+// Tooling#746 round-3 review: this file's own writeJsonAtomic used a FIXED `${path}.tmp` name for
+// every write, unlike the host it claims to faithfully copy (rackbops-discord-bot src/storage.ts,
+// #154 + #253) -- two writes to the SAME path (e.g. #742's own startDrain redundant write followed
+// by drainAndPersist's final write, both real, both awaited, but still landing close enough together
+// under real fs I/O) could race on that one shared tmp file, one writer's rename consuming or
+// clobbering the file the other is still writing. Mirrors the host's tmpPathFor exactly (a monotonic
+// per-process counter alone isn't enough either -- two containers in a handoff can share a pid and
+// both start counting from zero, #253's own fix for #154's gap) so this "faithful copy" comment above
+// is actually true of the write path, not just the serialization one. Diagnosed by running the full
+// plugins/mcp test suite repeatedly with the swallowed error logged: every failure was an ENOENT or
+// EPERM on this function's own renameSync, never a wrong VALUE -- confirming a write-path race, not a
+// logic bug in the delivery/edit code that calls it.
+let tmpCounter = 0;
+const TMP_TOKEN = randomBytes(4).toString("hex");
+
+function tmpPathFor(path: string, pid: number, token: string, counter: number): string {
+  return `${path}.${pid}.${token}.${counter}.tmp`;
+}
+
+/** Windows-only: renaming onto a destination another handle still has open can throw EPERM/EBUSY/
+ *  EACCES even though nothing is logically wrong -- a transient OS-level lock, not a real conflict
+ *  (POSIX rename() atomically replaces even an open destination, so this can't happen on Linux, which
+ *  is what the host actually runs on; this exists only so the Windows dev loop isn't flaky). A unique
+ *  tmp name per write (above) already rules out two WRITERS colliding; this covers a concurrent
+ *  READER (`Bun.file(path)`) holding a transient lock on `path` itself at the moment of rename, via a
+ *  real `setTimeout` (never a busy-wait -- that would block the whole event loop, starving every
+ *  OTHER concurrent read/write in the same process for the entire delay).
+ *
+ *  The numbers below came from isolated reproduction (`Bun.file(path).json()` polled every 1ms
+ *  against 3 sequential real writes to the same path, matching #742's own reserve-then-startDrain-
+ *  then-drainAndPersist shape), not a guess: with NO concurrent reader, 6/6 runs of that reproduction
+ *  never fail; WITH one, a plain `renameSync` fails outright on most runs, and even a 20-attempt/25ms
+ *  (500ms) retry budget still exhausted itself and threw on 2/8 runs. Pushed further, the stuck case
+ *  always eventually clears, but the clear time is highly variable -- most retries resolve on attempt
+ *  1, one observed run needed attempt 35 (~1.75s @ 50ms apart) -- consistent with Bun's own file
+ *  handle release being deferred rather than a real deadlock. 90 attempts / 20ms apart (1.8s total,
+ *  under the 2s `waitUntil` timeout the plugin's own tests already use) cleared 8/8 reproduction runs
+ *  with margin, worst case 16 attempts. If this ever needs to go even higher, that is real
+ *  information about this runtime's GC/handle-release latency, not a sign the approach is wrong. */
+async function renameWithRetry(tmp: string, path: string): Promise<void> {
+  const RETRY_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
+  const MAX_ATTEMPTS = 90;
+  const RETRY_DELAY_MS = 20;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      renameSync(tmp, path);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (attempt >= MAX_ATTEMPTS || code === undefined || !RETRY_CODES.has(code)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    }
+  }
+}
+
 async function writeJsonAtomic(path: string, data: unknown): Promise<void> {
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.tmp`;
+  const tmp = tmpPathFor(path, process.pid, TMP_TOKEN, ++tmpCounter);
   await Bun.write(tmp, JSON.stringify(data, null, 2));
-  renameSync(tmp, path);
+  await renameWithRetry(tmp, path);
 }
 
 async function readJsonOrFresh<T>(path: string, fresh: () => T, label: string): Promise<T> {
