@@ -52,8 +52,12 @@ export interface DeliveryStore {
    *  left it in a state no caller retry, and no drain in flight, will ever resolve on its own. */
   markPendingUnknown(): Promise<void>;
   /** Tooling#746 decision 3/4: sets `lastEditSeq` on `requestId`'s record through the SAME keyed
-   *  mutator `reserve` uses for this path, so it is serialized against any other write to that one
-   *  file. A no-op (the record is left exactly as it was) when the current record is not `delivered`
+   *  mutator `reserve` uses for this path, so it is serialized against another CONCURRENT
+   *  `reserve`/`recordEditSeq` call for the same path (round-2 review: `set`/`prune`'s own `unlink`
+   *  bypass the mutator and are not covered by this -- safe in practice today, since nothing calls
+   *  `set` on an id after it reaches `delivered`, and `prune` only removes records 8+ days old, but
+   *  a future caller of either must not assume this mutator protects against them). A no-op (the
+   *  record is left exactly as it was) when the current record is not `delivered`
    *  -- an edit's `EditQueue` turn only ever calls this after its own `get()` of the same id has
    *  already confirmed `state === "delivered"` in that same serialized turn, so the "current record is
    *  missing or not delivered" branch here is not expected to be reached in practice; it exists so a
