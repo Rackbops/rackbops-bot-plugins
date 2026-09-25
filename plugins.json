@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-25T15:05:40.438Z",
+  "generatedAt": "2026-09-25T17:06:04.279Z",
   "plugins": [
     {
       "name": "mcp",
       "package": "@rackbops/plugin-mcp",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "description": "Bridge plugin for the Discord delivery MCP (Rackbops/discord-mcp): the service side of docs/bridge-protocol.md, plus /agent registration and pairing",
       "hostApiVersion": 1,
       "intents": [],
@@ -40,6 +40,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "0.3.0",
+          "publishedAt": "2026-09-25T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/mcp-v0.3.0",
+          "notes": "### Added\n\n- DM delivery, edit delivery and a recipient list (`Rackbops/Tooling#746`, S3d of Epic #734):\n  `kind: \"dm\"` now goes through `host.dm` to a registered user, and `kind: \"edit\"` goes through\n  `host.edit` against the stored delivery of the send `message_ref` names -- edits are applied in\n  `seq` order, serialized per message, and a lower `seq` arriving after a higher one is a no-op\n  (`applied: false`) rather than reapplying stale content. `GET /recipients` lists registered users\n  (id, display name), capped at 100, ordered by registration time. `GET /capabilities` now reports\n  `dm`/`edit` as `true` exactly when the host provides `host.dm`/`host.edit`, rather than always\n  `false`. A closed-DM recipient, or one who has since unregistered, fails\n  `failed{RECIPIENT_UNREACHABLE}` with no Discord call; an unknown or non-deliverable `message_ref`\n  fails `failed{NOT_FOUND}`. Every #742/#743 record without a `dm`/`edit`-shaped target (from before\n  this version) is refused the same way, never delivered."
+        },
         {
           "version": "0.2.0",
           "publishedAt": "2026-09-25T00:00:00.000Z",

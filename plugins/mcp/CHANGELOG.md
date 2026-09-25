@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0] - 2026-09-25
+
+### Added
+
+- DM delivery, edit delivery and a recipient list (`Rackbops/Tooling#746`, S3d of Epic #734):
+  `kind: "dm"` now goes through `host.dm` to a registered user, and `kind: "edit"` goes through
+  `host.edit` against the stored delivery of the send `message_ref` names -- edits are applied in
+  `seq` order, serialized per message, and a lower `seq` arriving after a higher one is a no-op
+  (`applied: false`) rather than reapplying stale content. `GET /recipients` lists registered users
+  (id, display name), capped at 100, ordered by registration time. `GET /capabilities` now reports
+  `dm`/`edit` as `true` exactly when the host provides `host.dm`/`host.edit`, rather than always
+  `false`. A closed-DM recipient, or one who has since unregistered, fails
+  `failed{RECIPIENT_UNREACHABLE}` with no Discord call; an unknown or non-deliverable `message_ref`
+  fails `failed{NOT_FOUND}`. Every #742/#743 record without a `dm`/`edit`-shaped target (from before
+  this version) is refused the same way, never delivered.
+
 ## [0.2.0] - 2026-09-25
 
 ### Added

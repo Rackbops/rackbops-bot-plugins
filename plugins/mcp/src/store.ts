@@ -8,9 +8,14 @@
 import { readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { HostStorage, PluginLog } from "../../../packages/api/contract.js";
-import type { DeliveryBody, DeliveryKind, PostTarget, StoredDelivery } from "./protocol.js";
+import type { DeliveryBody, DeliveryKind, DeliveryTarget, StoredDelivery } from "./protocol.js";
 
 const NOOP_LOG: PluginLog = { info() {}, warn() {}, error() {} };
+
+/** Thrown only by `recordEditSeq`'s own `fresh` callback, to distinguish "no record for this id" (a
+ *  silent no-op) from a genuine I/O failure reading or writing an EXISTING record's file (which must
+ *  still propagate, not be swallowed alongside it). */
+class NoRecordForEditSeq extends Error {}
 
 /** Decision 6: files older than this are pruned by the tick. Deliberately a day past #735's own
  *  7-day idempotency-store window, so the bridge's record never expires before the service's does. */
@@ -32,7 +37,7 @@ export interface DeliveryStore {
   reserve(
     requestId: string,
     kind: DeliveryKind,
-    target: PostTarget,
+    target: DeliveryTarget,
     body: DeliveryBody,
     now: () => Date,
   ): Promise<{ value: StoredDelivery; existing: boolean }>;
@@ -46,6 +51,15 @@ export interface DeliveryStore {
   /** activate() (decision 6): every `pending` record becomes `unknown` -- a restart mid-delivery
    *  left it in a state no caller retry, and no drain in flight, will ever resolve on its own. */
   markPendingUnknown(): Promise<void>;
+  /** Tooling#746 decision 3/4: sets `lastEditSeq` on `requestId`'s record through the SAME keyed
+   *  mutator `reserve` uses for this path, so it is serialized against any other write to that one
+   *  file. A no-op (the record is left exactly as it was) when the current record is not `delivered`
+   *  -- an edit's `EditQueue` turn only ever calls this after its own `get()` of the same id has
+   *  already confirmed `state === "delivered"` in that same serialized turn, so the "current record is
+   *  missing or not delivered" branch here is not expected to be reached in practice; it exists so a
+   *  call that somehow arrives anyway leaves the store exactly as decision 3 says ("otherwise leaves
+   *  the record unchanged") rather than corrupting it. */
+  recordEditSeq(requestId: string, seq: number): Promise<void>;
   /** Removes every record whose `createdAt` is at least 8 days before `now()`. Returns the pruned
    *  request ids. */
   prune(now: () => Date): Promise<string[]>;
@@ -112,6 +126,27 @@ export function createDeliveryStore(dataDir: string, storage: HostStorage, log: 
         } catch (err) {
           log.error(`marking delivery ${requestId} unknown after restart failed`, err);
         }
+      }
+    },
+    async recordEditSeq(requestId, seq) {
+      try {
+        await mutator.update(
+          deliveryPath(dataDir, requestId),
+          // Unlike reserve()'s `() => null` (which WANTS to create a fresh record for an absent
+          // path), a missing record here must produce NO write at all -- writing `null` back would
+          // create a phantom file that later reads as `null` instead of `undefined` from get(),
+          // breaking every "is this id known" check downstream. Throwing makes readJsonOrFresh (and
+          // so mutator.update as a whole) reject instead of ever reaching the write step; the catch
+          // below turns ONLY this specific marker into the silent no-op decision 3 asks for, while
+          // still letting a genuine I/O failure on an EXISTING record propagate as before.
+          () => {
+            throw new NoRecordForEditSeq();
+          },
+          (current) => (current !== null && current.state === "delivered" ? { ...current, lastEditSeq: seq } : current),
+          "mcp-delivery",
+        );
+      } catch (err) {
+        if (!(err instanceof NoRecordForEditSeq)) throw err;
       }
     },
     async prune(now) {

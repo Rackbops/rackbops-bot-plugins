@@ -131,6 +131,44 @@ describe("markPendingUnknown", () => {
   });
 });
 
+describe("recordEditSeq", () => {
+  test("sets lastEditSeq on a delivered record", async () => {
+    const id = "a".repeat(64);
+    await store.set(id, { state: "delivered", kind: "post", target: TARGET, body: BODY, createdAt: new Date(NOW).toISOString(), messageRef: id, url: null, delivery: null });
+    await store.recordEditSeq(id, 3);
+    expect((await store.get(id)) as { lastEditSeq?: number }).toMatchObject({ lastEditSeq: 3 });
+  });
+
+  test("a later call overwrites an earlier lastEditSeq", async () => {
+    const id = "a".repeat(64);
+    await store.set(id, { state: "delivered", kind: "post", target: TARGET, body: BODY, createdAt: new Date(NOW).toISOString(), messageRef: id, url: null, delivery: null });
+    await store.recordEditSeq(id, 1);
+    await store.recordEditSeq(id, 2);
+    expect((await store.get(id)) as { lastEditSeq?: number }).toMatchObject({ lastEditSeq: 2 });
+  });
+
+  test("a no-op on a pending record -- left exactly as it was", async () => {
+    const id = "a".repeat(64);
+    await store.reserve(id, "post", TARGET, BODY, () => new Date(NOW));
+    await store.recordEditSeq(id, 1);
+    expect(await store.get(id)).toEqual({ state: "pending", kind: "post", target: TARGET, body: BODY, createdAt: new Date(NOW).toISOString() });
+  });
+
+  test("a no-op on a failed record -- left exactly as it was", async () => {
+    const id = "a".repeat(64);
+    const failed: StoredDelivery = { state: "failed", kind: "post", target: TARGET, body: BODY, createdAt: new Date(NOW).toISOString(), code: "UPSTREAM_UNAVAILABLE" };
+    await store.set(id, failed);
+    await store.recordEditSeq(id, 1);
+    expect(await store.get(id)).toEqual(failed);
+  });
+
+  test("a no-op on an id with no record at all -- still no record afterward", async () => {
+    const id = "a".repeat(64);
+    await store.recordEditSeq(id, 1);
+    expect(await store.get(id)).toBeUndefined();
+  });
+});
+
 describe("prune", () => {
   test("a record survives at 8 days minus 1ms, and is pruned once it reaches exactly 8 days", async () => {
     const id = "a".repeat(64);

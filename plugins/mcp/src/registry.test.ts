@@ -286,6 +286,31 @@ describe("createRegistryStore: concurrency, over real storage", () => {
     expect(result).toEqual({ ok: false });
     expect(await store.generationOf(USER)).toBeUndefined();
   });
+
+  test("listRecipients: empty when nothing is registered", async () => {
+    expect(await store.listRecipients()).toEqual([]);
+  });
+
+  test("listRecipients: every registered user, with userId/displayName/registeredAt", async () => {
+    const now = () => new Date("2026-09-25T00:00:00.000Z");
+    await store.register(USER, NAME, now);
+    await store.register(OTHER_USER, "Bee", now);
+    const recipients = await store.listRecipients();
+    expect(recipients).toHaveLength(2);
+    expect(recipients).toEqual(
+      expect.arrayContaining([
+        { userId: USER, displayName: NAME, registeredAt: now().toISOString() },
+        { userId: OTHER_USER, displayName: "Bee", registeredAt: now().toISOString() },
+      ]),
+    );
+  });
+
+  test("listRecipients: an unregistered user disappears", async () => {
+    const now = () => new Date();
+    await store.register(USER, NAME, now);
+    await store.unregister(USER, now);
+    expect(await store.listRecipients()).toEqual([]);
+  });
 });
 
 describe("createRegistryStore: pruning uses the caller's own injected clock, not wall-clock time", () => {

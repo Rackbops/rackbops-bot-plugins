@@ -1,8 +1,8 @@
 // Pure request/response shapes for docs/bridge-protocol.md (Rackbops/discord-mcp, decision 6 of
 // Tooling#735's plan) -- no I/O, no HostApi. The wire is snake_case JSON (request_id, guild_id,
-// message_ref, created_at); everything internal is camelCase, so every function here is also the
-// one place that translates between the two. Validation never throws -- a malformed request is data,
-// not a crash.
+// user_id, message_ref, seq, created_at); everything internal is camelCase, so every function here is
+// also the one place that translates between the two. Validation never throws -- a malformed request
+// is data, not a crash.
 import type { HostCard, HostDelivery, HostLinkButton } from "../../../packages/api/contract.js";
 
 export const REQUEST_ID_RE = /^[0-9a-f]{64}$/;
@@ -10,6 +10,14 @@ export const SNOWFLAKE_RE = /^[0-9]{5,25}$/;
 export const MAX_BODY_BYTES = 64 * 1024;
 export const CONTENT_MIN = 1;
 export const CONTENT_MAX = 2000;
+/** Decision (Tooling#746): `target.seq` on an edit -- a signed 32-bit range, matching the service's
+ *  own counter. */
+export const SEQ_MIN = 1;
+export const SEQ_MAX = 2147483647;
+/** `GET /recipients` (Tooling#746): at most this many, and a display name truncated to this many
+ *  characters. */
+export const RECIPIENTS_MAX = 100;
+export const DISPLAY_NAME_MAX = 100;
 
 // Tooling#743's own wire shape for POST /pair/redeem's body. Deliberately looser than registry.ts's
 // own CODE_ALPHABET (which excludes I/L/O/U) -- the wire only rejects a structurally-wrong
@@ -43,63 +51,98 @@ export interface PostTarget {
   destination: string;
 }
 
+/** Tooling#746 decision 5. */
+export interface DmTarget {
+  userId: string;
+}
+
+/** Tooling#746 decision 5. `seq` is the service's own per-message edit counter, not a Discord id. */
+export interface EditTarget {
+  messageRef: string;
+  seq: number;
+}
+
+/** Tooling#746 decision 5: `StoredDelivery.target` is this union, not narrowed by `kind` -- a legacy
+ *  #742 dm/edit record (target coerced to `{guildId: "", destination: ""}`) is a real value this type
+ *  must still describe, and the mismatch between `kind` and the target's actual shape is exactly what
+ *  the guards below let a caller detect. */
+export type DeliveryTarget = PostTarget | DmTarget | EditTarget;
+
+export function isPostTarget(target: DeliveryTarget): target is PostTarget {
+  return "guildId" in target && "destination" in target;
+}
+export function isDmTarget(target: DeliveryTarget): target is DmTarget {
+  return "userId" in target;
+}
+export function isEditTarget(target: DeliveryTarget): target is EditTarget {
+  return "messageRef" in target && "seq" in target;
+}
+
+/** Decision 6 (Tooling#746): optional at the type level -- `edit`'s body may omit it (validated by
+ *  `validateBody`'s `requireContent` below), so the type has to allow that for every caller, not just
+ *  edit's. `toWireState` emits it only when present. */
 export interface DeliveryBody {
-  content: string;
+  content?: string;
   card?: HostCard;
   links?: HostLinkButton[];
 }
 
-/** One delivery's full record, kept one per `request_id` (decision 5). `dm`/`edit` land straight in
- *  `failed{CAPABILITY_UNAVAILABLE}` at creation (#742 decision 5) and never hold a real target, so
- *  `target` for those is whatever the caller sent, best-effort, never read for an actual delivery. */
+/** One delivery's full record, kept one per `request_id` (#742 decision 5). `target` is the general
+ *  `DeliveryTarget` union, not narrowed by `kind` -- see `DeliveryTarget`'s own comment. `lastEditSeq`
+ *  and `applied` are Tooling#746 additions: `lastEditSeq` persists on a `post`/`dm` original's own
+ *  delivered record (decision 4), so a restart can't lose edit ordering; `applied` appears only on a
+ *  `kind: "edit"` record that reaches `delivered` (decision 3). */
 export type StoredDelivery =
-  | { state: "pending"; kind: DeliveryKind; target: PostTarget; body: DeliveryBody; createdAt: string }
-  | { state: "unknown"; kind: DeliveryKind; target: PostTarget; body: DeliveryBody; createdAt: string }
+  | { state: "pending"; kind: DeliveryKind; target: DeliveryTarget; body: DeliveryBody; createdAt: string }
+  | { state: "unknown"; kind: DeliveryKind; target: DeliveryTarget; body: DeliveryBody; createdAt: string }
   | {
       state: "delivered";
       kind: DeliveryKind;
-      target: PostTarget;
+      target: DeliveryTarget;
       body: DeliveryBody;
       createdAt: string;
       messageRef: string | null;
       url: string | null;
       delivery: HostDelivery | null;
+      lastEditSeq?: number;
+      applied?: boolean;
     }
   | {
       state: "failed";
       kind: DeliveryKind;
-      target: PostTarget;
+      target: DeliveryTarget;
       body: DeliveryBody;
       createdAt: string;
-      code: "CAPABILITY_UNAVAILABLE" | "UPSTREAM_UNAVAILABLE";
+      code: "CAPABILITY_UNAVAILABLE" | "UPSTREAM_UNAVAILABLE" | "RECIPIENT_UNREACHABLE" | "NOT_FOUND";
     };
 
 export type ValidatedCreate =
-  | { ok: true; requestId: string; kind: DeliveryKind; target: PostTarget; body: DeliveryBody }
+  | { ok: true; requestId: string; kind: DeliveryKind; target: DeliveryTarget; body: DeliveryBody }
   | { ok: false; reason: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Best-effort target for a `dm`/`edit` request -- never read for delivery (they fail before ever
- *  reaching drain), kept only so the stored record shows what was actually asked for. */
-function coerceTarget(raw: unknown): PostTarget {
-  const r = isRecord(raw) ? raw : {};
-  return {
-    guildId: typeof r.guild_id === "string" ? r.guild_id : "",
-    destination: typeof r.destination === "string" ? r.destination : "",
-  };
-}
-
-function validateBody(raw: unknown): { ok: true; value: DeliveryBody } | { ok: false; reason: string } {
+/**
+ * `content` is required (1..CONTENT_MAX) when `requireContent` -- post and dm, matching #742's
+ * original rule. Edit passes `requireContent: false`: `content` is validated the same way when
+ * present, but the body must instead carry at least one of `content`/`card`/`links` (Tooling#746 wire
+ * contract, `POST /deliveries` kind "edit" 400 rules). card/links are re-validated in full by the
+ * host's own validateHostMessage at drain time (hostMessage.ts); here they only need to be
+ * present-or-absent, not deeply shaped.
+ */
+function validateBody(raw: unknown, opts: { requireContent: boolean }): { ok: true; value: DeliveryBody } | { ok: false; reason: string } {
   if (!isRecord(raw)) return { ok: false, reason: "body must be an object" };
-  if (typeof raw.content !== "string" || raw.content.length < CONTENT_MIN || raw.content.length > CONTENT_MAX) {
+  const value: DeliveryBody = {};
+  if (raw.content !== undefined) {
+    if (typeof raw.content !== "string" || raw.content.length < CONTENT_MIN || raw.content.length > CONTENT_MAX) {
+      return { ok: false, reason: `body.content must be ${CONTENT_MIN}..${CONTENT_MAX} characters` };
+    }
+    value.content = raw.content;
+  } else if (opts.requireContent) {
     return { ok: false, reason: `body.content must be ${CONTENT_MIN}..${CONTENT_MAX} characters` };
   }
-  const value: DeliveryBody = { content: raw.content };
-  // card/links are re-validated in full by the host's own validateHostMessage at drain time
-  // (hostMessage.ts); here they only need to be present-or-absent, not deeply shaped.
   if (raw.card !== undefined) {
     if (!isRecord(raw.card)) return { ok: false, reason: "body.card must be an object" };
     value.card = raw.card as unknown as HostCard;
@@ -108,15 +151,16 @@ function validateBody(raw: unknown): { ok: true; value: DeliveryBody } | { ok: f
     if (!Array.isArray(raw.links)) return { ok: false, reason: "body.links must be an array" };
     value.links = raw.links as unknown as HostLinkButton[];
   }
+  if (!opts.requireContent && value.content === undefined && value.card === undefined && value.links === undefined) {
+    return { ok: false, reason: "body must include at least one of content, card or links" };
+  }
   return { ok: true, value };
 }
 
 /**
- * `POST /deliveries`'s body, validated (decision 5). `kind` "dm"/"edit" is a structurally valid
- * request -- it is accepted here and left to the caller to immediately record as
- * `failed{CAPABILITY_UNAVAILABLE}` (decision 5's second bullet); only `kind: "post"` gets its
- * `target` deeply checked (a declared destination, a real snowflake), since that is the only kind
- * whose target is ever actually used.
+ * `POST /deliveries`'s body, validated. Every `kind` now gets its own deeply-checked `target`
+ * (Tooling#746 -- `dm` and `edit` used to be coerced best-effort and never actually delivered; now
+ * they do, so a malformed target is a real 400, not a record that silently never delivers).
  */
 export function validateCreateRequest(raw: unknown): ValidatedCreate {
   if (!isRecord(raw)) return { ok: false, reason: "request body must be an object" };
@@ -128,23 +172,46 @@ export function validateCreateRequest(raw: unknown): ValidatedCreate {
   if (kind !== "post" && kind !== "dm" && kind !== "edit") {
     return { ok: false, reason: 'kind must be "post", "dm" or "edit"' };
   }
-  const bodyResult = validateBody(raw.body);
+
+  if (kind === "post") {
+    const bodyResult = validateBody(raw.body, { requireContent: true });
+    if (!bodyResult.ok) return bodyResult;
+    if (!isRecord(raw.target)) return { ok: false, reason: "target must be an object" };
+    const guildId = raw.target.guild_id;
+    if (typeof guildId !== "string" || !SNOWFLAKE_RE.test(guildId)) {
+      return { ok: false, reason: "target.guild_id must be a snowflake" };
+    }
+    const destination = raw.target.destination;
+    if (typeof destination !== "string" || !DESTINATION_NAMES.includes(destination)) {
+      return { ok: false, reason: `target.destination must be one of ${DESTINATION_NAMES.join(", ")}` };
+    }
+    return { ok: true, requestId, kind, target: { guildId, destination }, body: bodyResult.value };
+  }
+
+  if (kind === "dm") {
+    const bodyResult = validateBody(raw.body, { requireContent: true });
+    if (!bodyResult.ok) return bodyResult;
+    if (!isRecord(raw.target)) return { ok: false, reason: "target must be an object" };
+    const userId = raw.target.user_id;
+    if (typeof userId !== "string" || !SNOWFLAKE_RE.test(userId)) {
+      return { ok: false, reason: "target.user_id must be a snowflake" };
+    }
+    return { ok: true, requestId, kind, target: { userId }, body: bodyResult.value };
+  }
+
+  // kind === "edit"
+  const bodyResult = validateBody(raw.body, { requireContent: false });
   if (!bodyResult.ok) return bodyResult;
-
-  if (kind !== "post") {
-    return { ok: true, requestId, kind, target: coerceTarget(raw.target), body: bodyResult.value };
-  }
-
   if (!isRecord(raw.target)) return { ok: false, reason: "target must be an object" };
-  const guildId = raw.target.guild_id;
-  if (typeof guildId !== "string" || !SNOWFLAKE_RE.test(guildId)) {
-    return { ok: false, reason: "target.guild_id must be a snowflake" };
+  const messageRef = raw.target.message_ref;
+  if (typeof messageRef !== "string" || !REQUEST_ID_RE.test(messageRef)) {
+    return { ok: false, reason: "target.message_ref must be a lowercase 64-character hex string" };
   }
-  const destination = raw.target.destination;
-  if (typeof destination !== "string" || !DESTINATION_NAMES.includes(destination)) {
-    return { ok: false, reason: `target.destination must be one of ${DESTINATION_NAMES.join(", ")}` };
+  const seq = raw.target.seq;
+  if (typeof seq !== "number" || !Number.isInteger(seq) || seq < SEQ_MIN || seq > SEQ_MAX) {
+    return { ok: false, reason: `target.seq must be an integer from ${SEQ_MIN} to ${SEQ_MAX}` };
   }
-  return { ok: true, requestId, kind, target: { guildId, destination }, body: bodyResult.value };
+  return { ok: true, requestId, kind, target: { messageRef, seq }, body: bodyResult.value };
 }
 
 export type ValidatedRedeem = { ok: true; code: string } | { ok: false };
@@ -159,16 +226,27 @@ export function validateRedeemRequest(raw: unknown): ValidatedRedeem {
   return { ok: true, code };
 }
 
-/** Wire JSON for `GET /capabilities` (decision 4). `dm`/`edit` are `false` regardless of the host in
- *  this child -- the recipient registry and edit ordering arrive in Tooling#737. */
-export function capabilitiesResponse(hasPost: boolean): Record<string, unknown> {
+/** Wire JSON for `GET /capabilities`. `dm`/`edit` now genuinely reflect `host.dm`/`host.edit`
+ *  (Tooling#746) -- before this child they were always `false`, regardless of the host. */
+export function capabilitiesResponse(flags: { post: boolean; dm: boolean; edit: boolean }): Record<string, unknown> {
   return {
-    dm: false,
-    targeted_post: hasPost,
-    cards: hasPost,
-    edit: false,
+    dm: flags.dm,
+    targeted_post: flags.post,
+    cards: flags.post,
+    edit: flags.edit,
     destinations: DESTINATIONS.map((d) => ({ destination: d.name, description: d.description })),
   };
+}
+
+/** The wire shape of one target, keyed by the target's own runtime shape (via the guards above), not
+ *  by the record's `kind` -- a legacy record's mismatched target (Tooling#746 decision 5) is emitted
+ *  exactly as stored, whatever `kind` says. Never reached for a target none of the three guards match
+ *  (every value ever constructed by `validateCreateRequest`, `reserve`'s legacy coercion, or a stored
+ *  #742 record satisfies one of them). */
+function wireTarget(target: DeliveryTarget): Record<string, unknown> {
+  if (isDmTarget(target)) return { user_id: target.userId };
+  if (isEditTarget(target)) return { message_ref: target.messageRef, seq: target.seq };
+  return { guild_id: target.guildId, destination: target.destination };
 }
 
 /** `StoredDelivery` -> the wire `DeliveryState` JSON (snake_case), the same shape for both
@@ -176,9 +254,9 @@ export function capabilitiesResponse(hasPost: boolean): Record<string, unknown> 
 export function toWireState(stored: StoredDelivery): Record<string, unknown> {
   const base = {
     kind: stored.kind,
-    target: { guild_id: stored.target.guildId, destination: stored.target.destination },
+    target: wireTarget(stored.target),
     body: {
-      content: stored.body.content,
+      ...(stored.body.content !== undefined ? { content: stored.body.content } : {}),
       ...(stored.body.card !== undefined ? { card: stored.body.card } : {}),
       ...(stored.body.links !== undefined ? { links: stored.body.links } : {}),
     },
@@ -189,8 +267,24 @@ export function toWireState(stored: StoredDelivery): Record<string, unknown> {
     case "unknown":
       return { state: stored.state, ...base };
     case "delivered":
-      return { state: "delivered", ...base, message_ref: stored.messageRef, url: stored.url };
+      return {
+        state: "delivered",
+        ...base,
+        message_ref: stored.messageRef,
+        url: stored.url,
+        ...(stored.applied !== undefined ? { applied: stored.applied } : {}),
+      };
     case "failed":
       return { state: "failed", ...base, code: stored.code };
   }
+}
+
+/** `GET /recipients` (Tooling#746): ordered by `registeredAt` ascending then `userId` (ISO-8601
+ *  sorts lexically the same as chronologically, so a plain string compare is enough), capped at
+ *  `RECIPIENTS_MAX`, each `displayName` truncated to `DISPLAY_NAME_MAX` characters. */
+export function recipientsResponse(entries: { userId: string; displayName: string; registeredAt: string }[]): Record<string, unknown> {
+  const sorted = [...entries].sort((a, b) => a.registeredAt.localeCompare(b.registeredAt) || a.userId.localeCompare(b.userId));
+  return {
+    items: sorted.slice(0, RECIPIENTS_MAX).map((e) => ({ user_id: e.userId, display_name: e.displayName.slice(0, DISPLAY_NAME_MAX) })),
+  };
 }
