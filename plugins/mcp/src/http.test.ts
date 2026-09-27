@@ -34,18 +34,6 @@ async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-/** Polls `check` until it returns true or `timeoutMs` elapses -- a single `flush()` tick is enough
- *  for a "post" drain (one host call, one store write), but dm/edit also touch the registry or a
- *  second store path through real fs I/O, which a single `setTimeout(0)` cannot reliably outlast
- *  (matches index.test.ts's own `waitUntil`, needed there for the same reason). */
-async function waitUntil(check: () => boolean | Promise<boolean>, timeoutMs = 2000): Promise<void> {
-  const start = Date.now();
-  while (!(await check())) {
-    if (Date.now() - start > timeoutMs) throw new Error("waitUntil timed out");
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-}
-
 const validDeliveryBody = () => ({
   request_id: REQUEST_ID,
   kind: "post",
@@ -164,7 +152,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     expect(createdBody.existing).toBe(false);
     expect(createdBody.state.state).toBe("pending");
 
-    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
+    await drainLock.settled(REQUEST_ID);
 
     const fetched = await handleMcpHttp(get(`/deliveries/${REQUEST_ID}`), INFO(`/deliveries/${REQUEST_ID}`), d);
     expect(fetched.status).toBe(200);
@@ -207,7 +195,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     const d = deps(host, TOKEN);
 
     await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
-    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
+    await drainLock.settled(REQUEST_ID);
     const retry = await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
     expect(retry.status).toBe(202);
     const retryBody = (await retry.json()) as { state: { state: string }; existing: boolean };
@@ -229,14 +217,14 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     const d = deps(host, TOKEN);
 
     await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
-    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "failed");
+    await drainLock.settled(REQUEST_ID);
 
     const retry = await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
     expect(retry.status).toBe(202);
     const retryBody = (await retry.json()) as { state: { state: string }; existing: boolean };
     expect(retryBody.existing).toBe(true);
     expect(retryBody.state.state).toBe("pending");
-    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
+    await drainLock.settled(REQUEST_ID);
     expect(attempts).toBe(2);
   });
 
@@ -249,7 +237,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     });
     const d = deps(host, TOKEN);
     await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
-    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "failed");
+    await drainLock.settled(REQUEST_ID);
     const firstCreatedAt = (await store.get(REQUEST_ID))!.createdAt;
 
     const laterDeps = { ...d, now: () => new Date(NOW + 60_000) };
@@ -308,7 +296,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
       existing: false,
     });
 
-    await waitUntil(async () => (await store.get(dmRequestId))?.state === "delivered");
+    await drainLock.settled(dmRequestId);
 
     const fetched = await handleMcpHttp(get(`/deliveries/${dmRequestId}`), INFO(`/deliveries/${dmRequestId}`), d);
     expect(fetched.status).toBe(200);
@@ -331,7 +319,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     const dmRequestId = "b".repeat(64);
 
     await handleMcpHttp(post("/deliveries", { request_id: dmRequestId, kind: "dm", target: { user_id: USER_ID }, body: { content: "hi" } }), INFO("/deliveries"), d);
-    await waitUntil(async () => (await store.get(dmRequestId))?.state === "failed");
+    await drainLock.settled(dmRequestId);
 
     const fetched = await handleMcpHttp(get(`/deliveries/${dmRequestId}`), INFO(`/deliveries/${dmRequestId}`), d);
     const body = (await fetched.json()) as { state: string; code?: string };
@@ -345,7 +333,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     const d = deps(host, TOKEN);
 
     await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
-    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
+    await drainLock.settled(REQUEST_ID);
 
     const editRequestId = "b".repeat(64);
     const created = await handleMcpHttp(
@@ -354,7 +342,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
       d,
     );
     expect(created.status).toBe(202);
-    await waitUntil(async () => (await store.get(editRequestId))?.state === "delivered");
+    await drainLock.settled(editRequestId);
 
     const fetched = await handleMcpHttp(get(`/deliveries/${editRequestId}`), INFO(`/deliveries/${editRequestId}`), d);
     expect(fetched.status).toBe(200);
@@ -627,7 +615,7 @@ describe("handleMcpHttp: a throw from the initial state write does not strand th
 
     // Real fs I/O (the flaky first write, then drainAndPersist's own second write), whose timing a
     // single flush() tick cannot reliably outlast -- wait for the delivery to actually land.
-    await waitUntil(async () => (await store.get(REQUEST_ID))?.state === "delivered");
+    await d.drainLock.settled(REQUEST_ID);
 
     // Proof the lock was actually released (not just that no error surfaced): a fresh tryStart for
     // the SAME request_id succeeds. Under the bug this fails, because the lock, once acquired at
