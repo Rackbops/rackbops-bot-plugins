@@ -6,6 +6,7 @@
 // in from outside the compose network is the opt-in `cloudflared` sidecar -- which is also what
 // makes SPOTIFY_REDIRECT_URI an HTTPS URL Spotify will accept as a registered redirect.
 
+import { clientIpFrom, createTrustedProxy, type TrustedProxy } from "../../../packages/net/clientIp.js";
 import type { Result } from "./spotify.js";
 
 /** A fixed-window limiter, per warbandeer's: enough to bound a hot loop within one process uptime. */
@@ -134,14 +135,17 @@ export async function handleCallback(req: Request, clientIp: string, deps: Callb
 
 /**
  * Started from `activate()` only when MUSIC_CALLBACK_PORT is set -- absent config means no server
- * at all, matching warbandeer's fail-closed rule. `CF-Connecting-IP` is trusted for the same reason
- * and with the same caveat as warbandeer's: Cloudflare's edge sets it for anything that genuinely
- * transits its network, and nothing else can reach this port today, but a future container on the
- * same compose network could set it to anything since nothing here re-verifies the path.
+ * at all, matching warbandeer's fail-closed rule. `CF-Connecting-IP` is trusted only from a peer
+ * address that resolves to `proxy`'s configured `TRUSTED_PROXY_HOST` (#69) -- Cloudflare's edge
+ * sets it for anything that genuinely transits its network, but nothing about a raw request proves
+ * it came that way. Previously trusted unconditionally, same gap and same fix as warbandeer's --
+ * see `clientIpFrom` (`packages/net/clientIp.ts`). `proxy` defaults to `TRUSTED_PROXY_HOST`, and is
+ * a parameter purely so tests can inject a fake one.
  */
 export function startCallbackServer(
   port: number,
   deps: CallbackDeps,
+  proxy: TrustedProxy = createTrustedProxy({ host: process.env.TRUSTED_PROXY_HOST }),
 ): { stop: () => void; port: number } {
   const server = Bun.serve({
     port,
@@ -149,7 +153,7 @@ export function startCallbackServer(
     maxRequestBodySize: 8 * 1024,
     idleTimeout: 30,
     fetch: (req, srv) => {
-      const clientIp = req.headers.get("CF-Connecting-IP") ?? srv.requestIP(req)?.address ?? "unknown";
+      const clientIp = clientIpFrom(req, srv.requestIP(req)?.address, proxy);
       return handleCallback(req, clientIp, deps);
     },
   });

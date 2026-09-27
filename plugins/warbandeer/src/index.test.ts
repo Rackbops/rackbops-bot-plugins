@@ -76,6 +76,14 @@ describe("dispose (#184)", () => {
     // isn't asserted here: Bun's own socket teardown after `.stop()` is asynchronous and not
     // something this plugin's tests should be timing-sensitive to.
     expect(warbandeerServerRunning()).toBe(false);
-    expect(calls).toEqual([{ level: "info", message: "ingest server stopped" }]);
+    // #69: TRUSTED_PROXY_HOST is unset in this test's env, so activate() logs that FIRST (before
+    // ever starting the server), then dispose() logs the stop -- both in the same capturing log.
+    expect(calls).toEqual([
+      {
+        level: "info",
+        message: "TRUSTED_PROXY_HOST is not set -- CF-Connecting-IP will never be trusted; every caller shares one rate-limit budget",
+      },
+      { level: "info", message: "ingest server stopped" },
+    ]);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createRateLimiter, escapeHtml, handleCallback, startCallbackServer, type CallbackDeps } from "./server.js";
+import type { TrustedProxy } from "../../../packages/net/clientIp.js";
 
 const PATH = "/spotify/callback";
 
@@ -192,5 +193,55 @@ describe("startCallbackServer", () => {
     const { port } = server;
     server.stop();
     await expect(fetch(`http://127.0.0.1:${port}${PATH}?code=C&state=T`)).rejects.toThrow();
+  });
+});
+
+/**
+ * Exercises `startCallbackServer`'s own `proxy` wiring (#69) over a REAL listener, mirroring
+ * warbandeer's own trust-boundary tests: two fixed fake `TrustedProxy`s (never trust / always
+ * trust) isolate whether `CF-Connecting-IP` gets honored, without depending on this test
+ * process's own loopback peer address (which can be "127.0.0.1" or "::1" depending on the host).
+ */
+describe("client-IP trust boundary (#69)", () => {
+  const TRUST_NONE: TrustedProxy = { isTrusted: () => false, refresh: async () => {} };
+  const TRUST_ALL: TrustedProxy = { isTrusted: () => true, refresh: async () => {} };
+
+  function depsWithBudget(max: number): CallbackDeps {
+    return makeDeps({ rateLimiter: createRateLimiter({ windowMs: 60_000, max }) });
+  }
+
+  /** A bare GET on the real callback path with no `state` param: 400 once the rate limiter allows
+   *  it through ("missing its state token"), 429 once the identity's budget is spent. */
+  async function getCallback(port: number, cfConnectingIp: string): Promise<number> {
+    const res = await fetch(`http://127.0.0.1:${port}${PATH}`, { headers: { "CF-Connecting-IP": cfConnectingIp } });
+    return res.status;
+  }
+
+  test("a non-tunnel peer setting a fresh CF-Connecting-IP per request shares ONE 30/min budget", async () => {
+    const server = startCallbackServer(0, depsWithBudget(2), TRUST_NONE);
+    try {
+      // TRUST_NONE means the header is never honored regardless of value, so all three requests
+      // below -- despite three DIFFERENT claimed CF-Connecting-IP values -- are keyed by the ONE
+      // real peer address this test's own fetch() connects from.
+      expect(await getCallback(server.port, "203.0.113.1")).toBe(400); // 1st, budget 1/2
+      expect(await getCallback(server.port, "203.0.113.2")).toBe(400); // 2nd, budget 2/2
+      expect(await getCallback(server.port, "203.0.113.3")).toBe(429); // 3rd -- budget exhausted
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("a tunnel peer is keyed by the header", async () => {
+    const server = startCallbackServer(0, depsWithBudget(1), TRUST_ALL);
+    try {
+      // TRUST_ALL means this test's real peer is always the trusted tunnel, so each request's OWN
+      // CF-Connecting-IP value becomes its identity -- two DIFFERENT values get two independent
+      // budgets; reusing one exhausts that one specifically, not some shared fallback.
+      expect(await getCallback(server.port, "203.0.113.10")).toBe(400); // fresh identity, budget 1/1
+      expect(await getCallback(server.port, "203.0.113.11")).toBe(400); // a DIFFERENT identity
+      expect(await getCallback(server.port, "203.0.113.10")).toBe(429); // back to the first -- spent
+    } finally {
+      server.stop();
+    }
   });
 });

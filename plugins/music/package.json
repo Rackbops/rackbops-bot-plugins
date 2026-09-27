@@ -52,6 +52,13 @@
         "required": false,
         "secret": false,
         "description": "Port the Spotify OAuth callback server binds inside the container; unset = no callback server, so /spotify connect reports the feature disabled."
+      },
+      {
+        "key": "TRUSTED_PROXY_HOST",
+        "format": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$",
+        "required": false,
+        "secret": false,
+        "description": "Compose hostname of the Cloudflare Tunnel sidecar in front of this port (the compose service is named cloudflared; a multi-instance deployment should use this instance's own tunnel container name instead, e.g. rackbops-discord-bot-debug-tunnel, matching bridge.url's own convention). Only a request whose peer address resolves to this host gets CF-Connecting-IP trusted; unset = the header is never trusted and every caller shares one rate-limit budget."
       }
     ]
   }

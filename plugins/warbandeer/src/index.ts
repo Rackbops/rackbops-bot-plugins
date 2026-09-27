@@ -1,4 +1,5 @@
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
+import { createTrustedProxy } from "../../../packages/net/clientIp.js";
 import { loadLinks } from "./links.js";
 import { initCharacters, MAX_ACCOUNT_LABEL_LENGTH } from "./characters.js";
 import { handleLinkCommand, handleUnlinkCommand } from "./link-command.js";
@@ -64,8 +65,22 @@ export function createPlugin(host: HostApi): Plugin {
       // catches nothing here, so this try/catch keeps the plugin alive with /link reporting the
       // feature disabled (warbandeerServerRunning() stays false).
       if (port !== undefined) {
+        // #69: created once per activate(), only when the server is actually about to start --
+        // TRUSTED_PROXY_HOST is the compose hostname of this instance's Cloudflare Tunnel sidecar;
+        // unset means CF-Connecting-IP is never trusted and every caller shares one rate-limit
+        // budget, which is worth a startup line since it's easy to deploy behind a real tunnel and
+        // forget to set it.
+        const proxyHost = host.env.TRUSTED_PROXY_HOST;
+        const proxy = createTrustedProxy({ host: proxyHost });
+        if (proxyHost === undefined) {
+          host.log.info(
+            "TRUSTED_PROXY_HOST is not set -- CF-Connecting-IP will never be trusted; every caller shares one rate-limit budget",
+          );
+        } else {
+          await proxy.refresh();
+        }
         try {
-          const server = startWarbandeerServer(port);
+          const server = startWarbandeerServer(port, undefined, proxy);
           stopServer = server.stop;
         } catch (err) {
           host.log.error(
