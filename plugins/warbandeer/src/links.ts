@@ -1,10 +1,12 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 import type { HostStorage } from "../../../packages/api/contract.js";
 
-/** A Link Code redeemable once, within its TTL, for a Device Token. */
+/** A Link Code redeemable once, within its TTL, for a Device Token. Stores only the code's sha256
+ *  hash (#69) -- like a Device Token's own `tokenHash` below, the plaintext is never persisted, so
+ *  a leaked/backed-up `links.json` can't be used to redeem a still-pending code. */
 export interface PendingLinkCode {
-  code: string;
+  codeHash: string;
   discordUserId: string;
   expiresAt: number; // ms epoch
 }
@@ -34,9 +36,22 @@ const LINK_CODE_TTL_MS = 10 * 60 * 1000;
  * 2000-character reply limit past roughly 30 accounts, and `links.json` is loaded whole at boot. */
 export const MAX_LINKED_ACCOUNTS_PER_USER = 20;
 
-/** A short, human-typeable code: 4 random bytes as 8 uppercase hex characters. */
+/** A short, human-typeable code (#69): 13 characters drawn from a 30-symbol alphabet that drops
+ *  visually-ambiguous letters/digits (no I/L/O/U, no 0/1) -- log2(30^13) ≈ 63.8 bits, up from the
+ *  original 4-byte/32-bit design. `randomInt` is used per character rather than slicing random
+ *  bytes: the alphabet's size (30) doesn't evenly divide a byte's range (256), and naively reducing
+ *  a byte mod 30 would bias the low symbols (30*8=240 maps cleanly, the remaining 16 values of 256
+ *  wrap around and land only on symbols 0-15) -- `randomInt(30)` is rejection-sampled internally and
+ *  carries no such bias. */
+const LINK_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789";
+const LINK_CODE_LENGTH = 13;
+
 export function generateLinkCode(): string {
-  return randomBytes(4).toString("hex").toUpperCase();
+  let code = "";
+  for (let i = 0; i < LINK_CODE_LENGTH; i += 1) {
+    code += LINK_CODE_ALPHABET[randomInt(LINK_CODE_ALPHABET.length)];
+  }
+  return code;
 }
 
 /** A long-lived Device Token. URL-safe so it drops cleanly into a bearer header or a config file
@@ -67,11 +82,16 @@ export function verifyToken(token: string, hash: string): boolean {
  * redeemable once a fresh one is minted. Pure: takes and returns state values, no I/O.
  *
  * Regenerates on the astronomically unlikely chance the new code collides with a DIFFERENT
- * user's still-pending code: `redeemLinkCode` matches by code alone, so a collision would hand
- * the redeemer the wrong user's identity and silently destroy that user's code — cheap enough to
- * close outright rather than accept given a 32-bit code space. `generateCode` defaults to
- * `generateLinkCode` and exists as a parameter purely so `links.test.ts` can force a collision
- * deterministically (real crypto randomness can't be steered into colliding on demand).
+ * user's still-pending code: `redeemLinkCode` matches by hash alone, so a collision would hand
+ * the redeemer the wrong user's identity and silently destroy that user's code. Now a ~64-bit code
+ * space (#69, up from the original 32-bit one) rather than the ~64-bit space itself being why this
+ * stays cheap enough to close outright rather than accept — it was already the rule at 32 bits, and
+ * remains one now. Comparing candidate hashes here is a plain `===`, not `hashesMatch`'s
+ * constant-time compare: this is OUR OWN freshly-generated candidate against other stored hashes,
+ * not an attacker-supplied value being timed against a secret, so there's nothing to leak.
+ * `generateCode` defaults to `generateLinkCode` and exists as a parameter purely so `links.test.ts`
+ * can force a collision deterministically (real crypto randomness can't be steered into colliding
+ * on demand).
  */
 export function mintLinkCode(
   state: LinksState,
@@ -81,10 +101,12 @@ export function mintLinkCode(
 ): { code: string; state: LinksState } {
   const others = state.pending.filter((p) => p.discordUserId !== discordUserId);
   let code = generateCode();
-  while (others.some((p) => p.code === code)) {
+  let codeHash = hashToken(code);
+  while (others.some((p) => p.codeHash === codeHash)) {
     code = generateCode();
+    codeHash = hashToken(code);
   }
-  const pending = others.concat({ code, discordUserId, expiresAt: now + LINK_CODE_TTL_MS });
+  const pending = others.concat({ codeHash, discordUserId, expiresAt: now + LINK_CODE_TTL_MS });
   return { code, state: { ...state, pending } };
 }
 
@@ -98,10 +120,19 @@ export type RedeemLinkCodeResult =
  * Redeems `code`, or reports why it couldn't. Burns the code — removes it from `pending` — on
  * ANY match attempt, including a failed redemption of an expired one: single-use applies even to
  * a code that's already stale, so a stale code can't be probed indefinitely.
+ *
+ * The presented code is hashed once, then compared against every stored `codeHash` with
+ * `hashesMatch`'s constant-time compare (#69) — unlike `mintLinkCode`'s collision check above,
+ * `code` here is attacker-supplied, exactly the value `verifyToken`/`findAccountByToken` already
+ * treat this way for Device Tokens.
  */
 export function redeemLinkCode(state: LinksState, code: string, now: number): RedeemLinkCodeResult {
-  const match = state.pending.find((p) => p.code === code);
-  const nextState: LinksState = { ...state, pending: state.pending.filter((p) => p.code !== code) };
+  const presentedHash = hashToken(code);
+  const match = state.pending.find((p) => hashesMatch(p.codeHash, presentedHash));
+  const nextState: LinksState = {
+    ...state,
+    pending: match === undefined ? state.pending : state.pending.filter((p) => p !== match),
+  };
   if (!match) return { ok: false, reason: "not-found", state: nextState };
   if (match.expiresAt < now) return { ok: false, reason: "expired", state: nextState };
   return { ok: true, discordUserId: match.discordUserId, state: nextState };
@@ -187,9 +218,19 @@ export function findAccountByToken(
  * is an array and `accounts` is a plain object and would throw (`.filter is not a function`,
  * `.find is not a function`) otherwise — a hand-edited or partially-written file shouldn't be
  * able to do that; treated the same as "missing" rather than trusted as-is.
+ *
+ * #69: also drops any pending entry with no `codeHash` string — the shape a pre-migration file can
+ * still hold (`{code, discordUserId, expiresAt}`, from before codes were hashed). A Link Code's TTL
+ * is 10 minutes, so by the time this file is next read after a deploy any such entry has already
+ * expired in practice; there is no plaintext value here worth migrating forward; and accepting the
+ * old shape would mean carrying a second, weaker redemption path indefinitely. Dropped outright,
+ * exactly like a missing/wrongly-typed top-level field above.
  */
 function normalizeLinksState(raw: Partial<LinksState> | undefined): LinksState {
-  const pending = Array.isArray(raw?.pending) ? raw.pending : [];
+  const pendingRaw = Array.isArray(raw?.pending) ? raw.pending : [];
+  const pending = pendingRaw.filter(
+    (p): p is PendingLinkCode => typeof (p as Partial<PendingLinkCode> | undefined)?.codeHash === "string",
+  );
   const accountsRaw = raw?.accounts;
   const accounts =
     accountsRaw && typeof accountsRaw === "object" && !Array.isArray(accountsRaw)
