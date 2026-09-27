@@ -136,6 +136,59 @@ export function createPlugin(host: HostApi): Plugin {
 `import type` only -- the contract is a vendored `.d.ts` with no runtime twin, so a runtime `import`
 from it fails (see [`CONTEXT.md`](CONTEXT.md)).
 
+### Delivery: post, dm, edit, destinations (optional)
+
+Four more `HostApi` members beyond `announce` -- `post`, `dm`, `edit` and `destinations`
+(rackbops-discord-bot#736) -- for a plugin that needs a *specific* channel or DM rather than
+`announce`'s routed/fallback post, and the ability to edit what it already sent. All four are
+**optional**: absent on a host that predates #736, so feature-detect before calling any of them
+([`packages/api/contract.d.ts`](packages/api/contract.d.ts)):
+
+```ts
+if (typeof host.post === "function") {
+  const delivery = await host.post(guildId, "alerts", { content: "Something happened." });
+}
+```
+
+| Member | Contract |
+|---|---|
+| `post(guildId, destination, message)` | Posts to the ONE channel the operator mapped for `destination` in that `guildId` -- never a default or fallback route the way `announce` has one. Rejects when `destination` isn't declared in this plugin's manifest, or isn't mapped in that server. Sends as the bot, never through a channel webhook (a link button is a component, which a plain webhook can't carry). |
+| `dm(userId, message)` | DMs `userId` as the bot. Rejects cleanly -- a plain `Error`, never a raw discord.js/Discord-API error -- when the recipient's DMs are closed or the bot is blocked. |
+| `edit(delivery, message)` | Edits a message `post`/`dm` delivered (`message` is `Partial<HostMessage>`). Refuses a message this bot didn't author: a plugin already reaches the live `Client` via `interaction.client`, so per-plugin ownership isn't a boundary the host can honestly enforce -- a caller that needs that enforces it itself. |
+| `destinations()` | Where this plugin's declared `destinations` are mapped right now, across every server it's in: `{ guildId, guildName, destination }[]`. |
+
+`post`/`dm` resolve with a `HostDelivery` (`{ guildId, channelId, messageId }`, `guildId: null` for
+a DM) that `edit` takes back in to find the message again. `message` (`HostMessage`) is
+`{ content, card?, links?, buttons? }`: `card` is an embed (`{ title, description?, url?, color?,
+fields?, footer? }`, built through discord.js's own `EmbedBuilder` so its validators run too);
+`links` renders up to 5 link-style buttons (`{ label, url }`); `buttons` (interactive components)
+is RESERVED and refused today.
+
+Declare `destinations` in `package.json`'s `botPlugin` block (see the field's own entry above) --
+each `{ name, description }` is a place the operator can map to a channel per server in the admin
+panel, distinct from `announce`'s own routing. A `destination` your manifest doesn't declare is
+refused by `post` outright, unlike `announce`, which just falls back to its usual channels for an
+undeclared name.
+
+Test with the shared testkit's delivery fakes (`../../../packages/testkit/index.js`), which
+`makeFakeHost` alone does **not** wire up -- matching how a pre-#736 host behaves:
+
+```ts
+import { makeFakeHost, makeFakeDelivery } from "../../../packages/testkit/index.js";
+
+const delivery = makeFakeDelivery();
+const host = makeFakeHost({ name: "myplugin", ...delivery });
+await host.post!(guildId, "alerts", { content: "hi" });
+expect(delivery.calls.post).toEqual([{ guildId, destination: "alerts", message: { content: "hi" } }]);
+```
+
+`post`/`dm` always answer the same fixed `HostDelivery`; `edit` resolves with nothing;
+`destinations` answers `[]` unless the test overrides it on the object `makeFakeDelivery()`
+returned, or on `makeFakeHost`'s own overrides. See
+[`packages/api/contract.d.ts`](packages/api/contract.d.ts) for the full types (`HostApi`,
+`HostMessage`, `HostCard`, `HostLinkButton`, `HostDelivery`, `HostMappedDestination`) -- the
+source of truth this section paraphrases.
+
 ### Buttons, selects and modals (optional)
 
 A plugin can ship its own buttons, select menus and modals -- richer interaction than a slash
@@ -326,6 +379,72 @@ alongside `dist/plugin.js` -- a package that trims `files` down to just the bot 
 breaks its own admin tab. `warbandeer` ships the first such tab (its ingest-port + connector
 status). Contract + design: [rackbops-discord-bot#123](https://github.com/Rackbops/rackbops-discord-bot/issues/123),
 installed-version pinning: [rackbops-discord-bot#165](https://github.com/Rackbops/rackbops-discord-bot/issues/165).
+
+## Pattern: pairing a Discord user with an outside service
+
+Linking a Discord user's identity to something outside Discord -- an MCP client, a web dashboard,
+a bot the user runs themselves -- without ever handing that service a Discord token. `plugins/mcp`
+([Rackbops/Tooling#742](https://github.com/Rackbops/Tooling/issues/742),
+[#743](https://github.com/Rackbops/Tooling/issues/743)) is the worked example: it bridges
+[`Rackbops/discord-mcp`](https://github.com/Rackbops/discord-mcp) to a Discord user, and its
+`src/registry.ts`, `src/commands.ts`, `src/auth.ts` and `src/http.ts` are what this sketch cites.
+
+**The shape.**
+
+1. **`/agent register`** mints the user a `generation` -- a random 128-bit id
+   (`randomBytes(16).toString("base64url")`, 22 characters) -- stored keyed by their Discord user
+   id. Running `register` again while already registered is a no-op: it mints nothing and returns
+   the existing generation unchanged.
+2. **`/agent pair`** issues a one-time code and replies with it **ephemerally**
+   (`MessageFlags.Ephemeral` -- visible only to the user who ran the command, never posted anywhere
+   another reader could see it). The plugin's own reply says exactly this: "Enter it only in
+   `discord-mcp pair` or your connector's authorization page -- never paste it anywhere else." The
+   code itself:
+   - is drawn from a 30-symbol alphabet, `ABCDEFGHJKMNPQRSTVWXYZ23456789` (A-Z minus the
+     visually-ambiguous I/L/O/U, plus 2-9), chosen for reading aloud or over a DM;
+   - is 27 characters, each an independent, unbiased draw (`randomInt`, not a modulo of
+     `randomBytes`) -- about 132.5 bits;
+   - lives 10 minutes and is single-use; at most 5 unexpired codes per user, and a 6th `pair`
+     drops the oldest;
+   - is stored only as its SHA-256 hash -- the registry never holds the plaintext code, so a
+     leaked registry file can't leak a live code.
+3. **The outside service redeems the code through the plugin's HTTP route** -- `POST
+   /pair/redeem` under `/mcp/` in this worked example -- authenticated the same way every other
+   route on that plugin is, with a shared bearer secret in the `Authorization` header
+   (`src/auth.ts`'s constant-time compare). A valid, unexpired, unused code answers `200
+   { "discord_user_id": "...", "generation": "..." }`; anything else -- unknown, expired,
+   already-used, or orphaned by an unregister since it was issued -- answers the same `404
+   { "error": "invalid or expired code" }`, deliberately not distinguishing which (a malformed
+   body is a `400` instead, before the registry is ever touched).
+4. **The outside service binds its own tokens to the returned `generation`**, and re-checks that
+   generation later (this worked example also exposes `GET /registration/{user_id}` for that)
+   before honoring one of its own tokens. `generation` is exactly what step 5 changes, so this is
+   what makes revocation actually work end to end.
+5. **`unregister` deletes the registration and every outstanding code in one write.** On its own
+   it mints no new generation, so a lone `unregister` only stops future pairing; it's `unregister`
+   **then** `register` again that invalidates every token issued under the old generation -- the
+   fresh generation supersedes it the moment the outside service next checks.
+   [`Rackbops/discord-mcp`](https://github.com/Rackbops/discord-mcp) is the reference
+   implementation of that check on the outside-service side: its README documents that
+   unregistering makes an issued token stop working for a tool call within roughly 60 seconds --
+   that service's own accept-path cache TTL, not a property of this plugin's HTTP route.
+
+**Rate-limit redemption attempts on the redeeming side too.** This plugin's shared bearer secret
+already rate-limits *failed auth* -- more than 10 wrong bearer tokens a minute from one client IP
+gets a `429` -- but a wrong pairing *code* under a valid bearer token is a `404`, not a `401`, so
+it never feeds that limiter. discord-mcp's own design makes the same call for the service that
+actually redeems these codes: "the code is the only credential there, so the endpoint is
+rate-limited per source" (`discord-mcp` `docs/architecture.md`, decision 5) -- the redeeming side
+is the place left to bound the guess rate, and a second plugin building this pattern should expect
+to do the same on whatever calls its own redeem route.
+
+**The code format is whatever `generateCode`/`CODE_ALPHABET`/`CODE_LENGTH` define**
+(`plugins/mcp/src/registry.ts`) -- copy the constants, don't retype the alphabet by hand, when
+building a second plugin against this same pattern.
+
+See [`plugins/mcp/README.md`](plugins/mcp/README.md) for this worked example's full wire shapes,
+and `Rackbops/discord-mcp`'s `docs/bridge-protocol.md` / `docs/architecture.md` for the consuming
+side.
 
 ## Testing
 
