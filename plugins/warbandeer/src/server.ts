@@ -168,7 +168,8 @@ export async function handleRequest(req: Request, clientIp: string, deps: Warban
     if (body === undefined) return new Response("payload too large", { status: 413 });
     const parsed = parseJsonObjectBody(body);
     // Trimmed/uppercased so a code copy-pasted with stray whitespace, or typed lowercase,
-    // still matches — generateLinkCode() always mints uppercase hex.
+    // still matches — generateLinkCode() always mints uppercase characters from its own alphabet
+    // (#69: 13 chars, no I/L/O/U or 0/1 -- not hex since #69, but still uppercase-only either way).
     const code = typeof parsed?.code === "string" ? parsed.code.trim().toUpperCase() : undefined;
     const rawAccountLabel = typeof parsed?.accountLabel === "string" ? parsed.accountLabel : undefined;
     if (!code || !rawAccountLabel) {
@@ -296,7 +297,11 @@ export function createProductionDeps(overrides?: {
  * header to anything, since nothing re-verified it — see `clientIpFrom` (`packages/net/clientIp.ts`)
  * for the fix. `deps` is optional so tests can start a real listener (real `Bun.serve`, port 0 for
  * an OS-assigned free port) against injected fake deps instead of the real
- * `links.json`/`data/characters/`; `proxy` defaults to `TRUSTED_PROXY_HOST` for the same reason.
+ * `links.json`/`data/characters/`; `proxy` similarly defaults to a `TrustedProxy` built from
+ * `process.env.TRUSTED_PROXY_HOST` directly. That default is a test/fallback convenience only —
+ * this module has no `HostApi` to read `host.env` through, and it's never actually exercised in
+ * production: `index.ts`'s `activate()` always constructs its own proxy from `host.env` (the real
+ * declared-capability boundary this repo enforces) and passes it explicitly as the 3rd argument.
  */
 export function startWarbandeerServer(
   port: number,

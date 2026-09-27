@@ -139,8 +139,10 @@ export async function handleCallback(req: Request, clientIp: string, deps: Callb
  * address that resolves to `proxy`'s configured `TRUSTED_PROXY_HOST` (#69) -- Cloudflare's edge
  * sets it for anything that genuinely transits its network, but nothing about a raw request proves
  * it came that way. Previously trusted unconditionally, same gap and same fix as warbandeer's --
- * see `clientIpFrom` (`packages/net/clientIp.ts`). `proxy` defaults to `TRUSTED_PROXY_HOST`, and is
- * a parameter purely so tests can inject a fake one.
+ * see `clientIpFrom` (`packages/net/clientIp.ts`). `proxy` defaults to a `TrustedProxy` built from
+ * `process.env.TRUSTED_PROXY_HOST` directly -- a test/fallback convenience only, never actually
+ * exercised in production: `index.ts`'s `activate()` always constructs its own proxy from
+ * `host.env` (the real declared-capability boundary this repo enforces) and passes it explicitly.
  */
 export function startCallbackServer(
   port: number,
