@@ -216,18 +216,42 @@ export interface DrainLock {
   /** `true` = acquired, this caller owns the drain; `false` = someone else already holds it. */
   tryStart(requestId: string): boolean;
   finish(requestId: string): void;
+  /**
+   * Tooling#71: resolves once `requestId`'s current drain (if any) has called `finish` -- or
+   * immediately, if none is in flight right now. Production code (http.ts, index.ts) never calls
+   * this; it exists purely so a test can await the REAL completion of a fire-and-forget
+   * `drainAndPersist` instead of polling `store.get` with a fixed-budget timeout. That polling
+   * budget (2000ms, sized for an idle machine) is what raced against a test's own `afterEach`
+   * (which deletes the test's tempdir unconditionally, without waiting for any in-flight
+   * background write) under real system load: a slow drain could still be mid-write when the
+   * poll's budget ran out and the test moved on, producing an ENOENT on the write's own rename
+   * (its tmp file deleted out from under it by the just-fired teardown). `settled` never resolves
+   * before `finish` has actually run, so a caller that awaits it is guaranteed the drain's own
+   * final `store.set` has already settled (successfully or not) -- no budget to exhaust, no
+   * teardown race.
+   */
+  settled(requestId: string): Promise<void>;
 }
 
 export function createDrainLock(): DrainLock {
-  const inFlight = new Set<string>();
+  const inFlight = new Map<string, { promise: Promise<void>; resolve: () => void }>();
   return {
     tryStart(requestId) {
       if (inFlight.has(requestId)) return false;
-      inFlight.add(requestId);
+      let resolve!: () => void;
+      const promise = new Promise<void>((res) => {
+        resolve = res;
+      });
+      inFlight.set(requestId, { promise, resolve });
       return true;
     },
     finish(requestId) {
+      const entry = inFlight.get(requestId);
       inFlight.delete(requestId);
+      entry?.resolve();
+    },
+    settled(requestId) {
+      return inFlight.get(requestId)?.promise ?? Promise.resolve();
     },
   };
 }
