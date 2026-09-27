@@ -24,6 +24,24 @@ describe("createTrustedProxy / isTrusted", () => {
     expect(clientIpFrom(req, "10.0.0.99", proxy)).toBe("10.0.0.99");
   });
 
+  // Round-2 gate finding: `Bun.serve` with no explicit `hostname` (every call site in this repo)
+  // binds dual-stack, and reports a REAL IPv4 peer's address in IPv4-mapped-IPv6 notation
+  // (`::ffff:x.x.x.x`) -- confirmed directly against a live listener, not assumed. `dns.lookup`
+  // never returns that notation, so both directions of the mismatch need their own case.
+  test("an IPv4-mapped-IPv6 peer address (Bun's dual-stack notation) still matches a plain IPv4 "
+    + "resolved address", async () => {
+    const proxy = createTrustedProxy({ host: "cloudflared", lookup: async () => ["10.0.0.5"] });
+    await proxy.refresh();
+    expect(proxy.isTrusted("::ffff:10.0.0.5")).toBe(true);
+    expect(proxy.isTrusted("::ffff:10.0.0.6")).toBe(false);
+  });
+
+  test("a resolved address that itself comes back mapped still matches a plain IPv4 peer", async () => {
+    const proxy = createTrustedProxy({ host: "cloudflared", lookup: async () => ["::ffff:10.0.0.5"] });
+    await proxy.refresh();
+    expect(proxy.isTrusted("10.0.0.5")).toBe(true);
+  });
+
   test("invalid header value falls back to the peer", async () => {
     const proxy = createTrustedProxy({ host: "cloudflared", lookup: async () => ["10.0.0.5"] });
     await proxy.refresh();

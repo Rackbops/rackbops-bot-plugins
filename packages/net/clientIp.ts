@@ -32,6 +32,23 @@ async function defaultLookup(host: string): Promise<string[]> {
 }
 
 /**
+ * Normalizes an IPv4-mapped IPv6 address (`::ffff:x.x.x.x`) down to its plain IPv4 form. Found
+ * during round-2 gate testing: `Bun.serve` with no explicit `hostname` (every call site in this
+ * repo) binds dual-stack, and an IPv4 peer connecting to that listener is reported by
+ * `srv.requestIP()` in mapped notation -- confirmed directly (`bun -e` against a real listener),
+ * not assumed. `dns.promises.lookup` never returns that notation for an IPv4 result, so without
+ * this the trusted-address Set and the peer address `isTrusted` is asked to check would never
+ * match for a real IPv4 tunnel sidecar: the whole fix would silently never engage. Applied on BOTH
+ * sides of the comparison (the resolved set and the incoming peer) so it doesn't matter which form
+ * either one happens to arrive in. Anything else (a real IPv6 address, an already-plain IPv4 one)
+ * passes through unchanged.
+ */
+function canonicalAddress(address: string): string {
+  const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(address);
+  return mapped?.[1] ?? address;
+}
+
+/**
  * `opts.host` is the compose hostname of the Cloudflare Tunnel sidecar in front of this listener
  * (env `TRUSTED_PROXY_HOST`; see each plugin's `botPlugin.env` entry for the deployed example
  * value). `undefined` means "not configured": `isTrusted` always returns `false` and the header is
@@ -57,7 +74,7 @@ export function createTrustedProxy(opts: {
     lastRefreshAt = now();
     inFlight = (async () => {
       try {
-        addresses = new Set(await lookup(host));
+        addresses = new Set((await lookup(host)).map(canonicalAddress));
       } catch {
         // Leave `addresses` as it was -- see the interface doc comment.
       } finally {
@@ -70,7 +87,7 @@ export function createTrustedProxy(opts: {
   return {
     isTrusted(peerAddress: string): boolean {
       if (host === undefined) return false;
-      const trusted = addresses.has(peerAddress);
+      const trusted = addresses.has(canonicalAddress(peerAddress));
       // Fire-and-forget: THIS call still answers from the address set as it stood when the
       // request arrived. The miss that triggers a refresh is itself still correctly untrusted --
       // refreshing can only help a LATER request, never retroactively change this one's answer.
