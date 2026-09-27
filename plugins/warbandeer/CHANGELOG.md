@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.3.0] - 2026-09-27
 
 ### Changed
 
@@ -8,7 +8,10 @@
   (rackbops-bot-plugins#69); previously trusted unconditionally, so another container on the same
   compose network could claim a fresh rate-limit budget on every request by spoofing the header.
   New optional env `TRUSTED_PROXY_HOST` (unset = the header is never trusted, matching the old
-  fail-closed behaviour minus the spoofable header).
+  fail-closed behaviour minus the spoofable header). Recognizes a peer reported in IPv4-mapped-IPv6
+  notation (`::ffff:x.x.x.x`, what `Bun.serve`'s dual-stack default bind reports for a real IPv4
+  connection) as the same address DNS resolves in plain form -- without this, the feature above
+  would never have actually engaged for a real container-to-container connection.
 - Link Codes are now 13 characters from a 30-symbol alphabet (~64 bits, up from 8 hex characters /
   32 bits) and are stored as a sha256 hash, never plaintext (rackbops-bot-plugins#69).
 
