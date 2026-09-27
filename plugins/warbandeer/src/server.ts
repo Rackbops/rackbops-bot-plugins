@@ -16,6 +16,7 @@ import {
   upsertLinkedAccount,
 } from "./links.js";
 import { charactersDir, saveCharacterSnapshotTo, validateAccountLabel, validateCharacterPayload } from "./characters.js";
+import { clientIpFrom, createTrustedProxy, type TrustedProxy } from "../../../packages/net/clientIp.js";
 
 // Whether WARBANDEER_INGEST_PORT is set — replaces the bot's `config.warbandeerIngestPort !==
 // undefined`. Set by createPlugin (which owns env parsing) before any command handler runs.
@@ -167,7 +168,8 @@ export async function handleRequest(req: Request, clientIp: string, deps: Warban
     if (body === undefined) return new Response("payload too large", { status: 413 });
     const parsed = parseJsonObjectBody(body);
     // Trimmed/uppercased so a code copy-pasted with stray whitespace, or typed lowercase,
-    // still matches — generateLinkCode() always mints uppercase hex.
+    // still matches — generateLinkCode() always mints uppercase characters from its own alphabet
+    // (#69: 13 chars, no I/L/O/U or 0/1 -- not hex since #69, but still uppercase-only either way).
     const code = typeof parsed?.code === "string" ? parsed.code.trim().toUpperCase() : undefined;
     const rawAccountLabel = typeof parsed?.accountLabel === "string" ? parsed.accountLabel : undefined;
     if (!code || !rawAccountLabel) {
@@ -287,19 +289,24 @@ export function createProductionDeps(overrides?: {
  * loopback-only bind would refuse), but `docker-compose.yml` publishes no host port for it — the
  * only route in from outside the compose network is the opt-in `cloudflared` tunnel sidecar.
  *
- * `CF-Connecting-IP` is trusted unconditionally, with no check that the request actually came
- * through the tunnel. This is trustworthy for its INTENDED path: Cloudflare's edge sets this
- * header itself from the connection it actually observed, and a client cannot override what
- * Cloudflare writes for a request that genuinely transits Cloudflare's network. The gap is anything
- * that reaches this port WITHOUT going through Cloudflare: nothing else can today (no published host
- * port), but another container on the same compose network later could set this header to anything,
- * since nothing here re-verifies it. `deps` is optional so tests can start a real listener (real
- * `Bun.serve`, port 0 for an OS-assigned free port) against injected fake deps instead of the real
- * `links.json`/`data/characters/`.
+ * `CF-Connecting-IP` is trusted only from a peer address that resolves to `proxy`'s configured
+ * `TRUSTED_PROXY_HOST` (#69) — Cloudflare's edge sets this header itself from the connection it
+ * actually observed, and a client cannot override what Cloudflare writes for a request that
+ * genuinely transits Cloudflare's network, but nothing about a raw request proves it came that
+ * way. Previously trusted unconditionally: another container on this compose network could set the
+ * header to anything, since nothing re-verified it — see `clientIpFrom` (`packages/net/clientIp.ts`)
+ * for the fix. `deps` is optional so tests can start a real listener (real `Bun.serve`, port 0 for
+ * an OS-assigned free port) against injected fake deps instead of the real
+ * `links.json`/`data/characters/`; `proxy` similarly defaults to a `TrustedProxy` built from
+ * `process.env.TRUSTED_PROXY_HOST` directly. That default is a test/fallback convenience only —
+ * this module has no `HostApi` to read `host.env` through, and it's never actually exercised in
+ * production: `index.ts`'s `activate()` always constructs its own proxy from `host.env` (the real
+ * declared-capability boundary this repo enforces) and passes it explicitly as the 3rd argument.
  */
 export function startWarbandeerServer(
   port: number,
   deps: WarbandeerDeps = createProductionDeps(),
+  proxy: TrustedProxy = createTrustedProxy({ host: process.env.TRUSTED_PROXY_HOST }),
 ): { stop: () => void; port: number } {
   const server = Bun.serve({
     port,
@@ -314,7 +321,7 @@ export function startWarbandeerServer(
     maxRequestBodySize: deps.maxBodyBytes * 4,
     idleTimeout: 30,
     fetch: (req, srv) => {
-      const clientIp = req.headers.get("CF-Connecting-IP") ?? srv.requestIP(req)?.address ?? "unknown";
+      const clientIp = clientIpFrom(req, srv.requestIP(req)?.address, proxy);
       return handleRequest(req, clientIp, deps);
     },
   });

@@ -76,6 +76,64 @@ describe("dispose (#184)", () => {
     // isn't asserted here: Bun's own socket teardown after `.stop()` is asynchronous and not
     // something this plugin's tests should be timing-sensitive to.
     expect(warbandeerServerRunning()).toBe(false);
-    expect(calls).toEqual([{ level: "info", message: "ingest server stopped" }]);
+    // #69: TRUSTED_PROXY_HOST is unset in this test's env, so activate() logs that FIRST (before
+    // ever starting the server), then dispose() logs the stop -- both in the same capturing log.
+    expect(calls).toEqual([
+      {
+        level: "info",
+        message: "TRUSTED_PROXY_HOST is not set -- CF-Connecting-IP will never be trusted; every caller shares one rate-limit budget",
+      },
+      { level: "info", message: "ingest server stopped" },
+    ]);
+  });
+});
+
+/**
+ * A gate finding (round 2): the per-listener trust-boundary tests in server.test.ts drive
+ * `startWarbandeerServer` directly with an explicitly-injected `TrustedProxy`, which pins that
+ * FUNCTION's own wiring but never proves `activate()` actually BUILDS a real proxy from
+ * `host.env.TRUSTED_PROXY_HOST` and hands it to that same call -- dropping the 3rd argument in
+ * `index.ts` left the whole suite green. This test drives the REAL `createPlugin(...).activate()`
+ * unmodified, with a REAL `TrustedProxy` (no fake `lookup` injected) resolving a REAL
+ * `TRUSTED_PROXY_HOST=localhost`, so it can only pass if activate()'s own env-to-proxy wiring is
+ * intact end to end.
+ */
+describe("client-IP trust boundary via activate() (#69 gate finding)", () => {
+  test("activate() wires its TRUSTED_PROXY_HOST-based proxy into the real listener -- a tunnel "
+    + "peer is keyed by CF-Connecting-IP, not a shared identity", async () => {
+    const probe = startWarbandeerServer(0);
+    const port = probe.port;
+    probe.stop();
+
+    const plugin = createPlugin(
+      makeFakeHost({ name: "warbandeer", env: { WARBANDEER_INGEST_PORT: String(port), TRUSTED_PROXY_HOST: "localhost" } }),
+    );
+    await plugin.activate?.();
+    try {
+      // Real fetch, explicitly to 127.0.0.1 (not "localhost") so the peer address Bun's
+      // `srv.requestIP` reports is deterministically the IPv4 loopback -- real DNS resolution of
+      // "localhost" on this machine includes that address (confirmed: `dns.lookup("localhost",
+      // {all:true})` returns BOTH ::1 and 127.0.0.1), so `TRUSTED_PROXY_HOST=localhost` genuinely
+      // trusts this test's own peer, through activate()'s own unmodified proxy.
+      const postLink = (cfIp: string) =>
+        fetch(`http://127.0.0.1:${port}/link`, { method: "POST", headers: { "CF-Connecting-IP": cfIp } });
+
+      // The real, hardcoded 30/min limiter from createProductionDeps() (server.ts): exhaust ONE
+      // identity's budget with 30 requests, confirm the 31st (same identity) is rate-limited, then
+      // confirm a DIFFERENT identity still has its own, untouched budget. This sequence can only
+      // hold if activate() actually wired its proxy into the listener, keying by the header
+      // per-identity -- with the proxy dropped (the round-2 mutation), every request here shares
+      // ONE real-peer budget and the 31st AND 32nd would both 429.
+      for (let i = 0; i < 30; i += 1) {
+        const res = await postLink("203.0.113.50");
+        expect(res.status).toBe(400); // "code and accountLabel are required" -- budget still open
+      }
+      const exhausted = await postLink("203.0.113.50");
+      expect(exhausted.status).toBe(429);
+      const freshIdentity = await postLink("203.0.113.51");
+      expect(freshIdentity.status).toBe(400); // a DIFFERENT header value has its OWN, untouched budget
+    } finally {
+      await plugin.dispose?.();
+    }
   });
 });

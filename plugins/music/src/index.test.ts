@@ -282,3 +282,61 @@ function stubFetch(): () => void {
     globalThis.fetch = real;
   };
 }
+
+/**
+ * A gate finding (round 2): the per-listener trust-boundary tests in server.test.ts drive
+ * `startCallbackServer` directly with an explicitly-injected `TrustedProxy`, which pins that
+ * FUNCTION's own wiring but never proves `activate()` actually BUILDS a real proxy from
+ * `host.env.TRUSTED_PROXY_HOST` and hands it to that same call -- dropping the 3rd argument in
+ * `index.ts` left the whole suite green. This test drives the REAL `createPlugin(...).activate()`
+ * unmodified, with a REAL `TrustedProxy` (no fake `lookup` injected) resolving a REAL
+ * `TRUSTED_PROXY_HOST=localhost`, so it can only pass if activate()'s own env-to-proxy wiring is
+ * intact end to end. `globalThis.fetch` is untouched here (no Spotify/setlist.fm call is ever
+ * reached -- every probe below is missing its `state` param, refused before any exchange), so it
+ * doesn't need the mock/restore pattern the tests above use.
+ */
+describe("client-IP trust boundary via activate() (#69 gate finding)", () => {
+  test("activate() wires its TRUSTED_PROXY_HOST-based proxy into the real listener -- a tunnel "
+    + "peer is keyed by CF-Connecting-IP, not a shared identity", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "music-activate-trust-"));
+    try {
+      const port = freePort();
+      const host = makeFakeHost({
+        name: "music",
+        env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: String(port), TRUSTED_PROXY_HOST: "localhost" },
+        dataDir: dir,
+        storage: makeRealStorage(),
+      });
+      const plugin = createPlugin(host);
+      await plugin.activate?.();
+      try {
+        // Real fetch, explicitly to 127.0.0.1 (not "localhost") so the peer address Bun's
+        // `srv.requestIP` reports resolves against the SAME address `TRUSTED_PROXY_HOST=localhost`
+        // resolves to via real DNS (confirmed: `dns.lookup("localhost", {all:true})` returns BOTH
+        // ::1 and 127.0.0.1 on this machine) -- through activate()'s own unmodified proxy.
+        const getCallback = (cfIp: string) =>
+          fetch(`http://127.0.0.1:${port}/spotify/callback`, { headers: { "CF-Connecting-IP": cfIp } });
+
+        // The real, hardcoded 30/min limiter from index.ts's own createRateLimiter call: exhaust
+        // ONE identity's budget with 30 requests (each missing `state`, so a clean 400, never
+        // touching Spotify), confirm the 31st (same identity) is rate-limited, then confirm a
+        // DIFFERENT identity still has its own, untouched budget. This sequence can only hold if
+        // activate() actually wired its proxy into the listener, keying by the header per-identity
+        // -- with the proxy dropped (the round-2 mutation), every request here shares ONE real-peer
+        // budget and the 31st AND 32nd would both 429.
+        for (let i = 0; i < 30; i += 1) {
+          const res = await getCallback("203.0.113.60");
+          expect(res.status).toBe(400); // missing state token -- budget still open
+        }
+        const exhausted = await getCallback("203.0.113.60");
+        expect(exhausted.status).toBe(429);
+        const freshIdentity = await getCallback("203.0.113.61");
+        expect(freshIdentity.status).toBe(400); // a DIFFERENT header value has its OWN, untouched budget
+      } finally {
+        await plugin.dispose?.();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `CF-Connecting-IP` is now trusted only from a peer address that resolves to `TRUSTED_PROXY_HOST`
+  (rackbops-bot-plugins#69); previously trusted unconditionally, so another container on the same
+  compose network could claim a fresh rate-limit budget on every request by spoofing the header.
+  New optional env `TRUSTED_PROXY_HOST` (unset = the header is never trusted, matching the old
+  fail-closed behaviour minus the spoofable header).
+
 ## [1.3.0] - 2026-09-20
 
 ### Added

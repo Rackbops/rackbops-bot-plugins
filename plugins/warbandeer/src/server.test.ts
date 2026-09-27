@@ -13,6 +13,7 @@ import {
 import { initCharacters, loadCharacterSnapshotsFrom } from "./characters.js";
 import { mintLinkCode, removeLinkedAccount, type LinksState } from "./links.js";
 import { makeRealStorage } from "../../../packages/testkit/index.js";
+import type { TrustedProxy } from "../../../packages/net/clientIp.js";
 
 describe("createRateLimiter", () => {
   test("allows up to max calls within the window, then rejects", () => {
@@ -607,5 +608,66 @@ describe("startWarbandeerServer — real listener", () => {
     expect(warbandeerServerRunning()).toBe(true);
     second.stop();
     expect(warbandeerServerRunning()).toBe(false);
+  });
+});
+
+/**
+ * Exercises `startWarbandeerServer`'s own `proxy` wiring (#69) over a REAL listener: real
+ * `Bun.serve`, real `fetch()`, so the peer address `clientIpFrom` sees is whatever this test
+ * process's own loopback connection actually is -- never asserted directly, since it can be
+ * "127.0.0.1" or "::1" depending on the host. Instead, two fixed fake `TrustedProxy`s (never trust
+ * / always trust) isolate the ONE thing that matters: whether `CF-Connecting-IP` gets honored.
+ */
+describe("client-IP trust boundary (#69)", () => {
+  const TRUST_NONE: TrustedProxy = { isTrusted: () => false, refresh: async () => {} };
+  const TRUST_ALL: TrustedProxy = { isTrusted: () => true, refresh: async () => {} };
+
+  function depsWithBudget(max: number): WarbandeerDeps {
+    return {
+      maxBodyBytes: 1024,
+      rateLimiter: createRateLimiter({ windowMs: 60_000, max }),
+      authFailureLimiter: createRateLimiter({ windowMs: 60_000, max: 1000 }),
+      redeemCode: async () => ({ ok: true, token: "t" }),
+      authenticate: () => undefined,
+      storeCharacters: async () => ({ ok: true }),
+    };
+  }
+
+  /** An empty POST /link: 400 once the rate limiter allows it through ("code and accountLabel are
+   *  required"), 429 once the identity's budget (keyed however clientIpFrom resolves it) is spent. */
+  async function postLink(port: number, cfConnectingIp: string): Promise<number> {
+    const res = await fetch(`http://localhost:${port}/link`, {
+      method: "POST",
+      headers: { "CF-Connecting-IP": cfConnectingIp },
+    });
+    return res.status;
+  }
+
+  test("a non-tunnel peer setting a fresh CF-Connecting-IP per request shares ONE 30/min budget", async () => {
+    const { stop, port } = startWarbandeerServer(0, depsWithBudget(2), TRUST_NONE);
+    try {
+      // TRUST_NONE means the header is never honored regardless of value, so all three requests
+      // below -- despite three DIFFERENT claimed CF-Connecting-IP values -- are keyed by the ONE
+      // real peer address this test's own fetch() connects from.
+      expect(await postLink(port, "203.0.113.1")).toBe(400); // 1st, budget 1/2
+      expect(await postLink(port, "203.0.113.2")).toBe(400); // 2nd, budget 2/2 -- a fresh header still didn't help
+      expect(await postLink(port, "203.0.113.3")).toBe(429); // 3rd -- budget exhausted
+    } finally {
+      stop();
+    }
+  });
+
+  test("a tunnel peer is keyed by the header", async () => {
+    const { stop, port } = startWarbandeerServer(0, depsWithBudget(1), TRUST_ALL);
+    try {
+      // TRUST_ALL means this test's real peer is always the trusted tunnel, so each request's OWN
+      // CF-Connecting-IP value becomes its identity -- two DIFFERENT values get two independent
+      // budgets; reusing one exhausts that one specifically, not some shared fallback.
+      expect(await postLink(port, "203.0.113.10")).toBe(400); // fresh identity, budget 1/1
+      expect(await postLink(port, "203.0.113.11")).toBe(400); // a DIFFERENT identity, its own fresh budget
+      expect(await postLink(port, "203.0.113.10")).toBe(429); // back to the first identity -- spent
+    } finally {
+      stop();
+    }
   });
 });

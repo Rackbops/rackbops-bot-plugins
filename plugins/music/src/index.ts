@@ -1,4 +1,5 @@
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
+import { createTrustedProxy } from "../../../packages/net/clientIp.js";
 import { resolveConfig } from "./config.js";
 import { initCommands, musicCommands, musicInteractions } from "./commands.js";
 import { createSetlistFmClient } from "./setlistfm.js";
@@ -94,6 +95,18 @@ export function createPlugin(host: HostApi): Plugin {
       if (config.callbackPort === undefined || config.spotify === undefined || spotify === undefined) return;
 
       const spotifyClient = spotify;
+      // #69: TRUSTED_PROXY_HOST is this instance's Cloudflare Tunnel sidecar; unset means
+      // CF-Connecting-IP is never trusted and every caller shares one rate-limit budget, which is
+      // worth a startup line since it's easy to deploy behind a real tunnel and forget to set it.
+      const proxyHost = host.env.TRUSTED_PROXY_HOST;
+      const proxy = createTrustedProxy({ host: proxyHost });
+      if (proxyHost === undefined) {
+        host.log.info(
+          "TRUSTED_PROXY_HOST is not set -- CF-Connecting-IP will never be trusted; every caller shares one rate-limit budget",
+        );
+      } else {
+        await proxy.refresh();
+      }
       try {
         const server = startCallbackServer(config.callbackPort, {
           callbackPath: config.spotify.callbackPath,
@@ -125,7 +138,7 @@ export function createPlugin(host: HostApi): Plugin {
             // The user id is safe to log; the refresh token never is.
             host.log.info(`connected Spotify for discord user ${discordUserId}`);
           },
-        });
+        }, proxy);
         stopServer = server.stop;
         serverRunning = true;
       } catch (err) {

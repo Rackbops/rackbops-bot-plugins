@@ -21,8 +21,9 @@ import { makeRealStorage } from "../../../packages/testkit/index.js";
 const empty = (): LinksState => ({ pending: [], accounts: {} });
 
 describe("generateLinkCode / generateDeviceToken", () => {
-  test("a link code is 8 uppercase hex characters", () => {
-    expect(generateLinkCode()).toMatch(/^[0-9A-F]{8}$/);
+  // #69: codes are 13 chars of the 30-symbol alphabet (no I/L/O/U, no 0/1) -- log2(30^13) ≈ 63.8 bits.
+  test("codes are 13 chars of the 30-symbol alphabet", () => {
+    expect(generateLinkCode()).toMatch(/^[ABCDEFGHJKMNPQRSTVWXYZ23456789]{13}$/);
   });
 
   test("two generated codes/tokens are (almost certainly) distinct", () => {
@@ -49,10 +50,15 @@ describe("hashToken / verifyToken", () => {
 });
 
 describe("mintLinkCode", () => {
-  test("mints a code expiring 10 minutes out", () => {
+  test("mints a code expiring 10 minutes out, stored hashed, never plain (#69)", () => {
     const now = 1_000_000;
     const { code, state } = mintLinkCode(empty(), "user-1", now);
-    expect(state.pending).toEqual([{ code, discordUserId: "user-1", expiresAt: now + 10 * 60 * 1000 }]);
+    expect(state.pending).toEqual([
+      { codeHash: hashToken(code), discordUserId: "user-1", expiresAt: now + 10 * 60 * 1000 },
+    ]);
+    // The plain code must not appear anywhere in the stored state -- not as a substring of the
+    // hash, not under some other key.
+    expect(JSON.stringify(state)).not.toContain(code);
   });
 
   test("minting a second code for the same user invalidates the first", () => {
@@ -60,7 +66,7 @@ describe("mintLinkCode", () => {
     const first = mintLinkCode(empty(), "user-1", now);
     const second = mintLinkCode(first.state, "user-1", now + 1);
     expect(second.state.pending).toHaveLength(1);
-    expect(second.state.pending[0]?.code).toBe(second.code);
+    expect(second.state.pending[0]?.codeHash).toBe(hashToken(second.code));
     expect(second.code).not.toBe(first.code);
   });
 
@@ -81,7 +87,9 @@ describe("mintLinkCode", () => {
     const b = mintLinkCode(a.state, "user-b", now, () => calls[i++] ?? "fallback");
     expect(b.code).toBe("UNIQUE01");
     expect(i).toBe(2); // proves the collision was actually detected and retried, not skipped
-    expect(b.state.pending.map((p) => p.code).sort()).toEqual(["COLLIDE1", "UNIQUE01"]);
+    expect(b.state.pending.map((p) => p.codeHash).sort()).toEqual(
+      [hashToken("COLLIDE1"), hashToken("UNIQUE01")].sort(),
+    );
   });
 
   test("never regenerates when there's no collision (doesn't call the generator twice for nothing)", () => {
@@ -97,6 +105,16 @@ describe("mintLinkCode", () => {
 });
 
 describe("redeemLinkCode", () => {
+  test("redeem works end to end and is single-use (#69)", () => {
+    const now = 1_000_000;
+    const minted = mintLinkCode(empty(), "user-1", now);
+    const first = redeemLinkCode(minted.state, minted.code, now + 1000);
+    expect(first).toMatchObject({ ok: true, discordUserId: "user-1" });
+    expect(first.state.pending).toEqual([]);
+    const second = redeemLinkCode(first.state, minted.code, now + 1000);
+    expect(second).toMatchObject({ ok: false, reason: "not-found" });
+  });
+
   test("redeems a valid, unexpired code", () => {
     const now = 1_000_000;
     const minted = mintLinkCode(empty(), "user-1", now);
@@ -240,6 +258,38 @@ describe("loadLinksFrom", () => {
       await Bun.write(file, JSON.stringify({ accounts: { "user-1": [] } })); // no "pending" key
       const result = await loadLinksFrom(file, makeRealStorage());
       expect(result).toEqual({ pending: [], accounts: { "user-1": [] } });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an entry without a hash is dropped on load (#69: pre-migration plaintext-code shape)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "links-test-"));
+    try {
+      const file = join(dir, "links.json");
+      await Bun.write(
+        file,
+        JSON.stringify({
+          // The OLD shape (before #69): a plaintext `code`, no `codeHash`.
+          pending: [{ code: "OLDPLAIN1", discordUserId: "user-1", expiresAt: 9_999_999_999_999 }],
+          accounts: {},
+        }),
+      );
+      const result = await loadLinksFrom(file, makeRealStorage());
+      expect(result).toEqual({ pending: [], accounts: {} });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a well-formed hashed entry survives load unchanged", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "links-test-"));
+    try {
+      const file = join(dir, "links.json");
+      const entry = { codeHash: hashToken("SOMECODE1"), discordUserId: "user-1", expiresAt: 9_999_999_999_999 };
+      await Bun.write(file, JSON.stringify({ pending: [entry], accounts: {} }));
+      const result = await loadLinksFrom(file, makeRealStorage());
+      expect(result).toEqual({ pending: [entry], accounts: {} });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
