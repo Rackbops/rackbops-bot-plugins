@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- Every way a `/setlist` run can stop before a build now logs exactly one line:
+  `setlist stopped stage=<stage>: <reason>`, at `info` level, where `<reason>` is the same sentence
+  the user was shown (rackbops-bot-plugins#55). `<stage>` is one of a closed set --
+  `not-configured`, `usage`, `lookup`, `stale-control`, `not-owner`, `no-pick`, `token` -- so a Loki
+  query can count stops by stage: `|= "setlist stopped" | regexp "stage=(?P<stage>[a-z-]+)"`.
+  Two more lines cover the same-day picker's lifecycle without counting as stops:
+  `setlist picker offered: <shown> of <total> shows` when the menu goes out, and `setlist picked`
+  the moment its owner makes a valid selection -- so an abandoned picker (offered minus picked) is
+  countable too, and a run that reaches a build is never counted twice.
+  No line ever carries a Discord user id or a token. `music-match-log.json` is untouched -- these
+  are new bot-log lines only.
+
 ### Fixed
 
 - A cover credit setlist.fm writes entirely in square brackets (`[traditional]`, `[unknown]`) is no

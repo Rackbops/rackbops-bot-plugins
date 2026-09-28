@@ -14,7 +14,7 @@ import {
   type ModalSubmitInteraction,
   type SlashCommandBuilder,
 } from "discord.js";
-import type { PluginCommand } from "../../../packages/api/contract.js";
+import type { PluginCommand, PluginLog } from "../../../packages/api/contract.js";
 import type { MusicConfig } from "./config.js";
 import { parseDateOption, parseSetlistUrl, type SetlistFmClient, type Setlist } from "./setlistfm.js";
 import type { SpotifyClient } from "./spotify.js";
@@ -67,6 +67,8 @@ interface Wiring {
   matchLog?: { record: (run: MatchRun) => Promise<void> };
   /** The clock stamped on a recorded run; a test seam, `new Date()` when absent. */
   now?: () => Date;
+  /** The plugin's logger; absent only in tests that don't read it. */
+  log?: PluginLog;
 }
 
 let wiring: Wiring | undefined;
@@ -207,6 +209,21 @@ export function formatPickPrompt(artistName: string, shown: number, total: numbe
 // Shared plumbing
 // ---------------------------------------------------------------------------------------------------
 
+/** Where a `/setlist` can stop before any build. Closed so a Loki count by stage stays exact. */
+export type StopStage =
+  | "not-configured"
+  | "usage"
+  | "lookup"
+  | "stale-control"
+  | "not-owner"
+  | "no-pick"
+  | "token";
+
+/** One line per stop: the only record a `/setlist` that never built leaves anywhere. */
+function logStop(stage: StopStage, reason: string): void {
+  required().log?.info(`setlist stopped stage=${stage}: ${reason}`);
+}
+
 async function replyEphemeral(interaction: ChatInputCommandInteraction, content: string): Promise<void> {
   if (interaction.deferred || interaction.replied) await interaction.editReply({ content });
   else await interaction.reply({ content, flags: MessageFlags.Ephemeral });
@@ -235,7 +252,8 @@ async function recordBuild(setlist: Setlist, built: BuildResult): Promise<void> 
  *
  * A build that ran is recorded whether it succeeded or came back as a failure -- and even when
  * sending the reply throws, since that is precisely when the log is the only account of what was
- * searched. The not-configured and token-failure paths return before any build and record nothing.
+ * searched. The not-configured and token-failure paths return before any build, log a stop line,
+ * and record nothing in the match log.
  * (`buildPlaylist` reports its failures as results; if it ever threw instead, nothing is recorded.)
  */
 async function buildInto(
@@ -245,11 +263,13 @@ async function buildInto(
 ): Promise<void> {
   const { config, spotify } = required();
   if (spotify === undefined) {
+    logStop("not-configured", formatNotConfigured(config.missing));
     await edit(formatNotConfigured(config.missing));
     return;
   }
   const token = await accessTokenFor(spotify, discordUserId);
   if (!token.ok) {
+    logStop("token", token.error);
     await edit(token.error);
     return;
   }
@@ -355,6 +375,7 @@ function pickerRow(discordUserId: string, setlists: readonly Setlist[]): ActionR
 async function handleSetlist(interaction: ChatInputCommandInteraction): Promise<void> {
   const { config, setlistFm, spotify } = required();
   if (setlistFm === undefined || spotify === undefined) {
+    logStop("not-configured", formatNotConfigured(config.missing));
     await replyEphemeral(interaction, formatNotConfigured(config.missing));
     return;
   }
@@ -365,12 +386,12 @@ async function handleSetlist(interaction: ChatInputCommandInteraction): Promise<
   if (url === null && artist === null) {
     // A lone `date` gets the specific diagnosis rather than the generic one: the user asked for
     // something reasonable, it just isn't a search setlist.fm can run.
-    await replyEphemeral(
-      interaction,
+    const reason =
       date === null
         ? "Give me either a setlist.fm `url` or an `artist` name."
-        : "A `date` needs an `artist` to go with it -- setlist.fm can't search a day on its own.",
-    );
+        : "A `date` needs an `artist` to go with it -- setlist.fm can't search a day on its own.";
+    logStop("usage", reason);
+    await replyEphemeral(interaction, reason);
     return;
   }
 
@@ -381,11 +402,13 @@ async function handleSetlist(interaction: ChatInputCommandInteraction): Promise<
   const resolved = await resolveSetlist(setlistFm, url, artist, date);
 
   if (resolved.kind === "error") {
+    logStop("lookup", resolved.error);
     await interaction.editReply({ content: resolved.error });
     return;
   }
 
   if (resolved.kind === "choose") {
+    required().log?.info(`setlist picker offered: ${resolved.setlists.length} of ${resolved.total} shows`);
     await interaction.editReply({
       content: formatPickPrompt(resolved.artistName, resolved.setlists.length, resolved.total),
       components: [pickerRow(interaction.user.id, resolved.setlists)],
@@ -409,29 +432,31 @@ async function handlePick(interaction: MessageComponentInteraction | ModalSubmit
   if (owner === undefined || !interaction.isStringSelectMenu()) {
     // Something else under the `music:` prefix -- a control from an older version of the plugin
     // still sitting in a channel. Say so rather than letting Discord show "interaction failed".
-    await interaction.reply({
-      content: "That control is from an older version of the bot. Run `/setlist` again for a fresh one.",
-      flags: MessageFlags.Ephemeral,
-    });
+    const reason = "That control is from an older version of the bot. Run `/setlist` again for a fresh one.";
+    logStop("stale-control", reason);
+    await interaction.reply({ content: reason, flags: MessageFlags.Ephemeral });
     return;
   }
 
   if (interaction.user.id !== owner) {
-    await interaction.reply({
-      content: "That menu belongs to whoever ran the command. Run `/setlist` yourself to build your own playlist.",
-      flags: MessageFlags.Ephemeral,
-    });
+    const reason = "That menu belongs to whoever ran the command. Run `/setlist` yourself to build your own playlist.";
+    logStop("not-owner", reason);
+    await interaction.reply({ content: reason, flags: MessageFlags.Ephemeral });
     return;
   }
 
+  required().log?.info("setlist picked");
+
   const { config, setlistFm } = required();
   if (setlistFm === undefined) {
+    logStop("not-configured", formatNotConfigured(config.missing));
     await interaction.reply({ content: formatNotConfigured(config.missing), flags: MessageFlags.Ephemeral });
     return;
   }
 
   const chosen = interaction.values[0];
   if (chosen === undefined) {
+    logStop("no-pick", "Nothing was picked.");
     await interaction.reply({ content: "Nothing was picked.", flags: MessageFlags.Ephemeral });
     return;
   }
@@ -442,6 +467,7 @@ async function handlePick(interaction: MessageComponentInteraction | ModalSubmit
 
   const one = await setlistFm.getSetlist(chosen);
   if (!one.ok) {
+    logStop("lookup", one.error);
     await interaction.editReply({ content: one.error });
     return;
   }
