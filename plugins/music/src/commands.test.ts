@@ -144,6 +144,17 @@ describe("formatBuildReply", () => {
     );
     expect(reply.split("\n")[0]).toBe("**Band**");
   });
+
+  test("names the artist used when it is not the one asked for", () => {
+    const reply = formatBuildReply(setlist({ artistName: "Some Kind of Band" }), outcome(), "Band");
+    expect(reply.split("\n")[0]).toBe('setlist.fm has no exact "Band"; this is the nearest match, Some Kind of Band.');
+  });
+
+  test("says nothing extra when the artist matches, whatever the case", () => {
+    const reply = formatBuildReply(setlist({ artistName: "Band" }), outcome(), "band");
+    expect(reply).not.toContain("no exact");
+    expect(reply.split("\n")[0]).toContain("Band - The Venue");
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -461,9 +472,10 @@ function wireBuild(
       { name: "Two", searchArtist: "Band", isCover: false },
     ],
     wired = true,
-  }: { connected?: boolean; songs?: Setlist["songs"]; wired?: boolean } = {},
+    artistName,
+  }: { connected?: boolean; songs?: Setlist["songs"]; wired?: boolean; artistName?: string } = {},
 ): void {
-  const two = setlist({ songs });
+  const two = setlist({ songs, ...(artistName !== undefined ? { artistName } : {}) });
   logged = [];
   resetStoreForTest(connected ? putConnection(freshState(), "user-1", "RT", 1) : freshState());
   initCommands({
@@ -655,6 +667,37 @@ describe("recording a build", () => {
     const run = fakeCommand({ artist: "Band" });
     await handleSetlist()(run.interaction);
     expect(recorded).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #65: naming the artist actually used, when it wasn't the one asked for
+// ---------------------------------------------------------------------------------------------------
+
+describe("naming the artist used", () => {
+  test("/setlist artist: built from a loose match names the artist it used", async () => {
+    wireBuild(async () => {}, buildSpotify(), { artistName: "Some Kind of Band" });
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+    expect(shown(run)).toContain('no exact "Band"');
+    expect(shown(run)).toContain("Some Kind of Band");
+  });
+
+  test("/setlist url: never adds the note", async () => {
+    wireBuild(async () => {}, buildSpotify(), { artistName: "Some Kind of Band" });
+    const run = fakeCommand({ url: "https://www.setlist.fm/setlist/band/2026/the-venue-abc123.html" });
+    await handleSetlist()(run.interaction);
+    expect(shown(run)).not.toContain("no exact");
+  });
+
+  test("/setlist url: with a mismatched artist: still never adds the note -- the url wins for resolution", async () => {
+    wireBuild(async () => {}, buildSpotify(), { artistName: "Band" });
+    const run = fakeCommand({
+      url: "https://www.setlist.fm/setlist/band/2026/the-venue-abc123.html",
+      artist: "Totally Different Artist",
+    });
+    await handleSetlist()(run.interaction);
+    expect(shown(run)).not.toContain("no exact");
   });
 });
 

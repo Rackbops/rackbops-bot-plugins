@@ -16,6 +16,14 @@
   No line ever carries a Discord user id or a token. `music-match-log.json` is untouched -- these
   are new bot-log lines only.
 
+### Changed
+
+- `/setlist artist:` (and `date:` search via `showsOn`) now prefers a setlist.fm result whose
+  artist name exactly matches what was asked for over a looser match, such as a tribute act --
+  `artist:Metallica` no longer resolves to "Some Kind of Metallica" just because it has a newer
+  show. When nothing matches exactly, the build still goes ahead from the nearest loose match, but
+  the reply's first line now names the artist actually used (#65).
+
 ### Fixed
 
 - A cover credit setlist.fm writes entirely in square brackets (`[traditional]`, `[unknown]`) is no
