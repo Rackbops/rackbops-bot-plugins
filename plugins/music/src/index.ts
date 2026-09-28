@@ -62,6 +62,7 @@ export function createPlugin(host: HostApi): Plugin {
     runner,
     serverRunning: () => serverRunning,
     matchLog: { record: recordRun },
+    log: host.log,
   });
 
   const activeRunner = runner;

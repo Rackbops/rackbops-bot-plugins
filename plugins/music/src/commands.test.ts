@@ -19,6 +19,34 @@ import type { MatchRun } from "./matchlog.js";
 import type { TrackCandidate } from "./matching.js";
 import type { Setlist } from "./setlistfm.js";
 
+// ---------------------------------------------------------------------------------------------------
+// #55: every log line a wiring emits, captured so a test can assert on stop lines
+// ---------------------------------------------------------------------------------------------------
+
+let logged: string[] = [];
+const captureLog = {
+  info: (m: string) => {
+    logged.push(m);
+  },
+  warn() {},
+  error() {},
+};
+
+/** A Discord id that would be tempting to log -- every stop-line test below checks it never is. */
+const USER = "424242424242424242";
+
+/** Every captured line that is a stop line, in order. */
+function stops(): string[] {
+  return logged.filter((l) => l.startsWith("setlist stopped"));
+}
+
+/** Asserts exactly one stop line was logged, and that it carries `stage`. */
+function expectOneStop(stage: string): void {
+  const found = stops();
+  expect(found).toHaveLength(1);
+  expect(found[0]).toContain(`stage=${stage}:`);
+}
+
 function setlist(overrides: Partial<Setlist> = {}): Setlist {
   return {
     id: "abc123",
@@ -232,6 +260,7 @@ function wire(showsOn: SetlistFmClient["showsOn"], latest?: SetlistFmClient["lat
     latestForArtist: latest ?? (async (): Promise<SetlistFmResult> => ({ ok: false, error: "not used here" })),
     showsOn,
   };
+  logged = [];
   resetStoreForTest(freshState());
   initCommands({
     config: { setlistFmKey: "KEY", missing: [] },
@@ -240,6 +269,7 @@ function wire(showsOn: SetlistFmClient["showsOn"], latest?: SetlistFmClient["lat
     // Spotify first" check that comes before any Spotify call.
     spotify: {} as unknown as SpotifyClient,
     serverRunning: () => true,
+    log: captureLog,
   });
 }
 
@@ -377,6 +407,7 @@ function fakePick(
 }
 
 function wirePicker(getSetlist: SetlistFmClient["getSetlist"]): void {
+  logged = [];
   resetStoreForTest(freshState());
   initCommands({
     config: { setlistFmKey: "KEY", missing: [] },
@@ -387,6 +418,7 @@ function wirePicker(getSetlist: SetlistFmClient["getSetlist"]): void {
     },
     spotify: {} as unknown as SpotifyClient,
     serverRunning: () => true,
+    log: captureLog,
   });
 }
 
@@ -432,6 +464,7 @@ function wireBuild(
   }: { connected?: boolean; songs?: Setlist["songs"]; wired?: boolean } = {},
 ): void {
   const two = setlist({ songs });
+  logged = [];
   resetStoreForTest(connected ? putConnection(freshState(), "user-1", "RT", 1) : freshState());
   initCommands({
     config: { setlistFmKey: "KEY", missing: [] },
@@ -445,6 +478,7 @@ function wireBuild(
     // `wired: false` is a plugin whose match log was never handed over: builds must still work.
     ...(wired ? { matchLog: { record } } : {}),
     now: () => STAMP,
+    log: captureLog,
   });
 }
 
@@ -663,5 +697,265 @@ describe("the show picker", () => {
     const run = fakePick(pickerCustomId("user-1"), ["bbb222"], "user-1");
     await musicInteractions(run.interaction);
     expect(run.edits[0]!.content).toContain("HTTP 503");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #55: every /setlist run that stops before a build leaves exactly one line, id-free
+// ---------------------------------------------------------------------------------------------------
+
+describe("/setlist stop lines", () => {
+  test("not configured", async () => {
+    logged = [];
+    resetStoreForTest(freshState());
+    initCommands({
+      config: { missing: ["SETLISTFM_API_KEY"] },
+      serverRunning: () => true,
+      log: captureLog,
+    });
+    const run = fakeCommand({ artist: "Band" }, USER);
+    await handleSetlist()(run.interaction);
+    expectOneStop("not-configured");
+  });
+
+  test("usage: neither url nor artist", async () => {
+    wire(async () => ({ ok: true, setlists: [] }));
+    const run = fakeCommand({}, USER);
+    await handleSetlist()(run.interaction);
+    expectOneStop("usage");
+  });
+
+  test("usage: a lone date with no artist", async () => {
+    wire(async () => ({ ok: true, setlists: [] }));
+    const run = fakeCommand({ date: "2026-09-08" }, USER);
+    await handleSetlist()(run.interaction);
+    expectOneStop("usage");
+  });
+
+  const LOOKUP_CASES: [name: string, options: Record<string, string>, setup: () => void][] = [
+    ["a bad link", { url: "nope" }, () => wire(async () => ({ ok: true, setlists: [] }))],
+    ["a getSetlist failure", { url: "abc123" }, () => wire(async () => ({ ok: true, setlists: [] }))],
+    [
+      "an unreadable date",
+      { artist: "Band", date: "last tuesday" },
+      () => wire(async () => ({ ok: true, setlists: [] })),
+    ],
+    [
+      "no show on that date",
+      { artist: "Band", date: "2026-09-08" },
+      () => wire(async () => ({ ok: true, setlists: [] })),
+    ],
+    [
+      "shows but no song list",
+      { artist: "Band", date: "2026-09-08" },
+      () => wire(async () => ({ ok: true, setlists: [dated("aaa111", "The Cave", 0)] })),
+    ],
+    [
+      "a latestForArtist failure",
+      { artist: "Band" },
+      () => wire(async () => ({ ok: true, setlists: [] })),
+    ],
+  ];
+  test.each(LOOKUP_CASES)("lookup: %s", async (_name, options, setup) => {
+    setup();
+    const run = fakeCommand(options, USER);
+    await handleSetlist()(run.interaction);
+    expectOneStop("lookup");
+    expect(stops()[0]).toBe(`setlist stopped stage=lookup: ${shown(run)}`);
+  });
+
+  test("picker offered: not a stop, but still exactly one line", async () => {
+    wire(async () => ({ ok: true, setlists: [dated("aaa111", "The Cave", 3), dated("bbb222", "Big Field", 5)] }));
+    const run = fakeCommand({ artist: "Band", date: "2026-09-08" }, USER);
+    await handleSetlist()(run.interaction);
+    expect(logged).toEqual(["setlist picker offered: 2 of 2 shows"]);
+    expect(stops()).toEqual([]);
+  });
+
+  test("handlePick: stale-control", async () => {
+    wirePicker(async () => ({ ok: true, setlist: setlist() }));
+    const run = fakePick(pickerCustomId(USER), ["abc123"], USER, false);
+    await musicInteractions(run.interaction);
+    expectOneStop("stale-control");
+  });
+
+  test("handlePick: not-owner", async () => {
+    wirePicker(async () => ({ ok: true, setlist: setlist() }));
+    const run = fakePick(pickerCustomId("someone-else"), ["abc123"], USER);
+    await musicInteractions(run.interaction);
+    expectOneStop("not-owner");
+  });
+
+  test("handlePick: a valid pick logs 'setlist picked'", async () => {
+    wirePicker(async () => ({ ok: true, setlist: setlist() }));
+    const run = fakePick(pickerCustomId(USER), ["abc123"], USER);
+    await musicInteractions(run.interaction);
+    expect(logged).toContain("setlist picked");
+  });
+
+  test("handlePick: not-configured", async () => {
+    logged = [];
+    resetStoreForTest(freshState());
+    initCommands({
+      config: { missing: ["SETLISTFM_API_KEY"] },
+      serverRunning: () => true,
+      log: captureLog,
+    });
+    const run = fakePick(pickerCustomId(USER), ["abc123"], USER);
+    await musicInteractions(run.interaction);
+    expectOneStop("not-configured");
+  });
+
+  test("handlePick: no-pick", async () => {
+    wirePicker(async () => ({ ok: true, setlist: setlist() }));
+    const run = fakePick(pickerCustomId(USER), [], USER);
+    await musicInteractions(run.interaction);
+    expectOneStop("no-pick");
+  });
+
+  test("handlePick: lookup", async () => {
+    wirePicker(async (): Promise<SetlistFmResult> => ({ ok: false, error: "setlist.fm returned HTTP 503" }));
+    const run = fakePick(pickerCustomId(USER), ["abc123"], USER);
+    await musicInteractions(run.interaction);
+    expectOneStop("lookup");
+  });
+
+  test("buildInto: not-configured, via the picker path with spotify undefined", async () => {
+    logged = [];
+    resetStoreForTest(freshState());
+    initCommands({
+      config: { setlistFmKey: "KEY", missing: ["SPOTIFY_CLIENT_ID"] },
+      setlistFm: {
+        getSetlist: async (): Promise<SetlistFmResult> => ({ ok: true, setlist: setlist() }),
+        latestForArtist: async (): Promise<SetlistFmResult> => ({ ok: false, error: "not used here" }),
+        showsOn: async (): Promise<SetlistListResult> => ({ ok: true, setlists: [] }),
+      },
+      serverRunning: () => true,
+      log: captureLog,
+    });
+    const run = fakePick(pickerCustomId(USER), ["abc123"], USER);
+    await musicInteractions(run.interaction);
+    expectOneStop("not-configured");
+  });
+
+  test("buildInto: token, via the command path with a filled-in show and no Spotify connection", async () => {
+    wire(async () => ({ ok: true, setlists: [dated("aaa111", "The Cave", 3), dated("bbb222", "Big Field", 0)] }));
+    const run = fakeCommand({ artist: "Band", date: "2026-09-08" }, USER);
+    await handleSetlist()(run.interaction);
+    expectOneStop("token");
+  });
+
+  test("no stop line ever carries the user's id", async () => {
+    const allLogged: string[] = [];
+
+    async function exercise(act: () => Promise<void>): Promise<void> {
+      logged = [];
+      await act();
+      allLogged.push(...logged);
+    }
+
+    // handleSetlist: not-configured
+    await exercise(async () => {
+      resetStoreForTest(freshState());
+      initCommands({ config: { missing: ["SETLISTFM_API_KEY"] }, serverRunning: () => true, log: captureLog });
+      await handleSetlist()(fakeCommand({ artist: "Band" }, USER).interaction);
+    });
+
+    // handleSetlist: usage
+    await exercise(async () => {
+      wire(async () => ({ ok: true, setlists: [] }));
+      await handleSetlist()(fakeCommand({}, USER).interaction);
+    });
+
+    // handleSetlist: lookup
+    await exercise(async () => {
+      wire(async () => ({ ok: true, setlists: [] }));
+      await handleSetlist()(fakeCommand({ url: "abc123" }, USER).interaction);
+    });
+
+    // handleSetlist: picker offered (not a stop, but still a line that must be id-free)
+    await exercise(async () => {
+      wire(async () => ({ ok: true, setlists: [dated("aaa111", "The Cave", 3), dated("bbb222", "Big Field", 5)] }));
+      await handleSetlist()(fakeCommand({ artist: "Band", date: "2026-09-08" }, USER).interaction);
+    });
+
+    // handleSetlist -> buildInto: token
+    await exercise(async () => {
+      wire(async () => ({ ok: true, setlists: [dated("aaa111", "The Cave", 3), dated("bbb222", "Big Field", 0)] }));
+      await handleSetlist()(fakeCommand({ artist: "Band", date: "2026-09-08" }, USER).interaction);
+    });
+
+    // handlePick: stale-control
+    await exercise(async () => {
+      wirePicker(async () => ({ ok: true, setlist: setlist() }));
+      await musicInteractions(fakePick(pickerCustomId(USER), ["abc123"], USER, false).interaction);
+    });
+
+    // handlePick: not-owner
+    await exercise(async () => {
+      wirePicker(async () => ({ ok: true, setlist: setlist() }));
+      await musicInteractions(fakePick(pickerCustomId("someone-else"), ["abc123"], USER).interaction);
+    });
+
+    // handlePick: picked, then not-configured
+    await exercise(async () => {
+      resetStoreForTest(freshState());
+      initCommands({ config: { missing: ["SETLISTFM_API_KEY"] }, serverRunning: () => true, log: captureLog });
+      await musicInteractions(fakePick(pickerCustomId(USER), ["abc123"], USER).interaction);
+    });
+
+    // handlePick: picked, then no-pick
+    await exercise(async () => {
+      wirePicker(async () => ({ ok: true, setlist: setlist() }));
+      await musicInteractions(fakePick(pickerCustomId(USER), [], USER).interaction);
+    });
+
+    // handlePick: picked, then lookup
+    await exercise(async () => {
+      wirePicker(async (): Promise<SetlistFmResult> => ({ ok: false, error: "setlist.fm returned HTTP 503" }));
+      await musicInteractions(fakePick(pickerCustomId(USER), ["abc123"], USER).interaction);
+    });
+
+    // handlePick -> buildInto: not-configured
+    await exercise(async () => {
+      resetStoreForTest(freshState());
+      initCommands({
+        config: { setlistFmKey: "KEY", missing: ["SPOTIFY_CLIENT_ID"] },
+        setlistFm: {
+          getSetlist: async (): Promise<SetlistFmResult> => ({ ok: true, setlist: setlist() }),
+          latestForArtist: async (): Promise<SetlistFmResult> => ({ ok: false, error: "not used here" }),
+          showsOn: async (): Promise<SetlistListResult> => ({ ok: true, setlists: [] }),
+        },
+        serverRunning: () => true,
+        log: captureLog,
+      });
+      await musicInteractions(fakePick(pickerCustomId(USER), ["abc123"], USER).interaction);
+    });
+
+    expect(allLogged.length).toBeGreaterThan(0);
+    for (const line of allLogged) {
+      expect(line).not.toContain(USER);
+    }
+  });
+
+  test("a build that ran logs no stop line, whether it succeeded or failed", async () => {
+    const recorded: MatchRun[] = [];
+
+    // wireBuild connects "user-1" by default -- these run all the way to a build, unlike the
+    // stop-line tests above which deliberately leave USER disconnected.
+    wireBuild(async (run) => void recorded.push(run), buildSpotify());
+    const good = fakeCommand({ artist: "Band" });
+    await handleSetlist()(good.interaction);
+    expect(stops()).toEqual([]);
+    expect(recorded).toHaveLength(1);
+
+    wireBuild(
+      async (run) => void recorded.push(run),
+      buildSpotify({ searchTracks: async () => ({ ok: false, error: "Spotify returned HTTP 429" }) }),
+    );
+    const failed = fakeCommand({ artist: "Band" });
+    await handleSetlist()(failed.interaction);
+    expect(stops()).toEqual([]);
+    expect(recorded).toHaveLength(2);
   });
 });
