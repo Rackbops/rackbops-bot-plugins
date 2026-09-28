@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-27T03:19:51.529Z",
+  "generatedAt": "2026-09-28T05:00:45.265Z",
   "plugins": [
     {
       "name": "mcp",
@@ -63,7 +63,7 @@
     {
       "name": "music",
       "package": "@rackbops/plugin-music",
-      "version": "1.4.0",
+      "version": "1.5.0",
       "description": "Music features: setlist.fm setlists turned into Spotify playlists, and the Spotify account link (/setlist, /spotify)",
       "hostApiVersion": 1,
       "intents": [],
@@ -117,6 +117,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "1.5.0",
+          "publishedAt": "2026-09-28T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/music-v1.5.0",
+          "notes": "### Added\n\n- Every way a `/setlist` run can stop before a build now logs exactly one line:\n  `setlist stopped stage=<stage>: <reason>`, at `info` level, where `<reason>` is the same sentence\n  the user was shown (rackbops-bot-plugins#55). `<stage>` is one of a closed set --\n  `not-configured`, `usage`, `lookup`, `stale-control`, `not-owner`, `no-pick`, `token` -- so a Loki\n  query can count stops by stage: `|= \"setlist stopped\" | regexp \"stage=(?P<stage>[a-z-]+)\"`.\n  Two more lines cover the same-day picker's lifecycle without counting as stops:\n  `setlist picker offered: <shown> of <total> shows` when the menu goes out, and `setlist picked`\n  the moment its owner makes a valid selection -- so an abandoned picker (offered minus picked) is\n  countable too, and a run that reaches a build is never counted twice.\n  No line ever carries a Discord user id or a token. `music-match-log.json` is untouched -- these\n  are new bot-log lines only.\n\n### Changed\n\n- `/setlist artist:` (and `date:` search via `showsOn`) now prefers a setlist.fm result whose\n  artist name exactly matches what was asked for over a looser match, such as a tribute act --\n  `artist:Metallica` no longer resolves to \"Some Kind of Metallica\" just because it has a newer\n  show. When nothing matches exactly, the build still goes ahead from the nearest loose match, but\n  the reply's first line now names the artist actually used (#65).\n\n### Fixed\n\n- A cover credit setlist.fm writes entirely in square brackets (`[traditional]`, `[unknown]`) is no\n  longer searched as an artist; the song is searched under the performing artist and still counts\n  as a cover (#62)."
+        },
         {
           "version": "1.4.0",
           "publishedAt": "2026-09-27T00:00:00.000Z",
