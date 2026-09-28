@@ -861,17 +861,23 @@ describe("/setlist stop lines", () => {
       await handleSetlist()(fakeCommand({ artist: "Band" }, USER).interaction);
     });
 
-    // handleSetlist: usage
+    // handleSetlist: usage, both sub-cases (neither url nor artist; a lone date with no artist)
     await exercise(async () => {
       wire(async () => ({ ok: true, setlists: [] }));
       await handleSetlist()(fakeCommand({}, USER).interaction);
     });
-
-    // handleSetlist: lookup
     await exercise(async () => {
       wire(async () => ({ ok: true, setlists: [] }));
-      await handleSetlist()(fakeCommand({ url: "abc123" }, USER).interaction);
+      await handleSetlist()(fakeCommand({ date: "2026-09-08" }, USER).interaction);
     });
+
+    // handleSetlist: lookup, every LOOKUP_CASES row -- not just one representative case
+    for (const [, options, setup] of LOOKUP_CASES) {
+      await exercise(async () => {
+        setup();
+        await handleSetlist()(fakeCommand(options, USER).interaction);
+      });
+    }
 
     // handleSetlist: picker offered (not a stop, but still a line that must be id-free)
     await exercise(async () => {
