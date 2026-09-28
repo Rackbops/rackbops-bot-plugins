@@ -21,7 +21,7 @@ export interface SetlistSong {
    * live has usually never released it themselves -- the recording that exists is the original's.
    */
   searchArtist: string;
-  /** True when `searchArtist` is not the performing artist (i.e. setlist.fm flagged it a cover). */
+  /** True when setlist.fm flagged the song a cover. */
   isCover: boolean;
 }
 
@@ -148,6 +148,19 @@ export function splitMedley(name: string): string[] {
 }
 
 /**
+ * setlist.fm writes a cover of no particular artist as a bracketed pseudo-artist --
+ * `[traditional]`, `[unknown]`. Searching that as an artist matches nothing sensible
+ * (`artist:"[traditional]"` landed an unrelated folk medley), so it is not one.
+ *
+ * This is a syntactic heuristic with no allowlist: a real artist whose stage name IS just a
+ * bracket pair (e.g. the bands "[spunge]" or "[dunkelbunt]") would also read as a pseudo-artist
+ * if setlist.fm ever credited a cover to one. Accepted as rare and out of scope here -- see #62.
+ */
+export function isPseudoArtist(name: string): boolean {
+  return /^\[.*\]$/.test(name.trim());
+}
+
+/**
  * Flattens setlist.fm's nested `sets.set[].song[]` into one ordered list, in stage order (main set
  * first, then each encore), and resolves each song's search artist.
  *
@@ -158,7 +171,9 @@ export function splitMedley(name: string): string[] {
  *
  * One entry can yield more than one song: a medley is one setlist.fm entry but several tracks --
  * see `splitMedley`. Each part inherits the entry's cover credit, since the whole medley is
- * credited to the one original artist.
+ * credited to the one original artist. A cover credit written entirely in square brackets (see
+ * `isPseudoArtist`) is not an artist at all, so the song is searched under the performing artist
+ * instead while still counting as a cover.
  */
 export function flattenSetlist(raw: RawSetlist): { songs: SetlistSong[]; tapeCount: number } {
   const performingArtist = str(raw.artist?.name) ?? "";
@@ -178,12 +193,13 @@ export function flattenSetlist(raw: RawSetlist): { songs: SetlistSong[]; tapeCou
         tapeCount += 1;
         continue;
       }
-      const coverArtist = str(song.cover?.name);
+      const credited = str(song.cover?.name);
+      const coverArtist = credited !== undefined && !isPseudoArtist(credited) ? credited : undefined;
       for (const part of splitMedley(name)) {
         songs.push({
           name: part,
           searchArtist: coverArtist ?? performingArtist,
-          isCover: coverArtist !== undefined,
+          isCover: credited !== undefined,
         });
       }
     }

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createSetlistFmClient,
   flattenSetlist,
+  isPseudoArtist,
   isRetryable,
   parseDateOption,
   parseRetryAfter,
@@ -173,6 +174,38 @@ describe("flattenSetlist", () => {
 
   test("a setlist with no sets at all yields nothing, not a throw", () => {
     expect(flattenSetlist({ artist: { name: "Band" } })).toEqual({ songs: [], tapeCount: 0 });
+  });
+
+  test("a bracketed cover credit like [traditional] is not an artist: searched under the performer, still a cover", () => {
+    for (const credit of ["[traditional]", "[unknown]", "[ Traditional ]"]) {
+      const { songs } = flattenSetlist({
+        artist: { name: "Band" },
+        sets: { set: [{ song: [{ name: "Whiskey in the Jar", cover: { name: credit } }] }] },
+      });
+      expect(songs).toEqual([{ name: "Whiskey in the Jar", searchArtist: "Band", isCover: true }]);
+    }
+  });
+
+  test("a credit that merely contains brackets is still an artist", () => {
+    const { songs } = flattenSetlist({
+      artist: { name: "Band" },
+      sets: { set: [{ song: [{ name: "Whiskey in the Jar", cover: { name: "[traditional] folk" } }] }] },
+    });
+    expect(songs).toEqual([{ name: "Whiskey in the Jar", searchArtist: "[traditional] folk", isCover: true }]);
+  });
+});
+
+describe("isPseudoArtist", () => {
+  test("a name entirely in square brackets is a pseudo-artist", () => {
+    expect(isPseudoArtist("[traditional]")).toBe(true);
+    expect(isPseudoArtist("[unknown]")).toBe(true);
+    expect(isPseudoArtist("[ Traditional ]")).toBe(true);
+  });
+
+  test("an ordinary name, or one that merely contains brackets, is not", () => {
+    expect(isPseudoArtist("Traditional")).toBe(false);
+    expect(isPseudoArtist("[traditional] folk")).toBe(false);
+    expect(isPseudoArtist("")).toBe(false);
   });
 });
 

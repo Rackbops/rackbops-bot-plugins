@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- A cover credit setlist.fm writes entirely in square brackets (`[traditional]`, `[unknown]`) is no
+  longer searched as an artist; the song is searched under the performing artist and still counts
+  as a cover (#62).
+
 ## [1.4.0] - 2026-09-27
 
 ### Changed
