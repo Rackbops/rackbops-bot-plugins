@@ -6,6 +6,8 @@
 // The API is free for non-commercial use and keyed per account (https://api.setlist.fm/docs/1.0/).
 // It answers XML unless `Accept: application/json` is sent, so the client always sends it.
 
+import { normalize } from "./matching.js";
+
 /** How long any one setlist.fm request may take before it is abandoned. */
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -291,6 +293,17 @@ export function parseDateOption(input: string): string | undefined {
 // The client
 // ---------------------------------------------------------------------------------------------------
 
+/**
+ * setlist.fm's `artistName=` search is a loose match, so a tribute act's newer show can sit
+ * ahead of the real artist's. When any result IS the artist asked for (after `normalize`),
+ * only those count; otherwise the whole page stands, in setlist.fm's order.
+ */
+export function preferExactArtist(setlists: readonly Setlist[], artistName: string): Setlist[] {
+  const wanted = normalize(artistName);
+  const exact = setlists.filter((s) => normalize(s.artistName) === wanted);
+  return exact.length > 0 ? exact : [...setlists];
+}
+
 export type SetlistFmResult =
   | { ok: true; setlist: Setlist }
   | { ok: false; error: string };
@@ -306,7 +319,10 @@ export interface SetlistFmClient {
   /**
    * The most recent setlist for an artist name that actually has songs on it. setlist.fm's search
    * is newest-first and full of stubs (a show someone created but never filled in), so this skips
-   * empty ones rather than returning a playlist of nothing.
+   * empty ones rather than returning a playlist of nothing. When any result is an exact match for
+   * `artistName` (see `preferExactArtist`), a looser match -- typically a tribute act -- is never
+   * preferred over it, even if the tribute act's show is newer or has songs where the exact
+   * artist's don't yet.
    */
   latestForArtist(artistName: string): Promise<SetlistFmResult>;
   /**
@@ -317,7 +333,8 @@ export interface SetlistFmClient {
    * show the same night, and setlist.fm also carries genuine duplicate entries for one gig. Either
    * way there is no rule that picks the right one, so the caller puts the choice to the user rather
    * than this guessing. An empty list means nothing matched -- which is a normal answer, not an
-   * error.
+   * error. Applies the same exact-artist preference as `latestForArtist` (see `preferExactArtist`):
+   * when any result matches exactly, a looser match is dropped from the list entirely.
    */
   showsOn(artistName: string, date: string): Promise<SetlistListResult>;
 }
@@ -478,19 +495,22 @@ export function createSetlistFmClient(
     async latestForArtist(artistName) {
       const found = await search(`artistName=${encodeURIComponent(artistName)}`);
       if (!found.ok) return { ok: false, error: found.error };
-      for (const setlist of found.setlists) {
+      const pool = preferExactArtist(found.setlists, artistName);
+      for (const setlist of pool) {
         if (setlist.songs.length > 0) return { ok: true, setlist };
       }
       return {
         ok: false,
-        error: found.setlists.length === 0
+        error: pool.length === 0
           ? `no setlists on setlist.fm for "${artistName}"`
           : `setlist.fm has shows for "${artistName}" but none with a song list filled in yet`,
       };
     },
 
     async showsOn(artistName, date) {
-      return search(`artistName=${encodeURIComponent(artistName)}&date=${encodeURIComponent(date)}`);
+      const found = await search(`artistName=${encodeURIComponent(artistName)}&date=${encodeURIComponent(date)}`);
+      if (!found.ok) return found;
+      return { ok: true, setlists: preferExactArtist(found.setlists, artistName) };
     },
   };
 }

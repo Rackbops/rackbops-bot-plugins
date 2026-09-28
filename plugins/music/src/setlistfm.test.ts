@@ -7,9 +7,11 @@ import {
   parseDateOption,
   parseRetryAfter,
   parseSetlistUrl,
+  preferExactArtist,
   retryDelay,
   splitMedley,
   toSetlist,
+  type Setlist,
 } from "./setlistfm.js";
 
 /** A response builder, so each test says only what it is actually about. */
@@ -261,6 +263,31 @@ describe("toSetlist", () => {
   });
 });
 
+/** A minimal, otherwise-irrelevant `Setlist`, so `preferExactArtist` tests say only what matters. */
+function setlist(id: string, artistName: string): Setlist {
+  return { id, artistName, eventDate: "01-01-2026", url: `https://www.setlist.fm/setlist/${id}.html`, songs: [], tapeCount: 0 };
+}
+
+describe("preferExactArtist", () => {
+  test("when any result is an exact match, only exact matches are kept", () => {
+    const tribute = setlist("aaa111", "Some Kind of Band");
+    const real = setlist("bbb222", "Band");
+    expect(preferExactArtist([tribute, real], "Band")).toEqual([real]);
+  });
+
+  test("matching ignores case and accents", () => {
+    const real = setlist("bbb222", "Sigur Rós");
+    expect(preferExactArtist([real], "sigur ros")).toEqual([real]);
+    expect(preferExactArtist([real], "SIGUR RÓS")).toEqual([real]);
+  });
+
+  test("when nothing matches exactly, every result stands, in the original order", () => {
+    const tribute = setlist("aaa111", "Some Kind of Band");
+    const other = setlist("ccc333", "A Totally Different Act");
+    expect(preferExactArtist([tribute, other], "Band")).toEqual([tribute, other]);
+  });
+});
+
 describe("createSetlistFmClient", () => {
   test("sends the API key and asks for JSON, which the API needs to not answer XML", async () => {
     let seen: { url: string; init?: RequestInit } | undefined;
@@ -322,6 +349,33 @@ describe("createSetlistFmClient", () => {
     const noneResult = await none.latestForArtist("Band");
     expect(stubResult.ok === false && stubResult.error).toContain("none with a song list filled in");
     expect(noneResult.ok === false && noneResult.error).toContain("no setlists on setlist.fm");
+  });
+
+  test("latestForArtist prefers the exact artist over a newer tribute act's show", async () => {
+    const tribute = { id: "aaa111", artist: { name: "Some Kind of Band" }, sets: { set: [{ song: [{ name: "Song" }] }] } };
+    const real = { id: "bbb222", artist: { name: "Band" }, sets: { set: [{ song: [{ name: "Song" }] }] } };
+    // Tribute listed FIRST, as setlist.fm's newest-first order would if its show is more recent.
+    const client = createSetlistFmClient("KEY", async () => json({ setlist: [tribute, real] }));
+    const result = await client.latestForArtist("Band");
+    expect(result.ok).toBe(true);
+    expect(result.ok === true && result.setlist.id).toBe("bbb222");
+  });
+
+  test("latestForArtist builds from the nearest loose match when nothing matches exactly", async () => {
+    const tribute = { id: "aaa111", artist: { name: "Some Kind of Band" }, sets: { set: [{ song: [{ name: "Song" }] }] } };
+    const client = createSetlistFmClient("KEY", async () => json({ setlist: [tribute] }));
+    const result = await client.latestForArtist("Band");
+    expect(result.ok).toBe(true);
+    expect(result.ok === true && result.setlist.id).toBe("aaa111");
+  });
+
+  test("latestForArtist reports an exact artist whose shows are all stubs instead of building a tribute act's", async () => {
+    const stub = { id: "bbb222", artist: { name: "Band" }, sets: { set: [] } };
+    const tribute = { id: "aaa111", artist: { name: "Some Kind of Band" }, sets: { set: [{ song: [{ name: "Song" }] }] } };
+    const client = createSetlistFmClient("KEY", async () => json({ setlist: [stub, tribute] }));
+    const result = await client.latestForArtist("Band");
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toContain("none with a song list filled in");
   });
 
   test("an artist name with spaces and punctuation is URL-encoded", async () => {
@@ -542,6 +596,40 @@ describe("showsOn", () => {
     const client = createSetlistFmClient("KEY", async () =>
       json({ setlist: [show("aaa111", "Big Field"), show("bbb222", "The Cave")] }),
     );
+    const result = await client.showsOn("Band", "08-09-2026");
+    expect(result.ok).toBe(true);
+    expect(result.ok === true && result.setlists.map((s) => s.id)).toEqual(["aaa111", "bbb222"]);
+  });
+
+  test("showsOn keeps only the exact artist's shows when any match exactly", async () => {
+    const tribute = {
+      id: "ccc333",
+      eventDate: "08-09-2026",
+      artist: { name: "Some Kind of Band" },
+      sets: { set: [{ song: [{ name: "Song" }] }] },
+    };
+    const client = createSetlistFmClient("KEY", async () =>
+      json({ setlist: [tribute, show("aaa111", "Big Field"), show("bbb222", "The Cave")] }),
+    );
+    const result = await client.showsOn("Band", "08-09-2026");
+    expect(result.ok).toBe(true);
+    expect(result.ok === true && result.setlists.map((s) => s.id)).toEqual(["aaa111", "bbb222"]);
+  });
+
+  test("showsOn returns every loose match when none is exact", async () => {
+    const tribute1 = {
+      id: "aaa111",
+      eventDate: "08-09-2026",
+      artist: { name: "Some Kind of Band" },
+      sets: { set: [{ song: [{ name: "Song" }] }] },
+    };
+    const tribute2 = {
+      id: "bbb222",
+      eventDate: "08-09-2026",
+      artist: { name: "A Tribute to Band" },
+      sets: { set: [{ song: [{ name: "Song" }] }] },
+    };
+    const client = createSetlistFmClient("KEY", async () => json({ setlist: [tribute1, tribute2] }));
     const result = await client.showsOn("Band", "08-09-2026");
     expect(result.ok).toBe(true);
     expect(result.ok === true && result.setlists.map((s) => s.id)).toEqual(["aaa111", "bbb222"]);

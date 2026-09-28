@@ -19,7 +19,7 @@ import type { MusicConfig } from "./config.js";
 import { parseDateOption, parseSetlistUrl, type SetlistFmClient, type Setlist } from "./setlistfm.js";
 import type { SpotifyClient } from "./spotify.js";
 import { authorizeUrl, hasScopes, PARTY_SCOPES } from "./spotify.js";
-import { pickBestTrack } from "./matching.js";
+import { normalize, pickBestTrack } from "./matching.js";
 import { buildPlaylist, type BuildOutcome, type BuildResult } from "./build.js";
 import { toMatchRun, type MatchRun } from "./matchlog.js";
 import { accessTokenFor } from "./tokens.js";
@@ -120,9 +120,19 @@ function describeShow(setlist: Setlist): string {
  * what was skipped as walk-on tape, what wasn't found, and what matched but might be the wrong
  * recording. Clipped to Discord's limit by dropping the softest information first -- the link and
  * the counts always survive.
+ *
+ * `askedArtist` is the artist name the user typed via `artist:` (undefined for a `url:` run, and
+ * for the picker path, which already names the artist in its own prompt). When it doesn't match
+ * the built setlist's artist exactly (see `preferExactArtist` in `setlistfm.ts`), a note saying so
+ * leads the reply -- part of the head, so the clipping above never drops it.
  */
-export function formatBuildReply(setlist: Setlist, outcome: BuildOutcome): string {
+export function formatBuildReply(setlist: Setlist, outcome: BuildOutcome, askedArtist?: string): string {
+  const exactNote =
+    askedArtist !== undefined && normalize(askedArtist) !== normalize(setlist.artistName)
+      ? `setlist.fm has no exact "${askedArtist}"; this is the nearest match, ${setlist.artistName}.\n`
+      : "";
   const head =
+    exactNote +
     `**${describeShow(setlist)}**\n` +
     `${outcome.playlistUrl}\n` +
     `Added ${outcome.added} of ${outcome.attempted} songs.`;
@@ -260,6 +270,7 @@ async function buildInto(
   setlist: Setlist,
   discordUserId: string,
   edit: (content: string) => Promise<void>,
+  askedArtist?: string,
 ): Promise<void> {
   const { config, spotify } = required();
   if (spotify === undefined) {
@@ -275,7 +286,7 @@ async function buildInto(
   }
   const built = await buildPlaylist(spotify, token.accessToken, setlist);
   try {
-    await edit(built.ok ? formatBuildReply(setlist, built.outcome) : built.error);
+    await edit(built.ok ? formatBuildReply(setlist, built.outcome, askedArtist) : built.error);
   } finally {
     await recordBuild(setlist, built);
   }
@@ -416,9 +427,14 @@ async function handleSetlist(interaction: ChatInputCommandInteraction): Promise<
     return;
   }
 
-  await buildInto(resolved.setlist, interaction.user.id, async (content) => {
-    await interaction.editReply({ content });
-  });
+  await buildInto(
+    resolved.setlist,
+    interaction.user.id,
+    async (content) => {
+      await interaction.editReply({ content });
+    },
+    url === null ? artist ?? undefined : undefined,
+  );
 }
 
 /**
