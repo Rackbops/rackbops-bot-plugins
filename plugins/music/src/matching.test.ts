@@ -459,6 +459,21 @@ describe("pickBestTrack", () => {
     expect(best).toBeUndefined();
   });
 
+  // Pinned to the exact floor, not just "somewhere under 8" (the "Maria"/"Mario" test above is 5
+  // characters, nowhere near 8, so it can't tell an 8 from a 7 or a 9): a title one character
+  // short of MIN_TYPO_TITLE_LENGTH never gets the fallback, and a title exactly at the floor does.
+  test("a title one character short of the 8-character floor never gets the fallback", () => {
+    const song = { name: "Freeway", artist: "Test Act" }; // 7 characters
+    const best = pickBestTrack(song, [track("Freeday", ["Test Act"])]); // one substitution
+    expect(best).toBeUndefined();
+  });
+
+  test("a title exactly at the 8-character floor gets the fallback", () => {
+    const song = { name: "Freeways", artist: "Test Act" }; // 8 characters
+    const best = pickBestTrack(song, [track("Freeway", ["Test Act"])]); // one deletion
+    expect(best!.confidence).toBe("low");
+  });
+
   test("a live one-edit cut still pays the live penalty, ranking below the plain one", () => {
     const song = { name: "Detroit 422", artist: "Totally Blondie" };
     const best = pickBestTrack(song, [
