@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `normalize()` now reads `&` and `+` between two words as the word "and", so setlist.fm's
+  "By-Tor & the Snow Dog" and Spotify's "By-Tor And The Snow Dog" compare equal in both titles and
+  artist names -- the studio recording is now matched at `high` instead of falling to a live cut at
+  `low` (#57).
+
 ## [1.5.0] - 2026-09-28
 
 ### Added
