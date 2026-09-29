@@ -1,0 +1,2424 @@
+[
+  {
+    "name": "Dreamline",
+    "searchArtist": "Rush",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Dreamline\" artist:\"Rush\"",
+        "candidates": [
+          {
+            "uri": "spotify:track:1hM2HXmeYuEe1VTf0O1IFU",
+            "name": "Dreamline - 2004 Remaster",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:2SyNJigS7y0pehwd5OpVJA",
+            "name": "Dreamline - Live",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:3jAeWEJMVGa7dhEGI5Lw8o",
+            "name": "Dreamline - R30 Live Version",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:7tldZGcbFCySZsV8B1ZP1T",
+            "name": "Dreamline (with Clockwork Angels String Ensemble) [Live on Clockwork Angels Tour]",
+            "artistNames": [
+              "Rush",
+              "Clockwork Angels String Ensemble"
+            ]
+          },
+          {
+            "uri": "spotify:track:2gWMoVFNTZh9ruiKoForBH",
+            "name": "Dreamline - Rio Live",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:4m2777ISaagzK1T38oq1Uf",
+            "name": "Dreamline - Snakes & Arrows Live Version",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:7M4higH64Fvcj9FakibdZ5",
+            "name": "Dreamline - 2013 Remaster",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:3PdvwGsfbvwIFXij7kp24n",
+            "name": "Dreamline - Retrospective 3 Version",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:5hTuDOJ4PFVxj78avuQlNF",
+            "name": "Dreamline - R30 Live Version",
+            "artistNames": [
+              "Rush"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:1hM2HXmeYuEe1VTf0O1IFU",
+      "spotify:track:7M4higH64Fvcj9FakibdZ5",
+      "spotify:track:3PdvwGsfbvwIFXij7kp24n"
+    ],
+    "baseline": {
+      "uri": "spotify:track:1hM2HXmeYuEe1VTf0O1IFU",
+      "confidence": "medium"
+    }
+  },
+  {
+    "name": "Bravado",
+    "searchArtist": "Rush",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Bravado\" artist:\"Rush\"",
+        "candidates": [
+          {
+            "uri": "spotify:track:7fCntOTBEH6rshHhWX7hKG",
+            "name": "Bravado - 2004 Remaster",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:3VLg2R3ALa2rC6PNhusMdy",
+            "name": "Bravado - Live",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:2C6qF7xPEDxFDM90wAmK0N",
+            "name": "Bravado - Live",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:6TzYSNfTrfgauZwKITljUU",
+            "name": "Bravado - Rio Live",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:6B1j2cfKYbhFL08WSjoyZR",
+            "name": "Bravado - 2013 Remaster",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:7gnGcpHtx4bcj7FApIpb61",
+            "name": "Bravado - Restrospective 3 Version",
+            "artistNames": [
+              "Rush"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:7fCntOTBEH6rshHhWX7hKG",
+      "spotify:track:6B1j2cfKYbhFL08WSjoyZR",
+      "spotify:track:7gnGcpHtx4bcj7FApIpb61"
+    ],
+    "baseline": {
+      "uri": "spotify:track:7fCntOTBEH6rshHhWX7hKG",
+      "confidence": "medium"
+    }
+  },
+  {
+    "name": "2112 Part I: Overture",
+    "searchArtist": "Rush",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"2112 Part I: Overture\" artist:\"Rush\"",
+        "candidates": []
+      },
+      {
+        "query": "2112 Part I: Overture Rush",
+        "candidates": [
+          {
+            "uri": "spotify:track:0EqvSj5OJiCqytaCtKJEmp",
+            "name": "2112 (Overture) - Live",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:6DxVOM5N2Tc0BPpcyRXTHT",
+            "name": "2112 Overture",
+            "artistNames": [
+              "Royal Philharmonic Orchestra"
+            ]
+          },
+          {
+            "uri": "spotify:track:5p9fT4hoWPQ7uUpgsdLuq6",
+            "name": "2112 Overture - Retrospective Edit",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:59qImTH29LRWGKF3549ydx",
+            "name": "2112 - Overture - Live In YYZ 1981",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:0Dp6Bdi8G2cld1gm6sULun",
+            "name": "2112 Overture - Retrospective Edit",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:0tueVQBZKfEw1y6TshxDeb",
+            "name": "New Rush",
+            "artistNames": [
+              "Gin Wigmore"
+            ]
+          },
+          {
+            "uri": "spotify:track:1FKxKGONukVFXWVJxAKmlz",
+            "name": "Sweet Dreams",
+            "artistNames": [
+              "Beyonc\u00e9"
+            ]
+          },
+          {
+            "uri": "spotify:track:1ZseaIKt19broBzze3F8hz",
+            "name": "Hello, Anxiety",
+            "artistNames": [
+              "Phum Viphurit"
+            ]
+          },
+          {
+            "uri": "spotify:track:6krYS8KtmNAYyb5uTZiYW4",
+            "name": "Dawn FM",
+            "artistNames": [
+              "The Weeknd"
+            ]
+          },
+          {
+            "uri": "spotify:track:3gj1hwjku4JaoamjJVqIIl",
+            "name": "Dawn FM",
+            "artistNames": [
+              "The Weeknd"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [],
+    "baseline": "missing"
+  },
+  {
+    "name": "2112 Part II: The Temples of Syrinx",
+    "searchArtist": "Rush",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"2112 Part II: The Temples of Syrinx\" artist:\"Rush\"",
+        "candidates": []
+      },
+      {
+        "query": "2112 Part II: The Temples of Syrinx Rush",
+        "candidates": [
+          {
+            "uri": "spotify:track:6Po9FqcwIJq4xQtNZVXY6v",
+            "name": "2112 Overture / The Temples Of Syrinx",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:2DMDV9kUEO2WjUHg5acHBY",
+            "name": "2112: Overture / The Temples Of Syrinx / Discovery / Presentation / Oracle / Soliloquy / Grand Finale - Medley",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:5H8xFHau0x3PI1CssO6EaX",
+            "name": "2112: Overture / The Temples Of Syrinx / Discovery / Presentation / Oracle / Soliloquy / Grand Finale - Medley",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:6u9Zm9WJwA9F5kBtgcV1L4",
+            "name": "2112 Overture / The Temples Of Syrinx - Chronicles Version",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:3TUo7LbnbAjwMDZIm4J1ej",
+            "name": "2112 - The Temples of Syrinx - Live In YYZ 1981",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:4MhmAPkqKZT7xXfD9pOJ2V",
+            "name": "2112 Overture / The Temples of Syrinx - Live in Cleveland",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:28t1srx3KycdPfPuMNP7M3",
+            "name": "Space Game",
+            "artistNames": [
+              "MC Lars"
+            ]
+          },
+          {
+            "uri": "spotify:track:3nADDgCPFZ0icie1fzAK2Y",
+            "name": "2112 - Live R40 Tour",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:6DU38ChpG7076dTbPsn28b",
+            "name": "I Look Into My Glass",
+            "artistNames": [
+              "Thomas Hardy"
+            ]
+          },
+          {
+            "uri": "spotify:track:7z7cVLaaSflYWIlkgPrUGA",
+            "name": "A Glorious Death (feat. Flatbush ZOMBiES)",
+            "artistNames": [
+              "A$AP Twelvyy",
+              "Flatbush Zombies"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:2DMDV9kUEO2WjUHg5acHBY",
+      "spotify:track:5H8xFHau0x3PI1CssO6EaX"
+    ],
+    "baseline": "missing"
+  },
+  {
+    "name": "2112 Part VII: Grand Finale",
+    "searchArtist": "Rush",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"2112 Part VII: Grand Finale\" artist:\"Rush\"",
+        "candidates": []
+      },
+      {
+        "query": "2112 Part VII: Grand Finale Rush",
+        "candidates": [
+          {
+            "uri": "spotify:track:3pwpXuv36EwQ738QFye1lR",
+            "name": "2112 (Grand Finale) - Live",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:2DMDV9kUEO2WjUHg5acHBY",
+            "name": "2112: Overture / The Temples Of Syrinx / Discovery / Presentation / Oracle / Soliloquy / Grand Finale - Medley",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:5H8xFHau0x3PI1CssO6EaX",
+            "name": "2112: Overture / The Temples Of Syrinx / Discovery / Presentation / Oracle / Soliloquy / Grand Finale - Medley",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:3lEAEfJNbcREVWu7c8nBgf",
+            "name": "2112: Overture / The Temples Of Syrinx / Discovery / Presentation / Oracle / Soliloquy / Grand Finale - Medley",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:6Po9FqcwIJq4xQtNZVXY6v",
+            "name": "2112 Overture / The Temples Of Syrinx",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:0EqvSj5OJiCqytaCtKJEmp",
+            "name": "2112 (Overture) - Live",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:0hGgj4I7kPH7BBBu1j7QIU",
+            "name": "#2121313",
+            "artistNames": [
+              "Corrosion Of Conformity\t"
+            ]
+          },
+          {
+            "uri": "spotify:track:5tUwEDJFvZF0pfACkBGfbi",
+            "name": "The Cult of 2112",
+            "artistNames": [
+              "Perturbator"
+            ]
+          },
+          {
+            "uri": "spotify:track:4MhmAPkqKZT7xXfD9pOJ2V",
+            "name": "2112 Overture / The Temples of Syrinx - Live in Cleveland",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:3nADDgCPFZ0icie1fzAK2Y",
+            "name": "2112 - Live R40 Tour",
+            "artistNames": [
+              "Rush"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:2DMDV9kUEO2WjUHg5acHBY",
+      "spotify:track:5H8xFHau0x3PI1CssO6EaX",
+      "spotify:track:3lEAEfJNbcREVWu7c8nBgf"
+    ],
+    "baseline": "missing"
+  },
+  {
+    "name": "By-Tor & the Snow Dog",
+    "searchArtist": "Rush",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"By-Tor & the Snow Dog\" artist:\"Rush\"",
+        "candidates": [
+          {
+            "uri": "spotify:track:0hRJNNyjoIlRcrgYVypM2Y",
+            "name": "By-Tor And The Snow Dog",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:73eztWSnTK9iCzR9n0LxTi",
+            "name": "By-Tor & The Snow Dog - Live in London - Permanent Waves 1980 Tour",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:3tGDx4sdjgs8KBWJtu5SbL",
+            "name": "By-Tor And The Snow Dog - Live At Massey Hall, Toronto/1976",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:36Wm2KpS3YYX0b65bIaTzK",
+            "name": "By-Tor and the Snow Dog - Live",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:2pwRPRja1k2jc5nGQtEwQt",
+            "name": "By-Tor And The Snow Dog",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:5u1PoTIjT7LWy0lT6LNOMg",
+            "name": "By-Tor And The Snow Dog",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:4bLDnCOn4aVePwG3NaZGZz",
+            "name": "By-Tor And The Snow Dog - Live At Massey Hall, Toronto, Ontario, Canada - June/1976",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:1dYUEwOjIouVUBTgEtNsHQ",
+            "name": "By-Tor and the Snowdog - Rio Live",
+            "artistNames": [
+              "Rush"
+            ]
+          },
+          {
+            "uri": "spotify:track:63oiGaWauHYkLxzzCjvlji",
+            "name": "Working Man / Cygnus X-1 Book II: Hemispheres - Armageddon: The Battle Of Heart And Mind / By-Tor & The Snow Dog / In The End / In The Mood / 2112 - Grand Finale - Live In YYZ 1981",
+            "artistNames": [
+              "Rush"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:0hRJNNyjoIlRcrgYVypM2Y",
+      "spotify:track:2pwRPRja1k2jc5nGQtEwQt",
+      "spotify:track:5u1PoTIjT7LWy0lT6LNOMg"
+    ],
+    "baseline": {
+      "uri": "spotify:track:73eztWSnTK9iCzR9n0LxTi",
+      "confidence": "low"
+    }
+  },
+  {
+    "name": "Shadows of the Night",
+    "searchArtist": "Helen Schneider",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Shadows of the Night\" artist:\"Helen Schneider\"",
+        "candidates": []
+      },
+      {
+        "query": "Shadows of the Night Helen Schneider",
+        "candidates": [
+          {
+            "uri": "spotify:track:7kJMjiVVKcUaoLLW7iLGba",
+            "name": "Shadows Of The Night",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:1KMbr1yUbvpesjNYV4tdJU",
+            "name": "Shadows of the Night - Radio Version",
+            "artistNames": [
+              "DJ BoBo",
+              "VSOP"
+            ]
+          },
+          {
+            "uri": "spotify:track:3SPcBPzvbmWLl8NU5efx4W",
+            "name": "Telephone Line",
+            "artistNames": [
+              "Electric Light Orchestra"
+            ]
+          },
+          {
+            "uri": "spotify:track:2Hb1CVnIonpPOwZ89cXTSn",
+            "name": "Shadows of the Night - Radio Version",
+            "artistNames": [
+              "DJ BoBo",
+              "VSOP"
+            ]
+          },
+          {
+            "uri": "spotify:track:4uNFxDR75q2QWKRem6BOVl",
+            "name": "Shadows of the Night - King & White Mix",
+            "artistNames": [
+              "DJ BoBo",
+              "King & White"
+            ]
+          },
+          {
+            "uri": "spotify:track:6iXQrhhgBisdfvS34EMTZ3",
+            "name": "Mandy",
+            "artistNames": [
+              "Barry Manilow"
+            ]
+          },
+          {
+            "uri": "spotify:track:0UwNjqs1Wq1VNOkriRaRyS",
+            "name": "Who's Cheatin' Who",
+            "artistNames": [
+              "Alan Jackson"
+            ]
+          },
+          {
+            "uri": "spotify:track:7v3dVg6Tg7SwWkHpWP8sFQ",
+            "name": "Alien",
+            "artistNames": [
+              "Barmy Rote"
+            ]
+          },
+          {
+            "uri": "spotify:track:79U8ctPOW4Tl1mCMX4iEc0",
+            "name": "Helen from Idaho",
+            "artistNames": [
+              "Nolan Carter"
+            ]
+          },
+          {
+            "uri": "spotify:track:423KGdUKQk4SBJM7HJJyhV",
+            "name": "Shades Of Night",
+            "artistNames": [
+              "Evolving Stream"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:7kJMjiVVKcUaoLLW7iLGba"
+    ],
+    "baseline": {
+      "uri": "spotify:track:7kJMjiVVKcUaoLLW7iLGba",
+      "confidence": "low"
+    }
+  },
+  {
+    "name": "All Fired Up",
+    "searchArtist": "Rattling Sabres",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"All Fired Up\" artist:\"Rattling Sabres\"",
+        "candidates": []
+      },
+      {
+        "query": "All Fired Up Rattling Sabres",
+        "candidates": [
+          {
+            "uri": "spotify:track:6XpczhG192lULA9i4JLqKJ",
+            "name": "All Fired Up",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:1F93ZjsXoK84U6yWaXGf2r",
+            "name": "All Fired Up",
+            "artistNames": [
+              "Fastway"
+            ]
+          },
+          {
+            "uri": "spotify:track:0pC6sM6FAyVVTkdC9oiedG",
+            "name": "All Fired Up",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:4p9P2VIWXiUpE45VQnzAYx",
+            "name": "All Fired Up - Remastered",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:4cc4pXL4vi56zZo89WNFSZ",
+            "name": "All Fired Up",
+            "artistNames": [
+              "Interpol"
+            ]
+          },
+          {
+            "uri": "spotify:track:4yZYoHoRe6PGAZVmaXlpBg",
+            "name": "Body Talk",
+            "artistNames": [
+              "Ratt"
+            ]
+          },
+          {
+            "uri": "spotify:track:3btjsK6AnfPZjAYnqy54gB",
+            "name": "Rattle The Cage",
+            "artistNames": [
+              "Nickelback",
+              "John 5"
+            ]
+          },
+          {
+            "uri": "spotify:track:1TZHumCJB59llHy7zj4wXj",
+            "name": "Euphoria",
+            "artistNames": [
+              "DON BROCO"
+            ]
+          },
+          {
+            "uri": "spotify:track:60vnbO0LF9Ttr4i0CT7HVj",
+            "name": "Rat Race",
+            "artistNames": [
+              "Brody Dalle"
+            ]
+          },
+          {
+            "uri": "spotify:track:3EViQFgUT8QwIYOU9FUpqJ",
+            "name": "Rattler And The Devil\u2019s Whip",
+            "artistNames": [
+              "Lanie Gardner"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:6XpczhG192lULA9i4JLqKJ",
+      "spotify:track:0pC6sM6FAyVVTkdC9oiedG",
+      "spotify:track:4p9P2VIWXiUpE45VQnzAYx"
+    ],
+    "baseline": {
+      "uri": "spotify:track:6XpczhG192lULA9i4JLqKJ",
+      "confidence": "low"
+    }
+  },
+  {
+    "name": "Come On People",
+    "searchArtist": "Pat Benatar",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Come On People\" artist:\"Pat Benatar\"",
+        "candidates": []
+      },
+      {
+        "query": "Come On People Pat Benatar",
+        "candidates": [
+          {
+            "uri": "spotify:track:0yqIpi7zj74a0CRCedacOW",
+            "name": "Feelin' Satisfied",
+            "artistNames": [
+              "Boston"
+            ]
+          },
+          {
+            "uri": "spotify:track:6pwQEpLOlwclrsjgEOHEp0",
+            "name": "Shadows Of The Night",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:1PWaK14E1hcGWU3Nb5YC16",
+            "name": "Dirty Little Secrets",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:44lAQJzaUI6hcpHEFqp2mJ",
+            "name": "Space Truckin'",
+            "artistNames": [
+              "Deep Purple"
+            ]
+          },
+          {
+            "uri": "spotify:track:41CoPVBGQyaO9edYV2BKnp",
+            "name": "Love Is A Battlefield",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:22ML0MuFKfw16WejbxsLOy",
+            "name": "Heartbreaker",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:3vV3cr2TpPqFk07zxYUbla",
+            "name": "Cum on Feel the Noize",
+            "artistNames": [
+              "Quiet Riot"
+            ]
+          },
+          {
+            "uri": "spotify:track:3MrWxJaD2AT0W9DjWF64Vm",
+            "name": "Come On Eileen",
+            "artistNames": [
+              "Dexys Midnight Runners"
+            ]
+          },
+          {
+            "uri": "spotify:track:5yr8pi3uCjTYOnTqstBBdm",
+            "name": "Let's Get It On",
+            "artistNames": [
+              "Marvin Gaye"
+            ]
+          },
+          {
+            "uri": "spotify:track:12aeWyYJIyUzysWpjAx7r4",
+            "name": "Gone Guru",
+            "artistNames": [
+              "Lifeseeker"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [],
+    "baseline": "missing"
+  },
+  {
+    "name": "You Better Run",
+    "searchArtist": "The Rascals",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"You Better Run\" artist:\"The Rascals\"",
+        "candidates": [
+          {
+            "uri": "spotify:track:6zqsyB7uIvWrL1iCJzpNrs",
+            "name": "You Better Run - Single Version; Mono",
+            "artistNames": [
+              "The Young Rascals"
+            ]
+          },
+          {
+            "uri": "spotify:track:5FNTv65OqqO9TpLD2OsEMd",
+            "name": "You Better Run - Single Version",
+            "artistNames": [
+              "The Young Rascals"
+            ]
+          },
+          {
+            "uri": "spotify:track:04DOxjxyOrs7r0Ynj3iqYz",
+            "name": "You Better Run - Single Version",
+            "artistNames": [
+              "The Young Rascals"
+            ]
+          },
+          {
+            "uri": "spotify:track:7m1eifv6MaiZ5LpvdfPPNR",
+            "name": "You Better Run - Single Version",
+            "artistNames": [
+              "The Young Rascals"
+            ]
+          },
+          {
+            "uri": "spotify:track:5fHhJEt7nSoOhwmWraFOHN",
+            "name": "You Better Run (Single Version)",
+            "artistNames": [
+              "The Young Rascals"
+            ]
+          },
+          {
+            "uri": "spotify:track:2rKoWSglqDGGXrdpXe4iSi",
+            "name": "You Better Run - Live",
+            "artistNames": [
+              "The New Rascals"
+            ]
+          },
+          {
+            "uri": "spotify:track:78bPSJhzdMiMhCMmcWkFvL",
+            "name": "You Better Run - Rerecorded",
+            "artistNames": [
+              "The New Rascals"
+            ]
+          },
+          {
+            "uri": "spotify:track:4NqnXz7fy5h3zY1dXr2KfI",
+            "name": "You Better Run",
+            "artistNames": [
+              "The New Rascals"
+            ]
+          },
+          {
+            "uri": "spotify:track:4quMQ3iwt4SAc68ZtDooAa",
+            "name": "You Better Run",
+            "artistNames": [
+              "The New Rascals"
+            ]
+          },
+          {
+            "uri": "spotify:track:0eLcwQtWGBLJqwnS8QQGud",
+            "name": "You Better Run (Single Version)",
+            "artistNames": [
+              "The Young Rascals"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:6zqsyB7uIvWrL1iCJzpNrs",
+      "spotify:track:5FNTv65OqqO9TpLD2OsEMd",
+      "spotify:track:04DOxjxyOrs7r0Ynj3iqYz",
+      "spotify:track:7m1eifv6MaiZ5LpvdfPPNR",
+      "spotify:track:5fHhJEt7nSoOhwmWraFOHN",
+      "spotify:track:0eLcwQtWGBLJqwnS8QQGud"
+    ],
+    "baseline": {
+      "uri": "spotify:track:4NqnXz7fy5h3zY1dXr2KfI",
+      "confidence": "low"
+    }
+  },
+  {
+    "name": "Heartbreaker",
+    "searchArtist": "Pat Benatar & Neil Giraldo",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Heartbreaker\" artist:\"Pat Benatar & Neil Giraldo\"",
+        "candidates": [
+          {
+            "uri": "spotify:track:7Iz5HBIfWSWHjnA0kTGoVK",
+            "name": "Heartbreaker",
+            "artistNames": [
+              "Dolly Parton",
+              "Pat Benatar",
+              "Neil Giraldo"
+            ]
+          },
+          {
+            "uri": "spotify:track:1Y9EKhKE4MZP3tetsMJGX1",
+            "name": "Heartbreaker",
+            "artistNames": [
+              "Dolly Parton",
+              "Pat Benatar",
+              "Neil Giraldo"
+            ]
+          },
+          {
+            "uri": "spotify:track:5rb7ngtuw9iVqx3PRLgJgp",
+            "name": "Heartbreaker (Live)",
+            "artistNames": [
+              "Pat Benatar & Neil Giraldo"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [],
+    "baseline": {
+      "uri": "spotify:track:7Iz5HBIfWSWHjnA0kTGoVK",
+      "confidence": "medium"
+    }
+  },
+  {
+    "name": "Ring of Fire",
+    "searchArtist": "Pat Benatar & Neil Giraldo",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Ring of Fire\" artist:\"Pat Benatar & Neil Giraldo\"",
+        "candidates": []
+      },
+      {
+        "query": "Ring of Fire Pat Benatar & Neil Giraldo",
+        "candidates": [
+          {
+            "uri": "spotify:track:6nZdPmZoeIDtqG8AwJlWNe",
+            "name": "Fire And Ice",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:6pwQEpLOlwclrsjgEOHEp0",
+            "name": "Shadows Of The Night",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:665Jxlgi1HamPKbW1vwzx4",
+            "name": "We Belong",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:41CoPVBGQyaO9edYV2BKnp",
+            "name": "Love Is A Battlefield",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:22ML0MuFKfw16WejbxsLOy",
+            "name": "Heartbreaker",
+            "artistNames": [
+              "Pat Benatar"
+            ]
+          },
+          {
+            "uri": "spotify:track:7GV9NMtG3zZkes6q5ODmvL",
+            "name": "Cosby Sweater Restrung",
+            "artistNames": [
+              "Hilltop Hoods"
+            ]
+          },
+          {
+            "uri": "spotify:track:6myDPrp86x4Lhyp5aqU0EV",
+            "name": "Cosby Sweater",
+            "artistNames": [
+              "Hilltop Hoods"
+            ]
+          },
+          {
+            "uri": "spotify:track:7HH1dZHf9XlDxaonIiE7YH",
+            "name": "Cosby Sweater",
+            "artistNames": [
+              "Hilltop Hoods"
+            ]
+          },
+          {
+            "uri": "spotify:track:3WLuwdSN7VKK8RNZKTXmKe",
+            "name": "Cosby Sweater",
+            "artistNames": [
+              "Hilltop Hoods"
+            ]
+          },
+          {
+            "uri": "spotify:track:1lHi8hnfV6SR9YYbVAUHbL",
+            "name": "Cosby Sweater",
+            "artistNames": [
+              "Hilltop Hoods"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [],
+    "baseline": "missing"
+  },
+  {
+    "name": "French Kissin'",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"French Kissin'\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "French Kissin' Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:5yVoQHZJqvVHoRqmYzR1Q6",
+            "name": "French Kissin'",
+            "artistNames": [
+              "Debbie Harry"
+            ]
+          },
+          {
+            "uri": "spotify:track:28pEZRAgs41mQP5MKoinW0",
+            "name": "French Kissin' in the USA",
+            "artistNames": [
+              "Debbie Harry"
+            ]
+          },
+          {
+            "uri": "spotify:track:3AFjMnEW84rIKyrBPf65l1",
+            "name": "Panic",
+            "artistNames": [
+              "French Kiss"
+            ]
+          },
+          {
+            "uri": "spotify:track:7hnqJYCKZFW7vMoykaraZG",
+            "name": "French Kiss - The Original Underground Mix",
+            "artistNames": [
+              "Lil' Louis",
+              "The World"
+            ]
+          },
+          {
+            "uri": "spotify:track:0KfFTUq17o82B4huyNJbaL",
+            "name": "French Kiss the Elderly",
+            "artistNames": [
+              "Jack Off Jill"
+            ]
+          },
+          {
+            "uri": "spotify:track:3rDsK4LPkbISdXr7gBCkor",
+            "name": "french kids",
+            "artistNames": [
+              "almost monday"
+            ]
+          },
+          {
+            "uri": "spotify:track:6H1Kjxu2NlJCMxg0Pay0Rd",
+            "name": "Total Control",
+            "artistNames": [
+              "The Motels"
+            ]
+          },
+          {
+            "uri": "spotify:track:1e5DTpM1WeggytDXbphivX",
+            "name": "Kissin' You",
+            "artistNames": [
+              "Total"
+            ]
+          },
+          {
+            "uri": "spotify:track:7AgGIN0ZBPVRxHWkIjYTAR",
+            "name": "Kissin' You / Oh Honey",
+            "artistNames": [
+              "Total"
+            ]
+          },
+          {
+            "uri": "spotify:track:2OWSFXRzsxj34w6gLw5Zk9",
+            "name": "French Kiss",
+            "artistNames": [
+              "betahost",
+              "Hayjee"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:5yVoQHZJqvVHoRqmYzR1Q6",
+      "spotify:track:28pEZRAgs41mQP5MKoinW0"
+    ],
+    "baseline": {
+      "uri": "spotify:track:5yVoQHZJqvVHoRqmYzR1Q6",
+      "confidence": "low"
+    }
+  },
+  {
+    "name": "Union City Blue",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Union City Blue\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "Union City Blue Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:3a3JGuTQNYM3YawGpck7Ql",
+            "name": "Union City Blue - Single Version",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:7nO9qoxbNqtO2iyS3GZNZr",
+            "name": "Union City Blue - Single Version",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:48k0c0x5seBgOOo3Ze7AZv",
+            "name": "Union City Blue - Remastered 2001",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:5D9cGUts4bN2zoxhLrQdCJ",
+            "name": "Union City Blue - Remastered 2001",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:4tDRm2mI2r1dQT3T7onZLE",
+            "name": "Union City Blue - Live",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:2BQ1D2sI2G80dfLTeG5GrR",
+            "name": "Union City Blue - Remastered 2001",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:59CLe8stbcx4XYBWdsfbwK",
+            "name": "One Way Or Another",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:4v2rkl1mC3zVAz0nXMx9r4",
+            "name": "Heart Of Glass",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:5QIbR39hAEDIOkr4ggh4xc",
+            "name": "Atomic",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:4DliRSOmpVNHoPc60wUmUD",
+            "name": "Dead End Justice",
+            "artistNames": [
+              "The Runaways"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:3a3JGuTQNYM3YawGpck7Ql",
+      "spotify:track:7nO9qoxbNqtO2iyS3GZNZr",
+      "spotify:track:48k0c0x5seBgOOo3Ze7AZv",
+      "spotify:track:5D9cGUts4bN2zoxhLrQdCJ",
+      "spotify:track:2BQ1D2sI2G80dfLTeG5GrR"
+    ],
+    "baseline": {
+      "uri": "spotify:track:3a3JGuTQNYM3YawGpck7Ql",
+      "confidence": "medium"
+    }
+  },
+  {
+    "name": "Get It On",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Get It On\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "Get It On Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:4v2rkl1mC3zVAz0nXMx9r4",
+            "name": "Heart Of Glass",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:59CLe8stbcx4XYBWdsfbwK",
+            "name": "One Way Or Another",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:34x6hEJgGAOQvmlMql5Ige",
+            "name": "Danger Zone - From \"Top Gun\" Original Soundtrack",
+            "artistNames": [
+              "Kenny Loggins"
+            ]
+          },
+          {
+            "uri": "spotify:track:5QIbR39hAEDIOkr4ggh4xc",
+            "name": "Atomic",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:3XcjIvaZVUFAIdIYZqY9bd",
+            "name": "We're An American Band - Remastered 2002",
+            "artistNames": [
+              "Grand Funk Railroad"
+            ]
+          },
+          {
+            "uri": "spotify:track:0vLwL4xuJ3s7SeaCdvMqkY",
+            "name": "Call Me",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:0a4agFmqHXxcZl1nho1BxM",
+            "name": "Heart Of Glass - Special Mix",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:5sbydPPvDB7fJ1uDo8X6nB",
+            "name": "Demonoid Phenomenon",
+            "artistNames": [
+              "Rob Zombie"
+            ]
+          },
+          {
+            "uri": "spotify:track:4hfIVhq0F0zFUcrbecsYmo",
+            "name": "Let's Get It Started - Spike Mix",
+            "artistNames": [
+              "Black Eyed Peas"
+            ]
+          },
+          {
+            "uri": "spotify:track:0LWkaEyQRkF0XAms8Bg1fC",
+            "name": "Party Up",
+            "artistNames": [
+              "DMX"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [],
+    "baseline": "missing"
+  },
+  {
+    "name": "Heroes",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Heroes\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "Heroes Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:7Jh1bpe76CNTCgdgAdBw4Z",
+            "name": "\"Heroes\" - 2017 Remaster",
+            "artistNames": [
+              "David Bowie"
+            ]
+          },
+          {
+            "uri": "spotify:track:5QIbR39hAEDIOkr4ggh4xc",
+            "name": "Atomic",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:78wWPm9uCH45N7ZP5yzEqO",
+            "name": "Totally Awesome (Theme Song)",
+            "artistNames": [
+              "Mark Hoppus",
+              "Disney Junior"
+            ]
+          },
+          {
+            "uri": "spotify:track:3mwLIWu6drN0n6t9e5bwjG",
+            "name": "Heroes",
+            "artistNames": [
+              "Shinedown"
+            ]
+          },
+          {
+            "uri": "spotify:track:66XP5jUHX6UXul4pR8IRXn",
+            "name": "\u201cHeroes\u201d - Single Version; 2014 Remaster",
+            "artistNames": [
+              "David Bowie"
+            ]
+          },
+          {
+            "uri": "spotify:track:1vd6RAAMj6SZyXFKtsW2jl",
+            "name": "The Interview",
+            "artistNames": [
+              "The Smashing Pumpkins"
+            ]
+          },
+          {
+            "uri": "spotify:track:3ugtNoj3LjlPIyAO9JRpZG",
+            "name": "RING THE ALARM pt.1 pt.2 pt.3",
+            "artistNames": [
+              "Black Eyed Peas"
+            ]
+          },
+          {
+            "uri": "spotify:track:3Vs8te153CnfAHLdmkpjSC",
+            "name": "Blow",
+            "artistNames": [
+              "Theory of a Deadman"
+            ]
+          },
+          {
+            "uri": "spotify:track:1ssT0otwEbYRU2D0paC5gY",
+            "name": "RING THE ALARM pt.1 pt.2 pt.3",
+            "artistNames": [
+              "Black Eyed Peas"
+            ]
+          },
+          {
+            "uri": "spotify:track:6NLyTVfik2ihkUhThbj2QH",
+            "name": "Leeds Kick",
+            "artistNames": [
+              "Deep Kick"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:7Jh1bpe76CNTCgdgAdBw4Z",
+      "spotify:track:66XP5jUHX6UXul4pR8IRXn"
+    ],
+    "baseline": {
+      "uri": "spotify:track:3mwLIWu6drN0n6t9e5bwjG",
+      "confidence": "low"
+    }
+  },
+  {
+    "name": "I'm Gonna Love You Too",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"I'm Gonna Love You Too\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "I'm Gonna Love You Too Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:0s9oqwhKh1zTF7ysKrkn21",
+            "name": "I'm Gonna Love You Too",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:6dayCflQl0ISXwZs6GBygC",
+            "name": "I'm Gonna Love You",
+            "artistNames": [
+              "Cody Johnson",
+              "Carrie Underwood"
+            ]
+          },
+          {
+            "uri": "spotify:track:59CLe8stbcx4XYBWdsfbwK",
+            "name": "One Way Or Another",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:4v2rkl1mC3zVAz0nXMx9r4",
+            "name": "Heart Of Glass",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:0vLwL4xuJ3s7SeaCdvMqkY",
+            "name": "Call Me",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:0a4agFmqHXxcZl1nho1BxM",
+            "name": "Heart Of Glass - Special Mix",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:55nD22U1Y91PaZFjcbjyoZ",
+            "name": "Love U Like the Sun in June",
+            "artistNames": [
+              "Ryan Scott"
+            ]
+          },
+          {
+            "uri": "spotify:track:6lqFk12ZkhXpKUMTkh6Bm9",
+            "name": "Shy Girl",
+            "artistNames": [
+              "Stacey Q"
+            ]
+          },
+          {
+            "uri": "spotify:track:6lrFsT3bJbvXbKmwo5nyBU",
+            "name": "Love You Forever",
+            "artistNames": [
+              "Justin Mather"
+            ]
+          },
+          {
+            "uri": "spotify:track:58smsiqYQqpzxgqTNdaC05",
+            "name": "Green Lights",
+            "artistNames": [
+              "Mike Kota"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:0s9oqwhKh1zTF7ysKrkn21"
+    ],
+    "baseline": {
+      "uri": "spotify:track:0s9oqwhKh1zTF7ysKrkn21",
+      "confidence": "medium"
+    }
+  },
+  {
+    "name": "Rip Her to Shreds",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Rip Her to Shreds\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "Rip Her to Shreds Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:23yUwzz4CQ8yzQ65ATN6Ds",
+            "name": "Rip Her To Shreds - Remastered 2001",
+            "artistNames": [
+              "Blondie",
+              "Craig Leon"
+            ]
+          },
+          {
+            "uri": "spotify:track:2JSr7ac0mggMkATfcqHIFP",
+            "name": "Rip Her To Shreads",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:1xOXhyunTVqnIaV5eUPGJB",
+            "name": "Rip Her To Shreds - Remastered 2001",
+            "artistNames": [
+              "Blondie",
+              "Craig Leon"
+            ]
+          },
+          {
+            "uri": "spotify:track:61xWSI0W90N2GPHlQICzfc",
+            "name": "Rip Her To Shreads",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:3pK8iQ2oRstvc1JyntfT0j",
+            "name": "Rip Her To Shreds - Remastered 2001",
+            "artistNames": [
+              "Blondie",
+              "Craig Leon"
+            ]
+          },
+          {
+            "uri": "spotify:track:6DmGylcNFhoBPkdw5I3h8i",
+            "name": "Rip Her To Shreds - Remastered 2001",
+            "artistNames": [
+              "Blondie",
+              "Craig Leon"
+            ]
+          },
+          {
+            "uri": "spotify:track:3YtS8wYzkeN386Sn3k2TXJ",
+            "name": "Rip Her to Shreds",
+            "artistNames": [
+              "Boomkat"
+            ]
+          },
+          {
+            "uri": "spotify:track:59CLe8stbcx4XYBWdsfbwK",
+            "name": "One Way Or Another",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:4v2rkl1mC3zVAz0nXMx9r4",
+            "name": "Heart Of Glass",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:6cS9PmLky2NhLOhpIsUlow",
+            "name": "Gnat",
+            "artistNames": [
+              "Eminem"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:23yUwzz4CQ8yzQ65ATN6Ds",
+      "spotify:track:2JSr7ac0mggMkATfcqHIFP",
+      "spotify:track:1xOXhyunTVqnIaV5eUPGJB",
+      "spotify:track:61xWSI0W90N2GPHlQICzfc",
+      "spotify:track:3pK8iQ2oRstvc1JyntfT0j",
+      "spotify:track:6DmGylcNFhoBPkdw5I3h8i"
+    ],
+    "baseline": {
+      "uri": "spotify:track:3YtS8wYzkeN386Sn3k2TXJ",
+      "confidence": "low"
+    }
+  },
+  {
+    "name": "Sunday Girl",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Sunday Girl\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "Sunday Girl Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:5v6VaqC8b4P7NcKb45W77j",
+            "name": "Sunday Girl",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:1bCGzYa5RQYhVFM6G5Z4Jy",
+            "name": "Sunday Girl",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:23yv078f5kc08Kj6DMpO0t",
+            "name": "Sunday Girl",
+            "artistNames": [
+              "Blondie",
+              "Mike Chapman"
+            ]
+          },
+          {
+            "uri": "spotify:track:59CLe8stbcx4XYBWdsfbwK",
+            "name": "One Way Or Another",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:4v2rkl1mC3zVAz0nXMx9r4",
+            "name": "Heart Of Glass",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:5Z6Y2HPzj38Hfb8rPARYMR",
+            "name": "Blondie And Dagwood",
+            "artistNames": [
+              "Adam Carroll"
+            ]
+          },
+          {
+            "uri": "spotify:track:1vd6RAAMj6SZyXFKtsW2jl",
+            "name": "The Interview",
+            "artistNames": [
+              "The Smashing Pumpkins"
+            ]
+          },
+          {
+            "uri": "spotify:track:0hABacr1yTSleOlPKpIWBb",
+            "name": "Hey Blondie",
+            "artistNames": [
+              "Dominic Fike"
+            ]
+          },
+          {
+            "uri": "spotify:track:78JGdUz8IxGBaBpZo9BYKv",
+            "name": "Hey Blondie (From Barbie The Album)",
+            "artistNames": [
+              "Dominic Fike"
+            ]
+          },
+          {
+            "uri": "spotify:track:2CFwBKp0oN4d6vZaMV5FFA",
+            "name": "Hey Blondie",
+            "artistNames": [
+              "Dominic Fike"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:5v6VaqC8b4P7NcKb45W77j",
+      "spotify:track:1bCGzYa5RQYhVFM6G5Z4Jy",
+      "spotify:track:23yv078f5kc08Kj6DMpO0t"
+    ],
+    "baseline": {
+      "uri": "spotify:track:5v6VaqC8b4P7NcKb45W77j",
+      "confidence": "medium"
+    }
+  },
+  {
+    "name": "Denis",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Denis\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "Denis Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:1vd6RAAMj6SZyXFKtsW2jl",
+            "name": "The Interview",
+            "artistNames": [
+              "The Smashing Pumpkins"
+            ]
+          },
+          {
+            "uri": "spotify:track:3UEhL51J5B8x3I6rHGcFO5",
+            "name": "Roundabouts & Bags",
+            "artistNames": [
+              "Charlie Berens"
+            ]
+          },
+          {
+            "uri": "spotify:track:6NLyTVfik2ihkUhThbj2QH",
+            "name": "Leeds Kick",
+            "artistNames": [
+              "Deep Kick"
+            ]
+          },
+          {
+            "uri": "spotify:track:15p2MW0l0NkHsqtNetcNsG",
+            "name": "Back Stabbers",
+            "artistNames": [
+              "DEMI SAB"
+            ]
+          },
+          {
+            "uri": "spotify:track:6qli4FsQUpus0IG4vREQMB",
+            "name": "SAMURAI",
+            "artistNames": [
+              "NicholasLamar",
+              "Yung Steezee"
+            ]
+          },
+          {
+            "uri": "spotify:track:1vMJkB95UgXQppme7sSTml",
+            "name": "Take Me",
+            "artistNames": [
+              "Scout Willis"
+            ]
+          },
+          {
+            "uri": "spotify:track:6LrOmzIw8iLI4l1sZC4btt",
+            "name": "Nobody knows",
+            "artistNames": [
+              "Jonathan Denis"
+            ]
+          },
+          {
+            "uri": "spotify:track:263qqZc8XnwdzXNgJ0SF1h",
+            "name": "Over and Over",
+            "artistNames": [
+              "Scout Willis"
+            ]
+          },
+          {
+            "uri": "spotify:track:4DDuzijMlHzGi5JuvoiHil",
+            "name": "Hollywood Dreams",
+            "artistNames": [
+              "Shaq'khi"
+            ]
+          },
+          {
+            "uri": "spotify:track:36r5PbCOv76WVYfMDYd4yf",
+            "name": "Hollywood Dreams",
+            "artistNames": [
+              "Shaq'khi"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [],
+    "baseline": "missing"
+  },
+  {
+    "name": "Maria",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Maria\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "Maria Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:43117dpRPkEXz7euANdYDV",
+            "name": "Maria",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:6QvH7ohcXazHl7qT3eGT9H",
+            "name": "Maria",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:4yHHx0rMvgCOoYoDWNdcR3",
+            "name": "Maria - Radio Edit",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:4byoaTau0RsFVSjc42i8AT",
+            "name": "Maria - 2025 Remaster",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:0Qfv4U5HqVba2vpMlKdm1S",
+            "name": "Maria - Live",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:3w4hzEcinam3dFE4LCutn8",
+            "name": "Lovers Are Crazy",
+            "artistNames": [
+              "Steve Vai"
+            ]
+          },
+          {
+            "uri": "spotify:track:7znKnllINRD7HXI1HNP5B5",
+            "name": "Lovers Are Crazy (Remastered)",
+            "artistNames": [
+              "Steve Vai"
+            ]
+          },
+          {
+            "uri": "spotify:track:7fEUlGfoWyazNwKUHEshSW",
+            "name": "Who Is This Child",
+            "artistNames": [
+              "Trans-Siberian Orchestra"
+            ]
+          },
+          {
+            "uri": "spotify:track:1vd6RAAMj6SZyXFKtsW2jl",
+            "name": "The Interview",
+            "artistNames": [
+              "The Smashing Pumpkins"
+            ]
+          },
+          {
+            "uri": "spotify:track:6NLyTVfik2ihkUhThbj2QH",
+            "name": "Leeds Kick",
+            "artistNames": [
+              "Deep Kick"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:43117dpRPkEXz7euANdYDV",
+      "spotify:track:6QvH7ohcXazHl7qT3eGT9H",
+      "spotify:track:4yHHx0rMvgCOoYoDWNdcR3",
+      "spotify:track:4byoaTau0RsFVSjc42i8AT"
+    ],
+    "baseline": {
+      "uri": "spotify:track:43117dpRPkEXz7euANdYDV",
+      "confidence": "medium"
+    }
+  },
+  {
+    "name": "I Want That Man",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"I Want That Man\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "I Want That Man Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:59CLe8stbcx4XYBWdsfbwK",
+            "name": "One Way Or Another",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:3eR3lWuvQqOzhTn91nbRCa",
+            "name": "Something That I Want",
+            "artistNames": [
+              "Grace Potter"
+            ]
+          },
+          {
+            "uri": "spotify:track:4v2rkl1mC3zVAz0nXMx9r4",
+            "name": "Heart Of Glass",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:5QIbR39hAEDIOkr4ggh4xc",
+            "name": "Atomic",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:6F2vo4sxRNQ58VYe3pdiaL",
+            "name": "Rapture",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:1EUrIO8vLRkzPgPcqIi4Jw",
+            "name": "American tterroristt",
+            "artistNames": [
+              "RXKNephew"
+            ]
+          },
+          {
+            "uri": "spotify:track:0a4agFmqHXxcZl1nho1BxM",
+            "name": "Heart Of Glass - Special Mix",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:3CyNxb5RlWodDdf5uIeCxg",
+            "name": "Something That I Want",
+            "artistNames": [
+              "Grace Potter"
+            ]
+          },
+          {
+            "uri": "spotify:track:1151Q8Aev8vtz6UfuaBhAy",
+            "name": "Man-Made Object",
+            "artistNames": [
+              "Lemon Demon"
+            ]
+          },
+          {
+            "uri": "spotify:track:2P3SLxeQHPqh8qKB6gtJY2",
+            "name": "Poetic Justice",
+            "artistNames": [
+              "Kendrick Lamar",
+              "Drake"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [],
+    "baseline": "missing"
+  },
+  {
+    "name": "Fan Mail",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Fan Mail\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "Fan Mail Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:59CLe8stbcx4XYBWdsfbwK",
+            "name": "One Way Or Another",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:3lGBRoe3c6oV398Xwgf7c7",
+            "name": "The Tide Is High - Remastered 2001",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:0vLwL4xuJ3s7SeaCdvMqkY",
+            "name": "Call Me",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:6F2vo4sxRNQ58VYe3pdiaL",
+            "name": "Rapture",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:4yHHx0rMvgCOoYoDWNdcR3",
+            "name": "Maria - Radio Edit",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:1vd6RAAMj6SZyXFKtsW2jl",
+            "name": "The Interview",
+            "artistNames": [
+              "The Smashing Pumpkins"
+            ]
+          },
+          {
+            "uri": "spotify:track:16y0FJCBes7RcTqPtdV7Uu",
+            "name": "Congress Shall Make No Law",
+            "artistNames": [
+              "Frank Zappa"
+            ]
+          },
+          {
+            "uri": "spotify:track:5mJFXn2WP6iUZCniCM52jU",
+            "name": "L!F>3L!N>3.",
+            "artistNames": [
+              "qnt"
+            ]
+          },
+          {
+            "uri": "spotify:track:2qHH5EeeQvE0ZVCzj7QW2c",
+            "name": "L!F>3L!N>3.",
+            "artistNames": [
+              "qnt"
+            ]
+          },
+          {
+            "uri": "spotify:track:3nD82mbwcNmHnlbr0QfwCa",
+            "name": "L!F>3L!N>3.",
+            "artistNames": [
+              "qnt"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [],
+    "baseline": "missing"
+  },
+  {
+    "name": "(I'm Always Touched by Your) Presence, Dear",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"(I'm Always Touched by Your) Presence, Dear\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "(I'm Always Touched by Your) Presence, Dear Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:7wKcSMrAW3d9qTd8OSd9HX",
+            "name": "(I'm Always Touched By Your) Presence, Dear - Remastered 2001",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:46jm3WYrQs4CgxwiZfTIH3",
+            "name": "(I'm Always Touched By Your) Presence, Dear",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:6j8iJwp8z4QUZYdtFT5Dra",
+            "name": "(I'm Always Touched By Your) Presence, Dear - Remastered 2001",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:2XRV927GCgp88ZlpK34laM",
+            "name": "(I'm Always Touched By Your) Presence, Dear - Remastered 2001",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:2iJZ4haYfn6fa4KYSp2iyC",
+            "name": "(I'm Always Touched By Your) Presence, Dear - Remastered 2001",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:7CrtCUDsOZ7SFQZBrj45ic",
+            "name": "Myrtle and Rose",
+            "artistNames": [
+              "Lloyd Cole"
+            ]
+          },
+          {
+            "uri": "spotify:track:6rsc4mkp2OdzVScqmCxJVH",
+            "name": "Love Has Passed Away",
+            "artistNames": [
+              "The Supernaturals"
+            ]
+          },
+          {
+            "uri": "spotify:track:30f3BvAdiGmQXOmXXwLL3h",
+            "name": "Stranded On Death Row",
+            "artistNames": [
+              "Dr. Dre",
+              "Kurupt",
+              "RBX",
+              "The Lady Of Rage",
+              "Snoop Dogg",
+              "Bushwick Bill"
+            ]
+          },
+          {
+            "uri": "spotify:track:6Gkdq550XBZoACE78rYD6g",
+            "name": "The L.A. Song",
+            "artistNames": [
+              "People Under The Stairs"
+            ]
+          },
+          {
+            "uri": "spotify:track:2NHVRc2gml9maFMHRgIC0y",
+            "name": "Mr. Sun (miss da sun)",
+            "artistNames": [
+              "Greentea Peng"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:7wKcSMrAW3d9qTd8OSd9HX",
+      "spotify:track:46jm3WYrQs4CgxwiZfTIH3",
+      "spotify:track:6j8iJwp8z4QUZYdtFT5Dra",
+      "spotify:track:2XRV927GCgp88ZlpK34laM",
+      "spotify:track:2iJZ4haYfn6fa4KYSp2iyC"
+    ],
+    "baseline": {
+      "uri": "spotify:track:46jm3WYrQs4CgxwiZfTIH3",
+      "confidence": "medium"
+    }
+  },
+  {
+    "name": "Detroit 422",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Detroit 422\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "Detroit 422 Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:169bqVVPKnu2TInM4qNCjG",
+            "name": "Detroit 442 - Remastered",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:3DnjYQmx5DQCQ0vkT0OnxM",
+            "name": "Detroit 442 - Take 2",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:2KmxA8W8jzGNZT8wPGNyQ8",
+            "name": "Detroit 442 - Remastered",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:1eupzURWrfKLBVtYEbGnF6",
+            "name": "Detroit 442 - Live At The Walnut Theatre, Philadelphia, 1978 / Remastered",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:3uz0O62HqYoyRiWZjS61KK",
+            "name": "Detroit Rock City",
+            "artistNames": [
+              "KISS"
+            ]
+          },
+          {
+            "uri": "spotify:track:0D6qZlc6vNR7PDW2RKGPsV",
+            "name": "Rapture - Remastered 2001",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:6F2vo4sxRNQ58VYe3pdiaL",
+            "name": "Rapture",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:4DmBwHmp0FVO6NJ9QfH2w2",
+            "name": "Detroit Rock City",
+            "artistNames": [
+              "KISS"
+            ]
+          },
+          {
+            "uri": "spotify:track:2NgvsclHyE5KaOVSxJxPTu",
+            "name": "Detroit",
+            "artistNames": [
+              "Badflower"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:169bqVVPKnu2TInM4qNCjG",
+      "spotify:track:3DnjYQmx5DQCQ0vkT0OnxM",
+      "spotify:track:2KmxA8W8jzGNZT8wPGNyQ8"
+    ],
+    "baseline": "missing"
+  },
+  {
+    "name": "Picture This",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Picture This\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "Picture This Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:2zHdES7SpNrmyheE0LNVfo",
+            "name": "Picture This",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:6F2vo4sxRNQ58VYe3pdiaL",
+            "name": "Rapture",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:59CLe8stbcx4XYBWdsfbwK",
+            "name": "One Way Or Another",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:4v2rkl1mC3zVAz0nXMx9r4",
+            "name": "Heart Of Glass",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:0vLwL4xuJ3s7SeaCdvMqkY",
+            "name": "Call Me",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:12Eklgucr7tHqybGA8QK7e",
+            "name": "Ladykillers - 2023 Remaster",
+            "artistNames": [
+              "Lush"
+            ]
+          },
+          {
+            "uri": "spotify:track:7GgegSv70JILGOQPWwOgSe",
+            "name": "Me & Harlow",
+            "artistNames": [
+              "My Life With The Thrill Kill Kult"
+            ]
+          },
+          {
+            "uri": "spotify:track:0Dg9x9026brPlhRQMy7LQz",
+            "name": "Co-op",
+            "artistNames": [
+              "Bess Atwell"
+            ]
+          },
+          {
+            "uri": "spotify:track:4GpUnKmzVIFFkXBTsO6ZvZ",
+            "name": "Serial Killa",
+            "artistNames": [
+              "Snoop Dogg",
+              "D.O.C.",
+              "RBX",
+              "Tha Dogg Pound"
+            ]
+          },
+          {
+            "uri": "spotify:track:4SPyjYGmv0nbLru9oX75iV",
+            "name": "Serial Killa",
+            "artistNames": [
+              "Snoop Dogg",
+              "D.O.C.",
+              "RBX",
+              "Tha Dogg Pound"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:2zHdES7SpNrmyheE0LNVfo"
+    ],
+    "baseline": {
+      "uri": "spotify:track:2zHdES7SpNrmyheE0LNVfo",
+      "confidence": "medium"
+    }
+  },
+  {
+    "name": "Atomic",
+    "searchArtist": "Totally Blondie",
+    "isCover": false,
+    "queries": [
+      {
+        "query": "track:\"Atomic\" artist:\"Totally Blondie\"",
+        "candidates": []
+      },
+      {
+        "query": "Atomic Totally Blondie",
+        "candidates": [
+          {
+            "uri": "spotify:track:5QIbR39hAEDIOkr4ggh4xc",
+            "name": "Atomic",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:0nofyi58HyJrZogKLmi3Es",
+            "name": "Atomic",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:1agoWz2axt0R9alvenDXB0",
+            "name": "Atomic",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:1PAKcvZUMSgEqRhmhZDeGk",
+            "name": "Atomic",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:0bvsvNtqlKQ9eFLHexp2bO",
+            "name": "Atomic - Remastered 2001",
+            "artistNames": [
+              "Blondie"
+            ]
+          },
+          {
+            "uri": "spotify:track:1vd6RAAMj6SZyXFKtsW2jl",
+            "name": "The Interview",
+            "artistNames": [
+              "The Smashing Pumpkins"
+            ]
+          },
+          {
+            "uri": "spotify:track:76OT5JGQSej6daDFu2Mopu",
+            "name": "Drop Dead",
+            "artistNames": [
+              "Frank Zappa"
+            ]
+          },
+          {
+            "uri": "spotify:track:1s83A4kZY8hU8oN8Okhtqc",
+            "name": "Neoprene Byzantine",
+            "artistNames": [
+              "Closure in Moscow"
+            ]
+          },
+          {
+            "uri": "spotify:track:6NLyTVfik2ihkUhThbj2QH",
+            "name": "Leeds Kick",
+            "artistNames": [
+              "Deep Kick"
+            ]
+          },
+          {
+            "uri": "spotify:track:6qli4FsQUpus0IG4vREQMB",
+            "name": "SAMURAI",
+            "artistNames": [
+              "NicholasLamar",
+              "Yung Steezee"
+            ]
+          }
+        ]
+      }
+    ],
+    "right": [
+      "spotify:track:5QIbR39hAEDIOkr4ggh4xc",
+      "spotify:track:0nofyi58HyJrZogKLmi3Es",
+      "spotify:track:1agoWz2axt0R9alvenDXB0",
+      "spotify:track:1PAKcvZUMSgEqRhmhZDeGk",
+      "spotify:track:0bvsvNtqlKQ9eFLHexp2bO"
+    ],
+    "baseline": {
+      "uri": "spotify:track:5QIbR39hAEDIOkr4ggh4xc",
+      "confidence": "medium"
+    }
+  }
+]
