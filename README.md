@@ -329,7 +329,9 @@ export function createPlugin(host: HostApi): Plugin {
 `bun build --target bun --external discord.js`. **Everything except `discord.js` is bundled** -- the
 host provides `discord.js` (a command handler's `interaction.client` reaches the live `Client`), so
 it stays external; every other dependency must be bundled, with **no native/binary deps** (the bot
-loads a single JS file). Never hand-edit `dist/` -- it is gitignored and rebuilt by CI/publish.
+loads a single JS file). A plugin's own libraries are `devDependencies` (build inputs, since
+they are bundled), installed through the root workspace (`plugins/*`); Bun builtins (`bun:sqlite`) stay imports, since the bot runs on Bun
+(`plugins/tracker` uses one). Never hand-edit `dist/` -- it is gitignored and rebuilt by CI/publish.
 
 ### Admin tab (optional)
 

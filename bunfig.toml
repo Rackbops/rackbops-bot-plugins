@@ -1,0 +1,5 @@
+# Keep the hoisted node_modules layout the repo had before it became a workspace (plugins/*,
+# for plugins/tracker's own dependencies): the isolated linker Bun defaults to for workspaces
+# hides transitive packages such as bun-types, which tsconfig.json's "types" names.
+[install]
+linker = "hoisted"
