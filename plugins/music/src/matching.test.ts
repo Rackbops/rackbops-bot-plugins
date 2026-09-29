@@ -180,10 +180,15 @@ describe("pickBestTrack", () => {
     expect(best!.confidence).toBe("high");
   });
 
-  test("an ampersand on both sides still matches exactly", () => {
+  // An ampersand flanked by real characters on both sides (not at the edge of the title, unlike
+  // "Plus +" or "& Co" above) still has to compare equal to the same title spelled out with "And"
+  // -- using the SAME literal string on both sides here would pass trivially however "&" is
+  // handled, since normalize(x) always equals normalize(x); the candidate is deliberately spelled
+  // differently so this genuinely exercises the "&"-to-"and" conversion.
+  test("an ampersand flanked by real characters on both sides still matches a differently-spelled equivalent", () => {
     const song = { name: "I Don't Like People (& They Don't Like Me)", artist: "Boston Manor" };
     const best = pickBestTrack(song, [
-      track("I Don't Like People (& They Don't Like Me)", ["Boston Manor"]),
+      track("I Don't Like People (And They Don't Like Me)", ["Boston Manor"]),
     ]);
     expect(best!.confidence).toBe("high");
   });
