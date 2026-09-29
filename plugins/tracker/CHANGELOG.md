@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.5.0] - 2026-09-29
+
+### Added
+
+- The web area's task editor (rackbops-bot-plugins#80, slice 2, plan 5.10): a signed-in person makes,
+  edits, pauses, resumes and deletes their own reminders, renewals and price trackers from the web
+  pages, under the rules the commands enforce -- the same functions run both.
+  - New: `/tracker/new/reminder`, `/new/renewal` and `/new/price`, linked from My tasks, with the
+    options of `/remind`, `/renewal` and `/price` and their defaults, limits and messages (a price's
+    page is read once before anything is made; at most 20 price trackers per person, counting the
+    ones made in Discord; `near` becomes the same bounded pattern). One new price tracker's page
+    read at a time per person on the web, which has no Discord rate limit in front of it.
+  - Edit: `/tracker/tasks/<id>/edit`. A reminder's text, time and repeat (an empty time keeps the
+    one it has, unless the repeat changes); a renewal's name, amount, currency, date, unit, every,
+    lead and note (a new amount replaces the one the next ask quotes; a new date gets `/renewal`'s
+    first-ask rule, but a date a run already asked about is not asked about again); a price's name, interval, drop and
+    baseline -- not its page, since another page is another tracker. A schedule change cancels and
+    replaces what is queued, keeping snoozes, as a zone or hour move does; a changed title or config
+    is one `edited` event; nothing changed writes nothing. A finished task cannot be edited.
+  - Pause and Resume on a task's page. A task the owner paused sends nothing until resumed, and a
+    person's delivery resuming does not un-pause it; resuming gives it its next run (a run missed
+    while paused fires once, late). Resume on a task paused for failed DMs goes on without the
+    recipients who could not be DMed, as `/task resume` does.
+  - Delete takes two posts: the first shows what will happen, the second (with `confirm=yes`)
+    archives the task. It leaves every list, its queued runs are dropped and nothing more is sent;
+    its history stays on record (an admin can see every task) and its page stays for the owner. The
+    store has no way to erase a task; that is forget-me's, later.
+  - Every editor post goes through the same gates as settings: the session (re-checked, with the
+    membership re-check), the per-session CSRF token and the `Origin` check. The task is loaded by
+    its id and must be the viewer's own, checked again in the write queue; anyone else's task, an
+    admin's view of one included, answers the same 404 as an unknown id. A refused form comes back
+    with what was typed, escaped, and the reason. Only fixed notices are shown after an action;
+    nothing from the address is echoed. No GET changes anything.
+- `/task resume` also resumes a task its owner paused on the web (before, it answered that the task
+  was not paused by failed DMs).
+
+### Changed
+
+- A form body may now be up to 32 KiB (was 8 KiB), so the longest reminder fits in any script; a
+  declared `Content-Length` over it is refused unread, and a body is read only up to the cap.
+- The price cap's message says a tracker can also be deleted on the web.
+- Internal: `/remind`, `/renewal` and `/price` now run shared plan functions (`reminderPlan`,
+  `renewalPlan`, `priceSettingsPlan`, `startPrice`/`previewPrice`/`finishPrice`) that the web
+  editor runs too; the price tracker moved to `src/price.ts` and reminders to `src/reminders.ts`.
+  A renewal's `unit` and a reminder's `repeat` are now checked against their choices there (Discord
+  already offered only those). No schema change.
+
 ## [0.4.0] - 2026-09-29
 
 ### Added

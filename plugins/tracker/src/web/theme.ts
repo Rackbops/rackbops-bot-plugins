@@ -24,6 +24,8 @@ const LAYOUT_CSS = `
 .tr-main { max-width: 60rem; margin: 0 auto; padding: var(--rb-space-4); }
 .tr-main > section { margin-bottom: var(--rb-space-5); }
 .tr-stack { display: grid; gap: var(--rb-space-3); max-width: 28rem; }
+.tr-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--rb-space-2); }
+.tr-row form { margin: 0; }
 .tr-foot { margin-top: var(--rb-space-5); }
 `;
 

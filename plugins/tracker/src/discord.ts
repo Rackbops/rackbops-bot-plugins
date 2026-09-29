@@ -8,14 +8,13 @@ import {
   clip,
   enter,
   listTasks,
-  MAX_REMINDER_TEXT,
   registerPerson,
-  remind,
-  resumeTask,
+  said,
   setHour,
-  type Repeat,
   type TrackerDeps,
 } from "./actions.js";
+import { resumeTask } from "./manage.js";
+import { MAX_REMINDER_TEXT, remind, type Repeat } from "./reminders.js";
 import {
   EPHEMERAL,
   FAILED,
@@ -30,19 +29,8 @@ import {
 import { createInteractionHandler } from "./interactions.js";
 import { finishShare, prepareShare, sendShare } from "./press.js";
 import { historyWithSeries } from "./series.js";
-import {
-  addRenewal,
-  decideRenewal,
-  DEFAULT_LEAD_DAYS,
-  DEFAULT_POLL_HOURS,
-  MAX_EVERY,
-  MAX_LEAD_DAYS,
-  MAX_NEAR,
-  MAX_NOTE,
-  MAX_POLL_HOURS,
-  type PeriodUnit,
-  trackPrice,
-} from "./tracked.js";
+import { DEFAULT_POLL_HOURS, MAX_NEAR, MAX_POLL_HOURS, trackPrice } from "./price.js";
+import { addRenewal, decideRenewal, DEFAULT_LEAD_DAYS, MAX_EVERY, MAX_LEAD_DAYS, MAX_NOTE, type PeriodUnit } from "./tracked.js";
 import type { BaselineRule, RenewalDecision } from "@rackbops/docket-types";
 import { type WebLocation, webLink } from "./web/command.js";
 
@@ -317,7 +305,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           .addSubcommand((s) =>
             s
               .setName("resume")
-              .setDescription("Resume a task paused because someone could not be DMed, without them")
+              .setDescription("Resume a paused task; one paused for failed DMs goes on without them")
               .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(24)),
           )
           .addSubcommand((s) =>
@@ -353,7 +341,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             case "history":
               return historyWithSeries(d, user, taskId);
             case "resume":
-              return resumeTask(d, user, taskId);
+              return said(await resumeTask(d, user, taskId));
             case "share": {
               const pending = await prepareShare(d, user, taskId, { discordId: shareWith?.id ?? "", membership: membership ?? "unknown" });
               if (typeof pending === "string") return pending;

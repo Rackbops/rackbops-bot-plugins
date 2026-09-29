@@ -19,7 +19,7 @@ function name(u: User): string {
   return u.displayName ?? "you";
 }
 
-function framed(v: Viewer, title: string, body: Html): string {
+export function framed(v: Viewer, title: string, body: Html): string {
   return page({ base: v.base, title, signedIn: { name: name(v.user), csrf: v.csrf }, body });
 }
 
@@ -64,7 +64,21 @@ function cadence(entry: TaskListEntry, viewer: User, now: Date): string {
   return describeSchedule(s, entry.from ?? viewer, viewer.timeZone, now);
 }
 
-export function tasksPage(v: Viewer, data: { entries: readonly TaskListEntry[]; paused: readonly PausedTask[] }, now: Date): string {
+/** The links to the editor's new-task forms. */
+function newLinks(v: Viewer): Html {
+  return html`<p class="tr-row">
+<a class="rb-btn rb-btn--primary rb-btn--sm" href="${v.base}/new/reminder">New reminder</a>
+<a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/renewal">New renewal</a>
+<a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/price">New price tracker</a>
+</p>`;
+}
+
+export function tasksPage(
+  v: Viewer,
+  data: { entries: readonly TaskListEntry[]; paused: readonly PausedTask[] },
+  now: Date,
+  flash: Html | null = null,
+): string {
   const rows = data.entries.map(
     (e) => html`<tr>
 <td><a class="rb-link" href="${v.base}/tasks/${e.task.id}">${e.task.title}</a></td>
@@ -75,7 +89,7 @@ export function tasksPage(v: Viewer, data: { entries: readonly TaskListEntry[]; 
   );
   const active =
     data.entries.length === 0
-      ? html`<p class="rb-muted">You have no active tasks. <code>/remind</code> in Discord sets one.</p>`
+      ? html`<p class="rb-muted">You have no active tasks.</p>`
       : html`<div class="rb-table-scroll"><table class="rb-table">
 <thead><tr><th scope="col">Task</th><th scope="col">From</th><th scope="col">Next</th><th scope="col">Repeats</th></tr></thead>
 <tbody>${rows}</tbody>
@@ -87,7 +101,7 @@ export function tasksPage(v: Viewer, data: { entries: readonly TaskListEntry[]; 
 <h2>Paused</h2>
 <ul>${data.paused.map(
           (p) => html`<li><a class="rb-link" href="${v.base}/tasks/${p.task.id}">${p.task.title}</a>${
-            p.held.length > 0 ? html` -- I could not DM ${p.held.join(", ")}; <code>/task resume ${p.task.id}</code> goes on without them.` : null
+            p.held.length > 0 ? html` -- I could not DM ${p.held.join(", ")}; Resume on its page goes on without them.` : null
           }</li>`,
         )}</ul>
 </section>`;
@@ -96,7 +110,9 @@ export function tasksPage(v: Viewer, data: { entries: readonly TaskListEntry[]; 
     "My tasks",
     html`<section>
 <h1>My tasks</h1>
+${flash}
 <p class="rb-muted">Times are in ${v.user.timeZone}.</p>
+${newLinks(v)}
 ${active}
 </section>
 ${paused}
@@ -104,7 +120,8 @@ ${paused}
   );
 }
 
-export function historyPage(v: Viewer, h: HistoryView): string {
+/** A task's page; `controls` are the owner's (editor-pages.ts), `flash` what the last action did. */
+export function historyPage(v: Viewer, h: HistoryView, extra: { controls?: Html | null; flash?: Html | null } = {}): string {
   const runs =
     h.runs.length === 0
       ? html`<p class="rb-muted">No runs yet.</p>`
@@ -124,7 +141,9 @@ export function historyPage(v: Viewer, h: HistoryView): string {
     html`<section>
 <p><a class="rb-link" href="${v.base}/">My tasks</a></p>
 <h1>${h.task.title}</h1>
-<p>${h.task.type}, ${h.task.status}, ${h.cadence}. Next: ${h.next ?? "nothing scheduled"}.</p>
+${extra.flash ?? null}
+<p>${h.task.type}, ${h.task.status === "archived" ? "deleted" : h.task.status}, ${h.cadence}. Next: ${h.task.status === "active" ? (h.next ?? "nothing scheduled") : "nothing, while it is not active"}.</p>
+${extra.controls ?? null}
 </section>
 <section>
 <h2>Runs</h2>
