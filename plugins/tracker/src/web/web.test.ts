@@ -9,7 +9,8 @@ import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import pkg from "../../package.json" with { type: "json" };
 import { type Membership, NOT_ADMITTED } from "../access.js";
 import { createPlugin } from "../index.js";
-import { LEFT_SERVER, lookupWithin, MEMBER_GRACE_MS, MEMBER_RECHECK_MS, RECHECK_FAILED } from "./app.js";
+import { lookupMembership } from "../discord-common.js";
+import { LEFT_SERVER, lookupWithin, MEMBER_GRACE_MS, MEMBER_RECHECK_MS, MEMBER_RETRY_MS, RECHECK_FAILED } from "./app.js";
 import { WEB_NOT_CONFIGURED } from "./command.js";
 import { parseWebUrl, WEB_URL_FORMAT } from "./config.js";
 import { esc, html } from "./html.js";
@@ -428,17 +429,99 @@ describe("membership re-check (TRACKER_GUILD_ID set)", () => {
     clock.advance(MEMBER_RECHECK_MS);
     expect((await call(plugin, "GET", "/", { jar })).status).toBe(200); // no client yet
     answer = async () => "unknown";
+    clock.advance(MEMBER_RETRY_MS);
     expect((await call(plugin, "GET", "/", { jar })).status).toBe(200); // not confirmed, so asked again
     answer = async () => {
       throw new Error("discord is down");
     };
+    clock.advance(MEMBER_RETRY_MS);
     expect((await call(plugin, "GET", "/", { jar })).status).toBe(200);
     expect(l.calls).toHaveLength(3);
-    clock.advance(MEMBER_GRACE_MS - MEMBER_RECHECK_MS);
+    clock.advance(MEMBER_GRACE_MS - MEMBER_RECHECK_MS - 2 * MEMBER_RETRY_MS);
     const res = await call(plugin, "GET", "/", { jar });
     expect(res.status).toBe(403);
     expect(await res.text()).toContain(RECHECK_FAILED.replaceAll("'", "&#39;"));
     expect(jar.has(SESSION)).toBe(false);
+  });
+
+  it("after a failed lookup, that person is not looked up again for a minute (served under the grace rule)", async () => {
+    const l = lookup(async () => "unknown");
+    const { plugin, clock } = await world({ guild: true, webMembership: l.fn });
+    await people(plugin);
+    const jar = await signIn(plugin, LARRY);
+    clock.advance(MEMBER_RECHECK_MS);
+    for (let i = 0; i < 5; i++) expect((await call(plugin, "GET", "/", { jar })).status).toBe(200);
+    expect(l.calls).toHaveLength(1);
+    clock.advance(MEMBER_RETRY_MS - 1);
+    await call(plugin, "GET", "/", { jar });
+    expect(l.calls).toHaveLength(1);
+    clock.advance(1);
+    await call(plugin, "GET", "/", { jar });
+    expect(l.calls).toHaveLength(2);
+  });
+
+  it("concurrent requests share one lookup", async () => {
+    let release: (m: Membership) => void = () => {};
+    const l = lookup(() => new Promise<Membership>((resolve) => (release = resolve)));
+    const { plugin, clock } = await world({ guild: true, webMembership: l.fn });
+    await people(plugin);
+    const jar = await signIn(plugin, LARRY);
+    clock.advance(MEMBER_RECHECK_MS);
+    const pending = [call(plugin, "GET", "/", { jar }), call(plugin, "GET", "/settings", { jar }), call(plugin, "GET", "/", { jar })];
+    await Bun.sleep(5);
+    expect(l.calls).toHaveLength(1);
+    release("member");
+    expect((await Promise.all(pending)).map((r) => r.status)).toEqual([200, 200, 200]);
+  });
+
+  it("a session deleted while its lookup waited is not acted on", async () => {
+    let release: (m: Membership) => void = () => {};
+    const l = lookup(() => new Promise<Membership>((resolve) => (release = resolve)));
+    const { plugin, clock, dbPath } = await world({ guild: true, webMembership: l.fn });
+    await people(plugin);
+    const jar = await signIn(plugin, LARRY);
+    const csrf = await csrfOf(plugin, jar);
+    clock.advance(MEMBER_RECHECK_MS);
+    const pending = call(plugin, "POST", "/settings", { jar, form: { hour: "5", zone: "UTC", csrf }, origin: ORIGIN });
+    await Bun.sleep(5);
+    const db = new Database(dbPath);
+    db.query("DELETE FROM web_sessions").run();
+    release("member");
+    const res = await pending;
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/tracker/signin");
+    expect(db.query("SELECT preferred_hour AS h, time_zone AS z FROM users WHERE seq = 2").get()).toEqual({ h: 9, z: "America/New_York" });
+    db.close();
+  });
+
+  it("a confirmation time in the future (clock set back) is re-checked, not trusted", async () => {
+    const l = lookup(async () => "unknown");
+    const { plugin, clock } = await world({ guild: true, webMembership: l.fn });
+    await people(plugin);
+    const jar = await signIn(plugin, LARRY);
+    clock.advance(-60 * 60 * 1000);
+    const res = await call(plugin, "GET", "/", { jar });
+    expect(l.calls).toEqual([LARRY]);
+    // Not a fresh confirmation, so not within the grace either: signed out.
+    expect(res.status).toBe(403);
+  });
+
+  it("the member lookup asks Discord, never discord.js's cache: a cached member who left is not a member", async () => {
+    const cached = new Set([LARRY]);
+    const client = {
+      guilds: {
+        fetch: async () => ({
+          members: {
+            fetch: async (o: { user: string; force?: boolean }) => {
+              if (!o.force && cached.has(o.user)) return { id: o.user };
+              throw Object.assign(new Error("Unknown Member"), { code: 10007 });
+            },
+          },
+        }),
+      },
+    };
+    const log = { info() {}, warn() {}, error() {} };
+    expect(await lookupMembership({ guildId: null, user: { id: LARRY }, client }, GUILD, LARRY, log)).toBe("not-member");
   });
 
   it("a lookup that hangs counts as unknown after the timeout", async () => {

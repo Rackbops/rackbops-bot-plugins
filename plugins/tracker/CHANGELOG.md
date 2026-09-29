@@ -24,7 +24,9 @@
   minutes ago or more is checked with one member lookup (at most about 3 seconds), through the
   discord.js Client of an interaction the plugin has handled since start. Someone who left the
   server is signed out of every session; a lookup that fails, or no interaction yet, is allowed
-  while the last confirmation is under 24 hours old, and signs them out after that.
+  while the last confirmation is under 24 hours old, and signs them out after that. Concurrent
+  requests share one lookup per person, and a person whose lookup failed is not looked up again
+  for a minute.
 - The README says to keep the web origin on a domain whose sibling subdomains are all yours: a
   sibling can set a `__Secure-` cookie on the parent domain, and `__Host-` cannot be used with
   `Path=/tracker/`.
@@ -35,6 +37,13 @@
 - Schema 3: `web_login_tokens` and `web_sessions`. A 0.2.0 database migrates in place on first
   start. **Rolling back** to 0.2.0 afterwards does not work (0.2.0 refuses a newer database); keep
   a copy of `tracker.sqlite` from before the upgrade to roll back.
+
+### Fixed
+
+- The membership gate (`TRACKER_GUILD_ID`) asked discord.js's member cache rather than Discord:
+  the member lookup now passes `force: true`. With only the Guilds intent the bot never hears that
+  a member left, so someone who had once used the tracker in the server stayed a member forever
+  when they used it from DMs (0.2.0's gate) -- and would have on the web.
 
 ## [0.2.0] - 2026-09-29
 

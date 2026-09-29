@@ -28,12 +28,17 @@ import { STYLESHEET, STYLESHEET_PATH } from "./theme.js";
  *   `MEMBER_RECHECK_MS` ago or more is re-checked by one member lookup (outside the write queue,
  *   given `MEMBER_CHECK_TIMEOUT_MS`): not a member signs the person out everywhere; a member
  *   refreshes the time; an error, a timeout or no Discord client yet lets them on while the last
- *   confirmation is under `MEMBER_GRACE_MS` old, and signs them out after that.
+ *   confirmation is under `MEMBER_GRACE_MS` old, and signs them out after that. Concurrent requests
+ *   share one lookup per person, held until Discord answers (a timed-out one is abandoned, not
+ *   cancelled); after a failed one the person is not looked up again for `MEMBER_RETRY_MS`, so an
+ *   outage or a rate limit does not pile calls into the bot's shared REST queue. A confirmation
+ *   time in the future (a clock set back) counts as stale.
  */
 
 export const MEMBER_RECHECK_MS = 15 * 60 * 1000;
 export const MEMBER_GRACE_MS = 24 * 60 * 60 * 1000;
 export const MEMBER_CHECK_TIMEOUT_MS = 3000;
+export const MEMBER_RETRY_MS = 60 * 1000;
 
 export const LEFT_SERVER = `You are signed out. ${NOT_MEMBER}`;
 export const RECHECK_FAILED = "You are signed out: I could not check that you are still a member of this tracker's server.";
@@ -88,6 +93,10 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   const SESSION_COOKIE = `__Secure-${w.name}-session`;
   const LOGIN_COOKIE = `__Secure-${w.name}-login`;
   const clear = (name: string) => cookie(name, "", { base, maxAgeSeconds: 0, sameSite: "Lax" });
+  // In memory only, per tracker user id: the lookup still waiting on Discord, and when the last one
+  // failed.
+  const inFlight = new Map<string, Promise<Membership | null>>();
+  const failedAt = new Map<string, number>();
 
   async function authenticate(d: TrackerDeps, request: Request): Promise<Auth> {
     const id = readCookie(request, SESSION_COOKIE);
@@ -101,25 +110,50 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     }
     const refused = await recheckMembership(d, session, user);
     if (refused) return refused;
-    return { kind: "ok", id, session, user };
+    // The lookup may have waited: act only on the session as it stands now.
+    const current = d.sessions.find(id, d.clock.now());
+    if (!current) return { kind: "stale" };
+    return { kind: "ok", id, session: current, user };
+  }
+
+  /** One lookup per person at a time, kept until Discord answers; each caller waits at most the timeout. */
+  function lookupShared(userId: string, discordId: string): Promise<Membership | null> {
+    let pending = inFlight.get(userId);
+    if (!pending) {
+      const started = w.membership(discordId).catch((): Membership => "unknown");
+      pending = started;
+      inFlight.set(userId, started);
+      void started.finally(() => {
+        if (inFlight.get(userId) === started) inFlight.delete(userId);
+      });
+    }
+    const shared = pending;
+    return lookupWithin(() => shared, MEMBER_CHECK_TIMEOUT_MS);
   }
 
   async function recheckMembership(d: TrackerDeps, session: Session, user: User): Promise<Auth | null> {
     if (w.guildId === null) return null;
-    const now = d.clock.now();
-    const age = session.memberCheckedAt ? now.getTime() - Date.parse(session.memberCheckedAt) : Number.POSITIVE_INFINITY;
-    if (age < MEMBER_RECHECK_MS) return null;
-    const discordId = user.discordId;
-    const found = discordId ? await lookupWithin(() => w.membership(discordId), MEMBER_CHECK_TIMEOUT_MS) : "unknown";
+    const now = d.clock.now().getTime();
+    const age = session.memberCheckedAt ? now - Date.parse(session.memberCheckedAt) : Number.POSITIVE_INFINITY;
+    const fresh = (limit: number) => age >= 0 && age < limit;
+    if (fresh(MEMBER_RECHECK_MS)) return null;
+    const lastFailed = failedAt.get(user.id);
+    const backingOff = lastFailed !== undefined && now - lastFailed >= 0 && now - lastFailed < MEMBER_RETRY_MS;
+    let found: Membership | null = "unknown";
+    if (!backingOff && user.discordId) {
+      found = await lookupShared(user.id, user.discordId);
+      if (found === "member" || found === "not-member") failedAt.delete(user.id);
+      else failedAt.set(user.id, d.clock.now().getTime());
+    }
     if (found === "not-member") {
       d.sessions.deleteForUser(user.id);
       return { kind: "signed-out", note: LEFT_SERVER };
     }
     if (found === "member") {
-      d.sessions.confirmMember(user.id, now.toISOString());
+      d.sessions.confirmMember(user.id, d.clock.now().toISOString());
       return null;
     }
-    if (age < MEMBER_GRACE_MS) return null;
+    if (fresh(MEMBER_GRACE_MS)) return null;
     d.sessions.deleteForUser(user.id);
     return { kind: "signed-out", note: RECHECK_FAILED };
   }

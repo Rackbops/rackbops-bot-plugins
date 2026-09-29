@@ -91,7 +91,10 @@ queue), through the discord.js Client of an interaction the plugin has handled s
 Not a member: every session of theirs ends, on a page that says why. A member: the time is
 refreshed. A failed or slow lookup, or no interaction yet since a restart: they stay signed in
 while the last confirmation is under 24 hours old, and are then signed out and told to run `/web`
-again. There is no way yet to take a person off the tracker (forget-me and the admin view, below).
+again. Concurrent requests share one lookup per person, and after a failed one that person is not
+looked up again for a minute, so an outage or rate limit does not pile up calls. A confirmation
+time in the future (a clock set back) counts as stale. Every lookup asks Discord (`force: true`),
+never discord.js's member cache, which with only the Guilds intent never learns that someone left. There is no way yet to take a person off the tracker (forget-me and the admin view, below).
 
 **Choose the web origin's domain with care.** A host under the same parent domain as
 `TRACKER_WEB_URL` that you do not control can set a `__Secure-` cookie on the parent domain
