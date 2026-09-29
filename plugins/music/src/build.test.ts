@@ -188,6 +188,22 @@ describe("findSong", () => {
     });
     expect(await findSong(client, "AT", song("One"))).toMatchObject({ ok: false, error: "Spotify returned HTTP 429" });
   });
+
+  test("a failure on the optional second query doesn't discard a match the first one already found", async () => {
+    const { client } = fakeSpotify({}, {
+      searchTracks: async (_t, query) =>
+        query.startsWith("track:")
+          ? { ok: true, value: [candidate("One", "Someone Else")] } // a usable, if unconfident, match
+          : { ok: false, error: "Spotify returned HTTP 429" },
+    });
+    const found = await findSong(client, "AT", song("One"));
+    // #61 made this second query possible where before it would never have run at all; a
+    // transient failure on it must not turn an already-found low/medium pick into a fatal error.
+    expect(found.ok).toBe(true);
+    expect(found.ok === true && found.match?.confidence).toBe("low");
+    expect(found.trace.hitQuery).toBe(0);
+    expect(found.trace.queries).toHaveLength(1);
+  });
 });
 
 describe("buildPlaylist", () => {

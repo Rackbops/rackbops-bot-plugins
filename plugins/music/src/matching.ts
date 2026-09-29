@@ -195,7 +195,8 @@ export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandida
 }
 
 /**
- * The ordered search queries to try for one song, stopping at the first that yields a match.
+ * The ordered search queries to try for one song. `findSong` (build.ts) stops early once one of
+ * them is confident (#61) -- it no longer stops at merely the first that yields any match.
  *
  * The field-filtered query is precise but brittle -- Spotify's `track:"..."` filter matches poorly
  * when the title carries punctuation the indexer normalised differently -- so a loose query is

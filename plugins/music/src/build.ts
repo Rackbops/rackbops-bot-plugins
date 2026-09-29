@@ -152,12 +152,19 @@ export async function findSong(
   for (const query of buildQueries(wanted)) {
     const result = await spotify.searchTracks(accessToken, query);
     if (!result.ok) {
-      queries.push({ query, candidates: [] });
-      return {
-        ok: false,
-        error: result.error,
-        trace: { name: song.name, searchArtist: song.searchArtist, outcome: "error", queries, error: result.error },
-      };
+      if (best === undefined) {
+        queries.push({ query, candidates: [] });
+        return {
+          ok: false,
+          error: result.error,
+          trace: { name: song.name, searchArtist: song.searchArtist, outcome: "error", queries, error: result.error },
+        };
+      }
+      // #61 made this second, optional query possible for a song that already has a usable match
+      // from the first one -- a transient failure trying to do better (a 429, an expired token)
+      // must not throw away a pick already in hand, or abort the whole build over it. Stop here
+      // and report exactly what an unattempted second query would have: the first pick, untraced.
+      break;
     }
     queries.push({
       query,
