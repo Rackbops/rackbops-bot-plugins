@@ -15,7 +15,8 @@ import {
   type User,
 } from "@rackbops/docket-core";
 import { money, type RenewalConfig, type RenewalDecision } from "@rackbops/docket-types";
-import { clip, MAX_TITLE, NO_SUCH_TASK, type Plan, replyLanes, said, type TaskResult, type TrackerDeps } from "./actions.js";
+import { CURRENCY_LENGTH, DATE_LENGTH, MAX_NOTE, MAX_TITLE } from "./limits.js";
+import { clip, liveTaskCap, NO_SUCH_TASK, type Plan, replyLanes, said, type TaskResult, type TrackerDeps } from "./actions.js";
 
 /**
  * Renewals (rackbops-bot-plugins#81, plan 1.2 category 6, E6): `/renewal`'s rules and the command
@@ -24,7 +25,6 @@ import { clip, MAX_TITLE, NO_SUCH_TASK, type Plan, replyLanes, said, type TaskRe
  * Like actions.ts, no discord.js: discord.ts reads the options and renders what these return.
  */
 
-export const MAX_NOTE = 300;
 export const DEFAULT_LEAD_DAYS = 7;
 export const MAX_LEAD_DAYS = 365;
 export const MAX_EVERY = 100;
@@ -64,7 +64,7 @@ export function renewalPlan(
   if (name.length > MAX_TITLE) return bad(`That name is longer than ${MAX_TITLE} characters.`);
   if (!Number.isFinite(input.amount) || input.amount < 0) return bad("The amount has to be zero or more.");
   const currency = input.currency.trim().toUpperCase();
-  if (!/^[A-Z]{3}$/.test(currency)) return bad("The currency is a three-letter code, such as USD or EUR.");
+  if (!new RegExp(`^[A-Z]{${CURRENCY_LENGTH}}$`).test(currency)) return bad("The currency is a three-letter code, such as USD or EUR.");
   const note = input.note?.trim() ?? "";
   if (note.length > MAX_NOTE) return bad(`The note is longer than ${MAX_NOTE} characters.`);
   const unit = input.unit ?? "year";
@@ -74,7 +74,7 @@ export function renewalPlan(
   const lead = input.lead ?? DEFAULT_LEAD_DAYS;
   if (!Number.isInteger(lead) || lead < 0 || lead > MAX_LEAD_DAYS) return bad(`\`lead\` is a whole number of days from 0 to ${MAX_LEAD_DAYS}.`);
   const renews = input.renews.trim();
-  const days = /^\d{4}-\d{2}-\d{2}$/.test(renews) ? daysUntil(renews, d.clock.now(), user.timeZone) : null;
+  const days = renews.length === DATE_LENGTH && /^\d{4}-\d{2}-\d{2}$/.test(renews) ? daysUntil(renews, d.clock.now(), user.timeZone) : null;
   if (days === null) return bad("Give the date as YYYY-MM-DD, for example 2026-12-01.");
   if (days < 0) return bad("That date has passed: give the next renewal or expiry date.");
   return { ok: true, name, amount: input.amount, currency, note, days, schedule: { kind: "period", every, unit, anchor: renews, leadDays: lead } };
@@ -110,6 +110,8 @@ export async function createRenewal(d: TrackerDeps, user: User, input: RenewalIn
   if (!type) return { ok: false, error: "Renewals are not available on this bot." };
   const plan = renewalPlan(d, user, input);
   if (!plan.ok) return plan;
+  const capped = await liveTaskCap(d, user);
+  if (capped) return { ok: false, error: capped };
   const { name, currency, note, schedule } = plan;
   const now = d.clock.now();
   const config: RenewalConfig = { amount: plan.amount, currency, ...(note ? { note } : {}) };

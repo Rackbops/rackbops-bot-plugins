@@ -23,6 +23,7 @@ import type { HostApi, PluginLog } from "../../../packages/api/contract.js";
 import { decideAccess, type Membership, type Need } from "./access.js";
 import type { Admissions } from "./admissions.js";
 import { type DeliveryHealth, PAUSE_AFTER, resumedNotice } from "./delivery-health.js";
+import { MAX_LIVE_TASKS, MAX_WHEN } from "./limits.js";
 import { admit, PeopleError, setPreferences } from "./people.js";
 import type { Sessions } from "./web/sessions.js";
 import type { LoginLinks } from "./web/signin-link.js";
@@ -48,11 +49,12 @@ export interface TrackerDeps {
   /** The web area's one-time sign-in links and its sessions (web/). */
   logins: LoginLinks;
   sessions: Sessions;
+  /** Whether the web area (and its task editor) is set up: `TRACKER_WEB_URL`. Answers mention it only then. */
+  webEditor: boolean;
 }
 
 /** Discord's cap on a message; every answer is cut to it. */
 export const MAX_ANSWER = 2000;
-export const MAX_TITLE = 100;
 
 /** Never echoes the id a person typed: a typed id is theirs to see, not the bot's to repeat. */
 export const NO_SUCH_TASK = "You have no task with that id. `/tasks` lists yours.";
@@ -160,13 +162,16 @@ export async function setHour(d: TrackerDeps, user: User, hour: number): Promise
 }
 
 /**
- * A preferred-hour or zone edit cancels and replaces what is queued (plan 5.3): every active
- * recurring task of the owner whose time depends on it -- all calendar and period tasks when the
+ * A preferred-hour or zone edit cancels and replaces what is queued (plan 5.3): every active or
+ * paused recurring task of the owner whose time depends on it -- all calendar and period tasks when the
  * zone moved, only those naming no hour when just the hour did. Returns how many moved.
  */
 async function rescheduleOwned(d: TrackerDeps, owner: User, zoneChanged: boolean): Promise<number> {
   let moved = 0;
-  for (const task of await d.store.listTasks({ ownerId: owner.id, status: "active" })) {
+  // Paused ones too: a paused task keeps its queued run, which would otherwise fire once at the old
+  // zone's time on resume. Rescheduling a paused one only drops that run; resume makes the next.
+  const live = [...(await d.store.listTasks({ ownerId: owner.id, status: "active" })), ...(await d.store.listTasks({ ownerId: owner.id, status: "paused" }))];
+  for (const task of live) {
     const s = task.schedule;
     if (!s || (s.kind !== "calendar" && s.kind !== "period")) continue;
     if (!zoneChanged && s.hour !== undefined) continue;
@@ -197,6 +202,15 @@ export type Plan<T> = ({ ok: true } & T) | { ok: false; error: string };
 
 /** What a create or an edit did: the task and the words for it, or why not. */
 export type TaskResult = { ok: true; task: Task; text: string } | { ok: false; error: string };
+
+/** Why `owner` may not make another task, or null: at most `MAX_LIVE_TASKS` active and paused, all types together. */
+export async function liveTaskCap(d: Pick<TrackerDeps, "store" | "webEditor">, owner: User): Promise<string | null> {
+  const active = await d.store.listTasks({ ownerId: owner.id, status: "active" });
+  const paused = await d.store.listTasks({ ownerId: owner.id, status: "paused" });
+  if (active.length + paused.length < MAX_LIVE_TASKS) return null;
+  const where = d.webEditor ? " or delete one on the web" : "";
+  return `You already have ${MAX_LIVE_TASKS} active or paused tasks, the most one person may. Finish one${where} first.`;
+}
 
 /** A result as a command's answer. */
 export function said(r: TaskResult | { ok: true; text: string }): string {
@@ -252,6 +266,7 @@ export async function answerLatest(
   user: User,
   input: { taskId: string; kind: "done" | "snooze"; until?: string },
 ): Promise<string> {
+  if (input.until !== undefined && input.until.trim().length > MAX_WHEN) return `\`until\` is longer than ${MAX_WHEN} characters.`;
   const task = await ownTask(d, user, input.taskId);
   if (!task) return NO_SUCH_TASK;
   const fired = (await d.store.listOccurrences({ taskId: task.id })).filter(

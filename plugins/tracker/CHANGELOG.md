@@ -18,10 +18,15 @@
     first-ask rule, but a date a run already asked about is not asked about again); a price's name, interval, drop and
     baseline -- not its page, since another page is another tracker. A schedule change cancels and
     replaces what is queued, keeping snoozes, as a zone or hour move does; a changed title or config
-    is one `edited` event; nothing changed writes nothing. A finished task cannot be edited.
+    is one `edited` event; nothing changed writes nothing. A field left empty (or not sent) keeps
+    what the task has -- an empty note clears it, and an empty price name goes back to the page's
+    address. A renewal date that is one of the schedule's own period dates (as the form offers once
+    the first date has passed) keeps the stored schedule and its anchor, so a monthly renewal on the
+    31st stays on the 31st; only a different date re-anchors. A finished task cannot be edited.
   - Pause and Resume on a task's page. A task the owner paused sends nothing until resumed, and a
     person's delivery resuming does not un-pause it; resuming gives it its next run (a run missed
-    while paused fires once, late). Resume on a task paused for failed DMs goes on without the
+    while paused fires once, late). A zone or preferred-hour change moves a paused task's queued run
+    too, so it never fires at the old time. Resume on a task paused for failed DMs goes on without the
     recipients who could not be DMed, as `/task resume` does.
   - Delete takes two posts: the first shows what will happen, the second (with `confirm=yes`)
     archives the task. It leaves every list, its queued runs are dropped and nothing more is sent;
@@ -40,7 +45,15 @@
 
 - A form body may now be up to 32 KiB (was 8 KiB), so the longest reminder fits in any script; a
   declared `Content-Length` over it is refused unread, and a body is read only up to the cap.
-- The price cap's message says a tracker can also be deleted on the web.
+- The price cap's message says a tracker can also be deleted on the web, when the web area is set up.
+- At most 200 active or paused tasks per person, of every type together (`MAX_LIVE_TASKS`), checked
+  when a reminder, renewal or price tracker is made, in Discord and on the web alike.
+- One set of length limits (`src/limits.ts`) for the slash options, the web forms' `maxlength` and
+  the server's own checks: a price's page (1000), a `when` or `until` (100), a name (100), a note
+  (300), `near` (100), a reminder's text (1500), a currency (3), a zone (64). The server now checks
+  the page's length and the `when`/`until` length itself, not only Discord.
+- A `/settings` or `/register` zone or hour change also moves the recurring tasks the person has
+  paused, not only the active ones.
 - Internal: `/remind`, `/renewal` and `/price` now run shared plan functions (`reminderPlan`,
   `renewalPlan`, `priceSettingsPlan`, `startPrice`/`previewPrice`/`finishPrice`) that the web
   editor runs too; the price tracker moved to `src/price.ts` and reminders to `src/reminders.ts`.

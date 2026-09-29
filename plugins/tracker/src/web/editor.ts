@@ -1,8 +1,8 @@
-import { daysUntil, describeSchedule, periodDate, SNOOZE_PREFIX, type Task, type User } from "@rackbops/docket-core";
+import { describeSchedule, type Task, type User } from "@rackbops/docket-core";
 import type { BaselineRule, PriceConfig, RenewalConfig } from "@rackbops/docket-types";
 import { NO_SUCH_TASK, type TaskResult, type TrackerDeps } from "../actions.js";
 import type { Queue } from "../discord-common.js";
-import { editPrice, editReminder, editRenewal } from "../edit.js";
+import { editPrice, editReminder, editRenewal, renewalDate } from "../edit.js";
 import { loadHistory } from "../history.js";
 import { deleteTask, type Done, ownLiveTask, pauseTask, resumeTask } from "../manage.js";
 import { createReminder, type Repeat, repeatOf } from "../reminders.js";
@@ -99,6 +99,39 @@ function priceSettings(form: URLSearchParams) {
   };
 }
 
+/** An edit's form: an empty field is left out (kept), except a note or a name, where empty clears. */
+function reminderEdit(form: URLSearchParams) {
+  const text = opt(form, "text");
+  const when = opt(form, "when");
+  const repeat = opt(form, "repeat");
+  return { ...(text !== undefined ? { text } : {}), ...(when !== undefined ? { when } : {}), ...(repeat !== undefined ? { repeat: repeat as Repeat } : {}) };
+}
+
+function renewalEdit(form: URLSearchParams) {
+  const name = opt(form, "name");
+  const amount = decimal(form, "amount");
+  const currency = opt(form, "currency");
+  const renews = opt(form, "renews");
+  const every = int(form, "every");
+  const lead = int(form, "lead");
+  const unit = opt(form, "unit");
+  return {
+    ...(name !== undefined ? { name } : {}),
+    ...(amount !== undefined ? { amount } : {}),
+    ...(currency !== undefined ? { currency } : {}),
+    ...(renews !== undefined ? { renews } : {}),
+    ...(every !== undefined ? { every } : {}),
+    ...(lead !== undefined ? { lead } : {}),
+    ...(unit !== undefined ? { unit: unit as PeriodUnit } : {}),
+    ...(form.has("note") ? { note: str(form, "note") } : {}),
+  };
+}
+
+function priceEdit(form: URLSearchParams) {
+  const { name: _name, ...rest } = priceSettings(form);
+  return { ...rest, ...(form.has("name") ? { name: str(form, "name") } : {}) };
+}
+
 // --- new ------------------------------------------------------------------------------------------
 
 const DEFAULTS: Record<EditorType, Values> = {
@@ -152,19 +185,16 @@ export async function taskPage(e: Editor, id: string, done: string | null, error
 }
 
 /** The edit form's values as the task stands: what each field would say to keep it as it is. */
-async function current(d: TrackerDeps, user: User, task: Task): Promise<Values> {
+function current(d: TrackerDeps, user: User, task: Task): Values {
   const now = d.clock.now();
   if (task.type === "reminder") return { text: String((task.config as { text?: unknown } | null)?.text ?? ""), when: "", repeat: repeatOf(task.schedule) };
   if (task.type === "renewal" && task.schedule?.kind === "period") {
     const s = task.schedule;
     const c = task.config as RenewalConfig;
     const carried = (task.state as { amount?: unknown } | null)?.amount;
-    let renews = s.anchor;
-    // After a period has rolled the anchor is in the past: offer the date the next ask is about.
-    if ((daysUntil(s.anchor, now, user.timeZone) ?? 0) < 0) {
-      const next = (await d.store.listOccurrences({ taskId: task.id, status: "queued" })).find((o) => !o.dedupeKey.startsWith(SNOOZE_PREFIX));
-      if (next) renews = periodDate(s, new Date(next.dueAt), user.timeZone);
-    }
+    // After a period has rolled the anchor is in the past: offer the next period date, which edit.ts
+    // takes as the schedule as it is.
+    const renews = renewalDate(task, user, now);
     return {
       name: task.title,
       amount: String(typeof carried === "number" ? carried : c.amount),
@@ -199,7 +229,7 @@ export async function editGet(e: Editor, id: string): Promise<Response> {
   if (!task) return htmlResponse(notFoundPage(e.v.base, e.v), 404);
   // A finished task has nothing to edit: its page says what it is.
   if (task.status !== "active" && task.status !== "paused") return redirect(taskHref(e.v, task.id));
-  return htmlResponse(editPage(e, task, await current(e.d, e.v.user, task)));
+  return htmlResponse(editPage(e, task, current(e.d, e.v.user, task)));
 }
 
 export async function editPost(e: Editor, id: string, form: URLSearchParams): Promise<Response> {
@@ -207,10 +237,10 @@ export async function editPost(e: Editor, id: string, form: URLSearchParams): Pr
   if (!task) return htmlResponse(notFoundPage(e.v.base, e.v), 404);
   const saved =
     task.type === "reminder"
-      ? await asViewer(e, (u) => editReminder(e.d, u, task.id, reminderInput(form)))
+      ? await asViewer(e, (u) => editReminder(e.d, u, task.id, reminderEdit(form)))
       : task.type === "renewal"
-        ? await asViewer(e, (u) => editRenewal(e.d, u, task.id, renewalInput(form)))
-        : await asViewer(e, (u) => editPrice(e.d, u, task.id, priceSettings(form)));
+        ? await asViewer(e, (u) => editRenewal(e.d, u, task.id, renewalEdit(form)))
+        : await asViewer(e, (u) => editPrice(e.d, u, task.id, priceEdit(form)));
   if (saved.ok) return redirect(`${taskHref(e.v, task.id)}?done=saved`);
   if (saved.error === NO_SUCH_TASK) return htmlResponse(notFoundPage(e.v.base, e.v), 404);
   return htmlResponse(editPage(e, task, typed(task.type as EditorType, "edit", form), saved.error), 400);

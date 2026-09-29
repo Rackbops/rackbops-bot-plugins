@@ -91,14 +91,20 @@ you in as someone else. Sign out is a POST too.
 and the same functions check and make them: the same defaults, limits and messages, the page read
 once before a price tracker is made, at most 20 price trackers per person wherever they were made,
 and `near` turned into the same bounded pattern; a person has one new price tracker's page read in
-flight at a time. An edit changes a reminder's text, time and repeat
+flight at a time. Every person may have at most 200 active or paused tasks of all types together,
+made anywhere. The length limits are one set (`src/limits.ts`) for the slash options, the forms
+and the server's checks. An edit changes a reminder's text, time and repeat
 (an empty time keeps the one it has, unless the repeat changes); a renewal's name, amount,
 currency, date, unit, every, lead and note (a new amount is the one the next ask quotes; a new date
 gets `/renewal`'s first-ask rule, but a date a run already asked about is not asked again); a price's name, interval,
 drop and baseline, never its page. A schedule change cancels and replaces what is queued and keeps
-snoozes, as a zone move does, and each change is in the task's history. A finished task cannot be
+snoozes, as a zone move does, and each change is in the task's history. An empty field keeps what
+the task has (an empty note clears it; an empty price name is the page's address). A renewal date
+that is one of the schedule's own period dates keeps the schedule and its anchor as they are, so the
+31st stays the 31st; only a different date re-anchors. A finished task cannot be
 edited. Pause holds everything the task would send until Resume, and a person's delivery resuming
-does not undo it; a run missed while paused fires once, late, on resume. Resume on a task paused
+does not undo it; a run missed while paused fires once, late, on resume, and a zone or hour change
+moves a paused task's run as it does an active one's. Resume on a task paused
 for failed DMs is `/task resume`. Delete archives the task: it leaves every list, its queued runs
 are dropped and nothing more is sent, but its history is kept (an admin can see every task) and
 its page stays for the owner. Every editor post passes the session, CSRF and `Origin` checks; the
@@ -145,7 +151,7 @@ The `__Host-` prefix, which would stop that, requires `Path=/` and so cannot be 
 | Commands | `src/discord.ts`, `src/interactions.ts`, `src/discord-common.ts` (discord.js); `src/actions.ts`, `src/press.ts`, `src/history.ts`, `src/access.ts` | The discord.js files read options and render; the rest is Discord-free over the injected store, clock and notifier. Store writes are handled one at a time; Discord lookups and DMs run outside that queue. |
 | Health | `src/health.ts` | `GET /tracker/healthz` (through the bot's HTTP router): `200` `ok`/`starting`, `503` `inactive`/`stale`/`blocked`. |
 | Web area | `src/web/` | `app.ts` authenticates and dispatches (pure over the injected store and clock), `routes.ts` names the paths; `pages.ts`, `editor-pages.ts` and `html.ts` render; `editor.ts` reads the editor's forms and calls the shared rules; `signin-link.ts` and `sessions.ts` hold the sign-in; `theme.ts` the stylesheet; `command.ts` is `/web`. |
-| Task rules | `src/reminders.ts`, `src/tracked.ts`, `src/price.ts`, `src/edit.ts`, `src/manage.ts` | What makes, edits, pauses, resumes and deletes a task, Discord-free, for the commands and the web editor alike. |
+| Task rules | `src/reminders.ts`, `src/tracked.ts`, `src/price.ts`, `src/edit.ts`, `src/manage.ts`, `src/limits.ts` | What makes, edits, pauses, resumes and deletes a task, and the limits on it, Discord-free, for the commands and the web editor alike. |
 
 ## Configuration
 

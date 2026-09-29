@@ -8,7 +8,8 @@ import {
   money,
   type PriceConfig,
 } from "@rackbops/docket-types";
-import { clip, MAX_TITLE, type Plan, said, type TaskResult, type TrackerDeps } from "./actions.js";
+import { MAX_NEAR, MAX_TITLE, MAX_URL } from "./limits.js";
+import { clip, liveTaskCap, type Plan, said, type TaskResult, type TrackerDeps } from "./actions.js";
 import type { Step } from "./discord.js";
 import { FetchRefusedError, urlProblem } from "./fetch.js";
 
@@ -18,7 +19,6 @@ import { FetchRefusedError, urlProblem } from "./fetch.js";
  * back in it -- over docket's `price` type, for the command and the web editor alike. No discord.js.
  */
 
-export const MAX_NEAR = 100;
 /** Active and paused price trackers one person may own: each is a page read every few hours. */
 export const MAX_PRICE_TASKS = 20;
 export const DEFAULT_POLL_HOURS = 12;
@@ -107,7 +107,11 @@ async function ownedPriceTasks(d: TrackerDeps, user: User): Promise<number> {
   return [...active, ...paused].filter((t) => t.type === "price").length;
 }
 
-const AT_CAP = `You already track ${MAX_PRICE_TASKS} prices, the most one person may. Stop one with \`/task done\`, or delete one on the web, first.`;
+/** The price cap's answer; the web is mentioned only where there is one. */
+function atCap(d: Pick<TrackerDeps, "webEditor">): string {
+  const where = d.webEditor ? ", or delete one on the web," : "";
+  return `You already track ${MAX_PRICE_TASKS} prices, the most one person may. Stop one with \`/task done\`${where} first.`;
+}
 
 /** The title a price gets with no name: the page's host and path. */
 export function titleFor(url: string): string {
@@ -122,13 +126,16 @@ export function titleFor(url: string): string {
 export async function startPrice(d: TrackerDeps, user: User, input: PriceInput): Promise<Plan<{ pending: PendingPrice }>> {
   if (!d.types.price || !d.fetch) return { ok: false, error: "Price tracking is not available on this bot." };
   const url = input.url.trim();
+  if (url.length > MAX_URL) return { ok: false, error: `That address is longer than ${MAX_URL} characters.` };
   const problem = urlProblem(url);
   if (problem) return { ok: false, error: problem };
   const settings = priceSettingsPlan(input);
   if (!settings.ok) return settings;
   const near = input.near?.trim() ?? "";
   if (near.length > MAX_NEAR) return { ok: false, error: `\`near\` is longer than ${MAX_NEAR} characters.` };
-  if ((await ownedPriceTasks(d, user)) >= MAX_PRICE_TASKS) return { ok: false, error: AT_CAP };
+  if ((await ownedPriceTasks(d, user)) >= MAX_PRICE_TASKS) return { ok: false, error: atCap(d) };
+  const capped = await liveTaskCap(d, user);
+  if (capped) return { ok: false, error: capped };
   const { name, hours, drop, baseline } = settings;
   const config: PriceConfig = { url, dropPercent: drop, baseline, ...(near ? { pattern: nearPattern(near) } : {}) };
   return { ok: true, pending: { url, title: name || titleFor(url), hours, config } };
@@ -155,7 +162,9 @@ export async function finishPrice(d: TrackerDeps, user: User, v: PendingPrice, s
   const type = d.types.price;
   if (!type) return { ok: false, error: "Price tracking is not available on this bot." };
   // Checked again: two `/price` commands can both pass the first check before either creates.
-  if ((await ownedPriceTasks(d, user)) >= MAX_PRICE_TASKS) return { ok: false, error: AT_CAP };
+  if ((await ownedPriceTasks(d, user)) >= MAX_PRICE_TASKS) return { ok: false, error: atCap(d) };
+  const capped = await liveTaskCap(d, user);
+  if (capped) return { ok: false, error: capped };
   const now = d.clock.now();
   const schedule: Schedule = { kind: "poll", every: v.hours, unit: "hour", start: now.toISOString() };
   const actor: Actor = { userId: user.id, admin: user.admin };

@@ -1,13 +1,13 @@
 import { createTask, describeSchedule, formatInstant, parseWhen, wallClock, type Actor, type Schedule, type User } from "@rackbops/docket-core";
-import { clip, MAX_TITLE, type Plan, type TaskResult, said, type TrackerDeps } from "./actions.js";
+import { MAX_REMINDER_TEXT, MAX_TITLE, MAX_WHEN } from "./limits.js";
+import { clip, liveTaskCap, type Plan, type TaskResult, said, type TrackerDeps } from "./actions.js";
 
 /**
  * Reminders (category 4, plan 1.2): `/remind`'s rules -- the text, the `when`, the repeat -- in one
  * place for the command and the web editor, over docket's `reminder` type. No discord.js.
  */
 
-/** The longest reminder text: it goes out as the DM itself. */
-export const MAX_REMINDER_TEXT = 1500;
+export { MAX_REMINDER_TEXT } from "./limits.js";
 
 export const REPEATS = ["none", "day", "week", "month"] as const;
 export type Repeat = (typeof REPEATS)[number];
@@ -58,6 +58,7 @@ export function reminderPlan(d: Pick<TrackerDeps, "clock">, user: User, input: R
   if (!(REPEATS as readonly string[]).includes(input.repeat)) return { ok: false, error: "`repeat` is once, daily, weekly or monthly." };
   const now = d.clock.now();
   let when: Date | null = null;
+  if (input.when !== undefined && input.when.trim().length > MAX_WHEN) return { ok: false, error: `\`when\` is longer than ${MAX_WHEN} characters.` };
   if (input.when !== undefined && input.when.trim() !== "") {
     const parsed = parseWhen(input.when, now, { zone: user.timeZone, defaultHour: user.preferredHour });
     if (!parsed.ok) return { ok: false, error: parsed.error };
@@ -75,6 +76,8 @@ export async function createReminder(d: TrackerDeps, user: User, input: Reminder
   if (!type) return { ok: false, error: "Reminders are not available on this bot." };
   const plan = reminderPlan(d, user, input);
   if (!plan.ok) return plan;
+  const capped = await liveTaskCap(d, user);
+  if (capped) return { ok: false, error: capped };
   const { text, schedule } = plan;
   const now = d.clock.now();
   const actor: Actor = { userId: user.id, admin: user.admin };

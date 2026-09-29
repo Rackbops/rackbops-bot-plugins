@@ -1,6 +1,7 @@
 import { ADMIN_DISCLOSURE, describeSchedule, formatInstant, type TaskListEntry, type User } from "@rackbops/docket-core";
 import type { PausedTask } from "../actions.js";
 import type { HistoryView } from "../history.js";
+import { MAX_ZONE } from "../limits.js";
 import { html, type Html, page } from "./html.js";
 
 /**
@@ -185,7 +186,7 @@ ${form.error ? html`<div class="rb-alert rb-alert--danger" role="alert"><p class
 </div>
 <div class="rb-field">
 <label class="rb-label" for="zone">Time zone</label>
-<input class="rb-input" id="zone" name="zone" value="${form.zone}" maxlength="64" required${form.error ? html` aria-invalid="true"` : null}>
+<input class="rb-input" id="zone" name="zone" value="${form.zone}" maxlength="${MAX_ZONE}" required${form.error ? html` aria-invalid="true"` : null}>
 <p class="rb-field__help">An IANA name, such as America/New_York or Europe/London.</p>
 </div>
 <div><button class="rb-btn rb-btn--primary" type="submit">Save</button></div>

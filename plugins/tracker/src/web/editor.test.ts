@@ -1,8 +1,10 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
+import { SlashCommandBuilder } from "discord.js";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import { NO_SUCH_TASK } from "../actions.js";
+import { MAX_LIVE_TASKS, MAX_NEAR, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
 import { MAX_PRICE_TASKS, nearPattern } from "../price.js";
 import { MAX_FORM_BYTES } from "./app.js";
 import { READING } from "./editor.js";
@@ -351,14 +353,18 @@ describe("price trackers", () => {
     const larry = await signIn(w.plugin, LARRY);
     const csrf = await csrfOf(w.plugin, larry);
     const first = post(w.plugin, larry, csrf, "/new/price", { url: SHOP, near: "Price:" });
-    await Bun.sleep(5);
+    // Wait on the read itself, not a fixed time: a busy machine is slow to get there.
+    const until = async (n: number) => {
+      for (let i = 0; i < 500 && reads.length < n; i++) await Bun.sleep(2);
+    };
+    await until(1);
     const second = await post(w.plugin, larry, csrf, "/new/price", { url: `${SHOP}2`, near: "Price:" });
     expect(second.status).toBe(400);
     expect(await second.text()).toContain(READING);
     // Someone else is not held up by it.
     const curly = await signIn(w.plugin, CURLY);
     const other = post(w.plugin, curly, await csrfOf(w.plugin, curly), "/new/price", { url: `${SHOP}3`, near: "Price:" });
-    await Bun.sleep(5);
+    await until(2);
     expect(reads).toEqual([SHOP, `${SHOP}3`]);
     release();
     expect((await first).status).toBe(303);
@@ -408,9 +414,6 @@ describe("pause, resume, delete", () => {
     w.clock.advance(10 * 60 * 1000);
     await notifyTick(w.plugin);
     expect(w.sent).toHaveLength(0);
-    // A person's delivery resuming does not un-pause what they paused themselves.
-    await slash(w.plugin, "tasks", LARRY);
-    expect(tasks(w.dbPath)[0]?.status).toBe("paused");
 
     res = await post(w.plugin, w.larry, w.csrf, "/tasks/t1/resume");
     expect(res.headers.get("location")).toBe("/tracker/tasks/t1?done=resumed");
@@ -594,5 +597,148 @@ describe("the gates", () => {
     const home = await (await call(w.plugin, "GET", "/", { jar: w.larry })).text();
     expect(home).toContain('href="/tracker/new/reminder"');
     expect(home).toContain('href="/tracker/new/price"');
+  });
+});
+
+function field(body: string, name: string): string {
+  const m = new RegExp(`name="${name}" type="[a-z]+" value="([^"]*)"`).exec(body);
+  if (!m) throw new Error(`no field ${name}`);
+  return m[1] ?? "";
+}
+
+function deliveryPausedAt(dbPath: string, userId: string): string | null {
+  const db = new Database(dbPath, { readonly: true });
+  const row = db.query("SELECT paused_at FROM delivery_health WHERE user_id = ?").get(userId) as { paused_at: string | null } | null;
+  db.close();
+  return row?.paused_at ?? null;
+}
+
+describe("review fixes", () => {
+  it("a person's delivery pausing and resuming leaves a task they paused themselves paused", async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "mine, paused", repeat: "day" } });
+    await post(w.plugin, w.larry, w.csrf, "/tasks/t1/pause");
+    for (const text of ["a", "b", "c"]) await slash(w.plugin, "remind", LARRY, { strings: { text, when: "in 5 minutes" } });
+    w.delivery.refuse = true;
+    w.clock.advance(10 * 60 * 1000);
+    await notifyTick(w.plugin);
+    expect(deliveryPausedAt(w.dbPath, "u2")).not.toBeNull();
+    expect(events(w.dbPath, "t1")).toEqual(["created", "paused: paused by the owner"]);
+    // Using a command resumes the person's delivery; their own pause stays.
+    w.delivery.refuse = false;
+    expect(await slash(w.plugin, "tasks", LARRY)).toContain("I could not DM you 3 times in a row");
+    expect(deliveryPausedAt(w.dbPath, "u2")).toBeNull();
+    expect(tasks(w.dbPath)[0]?.status).toBe("paused");
+  });
+
+  it("a renewal saved unchanged after its anchor passed keeps its schedule: the 31st stays the 31st", async () => {
+    const w = await setup();
+    await post(w.plugin, w.larry, w.csrf, "/new/renewal", { name: "Gym", amount: "30", currency: "USD", renews: "2026-10-31", unit: "month", every: "1", lead: "3" });
+    const stored = tasks(w.dbPath)[0]?.schedule;
+    w.clock.set("2026-10-28T14:00:00.000Z");
+    await notifyTick(w.plugin);
+    w.clock.set("2026-11-02T14:00:00.000Z");
+    const before = queued(w.dbPath, "t1");
+    // A month on, the first session has expired: sign in again.
+    const jar = await signIn(w.plugin, LARRY);
+    const csrf = await csrfOf(w.plugin, jar);
+    const form = await (await call(w.plugin, "GET", "/tasks/t1/edit", { jar })).text();
+    expect(field(form, "renews")).toBe("2026-11-30");
+    const values = { name: "Gym", amount: field(form, "amount"), currency: "USD", renews: field(form, "renews"), unit: "month", every: "1", lead: "3" };
+    expect((await post(w.plugin, jar, csrf, "/tasks/t1/edit", values)).status).toBe(303);
+    expect(tasks(w.dbPath)[0]?.schedule).toEqual(stored ?? null);
+    expect(queued(w.dbPath, "t1")).toEqual(before);
+    expect(events(w.dbPath, "t1")).toEqual(["created"]);
+    // A date that is not one of its period dates re-anchors.
+    await post(w.plugin, jar, csrf, "/tasks/t1/edit", { ...values, renews: "2026-11-15" });
+    expect(tasks(w.dbPath)[0]?.schedule).toMatchObject({ anchor: "2026-11-15" });
+  });
+
+  it("a zone or hour change moves a paused task's queued run too, so resume does not fire it at the old time", async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "stretch", repeat: "day" } });
+    expect(queued(w.dbPath, "t1")).toEqual(["2026-10-01T13:00:00.000Z"]);
+    await post(w.plugin, w.larry, w.csrf, "/tasks/t1/pause");
+    await post(w.plugin, w.larry, w.csrf, "/settings", { hour: "9", zone: "Europe/London" });
+    expect(queued(w.dbPath, "t1")).toEqual([]);
+    await post(w.plugin, w.larry, w.csrf, "/tasks/t1/resume");
+    expect(queued(w.dbPath, "t1")).toEqual(["2026-10-02T08:00:00.000Z"]);
+  });
+
+  it("an edit's empty or missing field keeps what the task has; an empty note clears it", async () => {
+    const w = await setup();
+    await post(w.plugin, w.larry, w.csrf, "/new/renewal", { name: "Domain", amount: "12", currency: "USD", renews: "2026-12-01", unit: "month", every: "2", lead: "10", note: "registrar" });
+    await post(w.plugin, w.larry, w.csrf, "/tasks/t1/edit", { name: "", amount: "", currency: "", renews: "", every: "", lead: "" });
+    expect(tasks(w.dbPath)[0]).toMatchObject({
+      title: "Domain",
+      config: { amount: 12, currency: "USD", note: "registrar" },
+      schedule: { every: 2, unit: "month", anchor: "2026-12-01", leadDays: 10 },
+    });
+    expect(events(w.dbPath, "t1")).toEqual(["created"]);
+    await post(w.plugin, w.larry, w.csrf, "/tasks/t1/edit", { note: "" });
+    expect(tasks(w.dbPath)[0]?.config.note).toBeUndefined();
+
+    await post(w.plugin, w.larry, w.csrf, "/new/price", { url: SHOP, name: "Widget", hours: "6", drop: "15", baseline: "peak" });
+    await post(w.plugin, w.larry, w.csrf, "/tasks/t2/edit", { hours: "", drop: "" });
+    expect(tasks(w.dbPath)[1]).toMatchObject({ title: "Widget", config: { dropPercent: 15, baseline: "peak" }, schedule: { every: 6 } });
+    expect(events(w.dbPath, "t2")).toEqual(["created"]);
+
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "tea", repeat: "week" } });
+    await post(w.plugin, w.larry, w.csrf, "/tasks/t3/edit", { text: " " });
+    expect(tasks(w.dbPath)[2]).toMatchObject({ title: "tea", schedule: { unit: "week" } });
+    expect(events(w.dbPath, "t3")).toEqual(["created"]);
+  });
+
+  it("the length limits hold on the server, and are one set of numbers for Discord, the forms and the checks", async () => {
+    const w = await setup();
+    let res = await post(w.plugin, w.larry, w.csrf, "/new/price", { url: `${SHOP}?${"q".repeat(MAX_URL)}` });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain(`longer than ${MAX_URL} characters`);
+    expect(w.shop.reads).toEqual([]);
+    res = await post(w.plugin, w.larry, w.csrf, "/new/reminder", { text: "tea", when: `tomorrow${" ".repeat(MAX_WHEN)}9am`, repeat: "none" });
+    expect(await res.text()).toContain(`longer than ${MAX_WHEN} characters`);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "tea", when: "in 5 minutes" } });
+    expect(await slash(w.plugin, "task", LARRY, { sub: "snooze", strings: { task: "t1", until: "x".repeat(MAX_WHEN + 1) } })).toContain(`longer than ${MAX_WHEN}`);
+    for (const [field, limit] of [["text", MAX_REMINDER_TEXT], ["when", MAX_WHEN]] as const) {
+      expect(await (await call(w.plugin, "GET", "/new/reminder", { jar: w.larry })).text()).toContain(`name="${field}" type="text" value="" maxlength="${limit}"`);
+    }
+    const priceForm = await (await call(w.plugin, "GET", "/new/price", { jar: w.larry })).text();
+    expect(priceForm).toContain(`name="url" type="url" value="" maxlength="${MAX_URL}"`);
+    expect(priceForm).toContain(`name="near" type="text" value="" maxlength="${MAX_NEAR}"`);
+    const price = w.plugin.commands!.find((c) => c.name === "price")!;
+    const json = (price.build(new SlashCommandBuilder().setName("price")) as SlashCommandBuilder).toJSON();
+    const max = Object.fromEntries((json.options ?? []).map((o) => [o.name, (o as { max_length?: number }).max_length]));
+    expect(max).toMatchObject({ url: MAX_URL, name: MAX_TITLE, near: MAX_NEAR });
+  });
+
+  it(`at most ${MAX_LIVE_TASKS} active or paused tasks per person, of every type, in Discord and on the web alike`, async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "tea", repeat: "day" } });
+    const db = new Database(w.dbPath);
+    const copy = db.query(
+      "INSERT INTO tasks (owner_id, type, title, config, state, schedule, lane, capabilities, status, created_at, updated_at) SELECT owner_id, type, title, config, state, schedule, lane, capabilities, status, created_at, updated_at FROM tasks WHERE seq = 1",
+    );
+    for (let i = 1; i < MAX_LIVE_TASKS; i++) copy.run();
+    db.close();
+    const web = await post(w.plugin, w.larry, w.csrf, "/new/renewal", { name: "Gym", amount: "30", currency: "USD", renews: "2026-12-01" });
+    expect(web.status).toBe(400);
+    expect(await web.text()).toContain(`You already have ${MAX_LIVE_TASKS} active or paused tasks`);
+    expect(await slash(w.plugin, "remind", LARRY, { strings: { text: "more", when: "tomorrow" } })).toBe(
+      `You already have ${MAX_LIVE_TASKS} active or paused tasks, the most one person may. Finish one or delete one on the web first.`,
+    );
+    expect((await post(w.plugin, w.larry, w.csrf, "/new/price", { url: SHOP })).status).toBe(400);
+    expect(w.shop.reads).toEqual([]);
+    await post(w.plugin, w.larry, w.csrf, "/tasks/t1/delete", { confirm: "yes" });
+    expect((await post(w.plugin, w.larry, w.csrf, "/new/reminder", { text: "more", when: "tomorrow", repeat: "none" })).status).toBe(303);
+  });
+
+  it("the cap messages mention the web only when there is one", async () => {
+    const { s, fetch } = shop();
+    s.price = 5;
+    const w = await world({ webUrl: null, fetch });
+    await people(w.plugin);
+    for (let i = 0; i < MAX_PRICE_TASKS; i++) await slash(w.plugin, "price", LARRY, { strings: { url: `${SHOP}${i}` } });
+    const answer = await slash(w.plugin, "price", LARRY, { strings: { url: SHOP } });
+    expect(answer).toBe(`You already track ${MAX_PRICE_TASKS} prices, the most one person may. Stop one with \`/task done\` first.`);
   });
 });

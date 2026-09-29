@@ -3,6 +3,7 @@ import { type Membership, NOT_MEMBER } from "../access.js";
 import type { PluginHttpInfo } from "../../../../packages/api/contract.js";
 import { loadTaskList, saveSettings, type TrackerDeps } from "../actions.js";
 import type { Queue } from "../discord-common.js";
+import { MAX_ZONE } from "../limits.js";
 import { actionPost, editGet, editPost, type Editor, newGet, newPost, taskPage } from "./editor.js";
 import { notice } from "./editor-pages.js";
 import { cookie, htmlResponse, readBody, readCookie, redirect } from "./html.js";
@@ -205,7 +206,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     const zone = (form.get("zone") ?? "").trim();
     let error: string | null = null;
     if (!/^([0-9]|1[0-9]|2[0-3])$/.test(hour)) error = "The preferred hour must be a whole hour from 0 to 23.";
-    else if (zone === "" || zone.length > 64) error = "Give a time zone, such as America/New_York.";
+    else if (zone === "" || zone.length > MAX_ZONE) error = "Give a time zone, such as America/New_York.";
     else {
       error = await w.queue(async () => {
         const fresh = await d.store.getUser(v.user.id);

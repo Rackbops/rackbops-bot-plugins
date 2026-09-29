@@ -1,7 +1,7 @@
 import type { Task } from "@rackbops/docket-core";
-import { MAX_REMINDER_TEXT } from "../reminders.js";
-import { MAX_NEAR, MAX_POLL_HOURS } from "../price.js";
-import { MAX_EVERY, MAX_LEAD_DAYS, MAX_NOTE } from "../tracked.js";
+import { CURRENCY_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
+import { MAX_POLL_HOURS } from "../price.js";
+import { MAX_EVERY, MAX_LEAD_DAYS } from "../tracked.js";
 import { html, type Html } from "./html.js";
 import { framed, type Viewer } from "./pages.js";
 
@@ -35,7 +35,7 @@ const UNIT_OPTIONS = [["year", "yearly"], ["month", "monthly"], ["week", "weekly
 const BASELINE_OPTIONS = [["last", "the last price seen"], ["first", "the first price seen"], ["peak", "the highest price seen"]] as const;
 
 const PRICE_SETTINGS: readonly Field[] = [
-  { name: "name", label: "Name", kind: "text", maxlength: 100, help: "Leave it empty to use the page's address." },
+  { name: "name", label: "Name", kind: "text", maxlength: MAX_TITLE, help: "Leave it empty to use the page's address." },
   { name: "hours", label: "Hours between checks", kind: "number", min: 1, max: MAX_POLL_HOURS, help: `1 to ${MAX_POLL_HOURS}; 12 when empty.` },
   { name: "drop", label: "Alert on a drop of at least (percent)", kind: "text", decimal: true, help: "1 to 90; 10 when empty." },
   { name: "baseline", label: "Measure the drop from", kind: "select", options: BASELINE_OPTIONS },
@@ -51,7 +51,7 @@ export function fieldsFor(type: EditorType, mode: "new" | "edit"): readonly Fiel
         name: "when",
         label: "When",
         kind: "text",
-        maxlength: 100,
+        maxlength: MAX_WHEN,
         help:
           mode === "new"
             ? 'For example "in 20 minutes", "tomorrow 9am", "fri at 17:30". A repeating one with none starts today at your preferred hour.'
@@ -61,9 +61,9 @@ export function fieldsFor(type: EditorType, mode: "new" | "edit"): readonly Fiel
     ];
   case "renewal":
     return [
-      { name: "name", label: "What renews", kind: "text", required: true, maxlength: 100, help: "A subscription, a domain, a warranty." },
+      { name: "name", label: "What renews", kind: "text", required: true, maxlength: MAX_TITLE, help: "A subscription, a domain, a warranty." },
       { name: "amount", label: "What one period costs", kind: "text", required: true, decimal: true },
-      { name: "currency", label: "Currency", kind: "text", required: true, maxlength: 3, help: "A three-letter code, such as USD or EUR." },
+      { name: "currency", label: "Currency", kind: "text", required: true, maxlength: CURRENCY_LENGTH, help: "A three-letter code, such as USD or EUR." },
       { name: "renews", label: "Next renewal or expiry date", kind: "date", required: true },
       { name: "unit", label: "Renews", kind: "select", options: UNIT_OPTIONS },
       { name: "every", label: "Every how many of those", kind: "number", min: 1, max: MAX_EVERY, help: "1 when empty." },
@@ -74,7 +74,7 @@ export function fieldsFor(type: EditorType, mode: "new" | "edit"): readonly Fiel
     return mode === "edit"
       ? PRICE_SETTINGS
       : [
-        { name: "url", label: "Product page", kind: "url", required: true, maxlength: 1000 },
+        { name: "url", label: "Product page", kind: "url", required: true, maxlength: MAX_URL },
         ...PRICE_SETTINGS,
         { name: "near", label: "Words just before the price", kind: "text", maxlength: MAX_NEAR, help: "Only if I cannot find the price on my own." },
       ];

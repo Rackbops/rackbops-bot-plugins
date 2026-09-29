@@ -8,6 +8,7 @@ import type { Plugin } from "../../../../packages/api/contract.js";
 import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import type { Membership } from "../access.js";
 import { createPlugin } from "../index.js";
+import { HOST_CANNOT_MESSAGE } from "../notifier.js";
 
 /**
  * The web tests' harness (rackbops-bot-plugins#80), shared by web.test.ts and editor.test.ts and
@@ -44,12 +45,15 @@ export async function world(opts: { webUrl?: string | null; guild?: boolean; web
   const clock = clockAt(START);
   const webUrl = opts.webUrl === undefined ? ORIGIN : opts.webUrl;
   const sent: { userId: string; message: unknown }[] = [];
+  /** Set `refuse` to have the host refuse every DM as undeliverable (Discord's "cannot be messaged"). */
+  const delivery = { refuse: false };
   const plugin = createPlugin(
     makeFakeHost({
       name: "tracker",
       env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, ...(webUrl ? { TRACKER_WEB_URL: webUrl } : {}), ...(opts.guild ? { TRACKER_GUILD_ID: GUILD } : {}) },
       log: { info() {}, warn() {}, error() {} },
       dm: async (userId: string, message: unknown) => {
+        if (delivery.refuse) throw new Error(HOST_CANNOT_MESSAGE);
         sent.push({ userId, message });
         return { guildId: null, channelId: "c", messageId: "m" };
       },
@@ -64,7 +68,7 @@ export async function world(opts: { webUrl?: string | null; guild?: boolean; web
     },
   );
   await plugin.activate!();
-  return { plugin, clock, dbPath, sent };
+  return { plugin, clock, dbPath, sent, delivery };
 }
 
 export async function slash(

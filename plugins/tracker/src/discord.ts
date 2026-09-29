@@ -14,7 +14,8 @@ import {
   type TrackerDeps,
 } from "./actions.js";
 import { resumeTask } from "./manage.js";
-import { MAX_REMINDER_TEXT, remind, type Repeat } from "./reminders.js";
+import { CURRENCY_LENGTH, DATE_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
+import { remind, type Repeat } from "./reminders.js";
 import {
   EPHEMERAL,
   FAILED,
@@ -29,8 +30,8 @@ import {
 import { createInteractionHandler } from "./interactions.js";
 import { finishShare, prepareShare, sendShare } from "./press.js";
 import { historyWithSeries } from "./series.js";
-import { DEFAULT_POLL_HOURS, MAX_NEAR, MAX_POLL_HOURS, trackPrice } from "./price.js";
-import { addRenewal, decideRenewal, DEFAULT_LEAD_DAYS, MAX_EVERY, MAX_LEAD_DAYS, MAX_NOTE, type PeriodUnit } from "./tracked.js";
+import { DEFAULT_POLL_HOURS, MAX_POLL_HOURS, trackPrice } from "./price.js";
+import { addRenewal, decideRenewal, DEFAULT_LEAD_DAYS, MAX_EVERY, MAX_LEAD_DAYS, type PeriodUnit } from "./tracked.js";
 import type { BaselineRule, RenewalDecision } from "@rackbops/docket-types";
 import { type WebLocation, webLink } from "./web/command.js";
 
@@ -142,7 +143,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           .addIntegerOption((o) =>
             o.setName("hour").setDescription("Hour (0-23) a reminder without a time arrives; default 9").setMinValue(0).setMaxValue(23),
           )
-          .addStringOption((o) => o.setName("zone").setDescription("Your time zone, e.g. America/New_York (the default)").setMaxLength(64)),
+          .addStringOption((o) => o.setName("zone").setDescription("Your time zone, e.g. America/New_York (the default)").setMaxLength(MAX_ZONE)),
       handle: (interaction) =>
         run(interaction, "admitted", (d, user) => {
           const hour = interaction.options.getInteger("hour");
@@ -161,7 +162,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           .setDescription("Set a reminder, sent to you by DM")
           .addStringOption((o) => o.setName("text").setDescription("What to remind you of").setRequired(true).setMaxLength(MAX_REMINDER_TEXT))
           .addStringOption((o) =>
-            o.setName("when").setDescription('When: "in 20 minutes", "tomorrow 9am", "fri at 17:30"').setMaxLength(100),
+            o.setName("when").setDescription('When: "in 20 minutes", "tomorrow 9am", "fri at 17:30"').setMaxLength(MAX_WHEN),
           )
           .addStringOption((o) =>
             o
@@ -189,10 +190,10 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
       build: (b: SlashCommandBuilder) =>
         b
           .setDescription("Track a subscription, domain or warranty: I ask before each renewal")
-          .addStringOption((o) => o.setName("name").setDescription("What renews, e.g. Netflix").setRequired(true).setMaxLength(100))
+          .addStringOption((o) => o.setName("name").setDescription("What renews, e.g. Netflix").setRequired(true).setMaxLength(MAX_TITLE))
           .addNumberOption((o) => o.setName("amount").setDescription("What one period costs").setRequired(true).setMinValue(0))
-          .addStringOption((o) => o.setName("currency").setDescription("Currency code, e.g. USD").setRequired(true).setMinLength(3).setMaxLength(3))
-          .addStringOption((o) => o.setName("renews").setDescription("The next renewal or expiry date, YYYY-MM-DD").setRequired(true).setMaxLength(10))
+          .addStringOption((o) => o.setName("currency").setDescription("Currency code, e.g. USD").setRequired(true).setMinLength(CURRENCY_LENGTH).setMaxLength(CURRENCY_LENGTH))
+          .addStringOption((o) => o.setName("renews").setDescription("The next renewal or expiry date, YYYY-MM-DD").setRequired(true).setMaxLength(DATE_LENGTH))
           .addStringOption((o) =>
             o
               .setName("unit")
@@ -227,8 +228,8 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
       build: (b: SlashCommandBuilder) =>
         b
           .setDescription("Track a product's price: I DM you when it drops")
-          .addStringOption((o) => o.setName("url").setDescription("The product page").setRequired(true).setMaxLength(1000))
-          .addStringOption((o) => o.setName("name").setDescription("What to call it (default: the page address)").setMaxLength(100))
+          .addStringOption((o) => o.setName("url").setDescription("The product page").setRequired(true).setMaxLength(MAX_URL))
+          .addStringOption((o) => o.setName("name").setDescription("What to call it (default: the page address)").setMaxLength(MAX_TITLE))
           .addIntegerOption((o) =>
             o.setName("hours").setDescription(`Hours between checks (default ${DEFAULT_POLL_HOURS})`).setMinValue(1).setMaxValue(MAX_POLL_HOURS),
           )
@@ -273,20 +274,20 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             s
               .setName("done")
               .setDescription("Mark the task's latest reminder done")
-              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(24)),
+              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(MAX_TASK_ID)),
           )
           .addSubcommand((s) =>
             s
               .setName("snooze")
               .setDescription("Snooze the task's latest reminder (default: an hour)")
-              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(24))
-              .addStringOption((o) => o.setName("until").setDescription('Until when: "in 2h", "tomorrow 9am"').setMaxLength(100)),
+              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(MAX_TASK_ID))
+              .addStringOption((o) => o.setName("until").setDescription('Until when: "in 2h", "tomorrow 9am"').setMaxLength(MAX_WHEN)),
           )
           .addSubcommand((s) =>
             s
               .setName("decide")
               .setDescription("Answer a renewal's latest ask, with what you paid if it changed")
-              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(24))
+              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(MAX_TASK_ID))
               .addStringOption((o) =>
                 o
                   .setName("choice")
@@ -300,19 +301,19 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             s
               .setName("history")
               .setDescription("Every run of the task, how it was answered, and its changes")
-              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(24)),
+              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(MAX_TASK_ID)),
           )
           .addSubcommand((s) =>
             s
               .setName("resume")
               .setDescription("Resume a paused task; one paused for failed DMs goes on without them")
-              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(24)),
+              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(MAX_TASK_ID)),
           )
           .addSubcommand((s) =>
             s
               .setName("share")
               .setDescription("Ask someone to receive this task's messages too")
-              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(24))
+              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(MAX_TASK_ID))
               .addUserOption((o) => o.setName("user").setDescription("Who to invite").setRequired(true)),
           ),
       handle: (interaction) => {
