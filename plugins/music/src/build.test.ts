@@ -337,16 +337,18 @@ describe("buildPlaylist traces", () => {
   });
 
   // #59: tieBreak counts OTHER candidates on the same page that share this one's primary artist and
-  // still title-match, /100 -- not popularity, which a real search never sends.
+  // still title-match, /100 -- not popularity, which a real search never sends. Calls findSong
+  // directly (searches only song.searchArtist, #90's own documented contract for no `artists`
+  // argument) so #90's setlist-level performer-name fallback can't find its own exact "Band" match
+  // first and mask the partial-artist "medium" this test is about.
   test("a candidate's trace records tieBreak as its count of same-primary-artist editions on the page", async () => {
     const { client } = fakeSpotify({ One: [candidate("One"), candidate("One - Remastered")] });
-    const result = await buildPlaylist(client, "AT", setlist({ songs: [song("One", "Totally Band")] }));
-    expect(result.ok).toBe(true);
-    const one = result.songs[0]!;
+    const found = await findSong(client, "AT", song("One", "Totally Band"));
+    expect(found.ok).toBe(true);
     // Partial artist agreement ("Totally Band" contains "Band") keeps this below "high" confidence,
     // so the candidate list survives in the trace.
-    expect(one.outcome).toBe("medium");
-    const trace = one.queries![0]!.candidates.find((c) => c.name === "One")!;
+    expect(found.ok === true && found.match?.confidence).toBe("medium");
+    const trace = found.trace.queries![0]!.candidates.find((c) => c.name === "One")!;
     expect(trace.tieBreak).toBe(0.01);
   });
 
