@@ -299,6 +299,59 @@ describe("buildPlaylist", () => {
     expect(queries[0]).toContain('artist:"Band"');
     expect(queries.at(-1)).toContain('artist:"The Originals"');
   });
+
+  // #66: three DIFFERENT titles all parse as parts of one suite and resolve to the same
+  // whole-suite medley -- added once, the other two folded, the one add still surfaced as
+  // uncertain (a suite match never reaches "high").
+  test("three parts of one suite resolving to one track add it once and are counted as folded", async () => {
+    const medley = candidate("Odyssey: Dawn / Voyage / Return - Medley");
+    const { client, addedUris } = fakeSpotify({ Odyssey: [medley] });
+    const result = await buildPlaylist(
+      client,
+      "AT",
+      setlist({
+        songs: [song("Odyssey Part I: Dawn"), song("Odyssey Part II: Voyage"), song("Odyssey Part III: Return")],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    expect(addedUris).toEqual([medley.uri]);
+    expect(result.ok === true && result.outcome.added).toBe(1);
+    expect(result.ok === true && result.outcome.folded).toBe(2);
+    expect(result.ok === true && result.outcome.uncertain.map((u) => u.song.name)).toEqual(["Odyssey Part I: Dawn"]);
+  });
+
+  // The SAME part repeated (an encore reprise) is a genuine duplicate, not a fold: it must add
+  // twice exactly like any other repeated song, even though it resolves to the identical uri both
+  // times -- guards against keying the fold set on (stem, uri) alone, which would wrongly treat a
+  // repeat of the same part as a second, different part sharing a recording.
+  test("the same song listed twice still adds twice", async () => {
+    const medley = candidate("Odyssey: Dawn / Voyage / Return - Medley");
+    const { client, addedUris } = fakeSpotify({ Odyssey: [medley] });
+    const result = await buildPlaylist(
+      client,
+      "AT",
+      setlist({ songs: [song("Odyssey Part I: Dawn"), song("Odyssey Part I: Dawn")] }),
+    );
+    expect(result.ok).toBe(true);
+    expect(addedUris).toEqual([medley.uri, medley.uri]);
+    expect(result.ok === true && result.outcome.added).toBe(2);
+    expect(result.ok === true && result.outcome.folded).toBe(0);
+  });
+
+  test("two parts resolving to different tracks both add", async () => {
+    const dawn = candidate("Odyssey Dawn - Single Edit");
+    const voyage = candidate("Odyssey Voyage - Single Edit");
+    const { client, addedUris } = fakeSpotify({ Dawn: [dawn], Voyage: [voyage] });
+    const result = await buildPlaylist(
+      client,
+      "AT",
+      setlist({ songs: [song("Odyssey Part I: Dawn"), song("Odyssey Part II: Voyage")] }),
+    );
+    expect(result.ok).toBe(true);
+    expect(addedUris).toEqual([dawn.uri, voyage.uri]);
+    expect(result.ok === true && result.outcome.added).toBe(2);
+    expect(result.ok === true && result.outcome.folded).toBe(0);
+  });
 });
 
 describe("buildPlaylist traces", () => {

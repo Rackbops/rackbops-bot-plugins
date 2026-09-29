@@ -117,18 +117,44 @@ function isExactTitle(candidate: string, song: string): boolean {
 }
 
 /**
+ * Whether a song title names one part of a suite: `<stem> Part <n>: <part name>`, after
+ * `normalize` has already collapsed "Part I:" to "part i " (the colon is punctuation to
+ * `normalize`, gone before this ever runs). `n` is Roman or Arabic -- setlist.fm's own spelling
+ * isn't consistent -- and a part NAME must follow it, or this isn't a suite part worth searching
+ * specially for: "Another Brick in the Wall, Part 2" has no part name and is an ordinary title
+ * ("(.+)$" would never match nothing), and "Parts I-V" names no single part at all. `(.+?)` is
+ * non-greedy so the stem is as short as possible -- the part number is the first "part <n>" the
+ * title contains, not the last.
+ */
+export function parseSuitePart(normalizedTitle: string): { stem: string; part: string } | undefined {
+  const match = normalizedTitle.match(/^(.+?) part ([ivxlcdm]+|\d+) (.+)$/);
+  return match === null ? undefined : { stem: match[1]!, part: match[3]! };
+}
+
+/**
  * How well a candidate's title matches, 0-100. An exact match scores the full 100; a clean-edition
  * suffix (a remaster of the same recording) scores 99 -- exact enough for `high` confidence, but
  * one point short of the genuinely un-suffixed title, so when a page carries both, the plain title
  * still wins the tie by score rather than by page order (#60). A candidate that merely STARTS with
  * the song title scores well because that is what every OTHER edition suffix looks like ("Hey Jude
- * - Live"). A candidate that merely contains the title somewhere scores low -- it is usually a
- * medley or a mashup.
+ * - Live").
+ *
+ * `suite`, when the song is one part of a suite (#66), scores 60 a candidate whose title starts
+ * with the suite's stem and names the part -- setlist.fm lists *2112 Part I: Overture* as its own
+ * song, but no Spotify title ever carries "Part I:", so without this every candidate scores 0 on
+ * title and the part goes missing. 60 sits below a prefix match (72, an ordinary edition suffix)
+ * and above a bare contains (40): a suite match wins only when nothing names the part more
+ * directly. It can never satisfy `isExactTitle` either -- that compares against the SONG's own
+ * title, which still literally contains "part i", and no real Spotify title does.
+ *
+ * A candidate that merely contains the title somewhere (and isn't a suite match) scores low -- it
+ * is usually a medley or a mashup naming something else entirely.
  */
-function titleScore(candidate: string, song: string): number {
+function titleScore(candidate: string, song: string, suite?: { stem: string; part: string }): number {
   if (candidate === song) return 100;
   if (isExactTitle(candidate, song)) return 99;
   if (song.length >= 3 && candidate.startsWith(`${song} `)) return 72;
+  if (suite !== undefined && candidate.startsWith(suite.stem) && candidate.includes(suite.part)) return 60;
   if (song.length >= 4 && candidate.includes(song)) return 40;
   return 0;
 }
@@ -175,7 +201,11 @@ export function explainCandidate(
 ): ScoreBreakdown {
   const songTitle = normalize(song.name);
   const candidateTitle = normalize(candidate.name);
-  const title = titleScore(candidateTitle, songTitle);
+  // Parsed once per song (not per candidate) and threaded through every titleScore call below,
+  // including the sibling check inside the tieBreak loop -- so another edition of the same suite
+  // part counts as a real title match there too, not just for the winning candidate.
+  const suite = parseSuitePart(songTitle);
+  const title = titleScore(candidateTitle, songTitle, suite);
   // A candidate whose title doesn't match at all is never the right track, however well the artist
   // lines up -- returning 0 here (rather than a small positive) is what lets pickBestTrack reject
   // an entire result page instead of shipping its least-bad row.
@@ -196,7 +226,7 @@ export function explainCandidate(
       : page.filter((other) => {
           if (other === candidate) return false;
           const otherPrimary = other.artistNames[0] !== undefined ? normalize(other.artistNames[0]) : "";
-          return otherPrimary === primaryArtist && titleScore(normalize(other.name), songTitle) > 0;
+          return otherPrimary === primaryArtist && titleScore(normalize(other.name), songTitle, suite) > 0;
         }).length;
   const tieBreak = editions / 100;
   const penalty = variantPenalty(candidateTitle, songTitle);

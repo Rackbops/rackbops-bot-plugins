@@ -8,6 +8,7 @@ import {
   buildQueries,
   explainCandidate,
   normalize,
+  parseSuitePart,
   pickBestTrack,
   type Match,
   type MatchConfidence,
@@ -57,6 +58,9 @@ export interface BuildOutcome {
   /** Added songs whose winning name wasn't the one setlist.fm gave (`song.searchArtist`) --
    *  a fallback name (#63) or the performer's own recording of a credited cover (#64). */
   foundElsewhere: ResolvedSong[];
+  /** Suite parts (#66) that resolved to a recording another part of the same suite already added
+   *  -- neither added again nor counted missing, so `attempted` still accounts for every one. */
+  folded: number;
 }
 
 /** One track Spotify returned for a query, with how it scored. The match log's unit of evidence. */
@@ -278,12 +282,38 @@ export async function buildPlaylist(
   const resolved: ResolvedSong[] = [];
   const missing: string[] = [];
   const songs: SongTrace[] = [];
+  // Several DIFFERENT titles can all parse as parts of the same suite and resolve to the same
+  // recording (#66) -- a whole-suite medley matches every part's search, so those fold into one
+  // add. Tracked per PART NAME within a stem, not just per uri: the SAME part listed twice (a
+  // genuine repeat -- an encore reprise) still adds twice, exactly like any other repeated song --
+  // only a DIFFERENT part landing on a uri some earlier part already claimed folds.
+  const suitePartsSeen = new Map<string, Set<string>>(); // stem -> part names already resolved
+  const suiteUrisClaimed = new Map<string, Set<string>>(); // stem -> uris a part has already claimed
+  let folded = 0;
   for (const song of setlist.songs) {
     const found = await findSong(spotify, accessToken, song, searchArtistsFor(song, names));
     songs.push(found.trace);
     if (!found.ok) return { ok: false, error: found.error, songs };
-    if (found.match === undefined) missing.push(song.name);
-    else resolved.push({ song, match: found.match, foundUnder: found.trace.foundUnder ?? song.searchArtist });
+    if (found.match === undefined) {
+      missing.push(song.name);
+      continue;
+    }
+    const suite = parseSuitePart(normalize(song.name));
+    if (suite !== undefined) {
+      const parts = suitePartsSeen.get(suite.stem) ?? new Set<string>();
+      suitePartsSeen.set(suite.stem, parts);
+      if (!parts.has(suite.part)) {
+        parts.add(suite.part);
+        const uris = suiteUrisClaimed.get(suite.stem) ?? new Set<string>();
+        suiteUrisClaimed.set(suite.stem, uris);
+        if (uris.has(found.match.track.uri)) {
+          folded += 1;
+          continue;
+        }
+        uris.add(found.match.track.uri);
+      }
+    }
+    resolved.push({ song, match: found.match, foundUnder: found.trace.foundUnder ?? song.searchArtist });
   }
 
   if (resolved.length === 0) {
@@ -295,7 +325,9 @@ export async function buildPlaylist(
   if (!created.ok) return { ok: false, error: created.error, songs };
 
   // Duplicates are kept deliberately: a song played twice (a reprise, an encore repeat) is two
-  // entries on the setlist, and the playlist mirrors the show rather than de-duplicating it.
+  // entries on the setlist, and the playlist mirrors the show rather than de-duplicating it. The
+  // ONE exception is a suite folded above (#66): that is one recording standing in for several
+  // DIFFERENT titles, not the same song played twice, so it is added only once.
   const uris = resolved.map((r) => r.match.track.uri);
   const added = await spotify.addTracks(accessToken, created.value.id, uris);
   if (!added.ok) return { ok: false, error: added.error, songs };
@@ -310,6 +342,7 @@ export async function buildPlaylist(
       uncertain: resolved.filter((r) => r.match.confidence !== "high"),
       missing,
       foundElsewhere: resolved.filter((r) => normalize(r.foundUnder) !== normalize(r.song.searchArtist)),
+      folded,
     },
     songs,
   };

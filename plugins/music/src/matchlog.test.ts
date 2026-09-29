@@ -115,6 +115,7 @@ describe("toMatchRun", () => {
         uncertain: [],
         missing: ["Two"],
         foundElsewhere: [],
+        folded: 0,
       },
       songs,
     };
