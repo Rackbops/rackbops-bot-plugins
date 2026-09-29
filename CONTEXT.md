@@ -99,13 +99,15 @@ pin only needs to change in one place.
   comment), so this is expected, not a workaround.
 - **The root is a Bun workspace (`"workspaces": ["plugins/*"]`), on the hoisted linker (`bunfig.toml`).**
   Added for `plugins/tracker` (#78), the first plugin with runtime dependencies of its own
-  (`@rackbops/docket-core`/`-types`): the workspace is what makes one root `bun install
+  (`@rackbops/docket-core`/`-types`, as devDependencies): the workspace is what makes one root `bun install
   --frozen-lockfile` (CI, publish) install them, and `bun build` then bundles them into
   `dist/plugin.js`. Bun defaults a workspace to its **isolated** linker, which hides transitive
   packages from the root -- `bun-types`, which `tsconfig.json`'s `"types"` names, disappeared and
   `bun run check` failed with TS2688 -- so `bunfig.toml` pins `linker = "hoisted"`, the layout the
-  repo had before. A plugin's `dependencies` are bundle inputs only: the bot fetches the tarball
-  and loads `dist/plugin.js` without an install, so everything but `discord.js` must be bundled.
+  repo had before. A plugin's libraries are bundle inputs only, so they are `devDependencies`: the bot fetches the
+  tarball and loads `dist/plugin.js` without an install, so everything but `discord.js` is bundled
+  (verified 2026-09-29: the workspace still installs a plugin's devDependencies, and docket's code
+  is inside `plugins/tracker/dist/plugin.js`).
 - **`bun:` builtins stay external in a bundle.** `bun build --target bun` leaves
   `import { Database } from "bun:sqlite"` as an import (verified 2026-09-29 on the built
   `plugins/tracker/dist/plugin.js`, then loaded and run under Bun), so a plugin can use

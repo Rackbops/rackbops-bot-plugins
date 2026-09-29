@@ -7,9 +7,11 @@
 - The task tracker's core (rackbops-bot-plugins#78), the host of
   [`Rackbops/docket`](https://github.com/Rackbops/docket) (`@rackbops/docket-core` and
   `@rackbops/docket-types` 0.3.0, bundled): docket's Store port on `bun:sqlite` in
-  `<dataDir>/tracker.sqlite`, passing docket's `STORE_CONTRACT`; the notify lane on the host's
+  `<dataDir>/tracker/tracker.sqlite`, passing docket's `STORE_CONTRACT`; the notify lane on the host's
   60-second tick, delivering by `host.dm`, with each delivery claimed before it is sent so a
-  restart or an abandoned tick never sends one twice; people (Discord id, time zone, preferred
+  restart or an abandoned tick never sends one twice (a refusal before anything reaches Discord
+  releases the claim); people (Discord id, time zone, preferred
   hour, admin flag) in the tracker's own store, the first admin from `TRACKER_ADMIN_DISCORD_IDS`;
-  and `GET /tracker/healthz`, `503` once the last tick is more than three minutes old. No
-  commands yet (#79) and no buttons (they wait on rackbops-discord-bot#323).
+  and `GET /tracker/healthz`, `503` once the last tick is more than three minutes old. Runs the
+  `reminder` and `renewal` types only (`price` waits on the Fetch port). No commands yet (#79)
+  and no buttons (they wait on rackbops-discord-bot#323).

@@ -36,8 +36,11 @@ import type {
  *
  * `bun:sqlite` is synchronous, so each method is one or two statements with no `await` between a
  * read and its write: two callers on the one event loop cannot interleave inside a method, which is
- * what makes `createOccurrence`'s dedupe (`INSERT OR IGNORE` on the UNIQUE key) and the
+ * what makes `createOccurrence`'s dedupe (`ON CONFLICT (dedupe_key) DO NOTHING`) and the
  * read-merge-write updates safe without a transaction.
+ *
+ * Stricter than MemoryStore in one way: a Discord id belongs to at most one user (a partial UNIQUE
+ * index), so `createUser` and `updateUser` reject a duplicate. people.ts's `admit` relies on it.
  */
 
 type Row = Record<string, unknown>;
@@ -369,8 +372,9 @@ export class SqliteStore implements Store {
 
   async createOccurrence(o: NewOccurrence): Promise<Occurrence | null> {
     const { changes, lastInsertRowid } = this.run(
-      `INSERT OR IGNORE INTO occurrences (task_id, lane, due_at, status, late, dedupe_key, created_at)
-       VALUES (?, ?, ?, 'queued', 0, ?, ?)`,
+      `INSERT INTO occurrences (task_id, lane, due_at, status, late, dedupe_key, created_at)
+       VALUES (?, ?, ?, 'queued', 0, ?, ?)
+       ON CONFLICT (dedupe_key) DO NOTHING`,
       o.taskId,
       o.lane,
       o.dueAt,

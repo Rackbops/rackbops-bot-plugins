@@ -1,6 +1,6 @@
 import { ExecutorUnavailableError, type Clock, type Notifier, type OutgoingMessage, type Store } from "@rackbops/docket-core";
 import type { HostApi, HostMessage, PluginLog } from "../../../packages/api/contract.js";
-import type { ClaimStore } from "./claims.js";
+import type { ClaimStore, DeliveryClaim } from "./claims.js";
 
 /**
  * docket's Notifier port over `host.dm` (plan 5.5). docket addresses a tracker user; this looks up
@@ -16,11 +16,42 @@ import type { ClaimStore } from "./claims.js";
 /** What the host rejects `dm` with when Discord says the user cannot be messaged (its code 50007). */
 export const HOST_CANNOT_MESSAGE = "recipient cannot be messaged";
 
-/** Discord's own cap on a message's content. */
+/** Discord's own cap on a message's content, as the host checks it: after wrapping bare links. */
 export const MAX_CONTENT = 2000;
 
 /** What a claim with no recorded send is written as in docket's `delivered` event (never a real id). */
 export const UNCONFIRMED_MESSAGE_ID = "unconfirmed";
+
+/** The host's own id check (rackbops-discord-bot src/routing/model.ts SNOWFLAKE_RE). */
+const HOST_SNOWFLAKE = /^[0-9]{5,25}$/;
+
+/** The host's link wrapping (hostMessage.ts wrapBareUrls): its length is what the host bounds. */
+const URL_OR_WRAPPED = /<(https?:\/\/[^\s<>]+)>|(https?:\/\/[^\s<>]+)/g;
+export function wrapBareUrls(content: string): string {
+  return content.replace(URL_OR_WRAPPED, (whole: string, wrapped: string | undefined, bare: string | undefined) =>
+    wrapped !== undefined ? whole : `<${bare}>`,
+  );
+}
+
+/**
+ * Errors `host.dm` raises before anything reaches Discord: its own id and message checks
+ * (rackbops-discord-bot src/plugins/host.ts `dm`, hostMessage.ts `validateHostMessage`) and a
+ * `users.fetch` that finds no such user (delivery.ts `sendPayloadDm`, Discord code 10013). Nothing
+ * went out, so the claim is released (`failed`, which a later run may take again).
+ */
+export function isPreSendError(err: unknown): boolean {
+  if (typeof err === "object" && err !== null && (err as { code?: unknown }).code === 10013) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    message === "userId is not a valid id" ||
+    message === "message must be an object" ||
+    message === "content must be a string" ||
+    message === "content is empty" ||
+    message === "interactive buttons are not supported yet" ||
+    message === "Unknown User" ||
+    message.startsWith("content is longer than")
+  );
+}
 
 /**
  * A DM the host refused because the person's DMs are closed or they blocked the bot. docket fails
@@ -34,6 +65,11 @@ export class RecipientUnreachableError extends Error {
   }
 }
 
+/** A DM that could never be sent as it stands (a bad Discord id, an empty message); nothing was claimed. */
+export class UndeliverableError extends Error {
+  override name = "UndeliverableError";
+}
+
 export interface DmNotifierDeps {
   store: Store;
   claims: ClaimStore;
@@ -44,8 +80,16 @@ export interface DmNotifierDeps {
   signal?: AbortSignal;
 }
 
-export function toHostMessage(message: OutgoingMessage): HostMessage {
-  const text = message.text.length > MAX_CONTENT ? `${message.text.slice(0, MAX_CONTENT - 3)}...` : message.text;
+/** The host message for `message`, cut to fit the host's bound; null when it has no text to send. */
+export function toHostMessage(message: OutgoingMessage): HostMessage | null {
+  if (message.text.trim().length === 0) return null;
+  let text = message.text;
+  let keep = text.length;
+  // Cut until the wrapped form fits: a cut can split a link, which the host then wraps again.
+  while (wrapBareUrls(text).length > MAX_CONTENT) {
+    keep -= Math.max(1, wrapBareUrls(text).length - MAX_CONTENT);
+    text = `${message.text.slice(0, Math.max(0, keep - 3))}...`;
+  }
   return { content: text };
 }
 
@@ -53,19 +97,23 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
   return {
     async sendDm(userId, message) {
       const user = await d.store.getUser(userId);
-      if (!user) throw new Error(`no user ${userId}`);
-      if (!user.discordId) throw new Error(`user ${userId} has no Discord id`);
+      if (!user) throw new UndeliverableError(`no user ${userId}`);
+      const discordId = user.discordId;
+      if (!discordId || !HOST_SNOWFLAKE.test(discordId)) throw new UndeliverableError(`user ${userId} has no valid Discord id`);
+      const hostMessage = toHostMessage(message);
+      if (!hostMessage) throw new UndeliverableError("the message has no text");
       const occurrenceId = message.ref?.occurrenceId ?? null;
 
       if (occurrenceId !== null) {
         const existing = d.claims.get(occurrenceId, userId);
-        if (existing?.status === "sent" && existing.messageId) return { messageId: existing.messageId };
+        // Sent before (the crash came before docket recorded it): record it, never send again.
+        if (existing?.status === "sent") return { messageId: existing.messageId || UNCONFIRMED_MESSAGE_ID };
         if (existing && existing.status !== "failed") {
-          // Claimed before, never settled: the DM may or may not have gone out. Not resent.
-          d.claims.settle(occurrenceId, userId, "unconfirmed", d.clock.now().toISOString(), {
-            error: existing.error ?? "the send never reported back",
-          });
-          d.log.warn(`delivery of ${occurrenceId} to ${userId} is unconfirmed (claimed ${existing.claimedAt}); not resending`);
+          // Claimed and never settled, or settled unconfirmed: it may have gone out. Not resent.
+          if (existing.status === "claimed") {
+            d.claims.settle(occurrenceId, userId, "unconfirmed", d.clock.now().toISOString(), { error: "claimed, never settled" });
+          }
+          reportUnconfirmed(d.claims, d.log, existing, d.clock.now().toISOString());
           return { messageId: UNCONFIRMED_MESSAGE_ID };
         }
       }
@@ -76,14 +124,14 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
 
       if (occurrenceId !== null) {
         const at = d.clock.now().toISOString();
-        if (!d.claims.claim(occurrenceId, userId, user.discordId, at)) {
+        if (!d.claims.claim(occurrenceId, userId, discordId, at)) {
           // Someone claimed it between the read above and here; never send on their claim.
           return { messageId: UNCONFIRMED_MESSAGE_ID };
         }
       }
 
       try {
-        const delivery = await d.dm(user.discordId, toHostMessage(message));
+        const delivery = await d.dm(discordId, hostMessage);
         if (occurrenceId !== null) {
           d.claims.settle(occurrenceId, userId, "sent", d.clock.now().toISOString(), {
             messageId: delivery.messageId,
@@ -94,12 +142,22 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         const unreachable = reason === HOST_CANNOT_MESSAGE;
+        const nothingSent = unreachable || isPreSendError(err);
         if (occurrenceId !== null) {
-          d.claims.settle(occurrenceId, userId, unreachable ? "failed" : "unconfirmed", d.clock.now().toISOString(), { error: reason });
+          d.claims.settle(occurrenceId, userId, nothingSent ? "failed" : "unconfirmed", d.clock.now().toISOString(), { error: reason });
         }
         if (unreachable) throw new RecipientUnreachableError(userId);
         throw err;
       }
     },
   };
+}
+
+/** Logs a claim that may or may not have been delivered, once per claim. */
+export function reportUnconfirmed(claims: ClaimStore, log: PluginLog, claim: DeliveryClaim, at: string): void {
+  if (claim.reportedAt !== null) return;
+  const what =
+    claim.status === "claimed" ? `claimed ${claim.claimedAt}, never settled` : `unconfirmed since ${claim.claimedAt} (${claim.error ?? "no detail"})`;
+  log.warn(`delivery of ${claim.occurrenceId} to ${claim.userId} was ${what}; it will not be resent`);
+  claims.markReported(claim.occurrenceId, claim.userId, at);
 }

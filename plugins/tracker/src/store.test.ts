@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { STORE_CONTRACT } from "@rackbops/docket-core";
 import { migrate, openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
@@ -37,5 +40,28 @@ describe("SqliteStore beyond the contract", () => {
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(1);
     db.exec("PRAGMA user_version = 99");
     expect(() => migrate(db)).toThrow(/newer than this plugin knows/);
+  });
+
+  it("a file-backed store (WAL) keeps its data across a close and reopen, and keeps counting ids", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tracker-store-"));
+    try {
+      const path = join(dir, "tracker.sqlite");
+      const at = "2026-03-02T12:00:00.000Z";
+      const db = openDatabase(path);
+      expect((db.query("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode).toBe("wal");
+      const first = new SqliteStore(db);
+      const u = await first.createUser({ discordId: "111111111111111111", at });
+      const t = await first.createTask({ ownerId: u.id, type: "reminder", title: "t", config: { text: "t" }, schedule: null, lane: "notify", capabilities: ["notify"], at });
+      await first.createOccurrence({ taskId: t.id, lane: "notify", dueAt: at, dedupeKey: "k", at });
+      db.close();
+
+      const again = new SqliteStore(openDatabase(path));
+      expect((await again.findUserByDiscordId("111111111111111111"))?.id).toBe(u.id);
+      expect((await again.getTask(t.id))?.config).toEqual({ text: "t" });
+      expect(await again.createOccurrence({ taskId: t.id, lane: "notify", dueAt: at, dedupeKey: "k", at })).toBeNull();
+      expect((await again.createUser({ discordId: "222222222222222222", at })).id).toBe("u2");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

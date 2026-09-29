@@ -1,10 +1,12 @@
 import type { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Clock, TaskType } from "@rackbops/docket-core";
-import { TASK_TYPES } from "@rackbops/docket-types";
+import { reminder, renewal } from "@rackbops/docket-types";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { ClaimStore } from "./claims.js";
 import { decideHealth, type HealthState, healthResponse } from "./health.js";
+import { reportUnconfirmed } from "./notifier.js";
 import { runNotifyTick } from "./notify-lane.js";
 import { parseAdminIds, seedAdmins } from "./people.js";
 import { openDatabase } from "./schema.js";
@@ -21,12 +23,23 @@ import { SqliteStore } from "./store.js";
  * is opened in `activate()` and closed in `dispose()`.
  */
 
-/** The tracker's database, directly under the host's data directory (contract: `dataDir`). */
+/** The tracker's database: `<dataDir>/tracker/tracker.sqlite`, a directory of its own (mcp's convention). */
+export const DB_DIR = "tracker";
 export const DB_FILE = "tracker.sqlite";
+
+/**
+ * The task types this host runs: the notify-lane types whose ports are all wired. `price` needs the
+ * Fetch port and the execute-lane types an Executor (the city-hall adapter); neither exists yet, so
+ * a task of those types is never run here -- docket fails such a run with "no task type".
+ */
+export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object.freeze({
+  reminder: reminder as TaskType<unknown>,
+  renewal: renewal as TaskType<unknown>,
+});
 
 export interface TrackerOptions {
   clock?: Clock;
-  /** The database path; defaults to `<dataDir>/tracker.sqlite`. Tests pass ":memory:". */
+  /** The database path; defaults to `<dataDir>/tracker/tracker.sqlite`. Tests pass ":memory:". */
   dbPath?: string;
   types?: Readonly<Record<string, TaskType<unknown>>>;
 }
@@ -34,7 +47,7 @@ export interface TrackerOptions {
 export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugin {
   const adminIds = parseAdminIds(host.env.TRACKER_ADMIN_DISCORD_IDS);
   const clock: Clock = options.clock ?? { now: () => new Date() };
-  const types = options.types ?? TASK_TYPES;
+  const types = options.types ?? TRACKER_TYPES;
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
   let db: Database | null = null;
   let store: SqliteStore | null = null;
@@ -45,27 +58,43 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     commands: [],
 
     async activate() {
-      db = openDatabase(options.dbPath ?? join(host.dataDir, DB_FILE));
-      store = new SqliteStore(db);
-      claims = new ClaimStore(db);
-      const now = clock.now();
-      const granted = await seedAdmins(store, adminIds, now);
-      if (granted.length > 0) host.log.info(`made ${granted.length} admin(s) from TRACKER_ADMIN_DISCORD_IDS`);
-      // docket's recover(): work a crash left running goes back to the queue; delivery claims keep
-      // it from sending twice.
-      const requeued = await store.requeueRunning();
-      if (requeued.length > 0) host.log.warn(`requeued ${requeued.length} occurrence(s) left running: ${requeued.join(", ")}`);
-      for (const c of claims.listUnsettled()) {
-        host.log.warn(`delivery of ${c.occurrenceId} to ${c.userId} is unconfirmed since ${c.claimedAt}; it will not be resent`);
+      let path = options.dbPath;
+      if (path === undefined) {
+        const dir = join(host.dataDir, DB_DIR);
+        mkdirSync(dir, { recursive: true });
+        path = join(dir, DB_FILE);
       }
-      if (typeof host.dm !== "function") health.blocked = "this bot has no host.dm (it predates rackbops-discord-bot#736)";
+      const opened = openDatabase(path);
+      const openedStore = new SqliteStore(opened);
+      const openedClaims = new ClaimStore(opened);
+      try {
+        const granted = await seedAdmins(openedStore, adminIds, clock.now());
+        if (granted.length > 0) host.log.info(`made ${granted.length} admin(s) from TRACKER_ADMIN_DISCORD_IDS`);
+        // docket's recover(): work a crash left running goes back to the queue; delivery claims keep
+        // it from sending twice.
+        const requeued = await openedStore.requeueRunning();
+        if (requeued.length > 0) host.log.warn(`requeued ${requeued.length} occurrence(s) left running: ${requeued.join(", ")}`);
+        for (const c of openedClaims.listUnsettled()) reportUnconfirmed(openedClaims, host.log, c, clock.now().toISOString());
+      } catch (err) {
+        opened.close();
+        throw err;
+      }
+      db = opened;
+      store = openedStore;
+      claims = openedClaims;
+      health.blocked = typeof host.dm === "function" ? null : "this bot has no host.dm (it predates rackbops-discord-bot#736)";
       health.activatedAt = clock.now();
     },
 
     async dispose() {
+      // Null the handles first: a tick the host abandoned, or one that starts after this, finds no
+      // store and returns instead of touching a closed database.
       health.activatedAt = null;
-      db?.close();
+      store = null;
+      claims = null;
+      const closing = db;
       db = null;
+      closing?.close();
     },
 
     ticks: [

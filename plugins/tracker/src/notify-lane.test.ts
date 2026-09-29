@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { materialize, type Clock, type Schedule } from "@rackbops/docket-core";
-import { TASK_TYPES } from "@rackbops/docket-types";
+import { TRACKER_TYPES as TASK_TYPES } from "./index.js";
 import type { HostApi, HostMessage } from "../../../packages/api/contract.js";
 import { ClaimStore } from "./claims.js";
-import { HOST_CANNOT_MESSAGE, MAX_CONTENT, UNCONFIRMED_MESSAGE_ID } from "./notifier.js";
+import { HOST_CANNOT_MESSAGE, MAX_CONTENT, toHostMessage, UNCONFIRMED_MESSAGE_ID, wrapBareUrls } from "./notifier.js";
 import { runNotifyTick } from "./notify-lane.js";
 import { admit } from "./people.js";
 import { openDatabase } from "./schema.js";
@@ -112,8 +112,9 @@ describe("runNotifyTick", () => {
     expect(s.claims.get(s.occurrence.id, s.owner.id)?.status).toBe("unconfirmed");
     const delivered = (await s.store.listEvents(s.occurrence.id)).filter((e) => e.type === "delivered");
     expect(delivered.map((e) => e.text)).toEqual([`${s.owner.id} ${UNCONFIRMED_MESSAGE_ID}`]);
-    expect(warnings.some((w) => w.includes("unconfirmed"))).toBe(true);
+    expect(warnings.filter((w) => w.includes("never settled"))).toHaveLength(1);
     expect(s.claims.listUnsettled()).toHaveLength(1);
+    expect(s.claims.get(s.occurrence.id, s.owner.id)?.reportedAt).not.toBeNull();
   });
 
   it("a send that settled before the crash is recorded with its real message id, not sent again", async () => {
@@ -190,5 +191,69 @@ describe("runNotifyTick", () => {
     await runNotifyTick({ store: s.store, claims: s.claims, clock: s.clock, types: TASK_TYPES, dm, log });
     expect(calls[0]?.message.content).toHaveLength(MAX_CONTENT);
     expect(calls[0]?.message.content.endsWith("...")).toBe(true);
+  });
+
+  it("a claim recorded as sent stays sent, even without a message id, and is not sent again", async () => {
+    const s = await setup();
+    s.clock.set(DUE);
+    s.claims.claim(s.occurrence.id, s.owner.id, DISCORD, DUE);
+    s.claims.settle(s.occurrence.id, s.owner.id, "sent", DUE, { messageId: "" });
+    const { dm, calls } = fakeDm();
+    const { log, warnings } = silentLog();
+    await runNotifyTick({ store: s.store, claims: s.claims, clock: s.clock, types: TASK_TYPES, dm, log });
+    expect(calls).toHaveLength(0);
+    expect(s.claims.get(s.occurrence.id, s.owner.id)?.status).toBe("sent");
+    expect(warnings).toHaveLength(0);
+  });
+
+  for (const [what, error] of [
+    ["an invalid id", new Error("userId is not a valid id")],
+    ["an empty message", new Error("content is empty")],
+    ["a message too long after link wrapping", new Error("content is longer than 2000 after link wrapping")],
+    ["an unknown user (users.fetch)", Object.assign(new Error("Unknown User"), { code: 10013 })],
+  ] as const) {
+    it(`the host refusing before sending (${what}) releases the claim, so a later run may send`, async () => {
+      const s = await setup();
+      s.clock.set(DUE);
+      const { dm } = fakeDm(async () => {
+        throw error;
+      });
+      const { log } = silentLog();
+      await runNotifyTick({ store: s.store, claims: s.claims, clock: s.clock, types: TASK_TYPES, dm, log });
+      expect((await s.store.getOccurrence(s.occurrence.id))?.status).toBe("failed");
+      expect(s.claims.get(s.occurrence.id, s.owner.id)?.status).toBe("failed");
+      expect(s.claims.claim(s.occurrence.id, s.owner.id, DISCORD, DUE)).toBe(true);
+    });
+  }
+
+  it("refuses locally, claiming nothing and calling no host, a person without a valid Discord id", async () => {
+    const s = await setup();
+    await s.store.updateUser(s.owner.id, { discordId: "not-an-id" });
+    s.clock.set(DUE);
+    const { dm, calls } = fakeDm();
+    const { log } = silentLog();
+    await runNotifyTick({ store: s.store, claims: s.claims, clock: s.clock, types: TASK_TYPES, dm, log });
+    expect(calls).toHaveLength(0);
+    expect((await s.store.getOccurrence(s.occurrence.id))?.error).toBe(`user ${s.owner.id} has no valid Discord id`);
+    expect(s.claims.get(s.occurrence.id, s.owner.id)).toBeNull();
+  });
+
+  it("refuses locally, claiming nothing, a message with no text", async () => {
+    const s = await setup(undefined, "   ");
+    s.clock.set(DUE);
+    const { dm, calls } = fakeDm();
+    const { log } = silentLog();
+    await runNotifyTick({ store: s.store, claims: s.claims, clock: s.clock, types: TASK_TYPES, dm, log });
+    expect(calls).toHaveLength(0);
+    expect((await s.store.getOccurrence(s.occurrence.id))?.error).toBe("the message has no text");
+    expect(s.claims.get(s.occurrence.id, s.owner.id)).toBeNull();
+  });
+
+  it("cuts a long message so it fits after the host wraps its links, even when the cut splits one", () => {
+    const text = `${"a ".repeat(990)}https://example.com/${"x".repeat(100)}`;
+    const out = toHostMessage({ text });
+    expect(out).not.toBeNull();
+    expect(wrapBareUrls(out?.content ?? "").length).toBeLessThanOrEqual(MAX_CONTENT);
+    expect(out?.content.endsWith("...")).toBe(true);
   });
 });

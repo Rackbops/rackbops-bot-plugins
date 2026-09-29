@@ -26,6 +26,8 @@ export interface DeliveryClaim {
   error: string | null;
   claimedAt: string;
   settledAt: string | null;
+  /** When the admin was told about this claim (logged); null until then. Told once per claim. */
+  reportedAt: string | null;
 }
 
 type Row = Record<string, unknown>;
@@ -42,6 +44,7 @@ function toClaim(r: Row): DeliveryClaim {
     error: s(r.error),
     claimedAt: String(r.claimed_at),
     settledAt: s(r.settled_at),
+    reportedAt: s(r.reported_at),
   };
 }
 
@@ -64,7 +67,7 @@ export class ClaimStore {
          VALUES (?, ?, ?, 'claimed', ?)
          ON CONFLICT (occurrence_id, user_id) DO UPDATE SET
            discord_id = excluded.discord_id, status = 'claimed', claimed_at = excluded.claimed_at,
-           message_id = NULL, channel_id = NULL, error = NULL, settled_at = NULL
+           message_id = NULL, channel_id = NULL, error = NULL, settled_at = NULL, reported_at = NULL
          WHERE delivery_claims.status = 'failed'`,
       )
       .run(occurrenceId, userId, discordId, at);
@@ -84,6 +87,10 @@ export class ClaimStore {
          WHERE occurrence_id = ? AND user_id = ?`,
       )
       .run(status, detail.messageId ?? null, detail.channelId ?? null, detail.error ?? null, at, occurrenceId, userId);
+  }
+
+  markReported(occurrenceId: string, userId: string, at: string): void {
+    this.db.query("UPDATE delivery_claims SET reported_at = ? WHERE occurrence_id = ? AND user_id = ?").run(at, occurrenceId, userId);
   }
 
   /** Claims no send ever settled, and ones marked unconfirmed: what the admin is shown. */

@@ -19,9 +19,11 @@ export class PeopleError extends Error {
 }
 
 /**
- * `TRACKER_ADMIN_DISCORD_IDS`: comma-separated Discord user ids (spaces around commas tolerated).
- * Unset or blank is no admins; anything else that is not a list of ids throws, naming the bad
- * entry, so the host skips the plugin with that reason (createPlugin's rule).
+ * `TRACKER_ADMIN_DISCORD_IDS`: comma-separated Discord user ids, spaces around a comma allowed --
+ * the same shape as the manifest's `format`, so what `ops/bot-ops.sh env-set` accepts, this does.
+ * Unset or blank is no admins; anything else that is not a list of ids (an empty entry, as from a
+ * trailing comma, included) throws, naming the bad entry, so the host skips the plugin with that
+ * reason (createPlugin's rule).
  */
 export function parseAdminIds(raw: string | undefined): string[] {
   if (raw === undefined || raw.trim() === "") return [];
@@ -34,19 +36,27 @@ export function parseAdminIds(raw: string | undefined): string[] {
 
 /**
  * Admits the person with this Discord id: returns their row, creating it with the tracker's
- * defaults when absent. What `/allow` will call (rackbops-bot-plugins#79).
+ * defaults when absent. What `/allow` will call (rackbops-bot-plugins#79). The tracker's store
+ * rejects a second user with the same Discord id (store.ts), so two admissions racing each other
+ * leave one row: the loser's create throws, and it reads back the winner's.
  */
 export async function admit(store: Store, discordId: string, now: Date, options: { admin?: boolean } = {}): Promise<User> {
   if (!SNOWFLAKE.test(discordId)) throw new PeopleError(`"${discordId}" is not a Discord user id`);
   const existing = await store.findUserByDiscordId(discordId);
   if (existing) return existing;
-  return store.createUser({
-    discordId,
-    timeZone: DEFAULT_TIME_ZONE,
-    preferredHour: DEFAULT_PREFERRED_HOUR,
-    admin: options.admin ?? false,
-    at: now.toISOString(),
-  });
+  try {
+    return await store.createUser({
+      discordId,
+      timeZone: DEFAULT_TIME_ZONE,
+      preferredHour: DEFAULT_PREFERRED_HOUR,
+      admin: options.admin ?? false,
+      at: now.toISOString(),
+    });
+  } catch (err) {
+    const winner = await store.findUserByDiscordId(discordId);
+    if (winner) return winner;
+    throw err;
+  }
 }
 
 /**

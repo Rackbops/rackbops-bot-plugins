@@ -10,7 +10,7 @@
     "url": "git+https://github.com/Rackbops/rackbops-bot-plugins.git",
     "directory": "plugins/tracker"
   },
-  "dependencies": {
+  "devDependencies": {
     "@rackbops/docket-core": "^0.3.0",
     "@rackbops/docket-types": "^0.3.0"
   },
@@ -24,10 +24,10 @@
     "env": [
       {
         "key": "TRACKER_ADMIN_DISCORD_IDS",
-        "format": "^[0-9]{17,20}(,[0-9]{17,20})*$",
+        "format": "^ *[0-9]{17,20}( *, *[0-9]{17,20})* *$",
         "required": false,
         "secret": false,
-        "description": "Comma-separated Discord user ids made tracker admins at start (the first admin). Only ever grants: removing an id here does not revoke it. Unset = no admin is seeded."
+        "description": "Comma-separated Discord user ids (spaces around commas allowed) made tracker admins at start (the first admin). Only ever grants: removing an id here does not revoke it. Unset = no admin is seeded."
       }
     ]
   }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { DEFAULT_PREFERRED_HOUR, DEFAULT_TIME_ZONE, PeopleError, admit, localIdentity, parseAdminIds, seedAdmins, setPreferences } from "./people.js";
+import pkg from "../package.json" with { type: "json" };
 import { openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
 
@@ -14,6 +15,18 @@ describe("parseAdminIds", () => {
     expect(parseAdminIds(undefined)).toEqual([]);
     expect(parseAdminIds("  ")).toEqual([]);
     expect(parseAdminIds(`${A}, ${B},${A}`)).toEqual([A, B]);
+  });
+
+  it("accepts exactly what the manifest's format accepts: spaces around commas, no empty entry", () => {
+    const format = new RegExp(pkg.botPlugin.env[0]!.format);
+    for (const ok of [A, `${A},${B}`, `${A} , ${B}`, ` ${A}`]) {
+      expect(format.test(ok)).toBe(true);
+      expect(() => parseAdminIds(ok)).not.toThrow();
+    }
+    for (const bad of [`${A},`, `,${A}`, `${A},,${B}`, `${A};${B}`]) {
+      expect(format.test(bad)).toBe(false);
+      expect(() => parseAdminIds(bad)).toThrow(PeopleError);
+    }
   });
 
   it("refuses anything that is not a Discord id, naming it", () => {
@@ -59,5 +72,24 @@ describe("people in the store", () => {
     expect(await identity.actorForDiscord(A)).toEqual({ userId: admin?.id ?? "", admin: true });
     expect(await identity.actorForDiscord(B)).toBeNull();
     expect(await identity.actorForSubject("any")).toBeNull();
+  });
+
+  it("two admissions racing for one Discord id leave one row: the loser reads back the winner", async () => {
+    const store = fresh();
+    const first = await admit(store, A, NOW);
+    // The race: the loser looked before the winner wrote, so its own look found nobody.
+    const racing = Object.create(store) as SqliteStore;
+    let looked = false;
+    racing.findUserByDiscordId = async (id: string) => {
+      if (!looked) return ((looked = true), null);
+      return store.findUserByDiscordId(id);
+    };
+    expect((await admit(racing, A, NOW)).id).toBe(first.id);
+  });
+
+  it("the store rejects a second user with the same Discord id", async () => {
+    const store = fresh();
+    await admit(store, A, NOW);
+    await expect(store.createUser({ discordId: A, at: NOW.toISOString() })).rejects.toThrow();
   });
 });

@@ -133,6 +133,7 @@ export const MIGRATIONS: readonly string[] = [
     error TEXT,
     claimed_at TEXT NOT NULL,
     settled_at TEXT,
+    reported_at TEXT,
     PRIMARY KEY (occurrence_id, user_id)
   );
   `,

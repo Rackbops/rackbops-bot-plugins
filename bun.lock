@@ -27,7 +27,7 @@
     "plugins/tracker": {
       "name": "@rackbops/plugin-tracker",
       "version": "0.1.0",
-      "dependencies": {
+      "devDependencies": {
         "@rackbops/docket-core": "^0.3.0",
         "@rackbops/docket-types": "^0.3.0",
       },

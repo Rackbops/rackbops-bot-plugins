@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { materialize } from "@rackbops/docket-core";
 import { makeFakeDelivery, makeFakeHost } from "../../../packages/testkit/index.js";
 import pkg from "../package.json" with { type: "json" };
-import { createPlugin, DB_FILE } from "./index.js";
+import { createPlugin, DB_DIR, DB_FILE, TRACKER_TYPES } from "./index.js";
 import { admit } from "./people.js";
 import { openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
@@ -37,7 +37,7 @@ describe("createPlugin", () => {
     expect(() => createPlugin(makeFakeHost({ name: "tracker", env: { TRACKER_ADMIN_DISCORD_IDS: "roshne" } }))).toThrow("TRACKER_ADMIN_DISCORD_IDS");
     const dataDir = tempDir();
     createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN } }));
-    expect(existsSync(join(dataDir, DB_FILE))).toBe(false);
+    expect(existsSync(join(dataDir, DB_DIR, DB_FILE))).toBe(false);
   });
 
   it("declares no commands yet, and exactly the env keys it reads", () => {
@@ -57,11 +57,11 @@ describe("the plugin end to end on a real data file", () => {
 
     expect((await healthz(plugin)).status).toBe(503);
     await plugin.activate!();
-    expect(existsSync(join(dataDir, DB_FILE))).toBe(true);
+    expect(existsSync(join(dataDir, DB_DIR, DB_FILE))).toBe(true);
     expect((await healthz(plugin)).status).toBe(200);
 
     // A second connection to the same file stands in for the commands #79 will add.
-    const store = new SqliteStore(openDatabase(join(dataDir, DB_FILE)));
+    const store = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
     const owner = await admit(store, ADMIN, clock.now());
     expect(owner.admin).toBe(true);
     const task = await store.createTask({
@@ -105,7 +105,8 @@ describe("the plugin end to end on a real data file", () => {
   it("requeues a run a crash left running, without resending a delivery it had claimed", async () => {
     const dataDir = tempDir();
     const clock = clockAt("2026-10-01T12:01:00.000Z");
-    const db = openDatabase(join(dataDir, DB_FILE));
+    mkdirSync(join(dataDir, DB_DIR));
+    const db = openDatabase(join(dataDir, DB_DIR, DB_FILE));
     const store = new SqliteStore(db);
     const owner = await admit(store, ADMIN, clock.now());
     const task = await store.createTask({
@@ -133,8 +134,51 @@ describe("the plugin end to end on a real data file", () => {
     expect(warnings.some((w) => w.includes("requeued 1 occurrence"))).toBe(true);
     await plugin.ticks![0]!.run();
     expect(delivery.calls.dm).toHaveLength(0);
-    const reopened = new SqliteStore(openDatabase(join(dataDir, DB_FILE)));
+    const reopened = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
     expect((await reopened.getOccurrence(occurrence?.id ?? ""))?.status).toBe("done");
     await plugin.dispose!();
+  });
+
+  it("a tick after dispose, or one the host abandoned across it, touches nothing", async () => {
+    const dataDir = tempDir();
+    const delivery = makeFakeDelivery();
+    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, ...delivery }), { clock: clockAt(START) });
+    await plugin.activate!();
+    await plugin.dispose!();
+    await plugin.ticks![0]!.run(new AbortController().signal);
+    expect(delivery.calls.dm).toHaveLength(0);
+  });
+
+  it("closes the database and stays inactive when activate() fails", async () => {
+    const dataDir = tempDir();
+    mkdirSync(join(dataDir, DB_DIR));
+    // A database from a newer plugin: activate() must refuse it and leave nothing open.
+    const db = openDatabase(join(dataDir, DB_DIR, DB_FILE));
+    db.exec("PRAGMA user_version = 99");
+    db.close();
+    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir }), { clock: clockAt(START) });
+    await expect(plugin.activate!()).rejects.toThrow("newer than this plugin knows");
+    expect((await healthz(plugin)).status).toBe(503);
+    await plugin.ticks![0]!.run();
+  });
+
+  it("health goes 503 on dispose and back to 200 on a second activate, with the data kept", async () => {
+    const dataDir = tempDir();
+    const clock = clockAt(START);
+    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN }, ...makeFakeDelivery() }), { clock });
+    await plugin.activate!();
+    await plugin.ticks![0]!.run();
+    expect((await healthz(plugin)).status).toBe(200);
+    await plugin.dispose!();
+    expect((await healthz(plugin)).status).toBe(503);
+    await plugin.activate!();
+    expect((await healthz(plugin)).status).toBe(200);
+    await plugin.dispose!();
+    const store = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
+    expect((await store.findUserByDiscordId(ADMIN))?.admin).toBe(true);
+  });
+
+  it("registers only the notify-lane types whose ports are wired: reminder and renewal, not price", () => {
+    expect(Object.keys(TRACKER_TYPES).sort()).toEqual(["reminder", "renewal"]);
   });
 });
