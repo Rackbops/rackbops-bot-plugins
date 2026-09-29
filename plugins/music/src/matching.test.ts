@@ -385,6 +385,20 @@ describe("pickBestTrack", () => {
     expect(best).toBeUndefined();
   });
 
+  // A LITERAL exact-title candidate would win via titleScore's very first branch (100) regardless
+  // of whether the suite rule exists or where it sits -- that proves nothing about precedence. The
+  // candidate here reaches its score through the PREFIX rule (72) instead: it starts with the full
+  // song title plus a suffix that isn't a clean-edition remaster, so isExactTitle is false, but it
+  // ALSO independently satisfies the suite condition (starts with the stem, contains the part
+  // name). Both candidates tie on artist and tieBreak, so only the title rule that wins decides:
+  // 72 (prefix, checked first) beats 60 (suite) here; if the suite check ever ran first, both
+  // candidates would score identically and the medley (listed first) would win the tie instead.
+  test("a candidate satisfying both the prefix rule and the suite rule scores via the prefix rule, not the suite rule", () => {
+    const song = { name: "2112 Part I: Overture", artist: "Rush" };
+    const candidate = track("2112 Part I: Overture - Single Edit", ["Rush"]);
+    expect(explainCandidate(song, candidate).title).toBe(72);
+  });
+
   test("an exact or prefix title still beats a suite match", () => {
     const song = { name: "2112 Part I: Overture", artist: "Rush" };
     const best = pickBestTrack(song, [
@@ -392,10 +406,10 @@ describe("pickBestTrack", () => {
         "2112: Overture / The Temples Of Syrinx / Discovery / Presentation / Oracle / Soliloquy / Grand Finale - Medley",
         ["Rush"],
       ),
-      track("2112 Part I: Overture", ["Rush"]),
+      track("2112 Part I: Overture - Single Edit", ["Rush"]),
     ]);
-    expect(best!.track.name).toBe("2112 Part I: Overture");
-    expect(best!.confidence).toBe("high");
+    expect(best!.track.name).toBe("2112 Part I: Overture - Single Edit");
+    expect(best!.confidence).toBe("medium");
   });
 });
 
