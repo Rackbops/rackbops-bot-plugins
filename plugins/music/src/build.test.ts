@@ -383,7 +383,10 @@ describe("buildPlaylist traces", () => {
       artist: 0,
       // No other candidate on the page shares "Karaoke Crew" as its primary artist (#59).
       tieBreak: 0,
-      penalty: 100,
+      // Both the title ("Karaoke Version") and the artist name ("Karaoke Crew") independently
+      // trip the 100-point karaoke rule (#99 added the artist-side one), so this candidate's
+      // penalty is 200, not 100.
+      penalty: 200,
       score: 0,
     });
     expect(two.queries![1]!.candidates.map((c) => c.name)).toEqual(["Nothing Relevant"]);
