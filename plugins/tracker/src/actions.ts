@@ -25,6 +25,7 @@ import type { Admissions } from "./admissions.js";
 import { type DeliveryHealth, PAUSE_AFTER, resumedNotice } from "./delivery-health.js";
 import { MAX_LIVE_TASKS, MAX_WHEN } from "./limits.js";
 import { admit, PeopleError, setPreferences } from "./people.js";
+import { heldRuns, restoreHeldRun } from "./retime.js";
 import type { Sessions } from "./web/sessions.js";
 import type { LoginLinks } from "./web/signin-link.js";
 
@@ -125,7 +126,7 @@ export async function registerPerson(
   const first = !d.admissions.isRegistered(user.id);
   d.admissions.markRegistered(user.id, d.clock.now().toISOString());
   const zoneChanged = updated.timeZone !== user.timeZone;
-  if (zoneChanged || updated.preferredHour !== user.preferredHour) await rescheduleOwned(d, updated, zoneChanged);
+  if (zoneChanged || updated.preferredHour !== user.preferredHour) await rescheduleOwned(d, updated, zoneChanged, user);
   return registeredText(updated, first);
 }
 
@@ -142,7 +143,7 @@ export async function saveSettings(d: TrackerDeps, user: User, input: { hour: nu
     throw err;
   }
   const zoneChanged = updated.timeZone !== user.timeZone;
-  if (zoneChanged || updated.preferredHour !== user.preferredHour) await rescheduleOwned(d, updated, zoneChanged);
+  if (zoneChanged || updated.preferredHour !== user.preferredHour) await rescheduleOwned(d, updated, zoneChanged, user);
   return null;
 }
 
@@ -156,7 +157,7 @@ export async function setHour(d: TrackerDeps, user: User, hour: number): Promise
     if (err instanceof PeopleError) return err.message;
     throw err;
   }
-  const moved = await rescheduleOwned(d, updated, false);
+  const moved = await rescheduleOwned(d, updated, false, user);
   const note = moved > 0 ? ` ${moved} recurring reminder(s) moved to it.` : "";
   return `Your preferred hour is now ${String(hour).padStart(2, "0")}:00, ${updated.timeZone} time.${note}`;
 }
@@ -166,16 +167,19 @@ export async function setHour(d: TrackerDeps, user: User, hour: number): Promise
  * paused recurring task of the owner whose time depends on it -- all calendar and period tasks when the
  * zone moved, only those naming no hour when just the hour did. Returns how many moved.
  */
-async function rescheduleOwned(d: TrackerDeps, owner: User, zoneChanged: boolean): Promise<number> {
+async function rescheduleOwned(d: TrackerDeps, owner: User, zoneChanged: boolean, before: User): Promise<number> {
   let moved = 0;
-  // Paused ones too: a paused task keeps its queued run, which would otherwise fire once at the old
-  // zone's time on resume. Rescheduling a paused one only drops that run; resume makes the next.
+  // Paused ones too: a paused task keeps its queued run, which would otherwise fire at the old zone's
+  // time on resume. docket's reschedule drops it and makes no next run for a paused task, so the run
+  // it held is put back, re-timed to the new zone or hour for the same occurrence (retime.ts).
   const live = [...(await d.store.listTasks({ ownerId: owner.id, status: "active" })), ...(await d.store.listTasks({ ownerId: owner.id, status: "paused" }))];
   for (const task of live) {
     const s = task.schedule;
     if (!s || (s.kind !== "calendar" && s.kind !== "period")) continue;
     if (!zoneChanged && s.hour !== undefined) continue;
-    await rescheduleKeepingSnoozes(d, task, owner, s, owner.id);
+    const held = task.status === "paused" ? await heldRuns(d.store, task) : [];
+    const updated = await rescheduleKeepingSnoozes(d, task, owner, s, owner.id);
+    if (held.length > 0) await restoreHeldRun(d.store, updated, held, before, owner, d.clock.now());
     moved++;
   }
   return moved;

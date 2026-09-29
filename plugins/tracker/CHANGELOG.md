@@ -25,8 +25,9 @@
     31st stays on the 31st; only a different date re-anchors. A finished task cannot be edited.
   - Pause and Resume on a task's page. A task the owner paused sends nothing until resumed, and a
     person's delivery resuming does not un-pause it; resuming gives it its next run (a run missed
-    while paused fires once, late). A zone or preferred-hour change moves a paused task's queued run
-    too, so it never fires at the old time. Resume on a task paused for failed DMs goes on without the
+    while paused fires once, late). A zone or preferred-hour change re-times a paused task's held run
+    -- the same occurrence (period date, or local day) at the new zone or hour, still one run, snoozes
+    kept -- so resume fires it once, late, never at the old time and never lost. Resume on a task paused for failed DMs goes on without the
     recipients who could not be DMed, as `/task resume` does.
   - Delete takes two posts: the first shows what will happen, the second (with `confirm=yes`)
     archives the task. It leaves every list, its queued runs are dropped and nothing more is sent;
@@ -53,7 +54,9 @@
   (300), `near` (100), a reminder's text (1500), a currency (3), a zone (64). The server now checks
   the page's length and the `when`/`until` length itself, not only Discord.
 - A `/settings` or `/register` zone or hour change also moves the recurring tasks the person has
-  paused, not only the active ones.
+  paused (by hand or for failed DMs), not only the active ones: the run each was holding is kept,
+  re-timed for the same occurrence (`src/retime.ts`), so a renewal's due ask or a missed reminder
+  still goes out once, late, on resume.
 - Internal: `/remind`, `/renewal` and `/price` now run shared plan functions (`reminderPlan`,
   `renewalPlan`, `priceSettingsPlan`, `startPrice`/`previewPrice`/`finishPrice`) that the web
   editor runs too; the price tracker moved to `src/price.ts` and reminders to `src/reminders.ts`.

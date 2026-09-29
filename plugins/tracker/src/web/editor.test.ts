@@ -660,9 +660,65 @@ describe("review fixes", () => {
     expect(queued(w.dbPath, "t1")).toEqual(["2026-10-01T13:00:00.000Z"]);
     await post(w.plugin, w.larry, w.csrf, "/tasks/t1/pause");
     await post(w.plugin, w.larry, w.csrf, "/settings", { hour: "9", zone: "Europe/London" });
-    expect(queued(w.dbPath, "t1")).toEqual([]);
+    // The run it held, for Oct 1, now at 9:00 London time -- already past, so resume fires it late.
+    expect(queued(w.dbPath, "t1")).toEqual(["2026-10-01T08:00:00.000Z"]);
     await post(w.plugin, w.larry, w.csrf, "/tasks/t1/resume");
+    await notifyTick(w.plugin);
+    expect(w.sent).toHaveLength(1);
     expect(queued(w.dbPath, "t1")).toEqual(["2026-10-02T08:00:00.000Z"]);
+  });
+
+  it("a zone or hour change on a paused renewal keeps its due ask, re-timed, and resume sends it", async () => {
+    const w = await setup();
+    await post(w.plugin, w.larry, w.csrf, "/new/renewal", { name: "Gym", amount: "30", currency: "USD", renews: "2026-10-04", unit: "year", lead: "7" });
+    // The first ask (about Oct 4, 7 days before at 9:00) is already due; the next year's is queued too.
+    expect(queued(w.dbPath, "t1")).toEqual(["2026-09-27T13:00:00.000Z", "2027-09-27T13:00:00.000Z"]);
+    await post(w.plugin, w.larry, w.csrf, "/tasks/t1/pause");
+    expect(await slash(w.plugin, "settings", LARRY, { sub: "hour", ints: { hour: 7 } })).toContain("07:00");
+    // Exactly one run: the same ask, about the same date, at the new hour.
+    expect(queued(w.dbPath, "t1")).toEqual(["2026-09-27T11:00:00.000Z"]);
+    await post(w.plugin, w.larry, w.csrf, "/tasks/t1/resume");
+    await notifyTick(w.plugin);
+    expect(w.sent).toHaveLength(1);
+    expect(JSON.stringify(w.sent[0])).toContain("Gym renews on 2026-10-04");
+    expect(queued(w.dbPath, "t1")).toEqual(["2027-09-27T11:00:00.000Z"]);
+  });
+
+  it("a paused daily reminder's missed run survives an hour change and fires once, late, on resume", async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "stretch", repeat: "day" } });
+    await post(w.plugin, w.larry, w.csrf, "/tasks/t1/pause");
+    w.clock.set("2026-10-04T02:00:00.000Z");
+    await notifyTick(w.plugin);
+    // Signed in again: a few days on, and the settings form is its own session's.
+    const jar = await signIn(w.plugin, LARRY);
+    const csrf = await csrfOf(w.plugin, jar);
+    await post(w.plugin, jar, csrf, "/settings", { hour: "7", zone: "America/New_York" });
+    expect(queued(w.dbPath, "t1")).toEqual(["2026-10-01T11:00:00.000Z"]);
+    await post(w.plugin, jar, csrf, "/tasks/t1/resume");
+    await notifyTick(w.plugin);
+    expect(w.sent).toHaveLength(1);
+    expect(JSON.stringify(w.sent[0])).toContain("stretch");
+    expect(queued(w.dbPath, "t1")).toEqual(["2026-10-04T11:00:00.000Z"]);
+  });
+
+  it("a task paused for failed DMs keeps its run through an hour change, and delivery resuming sends it", async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "stretch", repeat: "day" } });
+    for (const text of ["a", "b", "c"]) await slash(w.plugin, "remind", LARRY, { strings: { text, when: "in 5 minutes" } });
+    w.delivery.refuse = true;
+    w.clock.advance(10 * 60 * 1000);
+    await notifyTick(w.plugin);
+    expect(tasks(w.dbPath)[0]?.status).toBe("paused");
+    // The web's settings form does not resume delivery, so the task is still paused when it moves.
+    await post(w.plugin, w.larry, w.csrf, "/settings", { hour: "7", zone: "America/New_York" });
+    expect(queued(w.dbPath, "t1")).toEqual(["2026-10-01T11:00:00.000Z"]);
+    w.delivery.refuse = false;
+    await slash(w.plugin, "tasks", LARRY);
+    expect(tasks(w.dbPath)[0]?.status).toBe("active");
+    await notifyTick(w.plugin);
+    expect(w.sent).toHaveLength(1);
+    expect(JSON.stringify(w.sent[0])).toContain("stretch");
   });
 
   it("an edit's empty or missing field keeps what the task has; an empty note clears it", async () => {

@@ -104,7 +104,8 @@ that is one of the schedule's own period dates keeps the schedule and its anchor
 31st stays the 31st; only a different date re-anchors. A finished task cannot be
 edited. Pause holds everything the task would send until Resume, and a person's delivery resuming
 does not undo it; a run missed while paused fires once, late, on resume, and a zone or hour change
-moves a paused task's run as it does an active one's. Resume on a task paused
+re-times the run a paused task holds -- same period date or local day, new zone or hour, still one
+run -- so it is neither lost nor sent at the old time. Resume on a task paused
 for failed DMs is `/task resume`. Delete archives the task: it leaves every list, its queued runs
 are dropped and nothing more is sent, but its history is kept (an admin can see every task) and
 its page stays for the owner. Every editor post passes the session, CSRF and `Origin` checks; the
