@@ -12,6 +12,13 @@
   whatever their titles score -- an exact title from an unrelated artist (e.g. Boomkat's *Rip Her to
   Shreds*) no longer outranks the right artist's own remaster (Blondie's, partial artist match).
   Confidence is unaffected; this changes which candidate wins, not how sure the reply is (#58).
+- A song search no longer stops at the first query that finds ANY credible match -- it keeps
+  going past a `medium` or `low` result to try the loose query too, and the more confident of the
+  two wins (ties keep the filtered query's match, which is the more precise of the two). The
+  common case, a confident first hit, still costs exactly one Spotify search; the worst case per
+  song is still bounded at two (rackbops-bot-plugins#61). The match log's `queries` field is now
+  kept whenever more than one query ran, even if the winner was `high` -- previously it was
+  dropped whenever the outcome was `high`, however many queries that took.
 
 ## [1.5.0] - 2026-09-28
 

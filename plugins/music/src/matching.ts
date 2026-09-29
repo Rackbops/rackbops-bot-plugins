@@ -32,6 +32,9 @@ export type MatchConfidence = "high" | "medium" | "low";
 export interface Match {
   track: TrackCandidate;
   confidence: MatchConfidence;
+  /** The winning candidate's `scoreCandidate` -- carried over so a caller comparing two matches
+   *  (across queries) never has to re-score. */
+  score: number;
 }
 
 /**
@@ -188,11 +191,12 @@ export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandida
   if (exactTitle && exactArtist) confidence = "high";
   else if (someArtistOverlap && best.score >= 90) confidence = "medium";
   else confidence = "low";
-  return { track: best.track, confidence };
+  return { track: best.track, confidence, score: best.score };
 }
 
 /**
- * The ordered search queries to try for one song, stopping at the first that yields a match.
+ * The ordered search queries to try for one song. `findSong` (build.ts) stops early once one of
+ * them is confident (#61) -- it no longer stops at merely the first that yields any match.
  *
  * The field-filtered query is precise but brittle -- Spotify's `track:"..."` filter matches poorly
  * when the title carries punctuation the indexer normalised differently -- so a loose query is

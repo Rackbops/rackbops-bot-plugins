@@ -116,6 +116,7 @@ describe("formatBuildReply", () => {
             match: {
               track: { uri: "u", name: "Yesterday - Live", artistNames: ["The Beatles"], popularity: 1 },
               confidence: "low",
+              score: 0, // unused by formatBuildReply -- only confidence and the track matter here
             },
           },
         ],
