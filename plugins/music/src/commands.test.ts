@@ -93,6 +93,16 @@ describe("formatBuildReply", () => {
     expect(lines[2]).toBe("Added 2 of 2 songs.");
   });
 
+  test("names the show date after the venue, in the playlist name's ISO form", () => {
+    const reply = formatBuildReply(setlist(), outcome());
+    expect(reply.split("\n")[0]).toContain("United Kingdom (2026-09-08)**");
+  });
+
+  test("omits the date when the setlist has none", () => {
+    const reply = formatBuildReply(setlist({ eventDate: "" }), outcome());
+    expect(reply.split("\n")[0]).toEndWith("United Kingdom**");
+  });
+
   test("says how many tape tracks were skipped, so the count isn't a silent mystery", () => {
     const reply = formatBuildReply(setlist({ tapeCount: 2 }), outcome());
     expect(reply).toContain("Skipped 2 played from tape");
@@ -196,7 +206,8 @@ describe("formatBuildReply", () => {
       setlist({ venueName: undefined, cityName: undefined, countryName: undefined }),
       outcome(),
     );
-    expect(reply.split("\n")[0]).toBe("**Band**");
+    // #92: the date still follows, even with no venue to put it after.
+    expect(reply.split("\n")[0]).toBe("**Band (2026-09-08)**");
   });
 
   test("names the artist used when it is not the one asked for", () => {

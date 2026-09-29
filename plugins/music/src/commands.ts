@@ -20,7 +20,7 @@ import { parseDateOption, parseSetlistUrl, type SetlistFmClient, type Setlist } 
 import type { SpotifyClient } from "./spotify.js";
 import { authorizeUrl, hasScopes, PARTY_SCOPES } from "./spotify.js";
 import { normalize, pickBestTrack } from "./matching.js";
-import { buildPlaylist, type BuildOutcome, type BuildResult } from "./build.js";
+import { buildPlaylist, isoDate, type BuildOutcome, type BuildResult } from "./build.js";
 import { toMatchRun, type MatchRun } from "./matchlog.js";
 import { accessTokenFor } from "./tokens.js";
 import {
@@ -123,6 +123,9 @@ function describeShow(setlist: Setlist): string {
  * of silently picking a plausible-looking track. Clipped to Discord's limit by dropping the
  * softest information first -- the link and the counts always survive.
  *
+ * The head also names the show date (#92): the reply was the only surface that didn't, since the
+ * playlist name (`isoDate` in `build.ts`) already carries it.
+ *
  * `askedArtist` is the artist name the user typed via `artist:` (undefined for a `url:` run, and
  * for the picker path, which already names the artist in its own prompt). When it doesn't match
  * the built setlist's artist exactly (see `preferExactArtist` in `setlistfm.ts`), a note saying so
@@ -135,7 +138,7 @@ export function formatBuildReply(setlist: Setlist, outcome: BuildOutcome, askedA
       : "";
   const head =
     exactNote +
-    `**${describeShow(setlist)}**\n` +
+    `**${describeShow(setlist)}${setlist.eventDate === "" ? "" : ` (${isoDate(setlist.eventDate)})`}**\n` +
     `${outcome.playlistUrl}\n` +
     `Added ${outcome.added} of ${outcome.attempted} songs.`;
 
