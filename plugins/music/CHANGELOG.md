@@ -38,6 +38,13 @@
   form the playlist name already uses: `**Metallica - London Stadium, London, United Kingdom
   (2026-07-05)**`. It was the only place the date wasn't shown, so a band that played the same
   venue twice read identically (#92). Nothing appended when the setlist has no date.
+- A tie between candidates with the same title and artist score is no longer broken by `popularity`
+  -- a search made with a connected user's token never actually sends it, so it always fell back to
+  whichever candidate Spotify happened to list first. The tie now goes to the candidate whose
+  primary artist has more editions on the same result page (the album cut, a remaster, a
+  compilation), which is what a real catalogue artist looks like; page order still decides a
+  genuine tie. **`tieBreak` in `music-match-log.json` is unchanged as a key, but now holds this
+  editions count divided by 100, not `popularity / 100`** (#59).
 
 ## [1.5.0] - 2026-09-28
 

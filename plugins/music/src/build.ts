@@ -219,7 +219,7 @@ export async function findSong(
           name: c.name,
           artists: c.artistNames,
           uri: c.uri,
-          ...explainCandidate(wanted, c),
+          ...explainCandidate(wanted, c, result.value),
         })),
       });
       const found = pickBestTrack(wanted, result.value);
