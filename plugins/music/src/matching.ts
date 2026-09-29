@@ -37,7 +37,8 @@ export interface Match {
 /**
  * Lowercase, strip accents, drop punctuation, collapse whitespace. Deliberately aggressive: the
  * difference between "Dont Stop Me Now" (setlist.fm, typed by a human at a gig) and "Don't Stop Me
- * Now" (Spotify) must not cost a match, and neither must "Mötley" vs "Motley".
+ * Now" (Spotify) must not cost a match, and neither must "Mötley" vs "Motley", nor "By-Tor & the
+ * Snow Dog" (setlist.fm) vs "By-Tor And The Snow Dog" (Spotify).
  */
 export function normalize(value: string): string {
   return value
@@ -49,6 +50,10 @@ export function normalize(value: string): string {
     // "don t" and lose the match against Spotify's own spelling. Covers the typographic apostrophe
     // too, which is what a copy-paste from a web page actually carries.
     .replace(/['\u2018\u2019\u02bc`]/g, "")
+    // "&" and "+" between two words read as "and": setlist.fm has "By-Tor & the Snow Dog", Spotify
+    // "By-Tor And The Snow Dog", and turning the symbol into a space made them different titles.
+    // Only between non-space characters, so a symbol on its own edge is still just punctuation.
+    .replace(/(?<=\S)\s*[&+]\s*(?=\S)/g, " and ")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 }

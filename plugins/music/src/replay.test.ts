@@ -120,5 +120,7 @@ afterAll(() => {
   console.log(`replay: right ${tally.right}, wrong ${tally.wrong}, missing ${tally.missing}`);
   console.log(`replay: ${unserved.length} queries had no logged page`);
   for (const q of unserved) console.log(`  unserved: ${q}`);
-  expect(tally).toEqual({ right: 12, wrong: 5, missing: 10 });
+  // #57: normalize() now reads "&"/"+" as "and", so By-Tor & the Snow Dog's studio cut is matched
+  // at high instead of a live recording at low -- 12/5/10 -> 13/4/10, the only entry that moved.
+  expect(tally).toEqual({ right: 13, wrong: 4, missing: 10 });
 });
