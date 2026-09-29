@@ -139,8 +139,20 @@ describe("explainCandidate", () => {
 
   test("tieBreak excludes the candidate itself even when an identical duplicate is elsewhere on the page", () => {
     const candidate = track("Hey Jude", ["The Beatles"]);
-    const page = [candidate];
-    expect(explainCandidate(song, candidate, page).tieBreak).toBe(0);
+    // A genuine duplicate row: same content, but a DISTINCT object -- real Spotify pages carry
+    // exact duplicates like this (the corpus has several). Exclusion is by reference identity, not
+    // content, so `candidate` must not count itself while `duplicate` still correctly counts as
+    // another edition.
+    const duplicate = track("Hey Jude", ["The Beatles"]);
+    const page = [candidate, duplicate];
+    expect(explainCandidate(song, candidate, page).tieBreak).toBe(0.01);
+  });
+
+  test("tieBreak treats two candidates with no artist at all as unrelated, not as sharing a primary artist", () => {
+    const noArtist = track("Hey Jude", []);
+    const alsoNoArtist = track("Hey Jude", []);
+    const page = [noArtist, alsoNoArtist];
+    expect(explainCandidate(song, noArtist, page).tieBreak).toBe(0);
   });
 });
 
