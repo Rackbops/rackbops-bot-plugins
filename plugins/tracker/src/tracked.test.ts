@@ -41,10 +41,17 @@ function world() {
     n++;
     return { guildId: null, channelId: `c${n}`, messageId: `m${n}` };
   };
-  const shop = { price: 100 as number | null, status: 200, reads: [] as string[], refuse: null as string | null };
+  const shop = {
+    price: 100 as number | null,
+    status: 200,
+    reads: [] as string[],
+    refuse: null as string | null,
+    onRead: null as (() => void) | null,
+  };
   const fetch: Fetch = {
     async get(url: string): Promise<FetchResponse> {
       shop.reads.push(url);
+      shop.onRead?.();
       if (shop.refuse) throw new FetchRefusedError(shop.refuse);
       return { status: shop.status, body: page(shop.price), headers: {} };
     },
@@ -186,7 +193,7 @@ describe("/renewal", () => {
     await withLarry(w);
     await slash(w.plugin, "renewal", LARRY, renewalOptions("2026-10-03"));
     expect(await slash(w.plugin, "task", LARRY, { sub: "decide", strings: { task: "t1", choice: "cancel" } })).toBe(
-      "That renewal has not asked you yet, so there is nothing to answer.",
+      "That renewal has no ask waiting for an answer yet.",
     );
     await notifyTick(w.plugin);
     expect(await slash(w.plugin, "task", LARRY, { sub: "decide", strings: { task: "t1", choice: "cancel" } })).toBe(
@@ -288,6 +295,31 @@ describe("/price", () => {
     expect(new RegExp(pattern, "i").exec("<b>Our price (today):</b> $1,299.99")?.[1]).toBe("1,299.99");
     w.shop.price = null; // no structured price: only `near` can find one, and here it does not
     expect(await slash(w.plugin, "price", LARRY, { strings: { url: SHOP, near: "Our price" } })).toContain("I found no price after that `near` text");
+  });
+});
+
+describe("an aborted poll tick", () => {
+  it("requeues the page read it cut short instead of counting a miss, and runs it on the next tick", async () => {
+    const w = world();
+    await withLarry(w);
+    expect(await slash(w.plugin, "price", LARRY, { strings: { url: SHOP } })).toContain("Tracking `t1`");
+    const controller = new AbortController();
+    // The host aborts the tick (a restart) while the read is in flight, and the read fails.
+    w.shop.onRead = () => {
+      controller.abort();
+      throw new Error("The operation was aborted.");
+    };
+    await w.plugin.ticks!.find((t) => t.name === "poll")!.run(controller.signal);
+    expect(w.shop.reads).toHaveLength(2); // the preview, and the read the abort cut short
+    expect(w.sent).toHaveLength(0);
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" } });
+    expect(history).not.toContain("no price");
+    expect(history).toContain("-- queued");
+
+    // The next tick runs it as if nothing happened.
+    w.shop.onRead = null;
+    await pollTick(w.plugin);
+    expect(w.sent.at(-1)?.message.content).toContain("Now tracking shop.example/widget at 100.00 USD.");
   });
 });
 

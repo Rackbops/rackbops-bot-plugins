@@ -1,6 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
+import { pageForExtraction } from "./page.js";
 
 /**
  * docket's Fetch port for the price tracker (rackbops-bot-plugins#81, plan 5.3: "the price
@@ -13,12 +14,15 @@ import type { Fetch, FetchResponse } from "@rackbops/docket-core";
  *   forms read as the IPv4 inside them). One such address refuses the whole read;
  * - redirects are followed by hand, at most `MAX_REDIRECTS`, each hop checked the same way;
  * - a read gives up after `TIMEOUT_MS`, or when the tick's signal aborts, and keeps at most
- *   `MAX_BYTES` of the body (a price is in the page's head or its JSON-LD, well inside that).
+ *   `MAX_BYTES` of the body (a price is in the page's head or its JSON-LD, well inside that);
+ * - the body handed back is `pageForExtraction`'s (page.ts): only what price extraction reads,
+ *   rebuilt so docket's extraction patterns cannot take quadratic time on it.
  *
  * The check resolves the name and then `fetch` resolves it again, so a DNS server that answers
  * differently the second time (rebinding) is not stopped by this; the host's own network is the
- * last fence. What a refusal says goes into the task's run summary, so it names the reason and
- * never an address.
+ * last fence. What a refusal says goes into the task's run summary, so a refusal made here names
+ * the host name and the reason, never a resolved address (a network error from the runtime itself
+ * is passed on as it comes).
  */
 
 export const TIMEOUT_MS = 15_000;
@@ -139,7 +143,26 @@ export function urlProblem(raw: string): string | null {
   return null;
 }
 
-async function checkHost(url: URL, resolve: Resolve): Promise<void> {
+/** `p`, or a refusal once `signal` aborts first: a name lookup takes no signal of its own. */
+function orAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    );
+  });
+}
+
+async function checkHost(url: URL, resolve: Resolve, signal: AbortSignal): Promise<void> {
   const problem = urlProblem(url.href);
   if (problem) throw new FetchRefusedError(problem);
   const host = url.hostname.replace(/^\[|\]$/g, "");
@@ -147,8 +170,9 @@ async function checkHost(url: URL, resolve: Resolve): Promise<void> {
   if (isIP(host) !== 0) addresses = [host];
   else {
     try {
-      addresses = await resolve(host);
+      addresses = await orAbort(resolve(host), signal);
     } catch {
+      signal.throwIfAborted();
       throw new FetchRefusedError(`the name ${host} did not resolve`);
     }
   }
@@ -190,7 +214,7 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
       const signal = o.signal ? AbortSignal.any([o.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
       let url = new URL(raw);
       for (let hop = 0; ; hop++) {
-        await checkHost(url, resolve);
+        await checkHost(url, resolve, signal);
         signal.throwIfAborted();
         const response = await fetchImpl(url.href, {
           method: "GET",
@@ -209,7 +233,7 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
         response.headers.forEach((value, key) => {
           out[key] = value;
         });
-        return { status: response.status, body: await readCapped(response, maxBytes), headers: out };
+        return { status: response.status, body: pageForExtraction(await readCapped(response, maxBytes)), headers: out };
       }
     },
   };

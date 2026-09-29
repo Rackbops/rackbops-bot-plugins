@@ -195,8 +195,9 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         run: (signal) => tick("notify", signal),
       },
       {
-        // The price tracker's page reads (#81), on a tick of their own so a slow page never holds up a
-        // reminder; the host runs a plugin's ticks concurrently.
+        // The price tracker's page reads (#81), on a tick of their own after `notify`: the host awaits
+        // a plugin's ticks in order and stops waiting on one after 30 s, so a slow page never holds up
+        // a reminder due now (notify-lane.ts).
         name: "poll",
         run: (signal) => tick("poll", signal),
       },

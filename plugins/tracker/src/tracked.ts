@@ -123,7 +123,7 @@ export async function addRenewal(d: TrackerDeps, user: User, input: RenewalInput
   return clip(
     [
       `Renewal \`${task.id}\` set: ${name}, ${money(input.amount, currency)}, ${cadence}.`,
-      `First ask: ${ask}. Each ask has Keep, Cancel and Renewed buttons; \`/task decide\` records a different amount.`,
+      `First ask: ${ask}. Each ask has Keep, Cancel and Renewed buttons; paid a different amount? Answer with \`/task decide\` instead of a button.`,
     ].join("\n"),
   );
 }
@@ -267,7 +267,7 @@ export async function decideRenewal(
     (o) => o.status === "running" || o.status === "done" || o.status === "failed",
   );
   const latest = fired.at(-1);
-  if (!latest) return "That renewal has not asked you yet, so there is nothing to answer.";
+  if (!latest) return "That renewal has no ask waiting for an answer yet.";
   const payload = input.amount === undefined ? input.choice : { choice: input.choice, amount: input.amount };
   try {
     await replyLanes(d).reply({ taskId: task.id, occurrenceId: latest.id, userId: user.id, kind: "decision", payload });
