@@ -42,7 +42,7 @@ describe("authorizeUrl", () => {
 });
 
 describe("toTrackCandidates", () => {
-  test("shapes the fields matching.ts scores on", () => {
+  test("shapes the fields matching.ts needs", () => {
     const candidates = toTrackCandidates({
       tracks: {
         items: [{ uri: "spotify:track:abc", name: "Hey Jude", popularity: 82, artists: [{ name: "The Beatles" }] }],
@@ -67,7 +67,7 @@ describe("toTrackCandidates", () => {
     expect(candidates).toEqual([]);
   });
 
-  test("a missing popularity defaults to 0 rather than NaN-ing every comparison", () => {
+  test("a missing popularity defaults to 0 rather than undefined", () => {
     const [candidate] = toTrackCandidates({
       tracks: { items: [{ uri: "spotify:track:a", name: "X", artists: [{ name: "Y" }] }] },
     });
