@@ -8,6 +8,10 @@
   "By-Tor & the Snow Dog" and Spotify's "By-Tor And The Snow Dog" compare equal in both titles and
   artist names -- the studio recording is now matched at `high` instead of falling to a live cut at
   `low` (#57).
+- `pickBestTrack` now ranks any candidate with artist agreement above every candidate with none,
+  whatever their titles score -- an exact title from an unrelated artist (e.g. Boomkat's *Rip Her to
+  Shreds*) no longer outranks the right artist's own remaster (Blondie's, partial artist match).
+  Confidence is unaffected; this changes which candidate wins, not how sure the reply is (#58).
 
 ## [1.5.0] - 2026-09-28
 
