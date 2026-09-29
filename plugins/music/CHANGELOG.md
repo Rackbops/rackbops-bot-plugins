@@ -34,6 +34,10 @@
   `high` reached only after falling back. Worst case per song is now up to 4 names x 2 queries --
   200 for 25 covers on a duo tribute set -- while an ordinary band matching under its own name, or
   any song whose first query is `high`, is unchanged.
+- The `/setlist` build reply's first line now names the show date, in the same ISO (`yyyy-MM-dd`)
+  form the playlist name already uses: `**Metallica - London Stadium, London, United Kingdom
+  (2026-07-05)**`. It was the only place the date wasn't shown, so a band that played the same
+  venue twice read identically (#92). Nothing appended when the setlist has no date.
 
 ## [1.5.0] - 2026-09-28
 
