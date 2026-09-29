@@ -12,7 +12,11 @@ export interface TrackCandidate {
   uri: string;
   name: string;
   artistNames: string[];
-  /** 0-100 as Spotify reports it; used only to break ties between otherwise equal candidates. */
+  /**
+   * 0-100 as Spotify reports it. Kept on the shape because `spotify.ts` still maps it from the API
+   * response, but nothing in this module reads it for scoring any more (#59): a search made with a
+   * connected user's token sends 0 for every candidate, so it never actually separated a tie.
+   */
   popularity: number;
   /**
    * Track length in ms. Nothing in this module reads it -- it rides along because the listening
@@ -131,8 +135,16 @@ export interface ScoreBreakdown {
  * One candidate's score split into its parts. `scoreCandidate` is defined as this function's
  * `score`, so the parts the match log records can never drift from the number that actually picked
  * the track.
+ *
+ * `page` is every candidate Spotify returned for this query, used only to compute `tieBreak` (see
+ * below); it defaults to empty so a caller with no page handy -- the replay harness, a direct test
+ * -- gets `tieBreak: 0`, exactly the value `popularity / 100` always produced in practice anyway.
  */
-export function explainCandidate(song: SongQuery, candidate: TrackCandidate): ScoreBreakdown {
+export function explainCandidate(
+  song: SongQuery,
+  candidate: TrackCandidate,
+  page: readonly TrackCandidate[] = [],
+): ScoreBreakdown {
   const songTitle = normalize(song.name);
   const candidateTitle = normalize(candidate.name);
   const title = titleScore(candidateTitle, songTitle);
@@ -141,14 +153,31 @@ export function explainCandidate(song: SongQuery, candidate: TrackCandidate): Sc
   // an entire result page instead of shipping its least-bad row.
   if (title === 0) return { title: 0, artist: 0, tieBreak: 0, penalty: 0, score: 0 };
   const artist = artistScore(candidate.artistNames.map(normalize), normalize(song.artist));
-  const tieBreak = candidate.popularity / 100; // < 1, so it only ever separates equals
+  // Ties survive title and artist scoring only between candidates that agree on both -- in
+  // practice, several editions of the SAME artist's own recording (the album cut, a remaster, a
+  // compilation). `popularity` used to break these, but a search made with a connected user's
+  // token sends 0 for every candidate, so it never actually separated anything (#59). Counting how
+  // many OTHER rows on the page share this candidate's primary artist and still title-match is a
+  // field the response genuinely carries: the artist whose recording exists in several editions is
+  // the catalogue artist, and a one-off cover by someone else appears once. Divided by 100 so it
+  // can never cross a title (100/72/40) or artist (40/22) step -- a page has at most 10 rows.
+  const primaryArtist = candidate.artistNames[0] !== undefined ? normalize(candidate.artistNames[0]) : "";
+  const editions =
+    primaryArtist === ""
+      ? 0
+      : page.filter((other) => {
+          if (other === candidate) return false;
+          const otherPrimary = other.artistNames[0] !== undefined ? normalize(other.artistNames[0]) : "";
+          return otherPrimary === primaryArtist && titleScore(normalize(other.name), songTitle) > 0;
+        }).length;
+  const tieBreak = editions / 100;
   const penalty = variantPenalty(candidateTitle, songTitle);
   return { title, artist, tieBreak, penalty, score: Math.max(0, title + artist + tieBreak - penalty) };
 }
 
 /** Exported for the tests -- the score one candidate earns for one song. */
-export function scoreCandidate(song: SongQuery, candidate: TrackCandidate): number {
-  return explainCandidate(song, candidate).score;
+export function scoreCandidate(song: SongQuery, candidate: TrackCandidate, page: readonly TrackCandidate[] = []): number {
+  return explainCandidate(song, candidate, page).score;
 }
 
 /**
@@ -168,7 +197,7 @@ export function scoreCandidate(song: SongQuery, candidate: TrackCandidate): numb
 export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandidate[]): Match | undefined {
   let best: { track: TrackCandidate; score: number; tier: number } | undefined;
   for (const candidate of candidates) {
-    const breakdown = explainCandidate(song, candidate);
+    const breakdown = explainCandidate(song, candidate, candidates);
     if (breakdown.score <= 0) continue;
     const tier = breakdown.artist > 0 ? 1 : 0;
     // Strictly greater on both counts, so the first candidate on a full tie (page order) is kept.
