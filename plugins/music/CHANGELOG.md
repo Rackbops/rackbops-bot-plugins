@@ -19,6 +19,21 @@
   song is still bounded at two (rackbops-bot-plugins#61). The match log's `queries` field is now
   kept whenever more than one query ran, even if the winner was `high` -- previously it was
   dropped whenever the outcome was `high`, however many queries that took.
+- A song is now searched under every artist name it could be filed under, not only the one
+  setlist.fm gives: the performer, the lead act of a joined performer name (`Pat Benatar & Neil
+  Giraldo` -> `Pat Benatar`), the artist a strict majority of the setlist's cover credits name (a
+  tribute act's own recordings), and last -- for a credited cover -- the original artist, so the
+  performer's own recording of a song it covers is preferred when Spotify has one
+  (rackbops-bot-plugins#63, rackbops-bot-plugins#64). A later name is tried only while the best
+  match so far isn't `high`, and only replaces it when strictly more confident -- a band on
+  Spotify keeps its own recordings over a same-confidence fallback. The reply now names any added
+  song whose winning artist wasn't the one setlist.fm gave, as its last line (so it's the first
+  dropped at the 2000-character ceiling): `Matched under a different artist than setlist.fm names:
+  Heartbreaker -> Pat Benatar.` `music-match-log.json` gains `foundUnder` per song (the artist that
+  actually found it) and keeps `queries` whenever more than one query ran under any name, even a
+  `high` reached only after falling back. Worst case per song is now up to 4 names x 2 queries --
+  200 for 25 covers on a duo tribute set -- while an ordinary band matching under its own name, or
+  any song whose first query is `high`, is unchanged.
 
 ## [1.5.0] - 2026-09-28
 
