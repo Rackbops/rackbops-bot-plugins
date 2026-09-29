@@ -117,6 +117,22 @@ describe("scoreCandidate", () => {
     expect(scoreCandidate(song, track("Hey Jude (In the Style of The Beatles)", ["Tribute Band"]))).toBe(0);
   });
 
+  test('an "originally performed by" upload is rejected like any other karaoke', () => {
+    const wantThatMan = { name: "I Want That Man", artist: "Blondie" };
+    expect(
+      scoreCandidate(
+        wantThatMan,
+        track("I Want That Man (Originally Performed by Blondie) [Instrumental Version]", ["Karaoke Collective"]),
+      ),
+    ).toBe(0);
+    expect(scoreCandidate(wantThatMan, track("I Want That Man (Originally by Blondie)", ["Tribute Band"]))).toBe(0);
+  });
+
+  test("a karaoke label's upload is rejected by its artist name alone", () => {
+    const wantThatMan = { name: "I Want That Man", artist: "Blondie" };
+    expect(scoreCandidate(wantThatMan, track("I Want That Man", ["Zoom Karaoke"]))).toBe(0);
+  });
+
   test("the word 'live' in the song's OWN title is not treated as a variant marker", () => {
     const liveSong = { name: "Live and Let Die", artist: "Wings" };
     expect(scoreCandidate(liveSong, track("Live and Let Die", ["Wings"]))).toBeGreaterThan(130);
@@ -197,9 +213,12 @@ describe("explainCandidate", () => {
   });
 
   test("a penalty larger than the rest clamps the total at 0 and keeps the parts", () => {
+    // Both the title ("Karaoke Version") and the artist name ("Karaoke Crew") independently trip
+    // the 100-point karaoke rule (#99 added the artist-side one), so the total penalty is 200 --
+    // still clamped to a score of 0, which is what this test actually guards.
     const candidate = track("Hey Jude (Karaoke Version)", ["Karaoke Crew"]);
     const breakdown = explainCandidate(song, candidate);
-    expect(breakdown).toEqual({ title: 72, artist: 0, tieBreak: 0, penalty: 100, score: 0 });
+    expect(breakdown).toEqual({ title: 72, artist: 0, tieBreak: 0, penalty: 200, score: 0 });
     expect(scoreCandidate(song, candidate)).toBe(0);
   });
 
@@ -250,6 +269,18 @@ describe("pickBestTrack", () => {
     ]);
     expect(best!.track.name).toBe("Yesterday");
     expect(best!.confidence).toBe("high");
+  });
+
+  test('an "originally performed by" karaoke upload does not win an otherwise-empty page', () => {
+    const wantThatMan = { name: "I Want That Man", artist: "Blondie" };
+    const best = pickBestTrack(wantThatMan, [
+      track("I Want That Man (Originally Performed by Blondie) [Instrumental Version]", ["Karaoke Collective"]),
+      track("I Want That Man", ["Debbie Harry"]),
+    ]);
+    // Debbie Harry's plain title wins -- but with no artist overlap ("Blondie" vs "Debbie Harry"),
+    // that's still only a low-confidence pick, exactly what the reply should flag to the listener.
+    expect(best!.track.artistNames).toEqual(["Debbie Harry"]);
+    expect(best!.confidence).toBe("low");
   });
 
   test("returns undefined when nothing on the page is credible", () => {
