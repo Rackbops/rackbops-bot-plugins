@@ -7,8 +7,9 @@ import type { ChatInputCommandInteraction } from "discord.js";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import pkg from "../../package.json" with { type: "json" };
-import { NOT_ADMITTED } from "../access.js";
+import { type Membership, NOT_ADMITTED } from "../access.js";
 import { createPlugin } from "../index.js";
+import { LEFT_SERVER, lookupWithin, MEMBER_GRACE_MS, MEMBER_RECHECK_MS, RECHECK_FAILED } from "./app.js";
 import { WEB_NOT_CONFIGURED } from "./command.js";
 import { parseWebUrl, WEB_URL_FORMAT } from "./config.js";
 import { esc, html } from "./html.js";
@@ -38,7 +39,11 @@ function clockAt(iso: string) {
   return { now: () => new Date(now), set: (s: string) => (now = new Date(s)), advance: (ms: number) => (now = new Date(now.getTime() + ms)) };
 }
 
-async function world(opts: { webUrl?: string | null } = {}) {
+const GUILD = "999999999999999999";
+
+type WebLookup = (discordId: string) => Promise<Membership | null>;
+
+async function world(opts: { webUrl?: string | null; guild?: boolean; webMembership?: WebLookup } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "tracker-web-"));
   dirs.push(dir);
   const dbPath = join(dir, "tracker.sqlite");
@@ -47,17 +52,28 @@ async function world(opts: { webUrl?: string | null } = {}) {
   const plugin = createPlugin(
     makeFakeHost({
       name: "tracker",
-      env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, ...(webUrl ? { TRACKER_WEB_URL: webUrl } : {}) },
+      env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, ...(webUrl ? { TRACKER_WEB_URL: webUrl } : {}), ...(opts.guild ? { TRACKER_GUILD_ID: GUILD } : {}) },
       log: { info() {}, warn() {}, error() {} },
       dm: async () => ({ guildId: null, channelId: "c", messageId: "m" }),
     }),
-    { clock, dbPath },
+    {
+      clock,
+      dbPath,
+      // The command side's gate: everyone is a member when there is one.
+      ...(opts.guild ? { membership: async (): Promise<Membership> => "member" } : {}),
+      ...(opts.webMembership ? { webMembership: opts.webMembership } : {}),
+    },
   );
   await plugin.activate!();
   return { plugin, clock, dbPath };
 }
 
-async function slash(plugin: Plugin, name: string, userId: string, o: { strings?: Record<string, string>; users?: Record<string, string> } = {}): Promise<string> {
+async function slash(
+  plugin: Plugin,
+  name: string,
+  userId: string,
+  o: { strings?: Record<string, string>; users?: Record<string, string>; client?: unknown } = {},
+): Promise<string> {
   const command = plugin.commands?.find((c) => c.name === name);
   if (!command) throw new Error(`no command ${name}`);
   const edits: { content: string }[] = [];
@@ -65,6 +81,7 @@ async function slash(plugin: Plugin, name: string, userId: string, o: { strings?
   const interaction = {
     commandName: name,
     guildId: null,
+    ...(o.client ? { client: o.client } : {}),
     user: { id: userId, username: `user${userId.slice(0, 3)}`, globalName: userId === LARRY ? "Larry" : null, bot: false },
     options: {
       getSubcommand: () => "",
@@ -211,17 +228,19 @@ describe("sign-in by one-time link", () => {
     await openLink(plugin, token, new Map());
     const opened = await openLink(plugin, token, jar);
     expect(opened.res.status).toBe(200);
-    expect(opened.res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(opened.res.headers.get("referrer-policy")).toBe("same-origin");
     expect(opened.res.headers.get("cache-control")).toBe("no-store");
     expect(opened.body).toContain(`action="/tracker/login"`);
     expect(opened.body).not.toContain("evil.example.net");
+    // Never no-referrer: a browser would then send a form post's Origin as "null", which is refused.
+    expect(opened.body).toContain('<meta name="referrer" content="same-origin">');
     expect(opened.res.headers.getSetCookie()[0]).toMatch(new RegExp(`^${LOGIN}=[^;]+; Path=/tracker/; Max-Age=600; HttpOnly; Secure; SameSite=Strict$`));
 
     const res = await call(plugin, "POST", "/login", { jar, form: opened.form ?? {}, origin: ORIGIN });
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/tracker/");
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("referrer-policy")).toBe("same-origin");
     const cookies = res.headers.getSetCookie();
     expect(cookies[0]).toMatch(new RegExp(`^${SESSION}=[A-Za-z0-9_-]{43}; Path=/tracker/; Max-Age=604800; HttpOnly; Secure; SameSite=Lax$`));
     expect(cookies[1]).toContain(`${LOGIN}=; Path=/tracker/; Max-Age=0`);
@@ -339,6 +358,126 @@ describe("sessions", () => {
     expect(res.headers.get("location")).toBe("/tracker/signin?out=1");
     expect(jar.has(SESSION)).toBe(false);
     expect((await call(plugin, "GET", "/", { jar: kept })).status).toBe(303);
+  });
+});
+
+describe("membership re-check (TRACKER_GUILD_ID set)", () => {
+  /** A web lookup that answers `answer()` and counts its calls. */
+  function lookup(answer: () => Promise<Membership | null>) {
+    const calls: string[] = [];
+    const fn: WebLookup = (id) => {
+      calls.push(id);
+      return answer();
+    };
+    return { fn, calls };
+  }
+
+  it("sign-in carries /web's confirmation: no lookup for 15 minutes", async () => {
+    const l = lookup(async () => "member");
+    const { plugin, clock } = await world({ guild: true, webMembership: l.fn });
+    await people(plugin);
+    const jar = await signIn(plugin, LARRY);
+    clock.advance(MEMBER_RECHECK_MS - 1);
+    expect((await call(plugin, "GET", "/", { jar })).status).toBe(200);
+    expect(l.calls).toEqual([]);
+  });
+
+  it("a member is re-confirmed after 15 minutes, and not asked again for another 15", async () => {
+    const l = lookup(async () => "member");
+    const { plugin, clock } = await world({ guild: true, webMembership: l.fn });
+    await people(plugin);
+    const jar = await signIn(plugin, LARRY);
+    clock.advance(MEMBER_RECHECK_MS);
+    expect((await call(plugin, "GET", "/", { jar })).status).toBe(200);
+    expect(l.calls).toEqual([LARRY]);
+    clock.advance(MEMBER_RECHECK_MS - 1);
+    expect((await call(plugin, "GET", "/", { jar })).status).toBe(200);
+    expect(l.calls).toHaveLength(1);
+  });
+
+  it("someone who left the server is signed out of every session, on a page that says why", async () => {
+    let answer: Membership = "member";
+    const l = lookup(async () => answer);
+    const { plugin, clock } = await world({ guild: true, webMembership: l.fn });
+    await people(plugin);
+    const jar = await signIn(plugin, LARRY);
+    const other = await signIn(plugin, LARRY);
+    clock.advance(MEMBER_RECHECK_MS);
+    answer = "not-member";
+    const res = await call(plugin, "GET", "/", { jar });
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain(LEFT_SERVER.replaceAll("'", "&#39;"));
+    expect(jar.has(SESSION)).toBe(false);
+    answer = "member";
+    expect((await call(plugin, "GET", "/", { jar: other })).status).toBe(303);
+    // A POST is refused the same way, before its form is read.
+    const third = await signIn(plugin, LARRY);
+    const csrf = await csrfOf(plugin, third);
+    clock.advance(MEMBER_RECHECK_MS);
+    answer = "not-member";
+    expect((await call(plugin, "POST", "/settings", { jar: third, form: { hour: "5", zone: "UTC", csrf }, origin: ORIGIN })).status).toBe(403);
+    expect(await slash(plugin, "tasks", LARRY)).toBe("You have no active tasks.");
+  });
+
+  it("a failed lookup, or no Discord client yet, lets them on for 24 hours from the last confirmation, then signs them out", async () => {
+    let answer: () => Promise<Membership | null> = async () => null;
+    const l = lookup(() => answer());
+    const { plugin, clock } = await world({ guild: true, webMembership: l.fn });
+    await people(plugin);
+    const jar = await signIn(plugin, LARRY);
+    clock.advance(MEMBER_RECHECK_MS);
+    expect((await call(plugin, "GET", "/", { jar })).status).toBe(200); // no client yet
+    answer = async () => "unknown";
+    expect((await call(plugin, "GET", "/", { jar })).status).toBe(200); // not confirmed, so asked again
+    answer = async () => {
+      throw new Error("discord is down");
+    };
+    expect((await call(plugin, "GET", "/", { jar })).status).toBe(200);
+    expect(l.calls).toHaveLength(3);
+    clock.advance(MEMBER_GRACE_MS - MEMBER_RECHECK_MS);
+    const res = await call(plugin, "GET", "/", { jar });
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain(RECHECK_FAILED.replaceAll("'", "&#39;"));
+    expect(jar.has(SESSION)).toBe(false);
+  });
+
+  it("a lookup that hangs counts as unknown after the timeout", async () => {
+    expect(await lookupWithin(() => new Promise(() => {}), 20)).toBe("unknown");
+    expect(await lookupWithin(async () => "member", 20)).toBe("member");
+    expect(await lookupWithin(async () => null, 20)).toBeNull();
+  });
+
+  it("by default it asks through the Discord client of an interaction the plugin handled", async () => {
+    const { plugin, clock } = await world({ guild: true });
+    await people(plugin);
+    const jar = await signIn(plugin, LARRY);
+    const asked: string[] = [];
+    const client = {
+      guilds: {
+        fetch: async (id: string) => ({
+          members: {
+            fetch: async (o: { user: string }) => {
+              asked.push(`${id}/${o.user}`);
+              throw Object.assign(new Error("Unknown Member"), { code: 10007 });
+            },
+          },
+        }),
+      },
+    };
+    await slash(plugin, "tasks", CURLY, { client });
+    clock.advance(MEMBER_RECHECK_MS);
+    expect((await call(plugin, "GET", "/", { jar })).status).toBe(403);
+    expect(asked).toEqual([`${GUILD}/${LARRY}`]);
+  });
+
+  it("with no gate, nothing is looked up, however old the session", async () => {
+    const l = lookup(async () => "not-member");
+    const { plugin, clock } = await world({ webMembership: l.fn });
+    await people(plugin);
+    const jar = await signIn(plugin, LARRY);
+    clock.advance(7 * 24 * 60 * 60 * 1000 - 1);
+    expect((await call(plugin, "GET", "/", { jar })).status).toBe(200);
+    expect(l.calls).toEqual([]);
   });
 });
 

@@ -44,14 +44,21 @@ export function html(strings: TemplateStringsArray, ...values: Part[]): Html {
 
 export const CSP = "default-src 'none'; style-src 'self'; img-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
 
-/** Headers on every page: personal content, so never cached or referred; never framed or sniffed. */
+/**
+ * `same-origin`, not `no-referrer`: under `no-referrer` a browser sends a form post's `Origin` as the
+ * literal `null`, which the Origin check has to refuse, so no form would work. `same-origin` keeps
+ * the Referer (and a link's token in it) off every cross-site request; the pages link nowhere else.
+ */
+export const REFERRER_POLICY = "same-origin";
+
+/** Headers on every page: personal content, so never cached or referred off-site; never framed or sniffed. */
 export function pageHeaders(extra: Record<string, string> = {}): Headers {
   const h = new Headers({
     "Content-Type": "text/html; charset=utf-8",
     "Content-Security-Policy": CSP,
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
-    "Referrer-Policy": "no-referrer",
+    "Referrer-Policy": REFERRER_POLICY,
     "Cache-Control": "no-store",
   });
   for (const [k, v] of Object.entries(extra)) h.set(k, v);
@@ -81,7 +88,7 @@ export function page(f: Frame): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="${REFERRER_POLICY}">
 <title>${f.title} -- Tracker</title>
 <link rel="stylesheet" href="${f.base}${STYLESHEET_PATH}">
 </head>
@@ -101,7 +108,7 @@ export function htmlResponse(body: string, status = 200, extra: Record<string, s
 
 /** A 303 to a path on this origin (never absolute: the Host header is the client's to choose). */
 export function redirect(location: string, cookies: readonly string[] = []): Response {
-  const h = new Headers({ Location: location, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
+  const h = new Headers({ Location: location, "Cache-Control": "no-store", "Referrer-Policy": REFERRER_POLICY });
   for (const c of cookies) h.append("Set-Cookie", c);
   return new Response(null, { status: 303, headers: h });
 }

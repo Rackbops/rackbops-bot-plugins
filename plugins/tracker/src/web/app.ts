@@ -1,4 +1,5 @@
 import type { User } from "@rackbops/docket-core";
+import { type Membership, NOT_MEMBER } from "../access.js";
 import type { PluginHttpInfo } from "../../../../packages/api/contract.js";
 import { loadTaskList, saveSettings, type TrackerDeps } from "../actions.js";
 import type { Queue } from "../discord-common.js";
@@ -23,7 +24,19 @@ import { STYLESHEET, STYLESHEET_PATH } from "./theme.js";
  *   has no session yet, so its form carries a double-submit token from a `SameSite=Strict` cookie
  *   the link's page sets: a cross-site page cannot sign a person in as someone else.
  * - Links and redirects are paths on this origin, never built from the `Host` header.
+ * - With a membership gate (`TRACKER_GUILD_ID`), a session whose membership was last confirmed
+ *   `MEMBER_RECHECK_MS` ago or more is re-checked by one member lookup (outside the write queue,
+ *   given `MEMBER_CHECK_TIMEOUT_MS`): not a member signs the person out everywhere; a member
+ *   refreshes the time; an error, a timeout or no Discord client yet lets them on while the last
+ *   confirmation is under `MEMBER_GRACE_MS` old, and signs them out after that.
  */
+
+export const MEMBER_RECHECK_MS = 15 * 60 * 1000;
+export const MEMBER_GRACE_MS = 24 * 60 * 60 * 1000;
+export const MEMBER_CHECK_TIMEOUT_MS = 3000;
+
+export const LEFT_SERVER = `You are signed out. ${NOT_MEMBER}`;
+export const RECHECK_FAILED = "You are signed out: I could not check that you are still a member of this tracker's server.";
 
 export interface WebWiring {
   /** The plugin's name: the path prefix and the cookie names. */
@@ -33,6 +46,10 @@ export interface WebWiring {
   deps(): TrackerDeps | null;
   /** The surface's one queue: a store write from here takes its turn with the commands' and buttons'. */
   queue: Queue;
+  /** `TRACKER_GUILD_ID`; null = no membership gate, and no re-check. */
+  guildId: string | null;
+  /** One member lookup of `TRACKER_GUILD_ID`; null when there is no Discord client to ask yet. */
+  membership(discordId: string): Promise<Membership | null>;
 }
 
 /** The biggest form body read: the forms here are a few short fields. */
@@ -50,7 +67,21 @@ function plain(status: number, text: string, extra: Record<string, string> = {})
 type Auth =
   | { kind: "none" }
   | { kind: "stale" }
+  | { kind: "signed-out"; note: string }
   | { kind: "ok"; id: string; session: Session; user: User };
+
+/** The lookup, or "unknown" when it throws or takes longer than `ms`. */
+export async function lookupWithin(lookup: () => Promise<Membership | null>, ms: number): Promise<Membership | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<Membership>((resolve) => {
+    timer = setTimeout(() => resolve("unknown"), ms);
+  });
+  try {
+    return await Promise.race([lookup().catch((): Membership => "unknown"), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export function createWebHandler(w: WebWiring): (request: Request, info: PluginHttpInfo) => Promise<Response> {
   const base = `/${w.name}`;
@@ -68,7 +99,29 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       d.sessions.deleteForUser(session.userId);
       return { kind: "stale" };
     }
+    const refused = await recheckMembership(d, session, user);
+    if (refused) return refused;
     return { kind: "ok", id, session, user };
+  }
+
+  async function recheckMembership(d: TrackerDeps, session: Session, user: User): Promise<Auth | null> {
+    if (w.guildId === null) return null;
+    const now = d.clock.now();
+    const age = session.memberCheckedAt ? now.getTime() - Date.parse(session.memberCheckedAt) : Number.POSITIVE_INFINITY;
+    if (age < MEMBER_RECHECK_MS) return null;
+    const discordId = user.discordId;
+    const found = discordId ? await lookupWithin(() => w.membership(discordId), MEMBER_CHECK_TIMEOUT_MS) : "unknown";
+    if (found === "not-member") {
+      d.sessions.deleteForUser(user.id);
+      return { kind: "signed-out", note: LEFT_SERVER };
+    }
+    if (found === "member") {
+      d.sessions.confirmMember(user.id, now.toISOString());
+      return null;
+    }
+    if (age < MEMBER_GRACE_MS) return null;
+    d.sessions.deleteForUser(user.id);
+    return { kind: "signed-out", note: RECHECK_FAILED };
   }
 
   async function readForm(request: Request): Promise<URLSearchParams | null> {
@@ -100,12 +153,12 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     const sent = form.get("csrf") ?? "";
     if (!expected || !safeEqual(expected, sent)) return forbidden();
     const now = d.clock.now();
-    const userId = d.logins.consume(form.get("t") ?? "", now);
-    const user = userId ? await d.store.getUser(userId) : null;
+    const link = d.logins.consume(form.get("t") ?? "", now);
+    const user = link ? await d.store.getUser(link.userId) : null;
     if (!user || !d.admissions.isRegistered(user.id)) {
       return htmlResponse(signInHelpPage(base, "That sign-in link has expired or was already used."), 400, { "Set-Cookie": clear(LOGIN_COOKIE) });
     }
-    const { id } = d.sessions.create(user.id, now);
+    const { id } = d.sessions.create(user.id, now, link?.memberCheckedAt ?? null);
     return redirect(`${base}/`, [cookie(SESSION_COOKIE, id, { base, maxAgeSeconds: SESSION_TTL_MS / 1000, sameSite: "Lax" }), clear(LOGIN_COOKIE)]);
   }
 
@@ -159,6 +212,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     if (wrong) return wrong;
 
     const auth = await authenticate(d, request);
+    if (auth.kind === "signed-out") return htmlResponse(signInHelpPage(base, auth.note), 403, { "Set-Cookie": clear(SESSION_COOKIE) });
     if (auth.kind !== "ok") return redirect(`${base}/signin`, auth.kind === "stale" ? [clear(SESSION_COOKIE)] : []);
     const v: Viewer = { base, user: auth.user, csrf: auth.session.csrf };
 

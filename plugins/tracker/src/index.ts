@@ -9,7 +9,8 @@ import type { TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
 import { ClaimStore } from "./claims.js";
 import { DeliveryHealth } from "./delivery-health.js";
-import { serial } from "./discord-common.js";
+import type { Membership } from "./access.js";
+import { type Interactionish, lookupMembership, serial } from "./discord-common.js";
 import { createSurface, type SurfaceWiring } from "./discord.js";
 import { decideHealth, type HealthState, healthResponse } from "./health.js";
 import { createDmNotifier, reportUnconfirmed } from "./notifier.js";
@@ -56,6 +57,9 @@ export interface TrackerOptions {
   types?: Readonly<Record<string, TaskType<unknown>>>;
   /** Test seam for the membership lookup (discord.ts). */
   membership?: SurfaceWiring["membership"];
+  /** Test seam for the web area's member re-check; null = no Discord client yet. Defaults to the
+   *  client captured from the interactions (below). */
+  webMembership?: (discordId: string) => Promise<Membership | null>;
 }
 
 /** A Notifier for a host without `dm`: every send is refused, before anything is claimed. */
@@ -86,15 +90,44 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     guildId,
     log: host.log,
     queue,
-    web: webOrigin ? { origin: webOrigin, name: host.name } : null,
+    web: webOrigin ? { origin: webOrigin, name: host.name, gated: guildId !== null } : null,
     ...(options.membership ? { membership: options.membership } : {}),
   });
 
-  const web = createWebHandler({ name: host.name, origin: webOrigin, deps: () => deps, queue });
+  // The web area's member re-check needs Discord, and the host API has no member lookup: it asks
+  // through the discord.js Client of the last interaction the plugin handled (`interaction.client`
+  // is the bot's one long-lived Client). Held here only, never stored; none until the first one.
+  let discordClient: Interactionish["client"] | null = null;
+  const capture = (interaction: unknown) => {
+    const client = (interaction as { client?: Interactionish["client"] }).client;
+    if (client) discordClient = client;
+  };
+  const clientMembership = async (discordId: string): Promise<Membership | null> => {
+    if (!discordClient) return null;
+    return lookupMembership({ guildId: null, user: { id: discordId }, client: discordClient }, guildId, discordId, host.log);
+  };
+  const web = createWebHandler({
+    name: host.name,
+    origin: webOrigin,
+    deps: () => deps,
+    queue,
+    guildId,
+    membership: options.webMembership ?? clientMembership,
+  });
+  const interactions = surface.interactions;
 
   return {
-    commands: surface.commands,
-    interactions: surface.interactions,
+    commands: surface.commands.map((c) => ({
+      ...c,
+      handle: (interaction) => {
+        capture(interaction);
+        return c.handle(interaction);
+      },
+    })),
+    interactions: (interaction) => {
+      capture(interaction);
+      return interactions(interaction);
+    },
 
     async activate() {
       let path = options.dbPath;

@@ -65,7 +65,9 @@ sessions). `/web` answers, ephemerally, `<TRACKER_WEB_URL>/tracker/login?t=<toke
 does not use it up -- a link preview or a prefetcher would otherwise burn it -- it shows a Sign in
 button; pressing it uses the token (once, within 10 minutes), starts a session and redirects to
 `/tracker/` so the token leaves the address bar. The login pages send `Referrer-Policy:
-no-referrer` and `Cache-Control: no-store` (every page does).
+same-origin` and `Cache-Control: no-store` (every page does). Not `no-referrer`: under it a browser
+sends a form post's `Origin` as `null`, which the Origin check refuses, so no form would work; the
+pages link nowhere else, so the token never leaves in a Referer either way.
 
 **Sessions and forms.** The session cookie is `__Secure-tracker-session`, `HttpOnly; Secure;
 SameSite=Lax; Path=/tracker/`, for 7 days from sign-in. The store keeps only SHA-256 hashes of
@@ -81,10 +83,21 @@ form-action 'self'; frame-ancestors 'none'; base-uri 'none'`, `X-Content-Type-Op
 `X-Frame-Options: DENY`. Every value on a page is HTML-escaped. An unknown path is 404; a method
 other than GET or POST (or the wrong one of the two for a path) is 405.
 
-**Not checked on the web:** membership of `TRACKER_GUILD_ID`. The host gives a plugin no member
-lookup outside an interaction, so membership is checked when `/web` issues the link, not on each
-page; a person who leaves the server keeps a session until it expires, unless an admin takes them
-off the tracker.
+**Membership on the web.** With `TRACKER_GUILD_ID` set, `/web` issues a link only to a member,
+and the session remembers when that was confirmed. A web request more than 15 minutes after the
+last confirmation re-checks with one member lookup (about 3 seconds at most, outside the write
+queue), through the discord.js Client of an interaction the plugin has handled since it started
+(the host API has no member lookup of its own; the Client is held in memory, never stored).
+Not a member: every session of theirs ends, on a page that says why. A member: the time is
+refreshed. A failed or slow lookup, or no interaction yet since a restart: they stay signed in
+while the last confirmation is under 24 hours old, and are then signed out and told to run `/web`
+again. There is no way yet to take a person off the tracker (forget-me and the admin view, below).
+
+**Choose the web origin's domain with care.** A host under the same parent domain as
+`TRACKER_WEB_URL` that you do not control can set a `__Secure-` cookie on the parent domain
+(cookie tossing), and so plant its own session or sign-in cookie in your browser: a login-CSRF.
+The `__Host-` prefix, which would stop that, requires `Path=/` and so cannot be used with
+`Path=/tracker/`. Put the bot on a host whose sibling subdomains are all yours.
 
 ## What it does
 
@@ -112,7 +125,8 @@ off the tracker.
 ## Not yet
 
 - The rest of the web area (E5): editing tasks, the admin view, lifting a decline block, forget-me,
-  and the JSON task API. Discord OAuth2 as a second sign-in method, if chosen (plan item 41).
+  and the JSON task API. Until forget-me and the admin view exist, nobody can be taken off the
+  tracker, so a web session ends only by sign-out, expiry, or the membership re-check. Discord OAuth2 as a second sign-in method, if chosen (plan item 41).
 - The `Fetch` port (then `price` is registered) and the city-hall Executor adapter (the execute lane).
 - An optional Discord-role gate (plan 5.5), and showing unconfirmed deliveries to admins anywhere but the log.
 

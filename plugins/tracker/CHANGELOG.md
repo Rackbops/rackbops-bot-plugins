@@ -17,8 +17,17 @@
   redirects so the token leaves the address bar. Only SHA-256 hashes of link tokens and session
   ids are stored. Every request re-checks that the person is still on the tracker and registered,
   and signs them out everywhere when not. Every form post carries a per-session CSRF token, and a
-  post whose `Origin` is not `TRACKER_WEB_URL` is refused; the sign-in post carries its own
-  double-submit token, so another site cannot sign a person in as someone else.
+  post whose `Origin` is not `TRACKER_WEB_URL` (or is `null`) is refused; the sign-in post carries
+  its own double-submit token, so another site cannot sign a person in as someone else. Pages send
+  `Referrer-Policy: same-origin` (under `no-referrer` a browser sends a form's `Origin` as `null`).
+- With `TRACKER_GUILD_ID` set, the web area re-checks membership: a session last confirmed 15
+  minutes ago or more is checked with one member lookup (at most about 3 seconds), through the
+  discord.js Client of an interaction the plugin has handled since start. Someone who left the
+  server is signed out of every session; a lookup that fails, or no interaction yet, is allowed
+  while the last confirmation is under 24 hours old, and signs them out after that.
+- The README says to keep the web origin on a domain whose sibling subdomains are all yours: a
+  sibling can set a `__Secure-` cookie on the parent domain, and `__Host-` cannot be used with
+  `Path=/tracker/`.
 - The new optional `TRACKER_WEB_URL` (not secret): the https origin the bot is reached at, e.g.
   `https://clerk.example.com`. Links and the allowed `Origin` come from it, never from the
   request's `Host` header. Unset = no web area: `/web` says so and the pages answer 404; a value

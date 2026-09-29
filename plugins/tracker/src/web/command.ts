@@ -10,6 +10,8 @@ export interface WebLocation {
   origin: string;
   /** The plugin's name: its path prefix. */
   name: string;
+  /** `TRACKER_GUILD_ID` is set: `/web` ran only after the gate confirmed membership. */
+  gated: boolean;
 }
 
 /**
@@ -19,7 +21,9 @@ export interface WebLocation {
  */
 export function webLink(d: Pick<TrackerDeps, "logins" | "clock">, user: User, web: WebLocation | null): string {
   if (!web) return WEB_NOT_CONFIGURED;
-  const token = d.logins.issue(user.id, d.clock.now());
+  const now = d.clock.now();
+  // The command's gate refuses anyone it could not confirm a member, so with a gate this is now.
+  const token = d.logins.issue(user.id, now, web.gated ? now.toISOString() : null);
   const minutes = LINK_TTL_MS / 60_000;
   return [
     `Your sign-in link for the tracker's web area. It works once, within ${minutes} minutes; do not share it.`,

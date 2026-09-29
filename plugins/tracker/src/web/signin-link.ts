@@ -18,14 +18,18 @@ export const LINK_TTL_MS = 10 * 60 * 1000;
 export class LoginLinks {
   constructor(private readonly db: Database) {}
 
-  /** A fresh token for `userId`; the caller builds the link. Drops expired tokens on the way. */
-  issue(userId: string, now: Date): string {
+  /**
+   * A fresh token for `userId`; the caller builds the link. `memberCheckedAt` is when `/web`'s gate
+   * last confirmed membership of `TRACKER_GUILD_ID` (null with no gate); the session inherits it.
+   * Drops expired tokens on the way.
+   */
+  issue(userId: string, now: Date, memberCheckedAt: string | null = null): string {
     const token = randomToken();
     const at = now.toISOString();
     this.db.query("DELETE FROM web_login_tokens WHERE expires_at <= ?").run(at);
     this.db
-      .query("INSERT INTO web_login_tokens (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
-      .run(sha256(token), userId, at, new Date(now.getTime() + LINK_TTL_MS).toISOString());
+      .query("INSERT INTO web_login_tokens (token_hash, user_id, created_at, expires_at, member_checked_at) VALUES (?, ?, ?, ?, ?)")
+      .run(sha256(token), userId, at, new Date(now.getTime() + LINK_TTL_MS).toISOString(), memberCheckedAt);
     return token;
   }
 
@@ -39,12 +43,12 @@ export class LoginLinks {
   }
 
   /** Uses the token up and answers whose it was; null when unknown, used or expired. */
-  consume(token: string, now: Date): string | null {
+  consume(token: string, now: Date): { userId: string; memberCheckedAt: string | null } | null {
     if (!isTokenShape(token)) return null;
     const at = now.toISOString();
     const row = this.db
-      .query("UPDATE web_login_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? RETURNING user_id")
-      .get(at, sha256(token), at) as { user_id: string } | null;
-    return row?.user_id ?? null;
+      .query("UPDATE web_login_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? RETURNING user_id, member_checked_at")
+      .get(at, sha256(token), at) as { user_id: string; member_checked_at: string | null } | null;
+    return row ? { userId: row.user_id, memberCheckedAt: row.member_checked_at } : null;
   }
 }
