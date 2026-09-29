@@ -75,7 +75,7 @@ export function normalize(value: string): string {
  */
 const VARIANT_PENALTIES: ReadonlyArray<{ pattern: RegExp; penalty: number }> = [
   { pattern: /\bkaraoke\b/, penalty: 100 },
-  { pattern: /\b(made popular by|in the style of|tribute)\b/, penalty: 100 },
+  { pattern: /\b(made popular by|in the style of|tribute|originally (performed )?by)\b/, penalty: 100 },
   { pattern: /\bcommentary\b/, penalty: 60 },
   { pattern: /\binstrumental\b/, penalty: 45 },
   { pattern: /\b(remix|rmx)\b/, penalty: 30 },
@@ -84,11 +84,22 @@ const VARIANT_PENALTIES: ReadonlyArray<{ pattern: RegExp; penalty: number }> = [
   { pattern: /\b(sped up|slowed|nightcore)\b/, penalty: 50 },
 ];
 
-function variantPenalty(candidateTitle: string, songTitle: string): number {
+/**
+ * A karaoke label's own uploads carry the ORIGINAL artist in the title, not the label's name, so
+ * the title-side rules above can miss them entirely (#99: "Originally Performed by Blondie" isn't
+ * caught by any title pattern). The candidate's own artist name is a second, independent signal:
+ * whatever the title says, a track credited to a karaoke label is never the right recording.
+ */
+const KARAOKE_ARTIST = /\bkaraoke\b/;
+
+function variantPenalty(candidateTitle: string, songTitle: string, candidateArtists: readonly string[]): number {
   let total = 0;
   for (const { pattern, penalty } of VARIANT_PENALTIES) {
     if (pattern.test(candidateTitle) && !pattern.test(songTitle)) total += penalty;
   }
+  // Unlike the title-side rules, this carries no "absent from the song's own title" guard: a song
+  // title never names its own artist, so there is no genuine song whose real artist is "Karaoke".
+  if (candidateArtists.some((artist) => KARAOKE_ARTIST.test(artist))) total += 100;
   return total;
 }
 
@@ -258,7 +269,8 @@ export function explainCandidate(
   // part counts as a real title match there too, not just for the winning candidate.
   const suite = parseSuitePart(songTitle);
   let title = titleScore(candidateTitle, songTitle, suite);
-  const artist = artistScore(candidate.artistNames.map(normalize), normalize(song.artist));
+  const candidateArtists = candidate.artistNames.map(normalize);
+  const artist = artistScore(candidateArtists, normalize(song.artist));
   // A one-character typo in setlist.fm's own title text (#67): a title that scored 0 by every
   // other rule may still be the right song if it's a single edit away from what setlist.fm typed
   // AND the artist agrees -- "Detroit 422" (a human typo) vs Spotify's "Detroit 442". Scored 30:
@@ -292,7 +304,7 @@ export function explainCandidate(
           return otherPrimary === primaryArtist && titleScore(normalize(other.name), songTitle, suite) > 0;
         }).length;
   const tieBreak = editions / 100;
-  const penalty = variantPenalty(candidateTitle, songTitle);
+  const penalty = variantPenalty(candidateTitle, songTitle, candidateArtists);
   return { title, artist, tieBreak, penalty, score: Math.max(0, title + artist + tieBreak - penalty) };
 }
 

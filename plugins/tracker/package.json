@@ -1,7 +1,7 @@
 {
   "name": "@rackbops/plugin-tracker",
-  "version": "0.2.0",
-  "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings)",
+  "version": "0.4.0",
+  "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings",
   "type": "module",
   "main": "dist/plugin.js",
   "files": ["dist"],
@@ -12,7 +12,8 @@
   },
   "devDependencies": {
     "@rackbops/docket-core": "^0.3.0",
-    "@rackbops/docket-types": "^0.3.0"
+    "@rackbops/docket-types": "^0.3.0",
+    "@rackbops/styles": "^0.2.42"
   },
   "peerDependencies": {
     "discord.js": "^14.27.0"
@@ -20,7 +21,7 @@
   "botPlugin": {
     "hostApiVersion": 1,
     "intents": [],
-    "commands": ["allow", "register", "remind", "renewal", "price", "tasks", "task", "settings"],
+    "commands": ["allow", "register", "remind", "renewal", "price", "tasks", "task", "settings", "web"],
     "env": [
       {
         "key": "TRACKER_ADMIN_DISCORD_IDS",
@@ -35,6 +36,13 @@
         "required": false,
         "secret": false,
         "description": "The Discord server id whose members may use the tracker (the membership gate), checked on every command and button, in DMs too. Unset = no membership gate: only the admission list (/allow) applies."
+      },
+      {
+        "key": "TRACKER_WEB_URL",
+        "format": "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$",
+        "required": false,
+        "secret": false,
+        "description": "The https origin the bot's HTTP is reached at through its tunnel, e.g. https://clerk.example.com (no path). /web links to <this>/tracker/login, and a form post from any other origin is refused. Unset = no web area: /web says so and its pages answer 404."
       }
     ]
   }

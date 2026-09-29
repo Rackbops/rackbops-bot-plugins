@@ -166,6 +166,33 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (task_id, user_id)
   );
   `,
+  // 3 (rackbops-bot-plugins#80): the web area's sign-in (plan 5.10, item 41). A one-time link's
+  // token and a session's id are stored only as their SHA-256, so a copy of the database signs
+  // nobody in. `used_at` makes a link single use; the CSRF token is per session.
+  // `member_checked_at` is when the person was last confirmed a member of `TRACKER_GUILD_ID`
+  // (null with no gate): set by `/web`, carried to the session, refreshed by the web area.
+  `
+  CREATE TABLE web_login_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    member_checked_at TEXT
+  );
+  CREATE INDEX web_login_tokens_expiry ON web_login_tokens (expires_at);
+
+  CREATE TABLE web_sessions (
+    id_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    csrf TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    member_checked_at TEXT
+  );
+  CREATE INDEX web_sessions_user ON web_sessions (user_id);
+  CREATE INDEX web_sessions_expiry ON web_sessions (expires_at);
+  `,
 ];
 
 /** Brings `db` up to the newest schema. Idempotent; each step runs in its own transaction. */

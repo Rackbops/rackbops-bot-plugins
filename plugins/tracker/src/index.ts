@@ -10,6 +10,8 @@ import { Admissions } from "./admissions.js";
 import { ClaimStore } from "./claims.js";
 import { DeliveryHealth } from "./delivery-health.js";
 import { createPageFetch } from "./fetch.js";
+import type { Membership } from "./access.js";
+import { type Interactionish, lookupMembership, serial } from "./discord-common.js";
 import { createSurface, type SurfaceWiring } from "./discord.js";
 import { decideHealth, type HealthState, healthResponse } from "./health.js";
 import { createDmNotifier, reportUnconfirmed } from "./notifier.js";
@@ -17,6 +19,10 @@ import { type NotifyTickKind, runNotifyTick } from "./notify-lane.js";
 import { parseAdminIds, seedAdmins } from "./people.js";
 import { openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
+import { createWebHandler } from "./web/app.js";
+import { parseWebUrl } from "./web/config.js";
+import { Sessions } from "./web/sessions.js";
+import { LoginLinks } from "./web/signin-link.js";
 
 /**
  * The task tracker (rackbops-bot-plugins#78; plan of record Rackbops/Tooling
@@ -24,11 +30,12 @@ import { SqliteStore } from "./store.js";
  * instance: docket's Store on SQLite, the notify lane on the host's tick, people and the first
  * admin, `/tracker/healthz` (#78), and the Discord surface -- the slash commands, the admission and
  * membership gates, consent, the buttons and the Reply modal, and pausing delivery after repeated
- * failures (#79); renewals and the price tracker, with the fenced page reads on a tick of their own
- * (#81).
+ * failures (#79), the web area's first slice -- sign-in by one-time link, my tasks, history,
+ * settings (#80) -- and renewals and the price tracker, with the fenced page reads on a tick of
+ * their own (#81).
  *
- * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS` and `TRACKER_GUILD_ID` and
- * nothing else. The database is opened in `activate()` and closed in `dispose()`.
+ * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID` and
+ * `TRACKER_WEB_URL` and nothing else. The database is opened in `activate()` and closed in `dispose()`.
  */
 
 /** The tracker's database: `<dataDir>/tracker/tracker.sqlite`, a directory of its own (mcp's convention). */
@@ -56,6 +63,9 @@ export interface TrackerOptions {
   fetch?: (signal?: AbortSignal) => Fetch;
   /** Test seam for the membership lookup (discord.ts). */
   membership?: SurfaceWiring["membership"];
+  /** Test seam for the web area's member re-check; null = no Discord client yet. Defaults to the
+   *  client captured from the interactions (below). */
+  webMembership?: (discordId: string) => Promise<Membership | null>;
 }
 
 /** A Notifier for a host without `dm`: every send is refused, before anything is claimed. */
@@ -68,6 +78,7 @@ const NO_DM: Notifier = {
 export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugin {
   const adminIds = parseAdminIds(host.env.TRACKER_ADMIN_DISCORD_IDS);
   const guildId = parseGuildId(host.env.TRACKER_GUILD_ID);
+  const webOrigin = parseWebUrl(host.env.TRACKER_WEB_URL);
   const clock: Clock = options.clock ?? { now: () => new Date() };
   const types = options.types ?? TRACKER_TYPES;
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
@@ -79,10 +90,14 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   let deps: TrackerDeps | null = null;
   let warnedNoDm = false;
   const dm = host.dm?.bind(host);
+  // One queue for every store write, from Discord and from the web area alike.
+  const queue = serial();
   const surface = createSurface({
     deps: () => deps,
     guildId,
     log: host.log,
+    queue,
+    web: webOrigin ? { origin: webOrigin, name: host.name, gated: guildId !== null } : null,
     ...(options.membership ? { membership: options.membership } : {}),
   });
 
@@ -114,9 +129,40 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     if (failed > 0) host.log.warn(`${kind === "poll" ? "poll" : "notify"} lane: ${ran} ran, ${failed} failed`);
   }
 
+  // The web area's member re-check needs Discord, and the host API has no member lookup: it asks
+  // through the discord.js Client of the last interaction the plugin handled (`interaction.client`
+  // is the bot's one long-lived Client). Held here only, never stored; none until the first one.
+  let discordClient: Interactionish["client"] | null = null;
+  const capture = (interaction: unknown) => {
+    const client = (interaction as { client?: Interactionish["client"] }).client;
+    if (client) discordClient = client;
+  };
+  const clientMembership = async (discordId: string): Promise<Membership | null> => {
+    if (!discordClient) return null;
+    return lookupMembership({ guildId: null, user: { id: discordId }, client: discordClient }, guildId, discordId, host.log);
+  };
+  const web = createWebHandler({
+    name: host.name,
+    origin: webOrigin,
+    deps: () => deps,
+    queue,
+    guildId,
+    membership: options.webMembership ?? clientMembership,
+  });
+  const interactions = surface.interactions;
+
   return {
-    commands: surface.commands,
-    interactions: surface.interactions,
+    commands: surface.commands.map((c) => ({
+      ...c,
+      handle: (interaction) => {
+        capture(interaction);
+        return c.handle(interaction);
+      },
+    })),
+    interactions: (interaction) => {
+      capture(interaction);
+      return interactions(interaction);
+    },
 
     async activate() {
       let path = options.dbPath;
@@ -170,6 +216,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         dm,
         log: host.log,
         notifier: dm ? createDmNotifier({ store: openedStore, claims: openedClaims, dm, clock, log: host.log, health: delivery }) : NO_DM,
+        logins: new LoginLinks(opened),
+        sessions: new Sessions(opened),
       };
       if (guildId === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
       health.blocked = typeof host.dm === "function" ? null : "this bot has no host.dm (it predates rackbops-discord-bot#736)";
@@ -207,7 +255,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       if (info.path === "/healthz" && (request.method === "GET" || request.method === "HEAD")) {
         return healthResponse(decideHealth(health, clock.now()));
       }
-      return new Response("Not found", { status: 404 });
+      return web(request, info);
     },
   };
 }
