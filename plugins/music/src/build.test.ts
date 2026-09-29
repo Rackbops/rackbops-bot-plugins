@@ -468,13 +468,29 @@ describe("buildPlaylist traces", () => {
 
 describe("findSong / buildPlaylist: artist fallback (#63/#64)", () => {
   test("an uncredited song by a performer Spotify doesn't know is found under the artist most credits name", async () => {
+    // 3 of 4 cover credits name "Originals" -- a strict majority, so it becomes the credited
+    // fallback for every song on this setlist, including the uncredited one under test.
+    const tributeSet = {
+      artistName: "Tribute Act",
+      songs: [
+        song("Signature Song", "Tribute Act", false),
+        song("Cover A", "Originals", true),
+        song("Cover B", "Originals", true),
+        song("Cover C", "Originals", true),
+        song("Cover D", "Other", true),
+      ],
+    } as Setlist;
+    const names = artistNamesFor(tributeSet);
+    expect(names.credited).toBe("Originals");
+
     const { client } = fakeSpotify({}, {
       searchTracks: async (_t, query) =>
         query.includes("Originals")
           ? { ok: true, value: [candidate("Signature Song", "Originals")] }
           : { ok: true, value: [] },
     });
-    const found = await findSong(client, "AT", song("Signature Song", "Tribute Act"), ["Tribute Act", "Originals"]);
+    const target = tributeSet.songs[0]!;
+    const found = await findSong(client, "AT", target, searchArtistsFor(target, names));
     expect(found.ok).toBe(true);
     expect(found.ok === true && found.match?.confidence).toBe("high");
     expect(found.trace.foundUnder).toBe("Originals");
