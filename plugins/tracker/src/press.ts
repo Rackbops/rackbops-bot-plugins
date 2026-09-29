@@ -1,12 +1,15 @@
 import {
+  decodeReplyRef,
   invite,
   inviteMessage,
   replyForRef,
   ReplyRefusedError,
   visibleTask,
+  type OutgoingMessage,
   type User,
 } from "@rackbops/docket-core";
-import { answeredText, clip, replyLanes, type TrackerDeps } from "./actions.js";
+import type { Membership } from "./access.js";
+import { answeredText, clip, NO_SUCH_TASK, replyLanes, type TrackerDeps } from "./actions.js";
 import { MAX_REPLY_TEXT } from "./buttons.js";
 import { RecipientUnreachableError } from "./notifier.js";
 
@@ -18,51 +21,84 @@ import { RecipientUnreachableError } from "./notifier.js";
  * into the words the presser sees.
  */
 
+/** One answer for every reason a person cannot be shared with, so it reveals none of them. */
+export const CANNOT_SHARE = "can't be shared with: they have to be on this tracker's list, registered, a member of its server, and reachable by DM.";
+
+/** An invitation recorded and waiting for its DM, which is sent outside the interaction queue. */
+export interface PendingShare {
+  taskId: string;
+  targetId: string;
+  targetDiscordId: string;
+  message: OutgoingMessage;
+}
+
 /**
- * `/task share <task> @user`: the owner invites an admitted, registered person, who gets the one
- * consent DM (docket's `inviteMessage`, with the disclosure) carrying accept and decline. A DM that
- * cannot be delivered withdraws the invitation, so the owner can try again once they open DMs.
+ * `/task share <task> @user`, first half (in the queue): the owner invites an admitted, registered,
+ * reachable member, and the invitation is recorded; the consent DM (docket's `inviteMessage`, with
+ * the disclosure, carrying accept and decline) is what `sendShare` sends.
  */
-export async function shareTask(d: TrackerDeps, owner: User, taskId: string, targetDiscordId: string): Promise<string> {
-  const id = taskId.trim();
-  const task = await visibleTask(d.store, { userId: owner.id, admin: false }, id);
-  if (!task || task.ownerId !== owner.id) return `You have no task \`${id}\`.`;
+export async function prepareShare(
+  d: TrackerDeps,
+  owner: User,
+  taskId: string,
+  target: { discordId: string; membership: Membership },
+): Promise<string | PendingShare> {
+  const task = await visibleTask(d.store, { userId: owner.id, admin: false }, taskId.trim());
+  if (!task || task.ownerId !== owner.id) return NO_SUCH_TASK;
   if (task.status !== "active") return `That task is ${task.status}.`;
-  const target = await d.store.findUserByDiscordId(targetDiscordId);
-  if (!target || !d.admissions.isRegistered(target.id)) {
-    return `<@${targetDiscordId}> has to be on the tracker's list and registered before you can share with them.`;
-  }
+  const person = await d.store.findUserByDiscordId(target.discordId);
+  const refused =
+    !person ||
+    !d.admissions.isRegistered(person.id) ||
+    target.membership === "not-member" ||
+    target.membership === "unknown" ||
+    d.health.isPaused(person.id);
+  if (refused) return `<@${target.discordId}> ${CANNOT_SHARE}`;
   const now = d.clock.now();
-  const result = await invite(d.store, { userId: owner.id, admin: false }, task, target.id, now);
+  const result = await invite(d.store, { userId: owner.id, admin: false }, task, person.id, now);
   if (!result.ok) {
     if (result.reason === "self") return "You already get your own tasks.";
-    if (result.reason === "already_invited") return `<@${targetDiscordId}> is already invited to that task.`;
+    if (result.reason === "already_invited") return `<@${target.discordId}> is already invited to that task.`;
     if (result.reason === "blocked") {
       const until = result.block?.expiresAt;
       return until
-        ? `<@${targetDiscordId}> declined an earlier invitation from you; you can invite them again after ${new Date(until).toISOString().slice(0, 16).replace("T", " ")} UTC.`
-        : `<@${targetDiscordId}> declined your invitations twice; only an admin can lift that.`;
+        ? `<@${target.discordId}> declined an earlier invitation from you; you can invite them again after ${new Date(until).toISOString().slice(0, 16).replace("T", " ")} UTC.`
+        : `<@${target.discordId}> declined your invitations twice; only an admin can lift that.`;
     }
     return "Only the task's owner can share it.";
   }
+  return { taskId: task.id, targetId: person.id, targetDiscordId: target.discordId, message: inviteMessage(task, owner, person, now) };
+}
+
+/** Second half, outside the queue: the consent DM. Resolves to the error when it failed. */
+export async function sendShare(d: TrackerDeps, p: PendingShare): Promise<unknown> {
   try {
-    await d.notifier.sendDm(target.id, inviteMessage(task, owner, target, now));
+    await d.notifier.sendDm(p.targetId, p.message);
+    return null;
   } catch (err) {
-    await d.store.removeRecipient(task.id, target.id);
-    await d.store.addTaskEvent({
-      taskId: task.id,
-      actorId: null,
-      kind: "recipient_removed",
-      detail: `${target.id}: the invitation could not be delivered`,
-      at: d.clock.now().toISOString(),
-    });
-    if (err instanceof RecipientUnreachableError) {
-      return `I could not DM <@${targetDiscordId}> (their DMs are closed, or they blocked the bot), so the invitation is withdrawn.`;
-    }
-    d.log.error(`invitation DM for ${task.id} to ${target.id} failed`, err);
-    return "The invitation could not be sent; try again in a minute.";
+    return err ?? new Error("failed");
   }
-  return `Invited <@${targetDiscordId}> to \`${task.id}\`. They get a DM to accept or decline.`;
+}
+
+/**
+ * Last, in the queue again: the owner's answer. A DM that could not be delivered withdraws the
+ * invitation (on record), so the owner can try again once the person opens their DMs.
+ */
+export async function finishShare(d: TrackerDeps, p: PendingShare, err: unknown): Promise<string> {
+  if (err === null) return `Invited <@${p.targetDiscordId}> to \`${p.taskId}\`. They get a DM to accept or decline.`;
+  await d.store.removeRecipient(p.taskId, p.targetId);
+  await d.store.addTaskEvent({
+    taskId: p.taskId,
+    actorId: null,
+    kind: "recipient_removed",
+    detail: `${p.targetId}: the invitation could not be delivered`,
+    at: d.clock.now().toISOString(),
+  });
+  if (err instanceof RecipientUnreachableError) {
+    return `I could not DM <@${p.targetDiscordId}> (their DMs are closed, or they blocked the bot), so the invitation is withdrawn.`;
+  }
+  d.log.error(`invitation DM for ${p.taskId} to ${p.targetId} failed`, err);
+  return "The invitation could not be sent; try again in a minute.";
 }
 
 export type PressResult =
@@ -125,4 +161,15 @@ export async function submitReply(d: TrackerDeps, user: User, occurrenceId: stri
     payload: { text: clip(trimmed, MAX_REPLY_TEXT) },
   });
   return "Reply kept with the task's history.";
+}
+
+/**
+ * A press that only reduces contact -- declining an invitation, opting out of a task -- skips the
+ * membership and registration gates, so someone who left the server or never registered can always
+ * stop the messages. Admission is not checked either: docket's `replyForRef` already requires the
+ * presser to be the invited or accepted recipient, and only a person in the store can be one.
+ */
+export function reducesContact(ref: string): boolean {
+  const kind = decodeReplyRef(ref)?.kind;
+  return kind === "decline" || kind === "opt_out";
 }

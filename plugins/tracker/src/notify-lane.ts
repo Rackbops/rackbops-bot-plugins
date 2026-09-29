@@ -23,13 +23,11 @@ export interface NotifyLaneDeps {
 }
 
 /**
- * The Store as the lane sees it (rackbops-bot-plugins#79). Two things docket 0.3.0 leaves to its
- * host: a due occurrence of a task that is not active is not run (docket's `due` lists every queued
- * occurrence whatever its task's status, so a paused task would still fire), and a recipient whose
- * delivery is paused is left out of a run's targets rather than failing it. Everything else passes
- * through unchanged.
+ * The Store as the lane sees it (rackbops-bot-plugins#79): a due occurrence of a task that is not
+ * active is not run. docket 0.3.0's `due` lists every queued occurrence whatever its task's status,
+ * so a paused task would otherwise still fire. Everything else passes through unchanged.
  */
-export function laneStore(store: Store, health?: DeliveryHealth): Store {
+export function laneStore(store: Store): Store {
   const view = Object.create(store) as Store;
   view.listOccurrences = async (filter = {}) => {
     const found = await store.listOccurrences(filter);
@@ -39,11 +37,6 @@ export function laneStore(store: Store, health?: DeliveryHealth): Store {
       if ((await store.getTask(o.taskId))?.status === "active") kept.push(o);
     }
     return kept;
-  };
-  view.listRecipients = async (taskId) => {
-    const all = await store.listRecipients(taskId);
-    const paused = health?.pausedUsers();
-    return paused && paused.size > 0 ? all.filter((r) => !paused.has(r.userId)) : all;
   };
   return view;
 }
@@ -57,7 +50,7 @@ export type NotifyTickOutcome =
 export async function runNotifyTick(d: NotifyLaneDeps, signal?: AbortSignal): Promise<NotifyTickOutcome> {
   if (typeof d.dm !== "function") return { kind: "no-dm" };
   if (signal?.aborted) return { kind: "aborted" };
-  const store = laneStore(d.store, d.health);
+  const store = laneStore(d.store);
   const notifier = createDmNotifier({
     store,
     claims: d.claims,

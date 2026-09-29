@@ -8,6 +8,7 @@ import {
   parseWhen,
   ReplyRefusedError,
   reschedule,
+  SNOOZE_PREFIX,
   taskList,
   visibleTask,
   wallClock,
@@ -48,6 +49,9 @@ export const MAX_ANSWER = 2000;
 /** The longest reminder text: it goes out as the DM itself. */
 export const MAX_REMINDER_TEXT = 1500;
 const MAX_TITLE = 100;
+
+/** Never echoes the id a person typed: a typed id is theirs to see, not the bot's to repeat. */
+export const NO_SUCH_TASK = "You have no task with that id. `/tasks` lists yours.";
 
 export function clip(text: string, max = MAX_ANSWER): string {
   return text.length <= max ? text : `${text.slice(0, max - 3)}...`;
@@ -114,12 +118,14 @@ export async function registerPerson(
   updated = await d.store.updateUser(user.id, { displayName: clip(input.displayName, 100) });
   const first = !d.admissions.isRegistered(user.id);
   d.admissions.markRegistered(user.id, d.clock.now().toISOString());
-  await rescheduleOwned(d, updated, input.zone !== undefined && input.zone !== user.timeZone);
+  const zoneChanged = updated.timeZone !== user.timeZone;
+  if (zoneChanged || updated.preferredHour !== user.preferredHour) await rescheduleOwned(d, updated, zoneChanged);
   return registeredText(updated, first);
 }
 
 /** `/settings hour` (plan 1.1, 5.13): the hour a reminder without a time of day arrives. */
 export async function setHour(d: TrackerDeps, user: User, hour: number): Promise<string> {
+  if (hour === user.preferredHour) return `Your preferred hour is already ${String(hour).padStart(2, "0")}:00, ${user.timeZone} time.`;
   let updated: User;
   try {
     updated = await setPreferences(d.store, user.id, { preferredHour: hour });
@@ -136,6 +142,10 @@ export async function setHour(d: TrackerDeps, user: User, hour: number): Promise
  * A preferred-hour or zone edit cancels and replaces what is queued (plan 5.3): every active
  * recurring task of the owner whose time depends on it -- all calendar and period tasks when the
  * zone moved, only those naming no hour when just the hour did. Returns how many moved.
+ *
+ * docket's `reschedule` drops every queued occurrence, a snooze's run included; a snooze is an
+ * instant the person asked for, not a time the schedule computed, so it is put back as it was
+ * (same due instant, same `snooze:` key, so its chain to the run it re-asks is unchanged).
  */
 async function rescheduleOwned(d: TrackerDeps, owner: User, zoneChanged: boolean): Promise<number> {
   let moved = 0;
@@ -143,7 +153,12 @@ async function rescheduleOwned(d: TrackerDeps, owner: User, zoneChanged: boolean
     const s = task.schedule;
     if (!s || (s.kind !== "calendar" && s.kind !== "period")) continue;
     if (!zoneChanged && s.hour !== undefined) continue;
-    await reschedule(d.store, task, owner, s, owner.id, d.clock.now());
+    const snoozes = (await d.store.listOccurrences({ taskId: task.id, status: "queued" })).filter((o) => o.dedupeKey.startsWith(SNOOZE_PREFIX));
+    const now = d.clock.now();
+    await reschedule(d.store, task, owner, s, owner.id, now);
+    for (const o of snoozes) {
+      await d.store.createOccurrence({ taskId: o.taskId, lane: o.lane, dueAt: o.dueAt, dedupeKey: o.dedupeKey, at: now.toISOString() });
+    }
     moved++;
   }
   return moved;
@@ -200,8 +215,16 @@ export async function remind(d: TrackerDeps, user: User, input: { text: string; 
 export async function listTasks(d: TrackerDeps, user: User): Promise<string> {
   const now = d.clock.now();
   const lines = [formatTaskList(await taskList(d.store, { userId: user.id, admin: user.admin }), user, now)];
-  const paused = await d.store.listTasks({ ownerId: user.id, status: "paused" });
-  if (paused.length > 0) lines.push(`Paused: ${paused.map((t) => `\`${t.id}\` ${t.title}`).join(", ")}`);
+  for (const task of await d.store.listTasks({ ownerId: user.id, status: "paused" })) {
+    const held = d.health.pausesFor(task.id).filter((u) => u !== user.id);
+    if (held.length === 0) {
+      lines.push(`Paused: \`${task.id}\` ${task.title}`);
+      continue;
+    }
+    const who = [];
+    for (const id of held) who.push((await d.store.getUser(id))?.displayName ?? id);
+    lines.push(`Paused: \`${task.id}\` ${task.title} -- I could not DM ${who.join(", ")}; \`/task resume ${task.id}\` goes on without them.`);
+  }
   return clip(lines.join("\n"));
 }
 
@@ -225,7 +248,7 @@ export async function answerLatest(
   input: { taskId: string; kind: "done" | "snooze"; until?: string },
 ): Promise<string> {
   const task = await ownTask(d, user, input.taskId);
-  if (!task) return `You have no task \`${input.taskId.trim()}\`.`;
+  if (!task) return NO_SUCH_TASK;
   const fired = (await d.store.listOccurrences({ taskId: task.id })).filter(
     (o) => o.status === "running" || o.status === "done" || o.status === "failed",
   );
@@ -251,4 +274,16 @@ export function answeredText(kind: string, snoozeUntil: Date | null, user: User,
   if (kind === "snooze" && snoozeUntil) return `Snoozed until ${formatInstant(snoozeUntil, user.timeZone, now)}.`;
   if (kind === "done") return "Marked done.";
   return "Recorded.";
+}
+
+/** `/task resume` (plan 5.5): the owner goes on without the recipients whose DMs failed. */
+export async function resumeTask(d: TrackerDeps, user: User, taskId: string): Promise<string> {
+  const task = await ownTask(d, user, taskId);
+  if (!task) return NO_SUCH_TASK;
+  const removed = await d.health.resumeTask(task, user.id, d.clock.now());
+  if (removed === null) return task.status === "paused" ? "That task was not paused by failed DMs." : `That task is ${task.status}, not paused.`;
+  const names = [];
+  for (const id of removed) names.push((await d.store.getUser(id))?.displayName ?? id);
+  const without = names.length > 0 ? `, without ${names.join(", ")}` : "";
+  return `Resumed \`${task.id}\`${without}.`;
 }

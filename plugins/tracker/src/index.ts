@@ -95,6 +95,11 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       const openedClaims = new ClaimStore(opened);
       try {
         const granted = await seedAdmins(openedStore, adminIds, clock.now());
+        const admissions = new Admissions(opened);
+        for (const id of adminIds) {
+          const admin = await openedStore.findUserByDiscordId(id);
+          if (admin) admissions.record(admin.id, null, clock.now().toISOString());
+        }
         if (granted.length > 0) host.log.info(`made ${granted.length} admin(s) from TRACKER_ADMIN_DISCORD_IDS`);
         // docket's recover(): work a crash left running goes back to the queue; delivery claims keep
         // it from sending twice.
@@ -108,7 +113,18 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       db = opened;
       store = openedStore;
       claims = openedClaims;
-      delivery = new DeliveryHealth(opened, openedStore);
+      // The owner of a task a recipient's failures paused is told once, by a plain DM: not counted
+      // toward the owner's own pause (they may simply be offline), and `/tasks` shows it regardless.
+      delivery = new DeliveryHealth(opened, openedStore, {
+        log: host.log,
+        ...(dm
+          ? {
+              tellOwner: async (owner, text) => {
+                if (owner.discordId) await dm(owner.discordId, { content: text });
+              },
+            }
+          : {}),
+      });
       deps = {
         store: openedStore,
         admissions: new Admissions(opened),

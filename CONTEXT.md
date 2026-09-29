@@ -116,9 +116,13 @@ pin only needs to change in one place.
   2026-09-29, for `plugins/tracker` #79): `Lanes.tickNotify` runs every queued due occurrence
   whatever its task's status, so a paused task still fires; and `runOne` fails the whole run when
   one recipient's send throws. The tracker's notify lane therefore hands docket a view of its
-  store (`laneStore`, `notify-lane.ts`) that drops a non-active task's due runs and a recipient
-  whose delivery is paused. docket's `registrationText` still wraps a usr link the tracker no
+  store (`laneStore`, `notify-lane.ts`) that drops a non-active task's due runs, and pauses every
+  task that would DM a person whose delivery paused (`delivery-health.ts`), as plan 5.5 asks. docket's `registrationText` still wraps a usr link the tracker no
   longer has (plan item 40), so `/register` builds its own text around `ADMIN_DISCLOSURE`.
+- **`TRACKER_GUILD_ID`'s server-membership gate is an addition beyond the plan.** Plan 5.5's
+  "membership gate" is the admission list alone, with a Discord-role check left unknown; checking
+  membership of one configured server came with #79's brief, not the plan of record. Not verified
+  live against Discord (below).
 - **A plugin checks guild membership through `interaction.client`, not the Host API**, which has no
   member lookup (`plugins/tracker/src/discord.ts` `lookupMembership`): `guilds.fetch(id)` then
   `members.fetch({ user })`, a REST call that needs no privileged intent; Discord's 10007 (unknown

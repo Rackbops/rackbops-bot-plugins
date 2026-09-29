@@ -10,7 +10,7 @@ import {
   type TaskEvent,
   type User,
 } from "@rackbops/docket-core";
-import { clip, type TrackerDeps } from "./actions.js";
+import { clip, NO_SUCH_TASK, type TrackerDeps } from "./actions.js";
 
 /**
  * `/task history` (plan 1.3 "History", 5.10): every run of a task -- when it was due, how it went,
@@ -50,7 +50,7 @@ export async function taskHistory(d: TrackerDeps, user: User, taskId: string): P
   const actor = { userId: user.id, admin: user.admin };
   const id = taskId.trim();
   const task = await visibleTask(d.store, actor, id);
-  if (!task) return `You have no task \`${id}\`.`;
+  if (!task) return NO_SUCH_TASK;
   const now = d.clock.now();
   const all = (await visibleOccurrences(d.store, actor, task.id)) ?? [];
   const upcoming = (o: Occurrence) => o.status === "queued" && Date.parse(o.dueAt) > now.getTime();

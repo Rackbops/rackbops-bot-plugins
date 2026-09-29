@@ -6,8 +6,10 @@ import type { Database } from "bun:sqlite";
  * `/register` stamps `registered_at`. The person's own row lives in docket's `users` table; this is
  * the tracker-only part docket's `User` does not carry.
  *
- * A user row with no admissions row predates this table (0.1.0) and was made by `admit`, so it is
- * admitted and not registered: `get` answers that instead of null.
+ * Every user row has an admissions row: migration 2 backfills the rows 0.1.0 left (made only by
+ * the configuration, so `admitted_by` NULL is exactly right for them), `/allow` writes one, and the
+ * configured admins get one at start. `get` still answers "admitted, not registered" for a row
+ * without one, rather than null, so a person is never locked out by a missing record.
  */
 
 export interface Admission {

@@ -88,10 +88,20 @@ export interface DmNotifierDeps {
   health?: DeliveryHealth;
 }
 
-/** A refusal about the buttons alone, which a send without them avoids (an older host's, above all). */
+/**
+ * The host's own refusals of `buttons` (rackbops-discord-bot src/plugins/hostMessage.ts
+ * `validateHostMessage`/`validateButtons`, and host.ts's check for an `interactions` handler), and
+ * the pre-#323 host's "interactive buttons are not supported yet". The contract (contract.d.ts,
+ * `HostMessage`) says a plugin that must work on either host "retries without `buttons` on any
+ * refusal" -- and a refusal there is the host's validation, which runs before anything is sent.
+ * So this matches only those texts, as plain host errors (no Discord `code`): a Discord API error,
+ * a timeout, or anything else that may have come after a send is never retried, since the DM may
+ * already have gone out and a retry would send it twice.
+ */
+const HOST_BUTTON_REFUSAL = /^(interactive buttons are not supported|buttons? (label|customId|customIds|style|must|is not valid|and links need|need this plugin))/;
 export function isButtonRefusal(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
-  return /button/i.test(message);
+  if (!(err instanceof Error) || (err as { code?: unknown }).code !== undefined) return false;
+  return HOST_BUTTON_REFUSAL.test(err.message);
 }
 
 /** The host message for `message`, cut to fit the host's bound; null when it has no text to send. */
@@ -131,6 +141,10 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
           return { messageId: UNCONFIRMED_MESSAGE_ID };
         }
       }
+
+      // A person whose delivery paused earlier in this tick (or before) is held, not failed: the
+      // run goes back to the queue, and the lane skips it while its task is paused.
+      if (d.health?.isPaused(userId)) throw new ExecutorUnavailableError(`delivery to ${userId} is paused`);
 
       // docket 0.3.0 has no signal of its own: the error it requeues on (rather than failing the
       // run) is ExecutorUnavailableError, so an aborted tick leaves this run queued for the next.

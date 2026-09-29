@@ -4,9 +4,11 @@ import type { HostApi, HostMessage, Plugin } from "../../../packages/api/contrac
 import { makeFakeHost } from "../../../packages/testkit/index.js";
 import { NOT_ADMIN, NOT_ADMITTED, NOT_MEMBER, NOT_REGISTERED, type Membership } from "./access.js";
 import { PAUSE_AFTER } from "./delivery-health.js";
+import { NO_SUCH_TASK } from "./actions.js";
 import { lookupMembership, type Interactionish } from "./discord.js";
 import { createPlugin } from "./index.js";
 import { HOST_CANNOT_MESSAGE } from "./notifier.js";
+import { CANNOT_SHARE } from "./press.js";
 
 /**
  * The Discord surface end to end (rackbops-bot-plugins#79), through the plugin's own commands and
@@ -207,7 +209,7 @@ describe("the first slice: a reminder by slash command, by DM, answered by butto
     expect(history).toContain("created");
     // Admin sees it too (plan 5.10); a stranger to the task does not.
     expect(await slash(w.plugin, "task", ADMIN, { sub: "history", strings: { task: "t1" } })).toContain("Larry done");
-    expect(await slash(w.plugin, "task", CURLY, { sub: "history", strings: { task: "t1" } })).toBe("You have no task `t1`.");
+    expect(await slash(w.plugin, "task", CURLY, { sub: "history", strings: { task: "t1" } })).toBe(NO_SUCH_TASK);
   });
 
   it("a daily reminder is snoozed by button, re-asked at the snooze, and the next day still comes", async () => {
@@ -247,7 +249,7 @@ describe("the first slice: a reminder by slash command, by DM, answered by butto
     await tick(w.plugin);
     expect(w.sent).toHaveLength(2);
     expect(await slash(w.plugin, "task", LARRY, { sub: "done", strings: { task: "t1" } })).toBe("Marked done.");
-    expect(await slash(w.plugin, "task", LARRY, { sub: "done", strings: { task: "t9" } })).toBe("You have no task `t9`.");
+    expect(await slash(w.plugin, "task", LARRY, { sub: "done", strings: { task: "t9" } })).toBe(NO_SUCH_TASK);
   });
 
   it("/settings hour moves a recurring reminder that has no time of its own", async () => {
@@ -324,7 +326,7 @@ describe("consent, the opt-out, and the Reply modal", () => {
     const w = world();
     await withLarry(w);
     await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
-    expect(await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } })).toBe("You have no task `t1`.");
+    expect(await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } })).toBe(NO_SUCH_TASK);
     await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "week" } });
     expect(await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } })).toContain("registered");
     await slash(w.plugin, "register", CURLY);
@@ -423,5 +425,94 @@ describe("pause after repeated failed DMs", () => {
     expect(w.sent.map((s) => s.message.content)).toEqual(["pills"]);
     expect(await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t2" } })).toContain("Next: Sun Oct 4, 9:00");
     expect(await slash(w.plugin, "tasks", LARRY)).not.toContain("I could not DM you");
+  });
+});
+
+describe("review fixes (#79)", () => {
+  it("/register and /settings hour keep a pending snooze, and change nothing when nothing changed", async () => {
+    const w = world();
+    await withLarry(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "stretch", repeat: "day" } });
+    w.clock.set("2026-10-02T12:00:00.000Z");
+    await tick(w.plugin);
+    await pressButton(w.plugin, buttonIds(w.sent[0])[1] as string, LARRY, "stretch"); // snoozed to 09:00
+    expect(await slash(w.plugin, "settings", LARRY, { sub: "hour", ints: { hour: 8 } })).toBe("Your preferred hour is already 08:00, America/New_York time.");
+    expect(await slash(w.plugin, "register", LARRY)).toContain("Your settings are updated.");
+    expect(await slash(w.plugin, "settings", LARRY, { sub: "hour", ints: { hour: 7 } })).toContain("1 recurring reminder(s) moved");
+    w.clock.set("2026-10-02T13:00:00.000Z"); // the snooze, still there
+    await tick(w.plugin);
+    expect(w.sent).toHaveLength(2);
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" } });
+    expect(history).toContain("Next: Sat Oct 3, 7:00");
+  });
+
+  it("declining and opting out work for someone no longer in the server or registered", async () => {
+    const members = new Set([ADMIN, LARRY, CURLY]);
+    const w = world({ members });
+    await withLarry(w);
+    await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
+    await slash(w.plugin, "register", CURLY);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "week" } });
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "recycling", when: "9am", repeat: "week" } });
+    await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } });
+    await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t2" }, users: { user: CURLY } });
+    await pressButton(w.plugin, "tracker:a.t.t2", CURLY);
+    members.delete(CURLY);
+    expect((await pressButton(w.plugin, "tracker:a.t.t1", CURLY)).followUps).toEqual([NOT_MEMBER]);
+    expect((await pressButton(w.plugin, "tracker:x.t.t1", CURLY)).edits[0]?.content).toContain("-- Declined.");
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await tick(w.plugin);
+    const optOut = buttonIds(w.sent.find((s) => s.userId === CURLY && s.message.content === "recycling"))[0] as string;
+    expect((await pressButton(w.plugin, optOut, CURLY)).edits[0]?.content).toContain("-- You will not get this task's messages any more.");
+    expect((await pressButton(w.plugin, "tracker:q.o.o1", STRANGER)).followUps).toEqual(["That is not yours to answer."]);
+  });
+
+  it("/task share checks membership and does not say which gate refused", async () => {
+    const w = world({ members: new Set([ADMIN, LARRY]) });
+    await withLarry(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "week" } });
+    const nonMember = await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } });
+    const unknown = await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: STRANGER } });
+    expect(nonMember).toBe(`<@${CURLY}> ${CANNOT_SHARE}`);
+    expect(unknown).toBe(`<@${STRANGER}> ${CANNOT_SHARE}`);
+  });
+
+  it("the Reply button resumes and writes nothing before its modal comes back", async () => {
+    const w = world({ unreachable: new Set([LARRY]) });
+    await withLarry(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "pills", repeat: "day" } });
+    for (const at of ["2026-10-02T12:00:00.000Z", "2026-10-03T12:00:00.000Z", "2026-10-04T12:00:00.000Z"]) {
+      w.clock.set(at);
+      await tick(w.plugin);
+    }
+    expect(await slash(w.plugin, "tasks", ADMIN)).toBe("You have no active tasks.");
+    w.unreachable.clear();
+    const opened = await pressButton(w.plugin, "tracker:r.o.o1", LARRY);
+    expect(opened.modals).toHaveLength(1);
+    const history = await slash(w.plugin, "task", ADMIN, { sub: "history", strings: { task: "t1" } });
+    expect(history).toContain("reminder, paused");
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", LARRY, "sorry, DMs were off")).toContain("so your reminders were paused");
+    expect(await slash(w.plugin, "task", ADMIN, { sub: "history", strings: { task: "t1" } })).toContain("reminder, active");
+  });
+
+  it("a recipient who cannot be DMed pauses the task; the owner is told, sees it in /tasks, and can go on without them", async () => {
+    const w = world();
+    await withLarry(w);
+    await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
+    await slash(w.plugin, "register", CURLY);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } });
+    await pressButton(w.plugin, "tracker:a.t.t1", CURLY);
+    w.unreachable.add(CURLY);
+    for (const day of ["01", "02", "03", "04"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await tick(w.plugin);
+    }
+    const told = w.sent.filter((s) => s.userId === LARRY && s.message.content.startsWith("Your task"));
+    expect(told).toHaveLength(1);
+    expect(told[0]?.message.content).toContain("I could not DM user333 3 times in a row");
+    expect(await slash(w.plugin, "tasks", LARRY)).toContain("Paused: `t1` bins out -- I could not DM user333; `/task resume t1` goes on without them.");
+    expect(await slash(w.plugin, "task", LARRY, { sub: "resume", strings: { task: "t1" } })).toBe("Resumed `t1`, without user333.");
+    expect(await slash(w.plugin, "tasks", LARRY)).toContain("`t1` bins out -- next");
   });
 });
