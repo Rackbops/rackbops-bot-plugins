@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-29T22:39:32.552Z",
+  "generatedAt": "2026-09-29T22:53:21.832Z",
   "plugins": [
     {
       "name": "mcp",
@@ -164,14 +164,16 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.3.0",
-      "description": "The task tracker for Rackbops Clerk: reminders by slash command, delivered by DM with done, snooze and reply buttons, on docket's SQLite store (/allow, /register, /remind, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings",
+      "version": "0.4.0",
+      "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings",
       "hostApiVersion": 1,
       "intents": [],
       "commands": [
         "allow",
         "register",
         "remind",
+        "renewal",
+        "price",
         "tasks",
         "task",
         "settings",
@@ -201,6 +203,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "0.4.0",
+          "publishedAt": "2026-09-29T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.4.0",
+          "notes": "### Added\n\n- Renewals and the price tracker (rackbops-bot-plugins#81, plan E6): two more task types on the\n  notify side, no model, nothing sent to city-hall.\n- `/renewal name amount currency renews [unit] [every] [lead] [note]`: docket's `renewal` on a\n  `period` schedule from the next renewal date, asking `lead` days before each (default 7) at the\n  preferred hour, with Keep, Cancel, Renewed and Snooze. When that ask is already past but the date\n  is not, the first ask comes within a minute. Keep and Renewed record what was paid; Cancel ends it.\n- `/task decide task choice [amount]`: answers a renewal's latest ask with the amount actually paid,\n  instead of a button.\n- `/price url [name] [hours] [drop] [baseline] [near]`: docket's `price` on a `poll` schedule every\n  `hours` (default 12, at most 168). The page is read once before anything is created, and nothing is\n  created without a price in it; a drop of `drop`% (default 10) from the last, first or highest price\n  seen DMs the owner once per crossing. `near` (the words before the price) stands in for a\n  free-form pattern. At most 20 per person.\n- `/task history` shows a renewal's paid periods and total, and a price's last check, readings, low\n  and high.\n- Page reads (`fetch.ts`) go only to the public internet: http or https on the default port, no\n  credentials, every resolved address public, redirects re-checked (at most 5), 15 s, 3 MB. The body\n  is rebuilt in linear time to what price extraction reads (`page.ts`), since docket's extraction\n  patterns take quadratic time on a page of unclosed tags.\n- A second host tick, `poll`, runs the page readers after `notify`, so a slow page never holds up a\n  reminder due now. A read the tick's abort cuts short requeues its run instead of counting a miss.\n  No schema change."
+        },
         {
           "version": "0.3.0",
           "publishedAt": "2026-09-29T00:00:00.000Z",

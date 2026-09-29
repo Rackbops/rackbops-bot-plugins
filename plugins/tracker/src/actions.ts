@@ -14,6 +14,7 @@ import {
   wallClock,
   type Actor,
   type Clock,
+  type Fetch,
   type Notifier,
   type Schedule,
   type Store,
@@ -42,6 +43,8 @@ export interface TrackerDeps {
   health: DeliveryHealth;
   clock: Clock;
   types: Readonly<Record<string, TaskType<unknown>>>;
+  /** Page reads for `/price`'s first look (fetch.ts); the poll tick makes its own, with its signal. */
+  fetch: Fetch | null;
   dm: HostApi["dm"];
   log: PluginLog;
   /** Sends one DM through the tracker's Notifier (claims, buttons, the failure count). */

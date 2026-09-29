@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.4.0] - 2026-09-29
+
+### Added
+
+- Renewals and the price tracker (rackbops-bot-plugins#81, plan E6): two more task types on the
+  notify side, no model, nothing sent to city-hall.
+- `/renewal name amount currency renews [unit] [every] [lead] [note]`: docket's `renewal` on a
+  `period` schedule from the next renewal date, asking `lead` days before each (default 7) at the
+  preferred hour, with Keep, Cancel, Renewed and Snooze. When that ask is already past but the date
+  is not, the first ask comes within a minute. Keep and Renewed record what was paid; Cancel ends it.
+- `/task decide task choice [amount]`: answers a renewal's latest ask with the amount actually paid,
+  instead of a button.
+- `/price url [name] [hours] [drop] [baseline] [near]`: docket's `price` on a `poll` schedule every
+  `hours` (default 12, at most 168). The page is read once before anything is created, and nothing is
+  created without a price in it; a drop of `drop`% (default 10) from the last, first or highest price
+  seen DMs the owner once per crossing. `near` (the words before the price) stands in for a
+  free-form pattern. At most 20 per person.
+- `/task history` shows a renewal's paid periods and total, and a price's last check, readings, low
+  and high.
+- Page reads (`fetch.ts`) go only to the public internet: http or https on the default port, no
+  credentials, every resolved address public, redirects re-checked (at most 5), 15 s, 3 MB. The body
+  is rebuilt in linear time to what price extraction reads (`page.ts`), since docket's extraction
+  patterns take quadratic time on a page of unclosed tags.
+- A second host tick, `poll`, runs the page readers after `notify`, so a slow page never holds up a
+  reminder due now. A read the tick's abort cuts short requeues its run instead of counting a miss.
+  No schema change.
+
 ## [0.3.0] - 2026-09-29
 
 ### Added

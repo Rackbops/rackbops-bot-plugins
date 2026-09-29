@@ -1,7 +1,7 @@
 {
   "name": "@rackbops/plugin-tracker",
-  "version": "0.3.0",
-  "description": "The task tracker for Rackbops Clerk: reminders by slash command, delivered by DM with done, snooze and reply buttons, on docket's SQLite store (/allow, /register, /remind, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings",
+  "version": "0.4.0",
+  "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings",
   "type": "module",
   "main": "dist/plugin.js",
   "files": ["dist"],
@@ -21,7 +21,7 @@
   "botPlugin": {
     "hostApiVersion": 1,
     "intents": [],
-    "commands": ["allow", "register", "remind", "tasks", "task", "settings", "web"],
+    "commands": ["allow", "register", "remind", "renewal", "price", "tasks", "task", "settings", "web"],
     "env": [
       {
         "key": "TRACKER_ADMIN_DISCORD_IDS",

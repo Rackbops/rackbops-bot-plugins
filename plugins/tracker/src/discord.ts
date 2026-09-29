@@ -27,9 +27,23 @@ import {
   STARTING,
   type SurfaceContext,
 } from "./discord-common.js";
-import { taskHistory } from "./history.js";
 import { createInteractionHandler } from "./interactions.js";
 import { finishShare, prepareShare, sendShare } from "./press.js";
+import { historyWithSeries } from "./series.js";
+import {
+  addRenewal,
+  decideRenewal,
+  DEFAULT_LEAD_DAYS,
+  DEFAULT_POLL_HOURS,
+  MAX_EVERY,
+  MAX_LEAD_DAYS,
+  MAX_NEAR,
+  MAX_NOTE,
+  MAX_POLL_HOURS,
+  type PeriodUnit,
+  trackPrice,
+} from "./tracked.js";
+import type { BaselineRule, RenewalDecision } from "@rackbops/docket-types";
 import { type WebLocation, webLink } from "./web/command.js";
 
 export { lookupMembership, type Interactionish, STARTING, FAILED } from "./discord-common.js";
@@ -183,6 +197,81 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
         }),
     },
     {
+      name: "renewal",
+      build: (b: SlashCommandBuilder) =>
+        b
+          .setDescription("Track a subscription, domain or warranty: I ask before each renewal")
+          .addStringOption((o) => o.setName("name").setDescription("What renews, e.g. Netflix").setRequired(true).setMaxLength(100))
+          .addNumberOption((o) => o.setName("amount").setDescription("What one period costs").setRequired(true).setMinValue(0))
+          .addStringOption((o) => o.setName("currency").setDescription("Currency code, e.g. USD").setRequired(true).setMinLength(3).setMaxLength(3))
+          .addStringOption((o) => o.setName("renews").setDescription("The next renewal or expiry date, YYYY-MM-DD").setRequired(true).setMaxLength(10))
+          .addStringOption((o) =>
+            o
+              .setName("unit")
+              .setDescription("How it renews (default: yearly)")
+              .addChoices({ name: "yearly", value: "year" }, { name: "monthly", value: "month" }, { name: "weekly", value: "week" }, { name: "daily", value: "day" }),
+          )
+          .addIntegerOption((o) => o.setName("every").setDescription("Every how many of those, e.g. 2 for every two years (default 1)").setMinValue(1).setMaxValue(MAX_EVERY))
+          .addIntegerOption((o) =>
+            o.setName("lead").setDescription(`Days before the date to ask (default ${DEFAULT_LEAD_DAYS})`).setMinValue(0).setMaxValue(MAX_LEAD_DAYS),
+          )
+          .addStringOption((o) => o.setName("note").setDescription("Carried on every ask: where to cancel, which account").setMaxLength(MAX_NOTE)),
+      handle: (interaction) =>
+        run(interaction, "registered", (d, user) => {
+          const every = interaction.options.getInteger("every");
+          const lead = interaction.options.getInteger("lead");
+          const unit = interaction.options.getString("unit");
+          const note = interaction.options.getString("note");
+          return addRenewal(d, user, {
+            name: interaction.options.getString("name", true),
+            amount: interaction.options.getNumber("amount", true),
+            currency: interaction.options.getString("currency", true),
+            renews: interaction.options.getString("renews", true),
+            ...(every !== null ? { every } : {}),
+            ...(lead !== null ? { lead } : {}),
+            ...(unit !== null ? { unit: unit as PeriodUnit } : {}),
+            ...(note !== null ? { note } : {}),
+          });
+        }),
+    },
+    {
+      name: "price",
+      build: (b: SlashCommandBuilder) =>
+        b
+          .setDescription("Track a product's price: I DM you when it drops")
+          .addStringOption((o) => o.setName("url").setDescription("The product page").setRequired(true).setMaxLength(1000))
+          .addStringOption((o) => o.setName("name").setDescription("What to call it (default: the page address)").setMaxLength(100))
+          .addIntegerOption((o) =>
+            o.setName("hours").setDescription(`Hours between checks (default ${DEFAULT_POLL_HOURS})`).setMinValue(1).setMaxValue(MAX_POLL_HOURS),
+          )
+          .addNumberOption((o) => o.setName("drop").setDescription("Alert on a drop of at least this percent (default 10)").setMinValue(1).setMaxValue(90))
+          .addStringOption((o) =>
+            o
+              .setName("baseline")
+              .setDescription("Measure the drop from which price seen (default: the last)")
+              .addChoices({ name: "the last", value: "last" }, { name: "the first", value: "first" }, { name: "the highest", value: "peak" }),
+          )
+          .addStringOption((o) =>
+            o.setName("near").setDescription("The words just before the price, if I cannot find it on my own").setMaxLength(MAX_NEAR),
+          ),
+      handle: (interaction) =>
+        run(interaction, "registered", (d, user) => {
+          const name = interaction.options.getString("name");
+          const hours = interaction.options.getInteger("hours");
+          const drop = interaction.options.getNumber("drop");
+          const baseline = interaction.options.getString("baseline");
+          const near = interaction.options.getString("near");
+          return trackPrice(d, user, {
+            url: interaction.options.getString("url", true),
+            ...(name !== null ? { name } : {}),
+            ...(hours !== null ? { hours } : {}),
+            ...(drop !== null ? { drop } : {}),
+            ...(baseline !== null ? { baseline: baseline as BaselineRule } : {}),
+            ...(near !== null ? { near } : {}),
+          });
+        }),
+    },
+    {
       name: "tasks",
       build: (b: SlashCommandBuilder) => b.setDescription("List your tasks and when each is next due"),
       handle: (interaction) => run(interaction, "registered", (d, user) => listTasks(d, user)),
@@ -204,6 +293,20 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .setDescription("Snooze the task's latest reminder (default: an hour)")
               .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(24))
               .addStringOption((o) => o.setName("until").setDescription('Until when: "in 2h", "tomorrow 9am"').setMaxLength(100)),
+          )
+          .addSubcommand((s) =>
+            s
+              .setName("decide")
+              .setDescription("Answer a renewal's latest ask, with what you paid if it changed")
+              .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(24))
+              .addStringOption((o) =>
+                o
+                  .setName("choice")
+                  .setDescription("Keep it, cancel it, or it has renewed")
+                  .setRequired(true)
+                  .addChoices({ name: "keep", value: "keep" }, { name: "cancel", value: "cancel" }, { name: "renewed", value: "renewed" }),
+              )
+              .addNumberOption((o) => o.setName("amount").setDescription("What you paid this time, if not the usual").setMinValue(0)),
           )
           .addSubcommand((s) =>
             s
@@ -239,8 +342,16 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               const until = interaction.options.getString("until");
               return answerLatest(d, user, { taskId, kind: "snooze", ...(until !== null ? { until } : {}) });
             }
+            case "decide": {
+              const amount = interaction.options.getNumber("amount");
+              return decideRenewal(d, user, {
+                taskId,
+                choice: interaction.options.getString("choice", true) as RenewalDecision,
+                ...(amount !== null ? { amount } : {}),
+              });
+            }
             case "history":
-              return taskHistory(d, user, taskId);
+              return historyWithSeries(d, user, taskId);
             case "resume":
               return resumeTask(d, user, taskId);
             case "share": {

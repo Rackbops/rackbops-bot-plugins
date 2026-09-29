@@ -1,20 +1,21 @@
 import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Clock, Notifier, TaskType } from "@rackbops/docket-core";
-import { reminder, renewal } from "@rackbops/docket-types";
+import type { Clock, Fetch, Notifier, TaskType } from "@rackbops/docket-core";
+import { price, reminder, renewal } from "@rackbops/docket-types";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildId } from "./access.js";
 import type { TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
 import { ClaimStore } from "./claims.js";
 import { DeliveryHealth } from "./delivery-health.js";
+import { createPageFetch } from "./fetch.js";
 import type { Membership } from "./access.js";
 import { type Interactionish, lookupMembership, serial } from "./discord-common.js";
 import { createSurface, type SurfaceWiring } from "./discord.js";
 import { decideHealth, type HealthState, healthResponse } from "./health.js";
 import { createDmNotifier, reportUnconfirmed } from "./notifier.js";
-import { runNotifyTick } from "./notify-lane.js";
+import { type NotifyTickKind, runNotifyTick } from "./notify-lane.js";
 import { parseAdminIds, seedAdmins } from "./people.js";
 import { openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
@@ -29,8 +30,9 @@ import { LoginLinks } from "./web/signin-link.js";
  * instance: docket's Store on SQLite, the notify lane on the host's tick, people and the first
  * admin, `/tracker/healthz` (#78), and the Discord surface -- the slash commands, the admission and
  * membership gates, consent, the buttons and the Reply modal, and pausing delivery after repeated
- * failures (#79), and the web area's first slice -- sign-in by one-time link, my tasks, history,
- * settings (#80).
+ * failures (#79), the web area's first slice -- sign-in by one-time link, my tasks, history,
+ * settings (#80) -- and renewals and the price tracker, with the fenced page reads on a tick of
+ * their own (#81).
  *
  * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID` and
  * `TRACKER_WEB_URL` and nothing else. The database is opened in `activate()` and closed in `dispose()`.
@@ -41,13 +43,15 @@ export const DB_DIR = "tracker";
 export const DB_FILE = "tracker.sqlite";
 
 /**
- * The task types this host runs: the notify-lane types whose ports are all wired. `price` needs the
- * Fetch port and the execute-lane types an Executor (the city-hall adapter); neither exists yet, so
- * a task of those types is never run here -- docket fails such a run with "no task type".
+ * The task types this host runs: the notify-lane types whose ports are all wired -- `price` reads
+ * pages through the fenced Fetch port (fetch.ts, #81). The execute-lane types need an Executor (the
+ * city-hall adapter), which does not exist yet, so a task of those types is never run here -- docket
+ * fails such a run with "no task type".
  */
 export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object.freeze({
   reminder: reminder as TaskType<unknown>,
   renewal: renewal as TaskType<unknown>,
+  price: price as TaskType<unknown>,
 });
 
 export interface TrackerOptions {
@@ -55,6 +59,8 @@ export interface TrackerOptions {
   /** The database path; defaults to `<dataDir>/tracker/tracker.sqlite`. Tests pass ":memory:". */
   dbPath?: string;
   types?: Readonly<Record<string, TaskType<unknown>>>;
+  /** Test seam for the page reads; defaults to the fenced `createPageFetch`, given the tick's signal. */
+  fetch?: (signal?: AbortSignal) => Fetch;
   /** Test seam for the membership lookup (discord.ts). */
   membership?: SurfaceWiring["membership"];
   /** Test seam for the web area's member re-check; null = no Discord client yet. Defaults to the
@@ -75,6 +81,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const webOrigin = parseWebUrl(host.env.TRACKER_WEB_URL);
   const clock: Clock = options.clock ?? { now: () => new Date() };
   const types = options.types ?? TRACKER_TYPES;
+  const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
   let db: Database | null = null;
   let store: SqliteStore | null = null;
@@ -93,6 +100,34 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     web: webOrigin ? { origin: webOrigin, name: host.name, gated: guildId !== null } : null,
     ...(options.membership ? { membership: options.membership } : {}),
   });
+
+  async function tick(kind: NotifyTickKind, signal?: AbortSignal) {
+    if (!store || !claims) return;
+    const outcome = await runNotifyTick(
+      {
+        store,
+        claims,
+        clock,
+        types,
+        dm,
+        log: host.log,
+        kind,
+        ...(kind === "poll" ? { fetch: pageFetch(signal) } : {}),
+        ...(delivery ? { health: delivery } : {}),
+      },
+      signal,
+    );
+    if (outcome.kind === "no-dm") {
+      if (!warnedNoDm) host.log.warn("notify lane is off: this bot has no host.dm (rackbops-discord-bot#736)");
+      warnedNoDm = true;
+      return;
+    }
+    if (outcome.kind === "aborted") return;
+    // Health tracks the reminders' tick; a slow page on `poll` says nothing about it.
+    if (kind === "notify") health.lastTickAt = clock.now();
+    const { ran, failed } = outcome.result;
+    if (failed > 0) host.log.warn(`${kind === "poll" ? "poll" : "notify"} lane: ${ran} ran, ${failed} failed`);
+  }
 
   // The web area's member re-check needs Discord, and the host API has no member lookup: it asks
   // through the discord.js Client of the last interaction the plugin handled (`interaction.client`
@@ -177,6 +212,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         health: delivery,
         clock,
         types,
+        fetch: pageFetch(),
         dm,
         log: host.log,
         notifier: dm ? createDmNotifier({ store: openedStore, claims: openedClaims, dm, clock, log: host.log, health: delivery }) : NO_DM,
@@ -204,22 +240,14 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     ticks: [
       {
         name: "notify",
-        async run(signal) {
-          if (!store || !claims) return;
-          const outcome = await runNotifyTick(
-            { store, claims, clock, types, dm, log: host.log, ...(delivery ? { health: delivery } : {}) },
-            signal,
-          );
-          if (outcome.kind === "no-dm") {
-            if (!warnedNoDm) host.log.warn("notify lane is off: this bot has no host.dm (rackbops-discord-bot#736)");
-            warnedNoDm = true;
-            return;
-          }
-          if (outcome.kind === "aborted") return;
-          health.lastTickAt = clock.now();
-          const { ran, failed } = outcome.result;
-          if (failed > 0) host.log.warn(`notify lane: ${ran} ran, ${failed} failed`);
-        },
+        run: (signal) => tick("notify", signal),
+      },
+      {
+        // The price tracker's page reads (#81), on a tick of their own after `notify`: the host awaits
+        // a plugin's ticks in order and stops waiting on one after 30 s, so a slow page never holds up
+        // a reminder due now (notify-lane.ts).
+        name: "poll",
+        run: (signal) => tick("poll", signal),
       },
     ],
 
