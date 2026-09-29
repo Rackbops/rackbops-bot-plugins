@@ -18,9 +18,11 @@ export interface SetlistSong {
   /** The song title as setlist.fm records it. */
   name: string;
   /**
-   * Whose recording to search for. For an ordinary song this is the performing artist; for a song
-   * setlist.fm marks as a `cover`, it is the ORIGINAL artist, because a band that covers a song
-   * live has usually never released it themselves -- the recording that exists is the original's.
+   * The artist setlist.fm names for this song: the performer, or, for a song setlist.fm marks as
+   * a `cover`, the ORIGINAL artist. It is a starting point, not the only name a search tries --
+   * `artists.ts`'s `searchArtistsFor` also tries the performer-side names (#63/#64), in an order
+   * that ends with this one; which name a song was actually found under is `foundUnder` on its
+   * `SongTrace` (`build.ts`), not this field.
    */
   searchArtist: string;
   /** True when setlist.fm flagged the song a cover. */

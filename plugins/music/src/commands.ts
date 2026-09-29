@@ -117,9 +117,11 @@ function describeShow(setlist: Setlist): string {
 
 /**
  * The success reply. Leads with the link (the thing the user wants), then the honest caveats:
- * what was skipped as walk-on tape, what wasn't found, and what matched but might be the wrong
- * recording. Clipped to Discord's limit by dropping the softest information first -- the link and
- * the counts always survive.
+ * what was skipped as walk-on tape, what wasn't found, what matched but might be the wrong
+ * recording, and -- last, so it's the first dropped -- which songs were matched under an artist
+ * name other than the one setlist.fm gave (#63/#64), so a wrong inference stays visible instead
+ * of silently picking a plausible-looking track. Clipped to Discord's limit by dropping the
+ * softest information first -- the link and the counts always survive.
  *
  * `askedArtist` is the artist name the user typed via `artist:` (undefined for a `url:` run, and
  * for the picker path, which already names the artist in its own prompt). When it doesn't match
@@ -150,6 +152,15 @@ export function formatBuildReply(setlist: Setlist, outcome: BuildOutcome, askedA
     notes.push(
       `Worth a check, these matched loosely: ${listNames(
         outcome.uncertain.map((u) => `${u.song.name} -> ${u.match.track.name}`),
+      )}.`,
+    );
+  }
+  // Last, so it is the first dropped at the character ceiling (#63/#64): a wrong inference here is
+  // a nice-to-know, not the reason the reply exists.
+  if (outcome.foundElsewhere.length > 0) {
+    notes.push(
+      `Matched under a different artist than setlist.fm names: ${listNames(
+        outcome.foundElsewhere.map((r) => `${r.song.name} -> ${r.foundUnder}`),
       )}.`,
     );
   }

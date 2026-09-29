@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { artistNamesFor, searchArtistsFor } from "./artists.js";
 import { betterMatch, buildPlaylist, findSong, isoDate, playlistDescription, playlistName } from "./build.js";
 import type { Setlist, SetlistSong } from "./setlistfm.js";
 import type { SpotifyClient } from "./spotify.js";
@@ -283,7 +284,10 @@ describe("buildPlaylist", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("a cover is searched under its original artist", async () => {
+  // Updated for #63/#64: a cover is now searched under the performer-side names first, and the
+  // original artist last -- so the performer's own recording (if Spotify has one) wins, and the
+  // original artist is only reached when it doesn't.
+  test("a cover is searched under the performer first, and its original artist last", async () => {
     const queries: string[] = [];
     const { client } = fakeSpotify({}, {
       searchTracks: async (_t, query) => {
@@ -292,7 +296,8 @@ describe("buildPlaylist", () => {
       },
     });
     await buildPlaylist(client, "AT", setlist({ songs: [song("Cover Song", "The Originals", true)] }));
-    expect(queries[0]).toContain('artist:"The Originals"');
+    expect(queries[0]).toContain('artist:"Band"');
+    expect(queries.at(-1)).toContain('artist:"The Originals"');
   });
 });
 
@@ -454,5 +459,232 @@ describe("buildPlaylist traces", () => {
     const { client } = fakeSpotify({ One: [candidate("One")] });
     const result = await buildPlaylist(client, "AT", setlist({ songs: [song("One"), song("One")] }));
     expect(result.songs.map((s) => s.name)).toEqual(["One", "One"]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #63/#64: search each song under every artist name it could be filed under
+// ---------------------------------------------------------------------------------------------------
+
+describe("findSong / buildPlaylist: artist fallback (#63/#64)", () => {
+  test("an uncredited song by a performer Spotify doesn't know is found under the artist most credits name", async () => {
+    const { client } = fakeSpotify({}, {
+      searchTracks: async (_t, query) =>
+        query.includes("Originals")
+          ? { ok: true, value: [candidate("Signature Song", "Originals")] }
+          : { ok: true, value: [] },
+    });
+    const found = await findSong(client, "AT", song("Signature Song", "Tribute Act"), ["Tribute Act", "Originals"]);
+    expect(found.ok).toBe(true);
+    expect(found.ok === true && found.match?.confidence).toBe("high");
+    expect(found.trace.foundUnder).toBe("Originals");
+    // The performer's two queries (nothing found) come first, then the credited artist's.
+    expect(found.trace.queries!.map((q) => q.query)).toEqual([
+      'track:"Signature Song" artist:"Tribute Act"',
+      "Signature Song Tribute Act",
+      'track:"Signature Song" artist:"Originals"',
+    ]);
+  });
+
+  test("a band on Spotify with covers of several artists gets no fallback search", async () => {
+    const tributeSet = {
+      artistName: "Band",
+      songs: [
+        song("Uncredited Song", "Band", false),
+        song("Cover A", "Artist A", true),
+        song("Cover B", "Artist B", true),
+      ],
+    } as Setlist;
+    const names = artistNamesFor(tributeSet);
+    // Two credits split between two different artists -- neither is a majority, so no fallback name.
+    expect(names.credited).toBeUndefined();
+
+    const queries: string[] = [];
+    const { client } = fakeSpotify({}, {
+      searchTracks: async (_t, query) => {
+        queries.push(query);
+        return { ok: true, value: [candidate("Uncredited Song", "Someone Else")] }; // a low match
+      },
+    });
+    const target = tributeSet.songs[0]!;
+    const found = await findSong(client, "AT", target, searchArtistsFor(target, names));
+    expect(found.ok === true && found.match?.confidence).toBe("low");
+    // Only the performer's own two queries -- there was no fallback name to try.
+    expect(queries).toHaveLength(2);
+  });
+
+  test("a band whose own song matches high keeps it even when most credits name one other artist", async () => {
+    const tributeSet = {
+      artistName: "Band",
+      songs: [
+        song("Own Song", "Band", false),
+        song("Cover A", "Originals", true),
+        song("Cover B", "Originals", true),
+        song("Cover C", "Originals", true),
+      ],
+    } as Setlist;
+    const names = artistNamesFor(tributeSet);
+    expect(names.credited).toBe("Originals");
+
+    let calls = 0;
+    const { client } = fakeSpotify({}, {
+      searchTracks: async () => {
+        calls += 1;
+        return { ok: true, value: [candidate("Own Song")] }; // exact artist "Band", exact title -> high
+      },
+    });
+    const target = tributeSet.songs[0]!;
+    const found = await findSong(client, "AT", target, searchArtistsFor(target, names));
+    expect(found.ok === true && found.match?.confidence).toBe("high");
+    expect(found.trace.foundUnder).toBe("Band");
+    // The performer's first query was high -- "Originals" is never even queried.
+    expect(calls).toBe(1);
+  });
+
+  test("an 'A & B' performer whose full name finds no high match is searched under the lead act", async () => {
+    // The same candidate scores differently under each artist: partial overlap under the full
+    // joined name (medium), exact under the lead act alone (high).
+    const { client } = fakeSpotify({ "Duet Song": [candidate("Duet Song", "Duo A")] });
+    const result = await buildPlaylist(
+      client,
+      "AT",
+      setlist({ artistName: "Duo A & Duo B", songs: [song("Duet Song", "Duo A & Duo B")] }),
+    );
+    expect(result.ok).toBe(true);
+    const one = result.songs[0]!;
+    expect(one.outcome).toBe("high");
+    expect(one.foundUnder).toBe("Duo A");
+    expect(one.queries!.map((q) => q.query)).toEqual([
+      'track:"Duet Song" artist:"Duo A & Duo B"',
+      "Duet Song Duo A & Duo B",
+      'track:"Duet Song" artist:"Duo A"',
+    ]);
+    expect(result.ok === true && result.outcome.foundElsewhere.map((r) => r.song.name)).toEqual(["Duet Song"]);
+  });
+
+  test("a fallback name replaces the performer's match only when it is more confident", async () => {
+    const performerCandidate: TrackCandidate = {
+      uri: "spotify:track:perf",
+      name: "One",
+      artistNames: ["A Performer Band"],
+      popularity: 50,
+    };
+    const creditedMedium: TrackCandidate = {
+      uri: "spotify:track:cred-med",
+      name: "One",
+      artistNames: ["A Credited Band"],
+      popularity: 100, // scores higher than performerCandidate, but stays medium confidence
+    };
+    const creditedHigh: TrackCandidate = { uri: "spotify:track:cred-high", name: "One", artistNames: ["Credited"], popularity: 0 };
+
+    // Same confidence tier (medium): the credited name's higher score does NOT replace the performer's pick.
+    {
+      const { client } = fakeSpotify({}, {
+        searchTracks: async (_t, query) => ({
+          ok: true,
+          value: query.includes("Credited") ? [creditedMedium] : [performerCandidate],
+        }),
+      });
+      const found = await findSong(client, "AT", song("One", "Performer"), ["Performer", "Credited"]);
+      expect(found.ok === true && found.match?.confidence).toBe("medium");
+      expect(found.trace.foundUnder).toBe("Performer");
+    }
+
+    // Strictly more confident (high): it does replace.
+    {
+      const { client } = fakeSpotify({}, {
+        searchTracks: async (_t, query) => ({
+          ok: true,
+          value: query.includes("Credited") ? [creditedHigh] : [performerCandidate],
+        }),
+      });
+      const found = await findSong(client, "AT", song("One", "Performer"), ["Performer", "Credited"]);
+      expect(found.ok === true && found.match?.confidence).toBe("high");
+      expect(found.trace.foundUnder).toBe("Credited");
+    }
+  });
+
+  test("a cover the performer has recorded picks the performer's recording", async () => {
+    const { client } = fakeSpotify({}, {
+      searchTracks: async (_t, query) =>
+        query.includes("Band") ? { ok: true, value: [candidate("Cover Song", "Band")] } : { ok: true, value: [] },
+    });
+    const result = await buildPlaylist(client, "AT", setlist({ songs: [song("Cover Song", "Originals", true)] }));
+    expect(result.ok).toBe(true);
+    const one = result.songs[0]!;
+    expect(one.outcome).toBe("high");
+    expect(one.foundUnder).toBe("Band");
+    expect(one.searchArtist).toBe("Originals"); // setlist.fm's own credit, unchanged
+    // The performer's query was high -- the original artist is never even queried.
+    expect(one.queries).toBeUndefined();
+    expect(result.ok === true && result.outcome.foundElsewhere.map((r) => r.song.name)).toEqual(["Cover Song"]);
+  });
+
+  test("a cover the performer never recorded falls back to the original artist's", async () => {
+    const { client } = fakeSpotify({}, {
+      searchTracks: async (_t, query) =>
+        query.includes("Originals") ? { ok: true, value: [candidate("Cover Song", "Originals")] } : { ok: true, value: [] },
+    });
+    const result = await buildPlaylist(client, "AT", setlist({ songs: [song("Cover Song", "Originals", true)] }));
+    expect(result.ok).toBe(true);
+    const one = result.songs[0]!;
+    expect(one.outcome).toBe("high");
+    expect(one.foundUnder).toBe("Originals");
+    // Found under exactly the name setlist.fm already gave it -- nothing to disclose.
+    expect(result.ok === true && result.outcome.foundElsewhere).toEqual([]);
+  });
+
+  test("a cover's performer-side medium is overtaken by the original's high", async () => {
+    const { client } = fakeSpotify({}, {
+      searchTracks: async (_t, query) =>
+        query.includes("Originals")
+          ? { ok: true, value: [candidate("Cover Song", "Originals")] } // exact -> high
+          : { ok: true, value: [candidate("Cover Song", "A Band Sort Of Like It")] }, // partial -> medium
+    });
+    const result = await buildPlaylist(client, "AT", setlist({ songs: [song("Cover Song", "Originals", true)] }));
+    expect(result.ok).toBe(true);
+    const one = result.songs[0]!;
+    expect(one.outcome).toBe("high");
+    expect(one.foundUnder).toBe("Originals");
+  });
+
+  test("a high match reached under a fallback name keeps its queries", async () => {
+    const { client } = fakeSpotify({}, {
+      searchTracks: async (_t, query) =>
+        query.includes("Fallback") ? { ok: true, value: [candidate("One", "Fallback")] } : { ok: true, value: [] },
+    });
+    const found = await findSong(client, "AT", song("One", "Performer"), ["Performer", "Fallback"]);
+    expect(found.ok === true && found.match?.confidence).toBe("high");
+    expect(found.trace.foundUnder).toBe("Fallback");
+    // Performer's two (nothing found) plus Fallback's one (high) -- the path is visible.
+    expect(found.trace.queries).toHaveLength(3);
+  });
+
+  test("a search failure under a fallback name doesn't discard a match found under an earlier name", async () => {
+    const { client } = fakeSpotify({}, {
+      searchTracks: async (_t, query) =>
+        query.includes("Fallback")
+          ? { ok: false, error: "Spotify returned HTTP 429" }
+          : { ok: true, value: [candidate("One", "Someone Else")] }, // a usable, low-confidence match
+    });
+    const found = await findSong(client, "AT", song("One", "Performer"), ["Performer", "Fallback"]);
+    // #61's failure rule carries across names: once a match exists (here, from "Performer"), a
+    // later name's failure just stops the search there instead of discarding it.
+    expect(found.ok).toBe(true);
+    expect(found.ok === true && found.match?.confidence).toBe("low");
+    expect(found.trace.foundUnder).toBe("Performer");
+  });
+
+  test("called with no artists argument, findSong searches only song.searchArtist -- the replay's contract", async () => {
+    const queries: string[] = [];
+    const { client } = fakeSpotify({}, {
+      searchTracks: async (_t, query) => {
+        queries.push(query);
+        return { ok: true, value: [] };
+      },
+    });
+    await findSong(client, "AT", song("One", "Some Artist"));
+    expect(queries.every((q) => q.includes("Some Artist"))).toBe(true);
+    expect(queries).toHaveLength(2); // just the one name's two query shapes
   });
 });
