@@ -6,9 +6,9 @@
 
 - A karaoke upload phrased "Originally Performed by <artist>" (or "Originally by <artist>") no
   longer survives on an instrumental penalty alone -- the phrase joins the same 100-point pattern
-  as "tribute" and "in the style of". A candidate whose primary artist name contains the word
-  "karaoke" now also pays the same 100-point penalty regardless of its title, catching a karaoke
-  label's uploads that don't otherwise name themselves in the title (#99).
+  as "tribute" and "in the style of". A candidate whose primary or secondary artist name contains
+  the word "karaoke" now also pays the same 100-point penalty regardless of its title, catching a
+  karaoke label's uploads that don't otherwise name themselves in the title (#99).
 
 ## [1.6.0] - 2026-09-29
 
