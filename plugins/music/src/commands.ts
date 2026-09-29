@@ -148,6 +148,11 @@ export function formatBuildReply(setlist: Setlist, outcome: BuildOutcome, askedA
       `Skipped ${setlist.tapeCount} played from tape (walk-on and interlude music, not performed).`,
     );
   }
+  // A suite part folded into a sibling's recording (#66) is neither added nor missing -- without
+  // this, "Added 22 of 24" reads as two silent misses rather than two parts sharing one track.
+  if (outcome.folded > 0) {
+    notes.push(`${outcome.folded} suite part(s) share a recording already added.`);
+  }
   if (outcome.missing.length > 0) {
     notes.push(`Couldn't find on Spotify: ${listNames(outcome.missing)}.`);
   }

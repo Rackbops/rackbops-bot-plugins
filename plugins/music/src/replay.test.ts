@@ -125,5 +125,7 @@ afterAll(() => {
   // #58: artist agreement is now a tier above title score, so Blondie's own remaster of Rip Her to
   // Shreds beats Boomkat's exact but unrelated title -- 13/4/10 -> 14/3/10, the only entry that
   // moved this time.
-  expect(tally).toEqual({ right: 14, wrong: 3, missing: 10 });
+  // #66: a suite part's title now matches a recording that names the part, so all three 2112 parts
+  // move from missing to medium picks -- 14/3/10 -> 17/3/7, no other entry moved.
+  expect(tally).toEqual({ right: 17, wrong: 3, missing: 7 });
 });

@@ -3,6 +3,7 @@ import {
   buildQueries,
   explainCandidate,
   normalize,
+  parseSuitePart,
   pickBestTrack,
   scoreCandidate,
   type TrackCandidate,
@@ -35,6 +36,31 @@ describe("normalize", () => {
   test('a symbol on the edge of a title is still punctuation, not "and"', () => {
     expect(normalize("Plus +")).toBe("plus");
     expect(normalize("& Co")).toBe("co");
+  });
+});
+
+describe("parseSuitePart", () => {
+  test("a Roman-numbered part, colon form: stem and part name, colon already gone", () => {
+    expect(parseSuitePart(normalize("2112 Part I: Overture"))).toEqual({ stem: "2112", part: "overture" });
+  });
+
+  test("an Arabic-numbered part, dash form", () => {
+    expect(parseSuitePart(normalize("2112 - Part 2 - The Temples of Syrinx"))).toEqual({
+      stem: "2112",
+      part: "the temples of syrinx",
+    });
+  });
+
+  test("a part number with no part name is not a suite part", () => {
+    expect(parseSuitePart(normalize("Another Brick in the Wall, Part 2"))).toBeUndefined();
+  });
+
+  test('"Parts I-V" names no single part and is not a suite part', () => {
+    expect(parseSuitePart(normalize("Parts I-V"))).toBeUndefined();
+  });
+
+  test("an ordinary title is not a suite part", () => {
+    expect(parseSuitePart(normalize("Tom Sawyer"))).toBeUndefined();
   });
 });
 
@@ -334,6 +360,56 @@ describe("pickBestTrack", () => {
       track("Genuine Tie", ["Artist Two"]),
     ]);
     expect(best!.track.artistNames).toEqual(["Artist One"]);
+  });
+
+  // #66: setlist.fm lists a suite by its parts ("2112 Part VII: Grand Finale"), but no Spotify
+  // title ever carries "Part VII:" -- names taken from the real corpus entry (rackbops-bot-plugins#43).
+  test("a suite part matches the suite's recording that names it, at medium", () => {
+    const song = { name: "2112 Part VII: Grand Finale", artist: "Rush" };
+    const best = pickBestTrack(song, [
+      track(
+        "2112: Overture / The Temples Of Syrinx / Discovery / Presentation / Oracle / Soliloquy / Grand Finale - Medley",
+        ["Rush"],
+      ),
+      track("2112 (Grand Finale) - Live", ["Rush"]),
+    ]);
+    expect(best!.track.name).toBe(
+      "2112: Overture / The Temples Of Syrinx / Discovery / Presentation / Oracle / Soliloquy / Grand Finale - Medley",
+    );
+    expect(best!.confidence).toBe("medium");
+  });
+
+  test("a suite part does not match a track of the suite that omits the part", () => {
+    const song = { name: "2112 Part VII: Grand Finale", artist: "Rush" };
+    const best = pickBestTrack(song, [track("2112 Overture / The Temples Of Syrinx", ["Rush"])]);
+    expect(best).toBeUndefined();
+  });
+
+  // A LITERAL exact-title candidate would win via titleScore's very first branch (100) regardless
+  // of whether the suite rule exists or where it sits -- that proves nothing about precedence. The
+  // candidate here reaches its score through the PREFIX rule (72) instead: it starts with the full
+  // song title plus a suffix that isn't a clean-edition remaster, so isExactTitle is false, but it
+  // ALSO independently satisfies the suite condition (starts with the stem, contains the part
+  // name). Both candidates tie on artist and tieBreak, so only the title rule that wins decides:
+  // 72 (prefix, checked first) beats 60 (suite) here; if the suite check ever ran first, both
+  // candidates would score identically and the medley (listed first) would win the tie instead.
+  test("a candidate satisfying both the prefix rule and the suite rule scores via the prefix rule, not the suite rule", () => {
+    const song = { name: "2112 Part I: Overture", artist: "Rush" };
+    const candidate = track("2112 Part I: Overture - Single Edit", ["Rush"]);
+    expect(explainCandidate(song, candidate).title).toBe(72);
+  });
+
+  test("an exact or prefix title still beats a suite match", () => {
+    const song = { name: "2112 Part I: Overture", artist: "Rush" };
+    const best = pickBestTrack(song, [
+      track(
+        "2112: Overture / The Temples Of Syrinx / Discovery / Presentation / Oracle / Soliloquy / Grand Finale - Medley",
+        ["Rush"],
+      ),
+      track("2112 Part I: Overture - Single Edit", ["Rush"]),
+    ]);
+    expect(best!.track.name).toBe("2112 Part I: Overture - Single Edit");
+    expect(best!.confidence).toBe("medium");
   });
 });
 

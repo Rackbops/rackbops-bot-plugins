@@ -72,6 +72,7 @@ function outcome(overrides: Partial<BuildOutcome> = {}): BuildOutcome {
     uncertain: [],
     missing: [],
     foundElsewhere: [],
+    folded: 0,
     ...overrides,
   };
 }
@@ -110,6 +111,16 @@ describe("formatBuildReply", () => {
 
   test("says nothing about tape when there was none", () => {
     expect(formatBuildReply(setlist(), outcome())).not.toContain("tape");
+  });
+
+  // #66: without this note, "Added 22 of 24" would read as two silent misses.
+  test("names how many suite parts shared an already-added recording", () => {
+    const reply = formatBuildReply(setlist(), outcome({ folded: 2 }));
+    expect(reply).toContain("2 suite part(s) share a recording already added.");
+  });
+
+  test("says nothing about folded parts when there were none", () => {
+    expect(formatBuildReply(setlist(), outcome())).not.toContain("suite part");
   });
 
   test("names the songs it couldn't find", () => {

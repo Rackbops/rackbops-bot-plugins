@@ -230,8 +230,14 @@
         ]
       }
     ],
-    "right": [],
-    "baseline": "missing"
+    "right": [
+      "spotify:track:5p9fT4hoWPQ7uUpgsdLuq6",
+      "spotify:track:0Dp6Bdi8G2cld1gm6sULun"
+    ],
+    "baseline": {
+      "uri": "spotify:track:5p9fT4hoWPQ7uUpgsdLuq6",
+      "confidence": "medium"
+    }
   },
   {
     "name": "2112 Part II: The Temples of Syrinx",
@@ -320,10 +326,15 @@
       }
     ],
     "right": [
+      "spotify:track:6Po9FqcwIJq4xQtNZVXY6v",
       "spotify:track:2DMDV9kUEO2WjUHg5acHBY",
-      "spotify:track:5H8xFHau0x3PI1CssO6EaX"
+      "spotify:track:5H8xFHau0x3PI1CssO6EaX",
+      "spotify:track:6u9Zm9WJwA9F5kBtgcV1L4"
     ],
-    "baseline": "missing"
+    "baseline": {
+      "uri": "spotify:track:6Po9FqcwIJq4xQtNZVXY6v",
+      "confidence": "medium"
+    }
   },
   {
     "name": "2112 Part VII: Grand Finale",
@@ -415,7 +426,10 @@
       "spotify:track:5H8xFHau0x3PI1CssO6EaX",
       "spotify:track:3lEAEfJNbcREVWu7c8nBgf"
     ],
-    "baseline": "missing"
+    "baseline": {
+      "uri": "spotify:track:2DMDV9kUEO2WjUHg5acHBY",
+      "confidence": "medium"
+    }
   },
   {
     "name": "By-Tor & the Snow Dog",

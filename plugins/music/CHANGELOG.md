@@ -53,6 +53,17 @@
   check a recording that was always right: *Dreamline* and *Bravado* (Rush) in particular. Other
   suffixes -- `Single Version`, `Radio Edit`, `Retrospective 3 Version`, `Take 2`, `live`, `remix`,
   `demo`, `instrumental` -- are a different edit or recording and stay a mere title prefix (#60).
+- setlist.fm lists a suite by its parts -- *2112 Part I: Overture*, *2112 Part II: The Temples of
+  Syrinx* -- but no Spotify track title ever carries "Part I:", so every part used to score 0 and
+  go missing. A song title of the shape `<stem> Part <n>: <part name>` now matches a candidate
+  whose title starts with the stem and names the part -- the whole-suite medley, a two-part track,
+  a single-part edit -- scored 60: below an ordinary edition suffix (72), above a bare contains
+  (40), so it only wins when nothing names the part more directly, and never above `medium`
+  confidence even with an exact artist. Several parts that resolve to the SAME recording (a
+  whole-suite medley matching every part) add it once; the reply gains a note,
+  `N suite part(s) share a recording already added.`, so the added/attempted counts stay honest. A
+  genuine repeat of the same part (an encore reprise) still adds twice, exactly like any other
+  repeated song (#66).
 
 ## [1.5.0] - 2026-09-28
 
