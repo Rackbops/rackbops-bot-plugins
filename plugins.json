@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-29T21:06:39.207Z",
+  "generatedAt": "2026-09-29T22:43:44.742Z",
   "plugins": [
     {
       "name": "mcp",
@@ -165,13 +165,15 @@
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
       "version": "0.2.0",
-      "description": "The task tracker for Rackbops Clerk: reminders by slash command, delivered by DM with done, snooze and reply buttons, on docket's SQLite store (/allow, /register, /remind, /tasks, /task, /settings)",
+      "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings)",
       "hostApiVersion": 1,
       "intents": [],
       "commands": [
         "allow",
         "register",
         "remind",
+        "renewal",
+        "price",
         "tasks",
         "task",
         "settings"

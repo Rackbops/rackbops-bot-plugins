@@ -3,8 +3,9 @@
 The task tracker for Rackbops Clerk: the host of [`Rackbops/docket`](https://github.com/Rackbops/docket)
 on a rackbops-discord-bot instance. Plan of record: Rackbops/Tooling
 `research/city-hall-task-tracker.md` (sections 0, 5.1-5.3, 5.5, 5.8). This version is the core
-(rackbops-bot-plugins#78) and the Discord surface of the first slice (#79): reminders by slash
-command, delivered by DM, answered by button, with history.
+(rackbops-bot-plugins#78), the Discord surface of the first slice (#79): reminders by slash
+command, delivered by DM, answered by button, with history -- and renewals and the price tracker
+(#81, plan E6): two more types on the notify side, no model, nothing sent to city-hall.
 
 ## Commands
 
@@ -16,9 +17,12 @@ as in a server (plan 5.5, item 39).
 | `/allow user` | a tracker admin | Admits a person: they can now `/register`. |
 | `/register [hour] [zone]` | an admitted person | Signs up, or changes the preferred hour (0-23, default 9) and time zone (default `America/New_York`). The reply says an admin can see every task. |
 | `/remind text [when] [repeat]` | a registered person | A reminder by DM. `when` is docket's `parseWhen` grammar (`in 20 minutes`, `tomorrow 9am`, `fri at 17:30`); `repeat` is once (the default), daily, weekly or monthly. A repeating one with no `when` starts today at the preferred hour. |
+| `/renewal name amount currency renews [unit] [every] [lead] [note]` | registered | A subscription, domain, warranty or membership (docket's `renewal`, a `period` schedule). `renews` is the next renewal or expiry date, `YYYY-MM-DD`, today or later; `unit` yearly (the default), monthly, weekly or daily, `every` how many of those; the ask comes `lead` days before (default 7) at the preferred hour, with Keep, Cancel, Renewed and Snooze. If that ask is already past but the date is not, the first ask comes within a minute. Keep and Renewed record what was paid; Cancel ends it. |
+| `/price url [name] [hours] [drop] [baseline] [near]` | registered | A price (docket's `price`, a `poll` schedule every `hours`, default 12, at most 168). The page is read once at once, and nothing is created unless a price is found in it; then the first check, within a minute, DMs the starting price, and a drop of `drop` percent or more (default 10) from the `baseline` -- the last (default), first or highest price seen -- DMs the owner once per crossing. `near` is the words just before the price, for a page with no structured price. At most 20 per person. |
 | `/tasks` | registered | Your active tasks and the ones you receive, each with its next run; then your paused ones. |
 | `/task done task` / `/task snooze task [until]` | the task's owner | Answers the task's latest reminder (snooze: an hour, or until `until`). |
-| `/task history task` | the owner, an accepted recipient, or an admin | Every run -- due, status, how it was answered, text replies -- and the task's changes. |
+| `/task decide task choice [amount]` | the renewal's owner | Answers the renewal's latest ask -- keep, cancel or renewed -- with the amount actually paid when it changed (a button cannot carry one). Use it instead of the button, not after it: a run is answered once. |
+| `/task history task` | the owner, an accepted recipient, or an admin | Every run -- due, status, how it was answered, text replies -- and the task's changes; for a renewal, what each period cost and the total; for a price, the last check and the readings with the low and the high. |
 | `/task share task user` | the task's owner | Invites an admitted, registered member who can be DMed: they get one consent DM with accept and decline. |
 | `/task resume task` | the task's owner | Resumes a task paused because a recipient could not be DMed, taking that recipient off it. |
 | `/settings hour hour` | registered | The preferred hour; recurring reminders with no time of their own move to it. |
@@ -47,7 +51,9 @@ that goes through clears the count.
 | Piece | File | Notes |
 |---|---|---|
 | Store | `src/store.ts`, `src/schema.ts` | docket's `Store` port on `bun:sqlite`, in `<dataDir>/tracker/tracker.sqlite` (WAL). A Discord id belongs to at most one user. Schema versioned by `PRAGMA user_version`; a shipped migration is never edited. `store.test.ts` runs docket's `STORE_CONTRACT` against it. |
-| Notify lane | `src/notify-lane.ts` | docket's `Lanes.tickNotify` on the host tick `notify` (every 60 s), through a view of the store that skips a paused task's due runs. Registers only `reminder` and `renewal`. The execute lane is not ticked. |
+| Notify lane | `src/notify-lane.ts` | docket's `Lanes.tickNotify` on two host ticks, every 60 s, through a view of the store that skips a paused task's due runs: `notify` runs every type but the page readers, `poll` runs only them (`price`) with the Fetch port, so a slow page never holds up a reminder. Registers `reminder`, `renewal` and `price`. The execute lane is not ticked. |
+| Page reads | `src/fetch.ts` | docket's `Fetch` port for `price`: http or https on the default port, no credentials, every resolved address public (no loopback, private, link-local, CGNAT, multicast or reserved range, IPv4 or IPv6), redirects followed by hand and re-checked (at most 5), 15 s, at most 3 MB kept. A DNS answer that changes between the check and the read is not caught here. |
+| Renewals, prices | `src/tracked.ts`, `src/series.ts` | `/renewal`, `/price` and `/task decide`; the series lines of `/task history`. The series (docket's `series` table, schema 1) holds a renewal's paid amounts and a price's readings. |
 | Delivery | `src/notifier.ts`, `src/claims.ts`, `src/buttons.ts` | docket's `Notifier` over `host.dm`, with the buttons. Each (occurrence, person) is claimed in `delivery_claims` before the DM is sent and settled after; a claim never settled is not resent -- it is logged once, as unconfirmed. |
 | Pause | `src/delivery-health.ts` | The per-person failure count, the pause and the resume. |
 | People | `src/people.ts`, `src/admissions.ts` | Discord id, time zone, preferred hour, admin flag -- in the tracker's store, never usr; who admitted each person and when they registered. `TRACKER_ADMIN_DISCORD_IDS` only ever grants admin. |
@@ -66,7 +72,8 @@ that goes through clears the count.
 ## Not yet
 
 - The web area (E5): editing tasks, the admin view, lifting a decline block, forget-me.
-- The `Fetch` port (then `price` is registered) and the city-hall Executor adapter (the execute lane).
+- The city-hall Executor adapter (the execute lane).
+- Editing a renewal or a price tracker after it is made (for now: `/task done`, or cancel, and make it again); a free-form pattern for `price` (`near` is the safe subset: a user's regular expression run on a large page could hang the bot).
 - An optional Discord-role gate (plan 5.5), and showing unconfirmed deliveries to admins anywhere but the log.
 
 docket-core and docket-types are `devDependencies`: `bun build` bundles them into `dist/plugin.js`,

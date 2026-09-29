@@ -44,7 +44,7 @@ describe("createPlugin", () => {
   it("declares exactly the commands it registers, an interactions handler, and the env keys it reads", () => {
     const plugin = createPlugin(makeFakeHost({ name: "tracker" }));
     expect(plugin.commands?.map((c) => c.name)).toEqual(pkg.botPlugin.commands);
-    expect(pkg.botPlugin.commands).toEqual(["allow", "register", "remind", "tasks", "task", "settings"]);
+    expect(pkg.botPlugin.commands).toEqual(["allow", "register", "remind", "renewal", "price", "tasks", "task", "settings"]);
     expect(typeof plugin.interactions).toBe("function");
     expect(pkg.botPlugin.intents).toEqual([]);
     expect(pkg.botPlugin.env.map((e) => e.key)).toEqual(["TRACKER_ADMIN_DISCORD_IDS", "TRACKER_GUILD_ID"]);
@@ -198,7 +198,7 @@ describe("the plugin end to end on a real data file", () => {
     expect((await store.findUserByDiscordId(ADMIN))?.admin).toBe(true);
   });
 
-  it("registers only the notify-lane types whose ports are wired: reminder and renewal, not price", () => {
-    expect(Object.keys(TRACKER_TYPES).sort()).toEqual(["reminder", "renewal"]);
+  it("registers the notify-lane types whose ports are wired: reminder, renewal and price (#81), no execute-lane type", () => {
+    expect(Object.keys(TRACKER_TYPES).sort()).toEqual(["price", "reminder", "renewal"]);
   });
 });
