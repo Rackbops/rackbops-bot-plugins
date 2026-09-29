@@ -137,6 +137,35 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (occurrence_id, user_id)
   );
   `,
+  // 2 (rackbops-bot-plugins#79): who admitted each person and when they registered (plan 5.8), and
+  // each person's run of failed DMs with the tasks a pause stopped (plan 5.5). 0.1.0 had no
+  // commands: its only way to make a person was `TRACKER_ADMIN_DISCORD_IDS`, so every user row it
+  // left is backfilled as admitted by the configuration (`admitted_by` NULL), not yet registered.
+  `
+  CREATE TABLE admissions (
+    user_id TEXT PRIMARY KEY,
+    admitted_by TEXT,
+    admitted_at TEXT NOT NULL,
+    registered_at TEXT
+  );
+  INSERT INTO admissions (user_id, admitted_by, admitted_at, registered_at)
+    SELECT 'u' || seq, NULL, created_at, NULL FROM users;
+
+  CREATE TABLE delivery_health (
+    user_id TEXT PRIMARY KEY,
+    failures INTEGER NOT NULL,
+    last_error TEXT,
+    last_failed_at TEXT,
+    paused_at TEXT
+  );
+
+  CREATE TABLE delivery_pauses (
+    task_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    at TEXT NOT NULL,
+    PRIMARY KEY (task_id, user_id)
+  );
+  `,
 ];
 
 /** Brings `db` up to the newest schema. Idempotent; each step runs in its own transaction. */

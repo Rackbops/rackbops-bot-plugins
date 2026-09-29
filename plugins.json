@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-29T03:56:31.805Z",
+  "generatedAt": "2026-09-29T17:29:16.734Z",
   "plugins": [
     {
       "name": "mcp",
@@ -158,11 +158,18 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.1.0",
-      "description": "The task tracker for Rackbops Clerk: docket's SQLite store, the notify lane on the host tick, people and admins, and /healthz",
+      "version": "0.2.0",
+      "description": "The task tracker for Rackbops Clerk: reminders by slash command, delivered by DM with done, snooze and reply buttons, on docket's SQLite store (/allow, /register, /remind, /tasks, /task, /settings)",
       "hostApiVersion": 1,
       "intents": [],
-      "commands": [],
+      "commands": [
+        "allow",
+        "register",
+        "remind",
+        "tasks",
+        "task",
+        "settings"
+      ],
       "env": [
         {
           "key": "TRACKER_ADMIN_DISCORD_IDS",
@@ -170,9 +177,22 @@
           "description": "Comma-separated Discord user ids (spaces around commas allowed) made tracker admins at start (the first admin). Only ever grants: removing an id here does not revoke it. Unset = no admin is seeded.",
           "required": false,
           "secret": false
+        },
+        {
+          "key": "TRACKER_GUILD_ID",
+          "format": "^[0-9]{17,20}$",
+          "description": "The Discord server id whose members may use the tracker (the membership gate), checked on every command and button, in DMs too. Unset = no membership gate: only the admission list (/allow) applies.",
+          "required": false,
+          "secret": false
         }
       ],
       "releases": [
+        {
+          "version": "0.2.0",
+          "publishedAt": "2026-09-29T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.2.0",
+          "notes": "### Added\n\n- The Discord surface (rackbops-bot-plugins#79, the first slice of plan E2): `/allow @user`\n  (admins), `/register [hour] [zone]` with the disclosure that an admin can see every task,\n  `/remind text [when] [repeat]` (a one-off, or daily, weekly or monthly), `/tasks`,\n  `/task done|snooze|history|share|resume`, and `/settings hour`. Every answer is ephemeral, and the\n  commands work in the bot's DMs as well as in a server.\n- The admission gate (only people an admin has `/allow`ed, or the configured admins, can\n  `/register`; everything else needs a registered person) and the membership gate: the new\n  optional `TRACKER_GUILD_ID` names the one server whose members may use the tracker, checked on\n  every command and button, DMs included. Unset = no membership gate.\n- Buttons on every DM: done and snooze for the owner, accept and decline on the one consent DM a\n  shared task sends, an opt-out on every copy a recipient gets, and a Reply button that opens a\n  modal, so the tracker never reads a typed DM and never needs the Message Content intent. A\n  pressed DM is edited to say what happened. A host from before rackbops-discord-bot#323 gets the\n  DM again without buttons.\n- Pausing delivery after three DMs in a row that the host says cannot be delivered (plan 5.5):\n  every task that would DM the person pauses, on record in its history, and their other runs due\n  in the same tick are held for the resume rather than failed. The owner of a task paused for a\n  recipient is DMed once and sees why in `/tasks`; the task resumes when the recipient next uses\n  the tracker, or `/task resume` goes on without them. A person paused for their own DMs is told,\n  and resumed, the next time they use a command.\n- Declining an invitation and opting out always work: those two buttons skip the membership and\n  registration gates.\n- Schema 2: `admissions` (who admitted each person, when they registered; the people 0.1.0 made\n  from `TRACKER_ADMIN_DISCORD_IDS` are backfilled as admitted by the configuration),\n  `delivery_health` and `delivery_pauses`. A 0.1.0 database migrates in place on first start.\n  **Rolling back** to 0.1.0 afterwards does not work: 0.1.0 refuses a database newer than it knows\n  and does not load. Keep a copy of `tracker.sqlite` from before the upgrade to roll back.\n\n### Fixed\n\n- A due run of a task that is not active (paused) is no longer run: docket 0.3.0's notify lane\n  runs every queued occurrence whatever its task's status, so the tracker's lane now skips them."
+        },
         {
           "version": "0.1.0",
           "publishedAt": "2026-09-29T00:00:00.000Z",

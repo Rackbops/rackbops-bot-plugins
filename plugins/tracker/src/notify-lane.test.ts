@@ -67,7 +67,19 @@ describe("runNotifyTick", () => {
 
     s.clock.set(DUE);
     expect(await runNotifyTick(deps)).toEqual({ kind: "ran", result: { ran: 1, failed: 0, skipped: 0 } });
-    expect(calls).toEqual([{ userId: DISCORD, message: { content: "water the plants" } }]);
+    expect(calls).toEqual([
+      {
+        userId: DISCORD,
+        message: {
+          content: "water the plants",
+          buttons: [
+            { customId: `tracker:d.o.${s.occurrence.id}`, label: "Done", style: "success" },
+            { customId: `tracker:s.o.${s.occurrence.id}`, label: "Snooze 1h", style: "secondary" },
+            { customId: `tracker:r.o.${s.occurrence.id}`, label: "Reply", style: "secondary" },
+          ],
+        },
+      },
+    ]);
     const after = await s.store.getOccurrence(s.occurrence.id);
     expect(after?.status).toBe("done");
     const delivered = (await s.store.listEvents(s.occurrence.id)).filter((e) => e.type === "delivered");
