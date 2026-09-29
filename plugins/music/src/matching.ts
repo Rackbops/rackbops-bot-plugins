@@ -93,9 +93,10 @@ function variantPenalty(candidateTitle: string, songTitle: string): number {
 }
 
 /**
- * A clean-edition suffix: a remaster of the SAME recording, in every spelling the corpus shows --
- * `2004 remaster`, `2013 remaster`, `remastered 2001`, `2017 remaster`, `remastered`, `remastered
- * version`. `normalize` already drops the parentheses and dashes around it, so `(Remastered)` and
+ * A clean-edition suffix: a remaster of the SAME recording, in every spelling the catalogue uses
+ * -- `2004 remaster`, `2013 remaster`, `remastered 2001`, `2017 remaster` and bare `remastered`
+ * all appear in the #56 corpus; `remastered version` doesn't, but the same pattern covers it too.
+ * `normalize` already drops the parentheses and dashes around it, so `(Remastered)` and
  * `- Remastered 2001` reach this as the identical case. Nothing else qualifies: `single version`,
  * `radio edit`, `mono`, `retrospective 3 version`, `take 2`, `live`, `remix`, `demo` and
  * `instrumental` are a different edit or a different recording, not the same master, and stay a
