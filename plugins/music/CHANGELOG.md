@@ -45,6 +45,14 @@
   compilation), which is what a real catalogue artist looks like; page order still decides a
   genuine tie. **`tieBreak` in `music-match-log.json` is unchanged as a key, but now holds this
   editions count divided by 100, not `popularity / 100`** (#59).
+- A title that differs from the song title only by a clean-edition suffix -- a remaster, with or
+  without a year, in every spelling the catalogue uses (`2004 Remaster`, `Remastered 2001`,
+  `Remastered Version`) -- now counts as an exact title (scored 99, one point short of a genuinely
+  un-suffixed title so the plain edition still wins a tie by score, not page order). With an exact
+  artist that makes the match `high` instead of `medium`, so the reply stops asking the user to
+  check a recording that was always right: *Dreamline* and *Bravado* (Rush) in particular. Other
+  suffixes -- `Single Version`, `Radio Edit`, `Retrospective 3 Version`, `Take 2`, `live`, `remix`,
+  `demo`, `instrumental` -- are a different edit or recording and stay a mere title prefix (#60).
 
 ## [1.5.0] - 2026-09-28
 

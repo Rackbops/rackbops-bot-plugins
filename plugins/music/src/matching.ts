@@ -93,13 +93,41 @@ function variantPenalty(candidateTitle: string, songTitle: string): number {
 }
 
 /**
- * How well a candidate's title matches, 0-100. An exact match is the only full score; a candidate
- * that merely STARTS with the song title scores well because that is what every remaster and
- * edition suffix looks like ("Hey Jude - Remastered 2015"). A candidate that merely contains the
- * title somewhere scores low -- it is usually a medley or a mashup.
+ * A clean-edition suffix: a remaster of the SAME recording, in every spelling the catalogue uses
+ * -- `2004 remaster`, `2013 remaster`, `remastered 2001`, `2017 remaster` and bare `remastered`
+ * all appear in the #56 corpus; `remastered version` doesn't, but the same pattern covers it too.
+ * `normalize` already drops the parentheses and dashes around it, so `(Remastered)` and
+ * `- Remastered 2001` reach this as the identical case. Nothing else qualifies: `single version`,
+ * `radio edit`, `mono`, `retrospective 3 version`, `take 2`, `live`, `remix`, `demo` and
+ * `instrumental` are a different edit or a different recording, not the same master, and stay a
+ * mere title prefix (#60's out-of-scope: a part-of-a-larger-work suffix like `- A New Age Dawns
+ * 3`, which this pattern was never meant to match either).
+ */
+const CLEAN_EDITION_SUFFIX = /^(\d{4} )?remaster(ed)?( \d{4})?( version)?$/;
+
+/**
+ * Whether `candidate` IS `song`, or is `song` plus nothing but a clean-edition suffix -- the two
+ * shapes `titleScore` (100 vs 99) and `pickBestTrack` (exact-title confidence, no score) each read
+ * through this one function so they can never disagree about what counts.
+ */
+function isExactTitle(candidate: string, song: string): boolean {
+  if (candidate === song) return true;
+  if (!candidate.startsWith(`${song} `)) return false;
+  return CLEAN_EDITION_SUFFIX.test(candidate.slice(song.length + 1));
+}
+
+/**
+ * How well a candidate's title matches, 0-100. An exact match scores the full 100; a clean-edition
+ * suffix (a remaster of the same recording) scores 99 -- exact enough for `high` confidence, but
+ * one point short of the genuinely un-suffixed title, so when a page carries both, the plain title
+ * still wins the tie by score rather than by page order (#60). A candidate that merely STARTS with
+ * the song title scores well because that is what every OTHER edition suffix looks like ("Hey Jude
+ * - Live"). A candidate that merely contains the title somewhere scores low -- it is usually a
+ * medley or a mashup.
  */
 function titleScore(candidate: string, song: string): number {
   if (candidate === song) return 100;
+  if (isExactTitle(candidate, song)) return 99;
   if (song.length >= 3 && candidate.startsWith(`${song} `)) return 72;
   if (song.length >= 4 && candidate.includes(song)) return 40;
   return 0;
@@ -208,7 +236,10 @@ export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandida
   if (best === undefined) return undefined;
 
   const songTitle = normalize(song.name);
-  const exactTitle = normalize(best.track.name) === songTitle;
+  // A clean-edition suffix (a remaster of the same recording) counts as exact here too (#60), via
+  // the same `isExactTitle` that scored it 99 rather than 100 in `titleScore` -- the two can never
+  // disagree about what an "exact" title is.
+  const exactTitle = isExactTitle(normalize(best.track.name), songTitle);
   const exactArtist = best.track.artistNames.some((a) => normalize(a) === normalize(song.artist));
 
   // A partial artist match is the floor for "medium": an exact title under a completely unrelated
