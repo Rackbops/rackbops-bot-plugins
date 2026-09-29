@@ -78,12 +78,34 @@ export interface HostCard {
   footer?: string;
 }
 
-/** What `post`/`dm`/`edit` accept. `buttons` is RESERVED for interactive components and refused today. */
+/**
+ * One interactive button (#323). `customId` must start with `<name>:` (this plugin's manifest name +
+ * colon) and be at most 100 characters, so a press routes back to this plugin's `interactions`;
+ * `label` is 1..80 characters; `style` defaults to `"secondary"`. The prefix rule is the Host API's
+ * only: a plugin answering a raw interaction itself can still attach any components it likes.
+ */
+export interface HostButton {
+  customId: string;
+  label: string;
+  style?: "primary" | "secondary" | "success" | "danger";
+}
+
+/**
+ * What `post`/`dm`/`edit` accept. `buttons` are rendered (#323) as action rows of at most 5, in list
+ * order, ahead of the one row of `links`; at most 5 rows in all, customIds unique per message, and
+ * refused unless this plugin declares `interactions`. A host that predates #323 refuses `buttons`
+ * with "interactive buttons are not supported yet"; a plugin that must work on either host retries
+ * without `buttons` on any refusal. On `edit`, `buttons` or `links` replaces every row the message
+ * had -- `edit(d, { links: [{ label: "Open", url }] })` leaves only that link, dropping its buttons,
+ * and `buttons: []` removes them all -- while `links: []` alone, or neither, leaves the rows as they
+ * are. `edit` is bot-scoped, not plugin-scoped: any plugin can edit any delivery this bot made,
+ * another plugin's buttons included.
+ */
 export interface HostMessage {
   content: string;
   card?: HostCard;
   links?: HostLinkButton[];
-  buttons?: { customId: string; label: string }[];
+  buttons?: HostButton[];
 }
 
 /** A message `post`/`dm` delivered, and what `edit` needs to find it again. `guildId` is `null` for a DM. */
