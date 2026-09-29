@@ -82,7 +82,10 @@ describe("createPageFetch", () => {
   it("reads a page with its own user agent and manual redirects", async () => {
     const f = fakeFetch({ "https://shop.example/": () => new Response("<p>ok</p>", { status: 200, headers: { "content-type": "text/html" } }) });
     const response = await createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl }).get("https://shop.example/");
-    expect(response).toEqual({ status: 200, body: " ok ", headers: { "content-type": "text/html" } });
+    expect(response.status).toBe(200);
+    expect(response.headers).toEqual({ "content-type": "text/html" });
+    expect(response.body).toContain("ok");
+    expect(response.body).not.toContain("<");
     expect(f.calls[0]?.init?.redirect).toBe("manual");
     expect((f.calls[0]?.init?.headers as Record<string, string>)["user-agent"]).toContain("RackbopsClerk");
   });

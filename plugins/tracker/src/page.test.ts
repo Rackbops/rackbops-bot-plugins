@@ -27,6 +27,14 @@ describe("pageForExtraction", () => {
     expect(extractPrice(pageForExtraction(html), nearPattern("Our price (today):"))).toEqual({ value: 1299.99 });
   });
 
+  it("keeps what near reads in script data and attributes, and blocks after a stray < or an unclosed style", () => {
+    expect(extractPrice(pageForExtraction("<script>var price = 19.99;</script>"), nearPattern("var price ="))).toEqual({ value: 19.99 });
+    expect(extractPrice(pageForExtraction('<div data-price="24.50">x</div>'), nearPattern('data-price="'))).toEqual({ value: 24.5 });
+    const ld = '<script type="application/ld+json">{"offers":{"price":"12.00","priceCurrency":"EUR"}}</script>';
+    expect(extractPrice(pageForExtraction(`<p>Deals <30 EUR here</p>${ld}`))).toEqual({ value: 12, currency: "EUR" });
+    expect(extractPrice(pageForExtraction('<style>.a{} <meta property="og:price:amount" content="8.00">'))).toEqual({ value: 8 });
+  });
+
   it("leaves no tag start in the text, and at most MAX_METAS meta tags", () => {
     const out = pageForExtraction(`${'<meta name="x" content="1">'.repeat(MAX_METAS + 50)}<p>a < b</p>`);
     expect(out.split("<meta").length - 1).toBe(MAX_METAS);
@@ -40,6 +48,10 @@ describe("pageForExtraction", () => {
       `${"<meta a>".repeat(MB3 / 8)}`,
       `<p>${"<meta property ".repeat(MB3 / 15)}>`,
       `${"<script type='application/ld+json'>{".repeat(MB3 / 40)}`,
+      "<script>".repeat(MB3 / 8),
+      "<style>".repeat(MB3 / 7),
+      "<>".repeat(MB3 / 2),
+      `${"<meta ".repeat(MB3 / 12)}>${"<meta ".repeat(MB3 / 12)}`,
     ]) {
       const { ms, found } = timed(body);
       expect(found).toBeNull();

@@ -8,9 +8,9 @@
  *
  * - a JSON body (it parses) is kept as JSON, every `<` escaped as `<` (same value);
  * - otherwise: the page's JSON-LD blocks (at most `MAX_BLOCKS`, each `<` inside escaped the same
- *   way), its `<meta>` tags (at most `MAX_METAS`, each at most `MAX_TAG` long), then its text with
- *   every tag removed, so no `<` is left in it for a tag pattern to start from, and an owner's
- *   `near` words still meet the price after them.
+ *   way), its `<meta>` tags (at most `MAX_METAS`, each at most `MAX_TAG` long), then the whole
+ *   page with every `<` blanked: no tag pattern has anywhere to start in it, and an owner's `near`
+ *   words still find a price in the text, an attribute or a script's data.
  */
 
 export const MAX_BLOCKS = 20;
@@ -36,38 +36,41 @@ export function pageForExtraction(body: string): string {
   const lower = body.toLowerCase();
   const blocks: string[] = [];
   const metas: string[] = [];
-  const text: string[] = [];
+  // Where each closing tag next occurs at or after the walk: searched again only once the walk has
+  // passed it, so a page of many unclosed `<script>`s does not rescan to its end for each one.
+  const closes = new Map<string, number>();
+  const nextClose = (closing: string, from: number): number => {
+    const known = closes.get(closing);
+    if (known !== undefined && (known < 0 || known >= from)) return known;
+    const found = lower.indexOf(closing, from);
+    closes.set(closing, found);
+    return found;
+  };
   let at = 0;
   while (at < body.length) {
-    const lt = body.indexOf("<", at);
-    if (lt < 0) {
-      text.push(body.slice(at));
-      break;
-    }
-    text.push(body.slice(at, lt));
+    let lt = body.indexOf("<", at);
+    if (lt < 0) break;
     const gt = body.indexOf(">", lt);
-    if (gt < 0) break; // an unclosed tag: nothing after it can be a tag or text worth reading
+    if (gt < 0) break; // no tag closes after this: nothing more to collect
+    // A stray `<` in text ("under <30 EUR") is not a tag: the tag is the last `<` before the `>`.
+    // Scanning back stops at `lt`, and `at` moves past `gt`, so the whole walk stays linear.
+    lt = body.lastIndexOf("<", gt);
     const tag = body.slice(lt, gt + 1);
     const tagLower = lower.slice(lt, gt + 1);
     at = gt + 1;
-    if (tagLower.startsWith("<script")) {
-      const end = lower.indexOf("</script", at);
-      const content = body.slice(at, end < 0 ? body.length : end);
-      if (/type\s*=\s*["']?application\/ld\+json/.test(tagLower.slice(0, MAX_TAG)) && blocks.length < MAX_BLOCKS) {
-        blocks.push(`<script type="application/ld+json">${escapeLt(content)}</script>`);
+    if (tagLower.startsWith("<script") || tagLower.startsWith("<style")) {
+      const closing = tagLower.startsWith("<script") ? "</script" : "</style";
+      const end = nextClose(closing, at);
+      if (end < 0) continue; // unclosed: read on as if it were a plain tag
+      if (closing === "</script" && blocks.length < MAX_BLOCKS && /type\s*=\s*["']?application\/ld\+json/.test(tagLower.slice(0, MAX_TAG))) {
+        blocks.push(`<script type="application/ld+json">${escapeLt(body.slice(at, end))}</script>`);
       }
-      if (end < 0) break;
-      const close = body.indexOf(">", end);
-      at = close < 0 ? body.length : close + 1;
-    } else if (tagLower.startsWith("<style")) {
-      const end = lower.indexOf("</style", at);
-      if (end < 0) break;
-      const close = body.indexOf(">", end);
-      at = close < 0 ? body.length : close + 1;
-    } else if (tagLower.startsWith("<meta") && tag.length <= MAX_TAG && metas.length < MAX_METAS && !tag.slice(1).includes("<")) {
+      at = end;
+    } else if (tagLower.startsWith("<meta") && tag.length <= MAX_TAG && metas.length < MAX_METAS) {
       metas.push(tag);
     }
-    text.push(" ");
   }
-  return [...blocks, ...metas, text.join("")].join("\n");
+  // The text keeps everything -- script data, attributes, words -- for an owner's `near`, with every
+  // `<` blanked, so no tag pattern has anywhere to start in it.
+  return [...blocks, ...metas, body.replaceAll("<", " ")].join("\n");
 }
