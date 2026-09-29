@@ -100,9 +100,10 @@ interface RawTrack {
 }
 
 /**
- * Shapes `/search`'s track rows into the minimum `matching.ts` scores against, dropping any row
- * missing a URI or name. A local track (`spotify:local:...`) is dropped too: those cannot be added
- * to a playlist through the API and would fail the whole add-items call if one slipped in.
+ * Shapes `/search`'s track rows into the minimum `TrackCandidate` shape `matching.ts` needs,
+ * dropping any row missing a URI or name. A local track (`spotify:local:...`) is dropped too:
+ * those cannot be added to a playlist through the API and would fail the whole add-items call if
+ * one slipped in.
  */
 export function toTrackCandidates(body: unknown): TrackCandidate[] {
   const items = (body as { tracks?: { items?: unknown } })?.tracks?.items;
