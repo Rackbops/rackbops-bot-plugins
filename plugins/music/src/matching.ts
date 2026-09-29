@@ -159,6 +159,58 @@ function titleScore(candidate: string, song: string, suite?: { stem: string; par
   return 0;
 }
 
+/**
+ * Whether `a` and `b` differ by at most one character -- one substitution, insertion or deletion.
+ * Equal strings count (zero edits). No edit-distance matrix: equal-length strings get a single
+ * differing-position scan; a one-character length difference gets a one-pointer scan that allows
+ * exactly one skip on the longer string. A length difference of two or more is never one edit
+ * away, so it short-circuits before either scan.
+ */
+export function withinOneEdit(a: string, b: string): boolean {
+  const lengthDiff = a.length - b.length;
+  if (Math.abs(lengthDiff) > 1) return false;
+  if (lengthDiff === 0) {
+    let diffs = 0;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i] && ++diffs > 1) return false;
+    }
+    return true;
+  }
+  const [shorter, longer] = lengthDiff < 0 ? [a, b] : [b, a];
+  let i = 0;
+  let j = 0;
+  let skipped = false;
+  while (i < shorter.length && j < longer.length) {
+    if (shorter[i] === longer[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    if (skipped) return false;
+    skipped = true;
+    j++;
+  }
+  return true;
+}
+
+/** The shortest song title a one-edit typo match is trusted for (#67) -- see `hasTypoPrefix`. */
+const MIN_TYPO_TITLE_LENGTH = 8;
+
+/**
+ * Whether `candidate` is a one-character typo of `song` (see `withinOneEdit`), or starts with such
+ * a typo'd title followed by a space -- so "detroit 442 remastered" still matches "detroit 422"
+ * the same way a bare typo'd title would. `withinOneEdit` itself already rejects any length
+ * difference greater than one, so trying every space-delimited prefix costs nothing extra: only a
+ * prefix genuinely close in length to `song` can ever pass it.
+ */
+function hasTypoPrefix(candidate: string, song: string): boolean {
+  if (withinOneEdit(candidate, song)) return true;
+  for (let i = 0; i < candidate.length; i++) {
+    if (candidate[i] === " " && withinOneEdit(candidate.slice(0, i), song)) return true;
+  }
+  return false;
+}
+
 /** How well any of the candidate's artists matches the one we searched for, 0-40. */
 function artistScore(candidateArtists: string[], wanted: string): number {
   if (wanted === "") return 0;
@@ -205,12 +257,23 @@ export function explainCandidate(
   // including the sibling check inside the tieBreak loop -- so another edition of the same suite
   // part counts as a real title match there too, not just for the winning candidate.
   const suite = parseSuitePart(songTitle);
-  const title = titleScore(candidateTitle, songTitle, suite);
+  let title = titleScore(candidateTitle, songTitle, suite);
+  const artist = artistScore(candidate.artistNames.map(normalize), normalize(song.artist));
+  // A one-character typo in setlist.fm's own title text (#67): a title that scored 0 by every
+  // other rule may still be the right song if it's a single edit away from what setlist.fm typed
+  // AND the artist agrees -- "Detroit 422" (a human typo) vs Spotify's "Detroit 442". Scored 30:
+  // with an exact artist that's 70, under the medium floor (90), so a typo match is always `low`
+  // and the reply always asks the listener to check it. The length floor keeps a one-edit
+  // collision on a short title (`maria` vs `mario`) from ever passing as the same song; without
+  // artist agreement the rule doesn't apply at all -- a one-edit title from an unrelated artist is
+  // a different song, not a typo.
+  if (title === 0 && artist > 0 && songTitle.length >= MIN_TYPO_TITLE_LENGTH && hasTypoPrefix(candidateTitle, songTitle)) {
+    title = 30;
+  }
   // A candidate whose title doesn't match at all is never the right track, however well the artist
   // lines up -- returning 0 here (rather than a small positive) is what lets pickBestTrack reject
   // an entire result page instead of shipping its least-bad row.
   if (title === 0) return { title: 0, artist: 0, tieBreak: 0, penalty: 0, score: 0 };
-  const artist = artistScore(candidate.artistNames.map(normalize), normalize(song.artist));
   // Ties survive title and artist scoring only between candidates that agree on both -- in
   // practice, several editions of the SAME artist's own recording (the album cut, a remaster, a
   // compilation). `popularity` used to break these, but a search made with a connected user's
