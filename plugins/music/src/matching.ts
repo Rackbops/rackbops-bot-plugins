@@ -32,6 +32,9 @@ export type MatchConfidence = "high" | "medium" | "low";
 export interface Match {
   track: TrackCandidate;
   confidence: MatchConfidence;
+  /** The winning candidate's `scoreCandidate` -- carried over so a caller comparing two matches
+   *  (across queries) never has to re-score. */
+  score: number;
 }
 
 /**
@@ -188,7 +191,7 @@ export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandida
   if (exactTitle && exactArtist) confidence = "high";
   else if (someArtistOverlap && best.score >= 90) confidence = "medium";
   else confidence = "low";
-  return { track: best.track, confidence };
+  return { track: best.track, confidence, score: best.score };
 }
 
 /**

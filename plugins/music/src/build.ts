@@ -11,6 +11,22 @@ import {
   type MatchConfidence,
   type ScoreBreakdown,
 } from "./matching.js";
+
+/** Confidence's ranking for `betterMatch`: `high` beats `medium` beats `low`. */
+const CONFIDENCE_RANK: Record<MatchConfidence, number> = { high: 2, medium: 1, low: 0 };
+
+/**
+ * The better of two matches for the same song: higher confidence first, then higher score. On a
+ * full tie `b` stands -- callers accumulate with `betterMatch(candidate, current)`, so a tie keeps
+ * whichever was found first (the filtered query is more precise than the loose one that follows
+ * it). Exported so #63/#64 can reuse the same comparator across artist names.
+ */
+export function betterMatch(a: Match, b: Match): Match {
+  if (CONFIDENCE_RANK[a.confidence] !== CONFIDENCE_RANK[b.confidence]) {
+    return CONFIDENCE_RANK[a.confidence] > CONFIDENCE_RANK[b.confidence] ? a : b;
+  }
+  return a.score > b.score ? a : b;
+}
 import type { SpotifyClient } from "./spotify.js";
 
 /** Spotify rejects a playlist name longer than this. */
@@ -63,9 +79,11 @@ export interface SongTrace {
   /** Index, among the queries issued, of the one that produced the pick. */
   hitQuery?: number;
   /**
-   * Every query issued, in order. Omitted when the outcome is "high": a confident match needs no
-   * second look, and a 25-song setlist is ~500 candidates. On an "error" outcome the last entry is
-   * the query that failed, with no candidates.
+   * Every query issued, in order. Omitted only when a single, confident ("high") query settled
+   * it -- that needs no second look, and a 25-song setlist is ~500 candidates. Present whenever
+   * more than one query ran, even if the winning one was "high" (#61): the page that a first
+   * `medium`/`low` came from, and the page that then beat it, both matter to whoever reads the
+   * trace. On an "error" outcome the last entry is the query that failed, with no candidates.
    */
   queries?: QueryTrace[];
   /** Present when the outcome is "error". */
@@ -110,8 +128,14 @@ export function playlistDescription(setlist: Setlist): string {
 }
 
 /**
- * Finds one song, trying each query shape in turn and taking the first that yields a credible
- * match. The distinction that matters: a search that FAILS (a 429, an expired token) is an error
+ * Finds one song, trying each query shape in turn. Every query up to and including the first
+ * `high` runs -- a `medium` or `low` no longer stops the search early, and the better of the two
+ * (`betterMatch`) wins. The worst case is unchanged: `buildQueries` never returns more than two,
+ * so a 25-song setlist still costs at most 50 requests; what changed is that the common case of a
+ * confident first hit still costs exactly one, while a `medium`/`low` first hit now gets a second
+ * chance instead of being taken on the spot.
+ *
+ * The distinction that matters: a search that FAILS (a 429, an expired token) is an error
  * that aborts the whole run, while a search that simply finds nothing is a missing song -- the two
  * must never collapse into each other, or a rate-limited run would silently report a setlist whose
  * every song is "not on Spotify".
@@ -123,6 +147,8 @@ export async function findSong(
 ): Promise<FindSongResult> {
   const wanted = { name: song.name, artist: song.searchArtist };
   const queries: QueryTrace[] = [];
+  let best: { match: Match; hitQuery: number } | undefined;
+
   for (const query of buildQueries(wanted)) {
     const result = await spotify.searchTracks(accessToken, query);
     if (!result.ok) {
@@ -142,20 +168,30 @@ export async function findSong(
         ...explainCandidate(wanted, c),
       })),
     });
-    const match = pickBestTrack(wanted, result.value);
-    if (match !== undefined) {
-      const trace: SongTrace = {
-        name: song.name,
-        searchArtist: song.searchArtist,
-        outcome: match.confidence,
-        picked: { name: match.track.name, artists: match.track.artistNames, uri: match.track.uri },
-        hitQuery: queries.length - 1,
-      };
-      if (match.confidence !== "high") trace.queries = queries;
-      return { ok: true, match, trace };
+    const found = pickBestTrack(wanted, result.value);
+    if (found !== undefined) {
+      best =
+        best === undefined || betterMatch(found, best.match) === found
+          ? { match: found, hitQuery: queries.length - 1 }
+          : best;
+      if (best.match.confidence === "high") break;
     }
   }
-  return { ok: true, trace: { name: song.name, searchArtist: song.searchArtist, outcome: "missing", queries } };
+
+  if (best === undefined) {
+    return { ok: true, trace: { name: song.name, searchArtist: song.searchArtist, outcome: "missing", queries } };
+  }
+  const trace: SongTrace = {
+    name: song.name,
+    searchArtist: song.searchArtist,
+    outcome: best.match.confidence,
+    picked: { name: best.match.track.name, artists: best.match.track.artistNames, uri: best.match.track.uri },
+    hitQuery: best.hitQuery,
+  };
+  // More than one query ran, or the winning one wasn't confident -- either way, the pages matter
+  // to whoever reads the trace later (the operator step; a later tuning PR).
+  if (queries.length > 1 || best.match.confidence !== "high") trace.queries = queries;
+  return { ok: true, match: best.match, trace };
 }
 
 /**

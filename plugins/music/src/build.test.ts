@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { buildPlaylist, findSong, isoDate, playlistDescription, playlistName } from "./build.js";
+import { betterMatch, buildPlaylist, findSong, isoDate, playlistDescription, playlistName } from "./build.js";
 import type { Setlist, SetlistSong } from "./setlistfm.js";
 import type { SpotifyClient } from "./spotify.js";
-import type { TrackCandidate } from "./matching.js";
+import type { Match, TrackCandidate } from "./matching.js";
 
 function song(name: string, searchArtist = "Band", isCover = false): SetlistSong {
   return { name, searchArtist, isCover };
@@ -117,7 +117,10 @@ describe("findSong", () => {
     expect(queries[0]).toStartWith("track:");
   });
 
-  test("stops at the first query that matches, so a hit costs one call", async () => {
+  // Renamed for #61: it used to be true of ANY match on the first query; now only a `high` one
+  // stops the search early, which is exactly what this case is (`candidate("One")` matches
+  // `song("One")`'s exact artist and title).
+  test("a high on the first query issues exactly one search", async () => {
     let calls = 0;
     const { client } = fakeSpotify({}, {
       searchTracks: async () => {
@@ -127,6 +130,56 @@ describe("findSong", () => {
     });
     await findSong(client, "AT", song("One"));
     expect(calls).toBe(1);
+  });
+
+  test("a medium on the first query keeps searching and a high on the second wins", async () => {
+    const { client } = fakeSpotify({}, {
+      // The filtered query's only candidate shares the title but not the artist -- medium, not
+      // high -- so #61 tries the loose query too, whose candidate is the exact artist as well.
+      searchTracks: async (_t, query) => ({
+        ok: true,
+        value: query.startsWith("track:") ? [candidate("One", "The Band")] : [candidate("One", "Band")],
+      }),
+    });
+    const found = await findSong(client, "AT", song("One"));
+    expect(found.ok).toBe(true);
+    expect(found.ok === true && found.match?.confidence).toBe("high");
+    expect(found.ok === true && found.match?.track.artistNames).toEqual(["Band"]);
+    expect(found.trace.hitQuery).toBe(1);
+    expect(found.trace.queries).toHaveLength(2);
+    expect(found.trace.queries![0]!.candidates[0]).toMatchObject({ name: "One", artists: ["The Band"] });
+  });
+
+  test("two loose matches: the more confident wins, then the higher score, then the first", async () => {
+    const match = (confidence: "high" | "medium" | "low", score: number): Match => ({
+      track: { uri: `spotify:track:${confidence}-${score}`, name: "X", artistNames: ["X"], popularity: 0 },
+      confidence,
+      score,
+    });
+
+    // Confidence beats score even when the lower-confidence match scored higher.
+    expect(betterMatch(match("medium", 50), match("low", 99))).toMatchObject({ confidence: "medium" });
+    // Same confidence: the higher score wins.
+    expect(betterMatch(match("low", 80), match("low", 40))).toMatchObject({ track: { uri: "spotify:track:low-80" } });
+    // A full tie: the second argument (the one already held) stands.
+    const a = match("low", 50);
+    const b = match("low", 50);
+    expect(betterMatch(a, b)).toBe(b);
+
+    // End to end through findSong: the filtered query's candidate shares no artist overlap at all
+    // (low, regardless of its score), the loose query's has partial overlap (medium) -- the more
+    // confident one wins even though neither query reached "high".
+    const { client } = fakeSpotify({}, {
+      searchTracks: async (_t, query) => ({
+        ok: true,
+        value: query.startsWith("track:")
+          ? [candidate("One", "Totally Unrelated")]
+          : [candidate("One", "A Completely Different Band")],
+      }),
+    });
+    const found = await findSong(client, "AT", song("One"));
+    expect(found.ok === true && found.match?.confidence).toBe("medium");
+    expect(found.trace.hitQuery).toBe(1);
   });
 
   test("a search FAILURE is an error, never a miss -- they must not collapse", async () => {
@@ -261,7 +314,9 @@ describe("buildPlaylist traces", () => {
     expect(two.queries![1]!.candidates.map((c) => c.name)).toEqual(["Nothing Relevant"]);
   });
 
-  test("a high match records the pick and hitQuery but no candidate lists", async () => {
+  // Renamed for #61: `queries` used to be omitted whenever the outcome was "high", however many
+  // queries ran; now it's kept whenever more than one did, since the page that missed matters too.
+  test("a high reached by the second query keeps both pages in the trace", async () => {
     const { client } = fakeSpotify({}, {
       searchTracks: async (_t, query) => ({
         ok: true,
@@ -276,7 +331,9 @@ describe("buildPlaylist traces", () => {
     expect(one.picked).toEqual({ name: "One", artists: ["Band"], uri: "spotify:track:one" });
     // The first query found nothing, so the second one is the hit.
     expect(one.hitQuery).toBe(1);
-    expect(one.queries).toBeUndefined();
+    expect(one.queries).toHaveLength(2);
+    expect(one.queries![0]!.candidates).toEqual([]);
+    expect(one.queries![1]!.candidates.map((c) => c.name)).toEqual(["One", "One - Live"]);
   });
 
   test("a loose match keeps its candidate lists", async () => {
@@ -285,10 +342,13 @@ describe("buildPlaylist traces", () => {
     expect(result.ok).toBe(true);
     const one = result.songs[0]!;
     expect(one.outcome).toBe("low");
+    // Not high, so #61's loose query runs too; the fake client happens to repeat the identical
+    // page, a full tie the earlier (filtered) query's match wins.
     expect(one.hitQuery).toBe(0);
     expect(one.picked?.artists).toEqual(["Someone Else"]);
-    expect(one.queries).toHaveLength(1);
+    expect(one.queries).toHaveLength(2);
     expect(one.queries![0]!.candidates[0]).toMatchObject({ name: "One", title: 100, artist: 0, penalty: 0, score: 100.5 });
+    expect(one.queries![1]!.candidates[0]).toMatchObject({ name: "One", title: 100, artist: 0, penalty: 0, score: 100.5 });
   });
 
   test("a medium match keeps its candidate lists too", async () => {
@@ -297,7 +357,9 @@ describe("buildPlaylist traces", () => {
     const result = await buildPlaylist(client, "AT", setlist({ songs: [song("One")] }));
     const one = result.songs[0]!;
     expect(one.outcome).toBe("medium");
-    expect(one.queries).toHaveLength(1);
+    // Not high, so #61's loose query runs too; same tie as above, the earlier query wins.
+    expect(one.hitQuery).toBe(0);
+    expect(one.queries).toHaveLength(2);
     expect(one.queries![0]!.candidates[0]).toMatchObject({ name: "One", title: 100, artist: 22, score: 122.5 });
   });
 
