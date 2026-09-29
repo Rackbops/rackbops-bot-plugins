@@ -55,6 +55,13 @@ export interface Resumed {
   tasks: string[];
 }
 
+/** An owner to tell that a recipient's failures paused their task, sent once the lock is released. */
+interface Notice {
+  owner: User;
+  task: Task;
+  text: string;
+}
+
 export interface DeliveryHealthOptions {
   /** DMs a task's owner that a recipient's failures paused the task. Best effort: a throw is logged. */
   tellOwner?: (owner: User, text: string) => Promise<void>;
@@ -111,8 +118,9 @@ export class DeliveryHealth {
   }
 
   /** A DM the host refused as undeliverable. Pauses on the `PAUSE_AFTER`th in a row. */
-  recordFailure(userId: string, error: string, at: string): Promise<FailureResult> {
-    return this.locked(async () => {
+  async recordFailure(userId: string, error: string, at: string): Promise<FailureResult> {
+    const notices: Notice[] = [];
+    const result = await this.locked(async (): Promise<FailureResult> => {
       this.db
         .query(
           `INSERT INTO delivery_health (user_id, failures, last_error, last_failed_at) VALUES (?, 1, ?, ?)
@@ -125,9 +133,13 @@ export class DeliveryHealth {
       if (!pauses && row.pausedAt === null) return { failures: row.failures, paused: false };
       if (pauses) this.db.query("UPDATE delivery_health SET paused_at = ? WHERE user_id = ?").run(at, userId);
       // Already paused: a task that started DMing them since (a new share, say) pauses too.
-      await this.pauseAffected(userId, at);
+      await this.pauseAffected(userId, at, notices);
       return { failures: row.failures, paused: pauses };
     });
+    // The owners' DMs go out after the lock is released: `enter` awaits `resume` on that lock from
+    // the interaction queue, so a slow DM held inside it would hold up every command.
+    for (const n of notices) await this.tellOwner(n);
+    return result;
   }
 
   /** Every task that would DM `userId`: theirs, and the ones they accepted. */
@@ -142,7 +154,7 @@ export class DeliveryHealth {
     return found;
   }
 
-  private async pauseAffected(userId: string, at: string): Promise<void> {
+  private async pauseAffected(userId: string, at: string, notices: Notice[]): Promise<void> {
     const recipient = await this.store.getUser(userId);
     for (const { task, asRecipient } of await this.affected(userId)) {
       // Only an active task, or one this mechanism already paused for someone else.
@@ -152,15 +164,17 @@ export class DeliveryHealth {
       await this.store.updateTask(task.id, { status: "paused", at });
       const detail = asRecipient ? `delivery to ${name(recipient, userId)} paused: ${PAUSE_AFTER} DMs in a row could not be delivered` : PAUSE_DETAIL;
       await this.store.addTaskEvent({ taskId: task.id, actorId: null, kind: "paused", detail, at });
-      if (asRecipient) await this.tellOwner(task, recipient, userId);
+      if (asRecipient) {
+        const owner = await this.store.getUser(task.ownerId);
+        if (owner) notices.push({ owner, task, text: recipientPausedText(task, recipient, userId) });
+      }
     }
   }
 
-  private async tellOwner(task: Task, recipient: User | null, recipientId: string): Promise<void> {
-    const owner = await this.store.getUser(task.ownerId);
-    if (!owner || !this.options.tellOwner) return;
+  private async tellOwner({ owner, task, text }: Notice): Promise<void> {
+    if (!this.options.tellOwner) return;
     try {
-      await this.options.tellOwner(owner, recipientPausedText(task, recipient, recipientId));
+      await this.options.tellOwner(owner, text);
     } catch (err) {
       this.options.log?.warn(`could not tell ${owner.id} that ${task.id} paused: ${err instanceof Error ? err.message : String(err)}`);
     }

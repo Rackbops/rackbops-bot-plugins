@@ -57,15 +57,15 @@ export async function prepareShare(
   const now = d.clock.now();
   const result = await invite(d.store, { userId: owner.id, admin: false }, task, person.id, now);
   if (!result.ok) {
-    if (result.reason === "self") return "You already get your own tasks.";
-    if (result.reason === "already_invited") return `<@${target.discordId}> is already invited to that task.`;
+    // Every refusal reads the same, except a block the target chose by declining: that one is theirs
+    // to have told the sharer, and saying so stops the sharer from retrying.
     if (result.reason === "blocked") {
       const until = result.block?.expiresAt;
       return until
         ? `<@${target.discordId}> declined an earlier invitation from you; you can invite them again after ${new Date(until).toISOString().slice(0, 16).replace("T", " ")} UTC.`
         : `<@${target.discordId}> declined your invitations twice; only an admin can lift that.`;
     }
-    return "Only the task's owner can share it.";
+    return `<@${target.discordId}> ${CANNOT_SHARE}`;
   }
   return { taskId: task.id, targetId: person.id, targetDiscordId: target.discordId, message: inviteMessage(task, owner, person, now) };
 }

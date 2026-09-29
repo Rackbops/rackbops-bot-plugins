@@ -223,3 +223,36 @@ describe("isButtonRefusal", () => {
     expect(isButtonRefusal("interactive buttons are not supported yet")).toBe(false);
   });
 });
+
+describe("owner notices", () => {
+  it("go out after the lock is released, so a resume does not wait behind a slow owner DM", async () => {
+    const s = await setup();
+    await s.store.setRecipient(s.task.id, s.friend.id, "accepted", "2026-10-01T12:00:00.000Z");
+    let release: () => void = () => {};
+    const slow = new Promise<void>((r) => (release = r));
+    const told: string[] = [];
+    const health = new DeliveryHealth(s.db, s.store, {
+      tellOwner: async (owner) => {
+        told.push(owner.id);
+        await slow;
+      },
+    });
+    for (let i = 0; i < PAUSE_AFTER - 1; i++) await health.recordFailure(s.friend.id, HOST_CANNOT_MESSAGE, "2026-10-01T12:00:00.000Z");
+    let failureDone = false;
+    const failure = health.recordFailure(s.friend.id, HOST_CANNOT_MESSAGE, "2026-10-01T12:00:00.000Z").then((r) => {
+      failureDone = true;
+      return r;
+    });
+    while (told.length === 0) await new Promise((r) => setTimeout(r, 1));
+    // The owner's DM is still in flight; a resume on the lock finishes anyway.
+    const resumed = await Promise.race([
+      health.resume(s.friend.id, s.clock.now()),
+      new Promise<"timed out">((r) => setTimeout(() => r("timed out"), 500)),
+    ]);
+    expect(resumed).not.toBe("timed out");
+    expect(failureDone).toBe(false);
+    release();
+    expect((await failure).paused).toBe(true);
+    expect(told).toEqual([s.owner.id]);
+  });
+});

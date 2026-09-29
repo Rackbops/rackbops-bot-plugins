@@ -516,3 +516,19 @@ describe("review fixes (#79)", () => {
     expect(await slash(w.plugin, "tasks", LARRY)).toContain("`t1` bins out -- next");
   });
 });
+
+describe("share refusals", () => {
+  it("read the same whatever docket's reason, except a block the target chose", async () => {
+    const w = world();
+    await withLarry(w);
+    await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
+    await slash(w.plugin, "register", CURLY);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "week" } });
+    const share = (who: string) => slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: who } });
+    expect(await share(CURLY)).toContain("Invited");
+    expect(await share(CURLY)).toBe(`<@${CURLY}> ${CANNOT_SHARE}`); // already invited
+    expect(await share(LARRY)).toBe(`<@${LARRY}> ${CANNOT_SHARE}`); // themself
+    await pressButton(w.plugin, "tracker:x.t.t1", CURLY);
+    expect(await share(CURLY)).toContain("declined an earlier invitation from you");
+  });
+});
