@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { materialize } from "@rackbops/docket-core";
+import { SlashCommandBuilder } from "discord.js";
 import { makeFakeDelivery, makeFakeHost } from "../../../packages/testkit/index.js";
 import pkg from "../package.json" with { type: "json" };
 import { createPlugin, DB_DIR, DB_FILE, TRACKER_TYPES } from "./index.js";
@@ -40,11 +41,28 @@ describe("createPlugin", () => {
     expect(existsSync(join(dataDir, DB_DIR, DB_FILE))).toBe(false);
   });
 
-  it("declares no commands yet, and exactly the env keys it reads", () => {
+  it("declares exactly the commands it registers, an interactions handler, and the env keys it reads", () => {
     const plugin = createPlugin(makeFakeHost({ name: "tracker" }));
-    expect(plugin.commands).toEqual([]);
-    expect(pkg.botPlugin.commands).toEqual([]);
-    expect(pkg.botPlugin.env.map((e) => e.key)).toEqual(["TRACKER_ADMIN_DISCORD_IDS"]);
+    expect(plugin.commands?.map((c) => c.name)).toEqual(pkg.botPlugin.commands);
+    expect(pkg.botPlugin.commands).toEqual(["allow", "register", "remind", "tasks", "task", "settings"]);
+    expect(typeof plugin.interactions).toBe("function");
+    expect(pkg.botPlugin.intents).toEqual([]);
+    expect(pkg.botPlugin.env.map((e) => e.key)).toEqual(["TRACKER_ADMIN_DISCORD_IDS", "TRACKER_GUILD_ID"]);
+  });
+
+  it("refuses a malformed TRACKER_GUILD_ID, and accepts it unset", () => {
+    expect(() => createPlugin(makeFakeHost({ name: "tracker", env: { TRACKER_GUILD_ID: "my server" } }))).toThrow("TRACKER_GUILD_ID");
+    createPlugin(makeFakeHost({ name: "tracker", env: { TRACKER_GUILD_ID: "123456789012345678" } }));
+    createPlugin(makeFakeHost({ name: "tracker", env: { TRACKER_GUILD_ID: "" } }));
+  });
+
+  it("every command builds into valid slash-command JSON", () => {
+    const plugin = createPlugin(makeFakeHost({ name: "tracker" }));
+    for (const command of plugin.commands ?? []) {
+      const json = command.build(new SlashCommandBuilder().setName(command.name)).toJSON();
+      expect(json.name).toBe(command.name);
+      expect(json.description.length).toBeGreaterThan(0);
+    }
   });
 });
 
@@ -78,7 +96,9 @@ describe("the plugin end to end on a real data file", () => {
 
     clock.set("2026-10-01T12:01:00.000Z");
     await plugin.ticks![0]!.run(new AbortController().signal);
-    expect(delivery.calls.dm).toEqual([{ userId: ADMIN, message: { content: "stretch" } }]);
+    expect(delivery.calls.dm).toHaveLength(1);
+    expect(delivery.calls.dm[0]).toMatchObject({ userId: ADMIN, message: { content: "stretch" } });
+    expect(delivery.calls.dm[0]?.message.buttons?.map((b) => b.label)).toEqual(["Done", "Snooze 1h", "Reply"]);
     expect((await store.getOccurrence(occurrence?.id ?? ""))?.status).toBe("done");
     const ok = await healthz(plugin);
     expect(ok.status).toBe(200);

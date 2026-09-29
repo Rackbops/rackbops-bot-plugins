@@ -1,7 +1,7 @@
 {
   "name": "@rackbops/plugin-tracker",
-  "version": "0.1.0",
-  "description": "The task tracker for Rackbops Clerk: docket's SQLite store, the notify lane on the host tick, people and admins, and /healthz",
+  "version": "0.2.0",
+  "description": "The task tracker for Rackbops Clerk: reminders by slash command, delivered by DM with done, snooze and reply buttons, on docket's SQLite store (/allow, /register, /remind, /tasks, /task, /settings)",
   "type": "module",
   "main": "dist/plugin.js",
   "files": ["dist"],
@@ -20,7 +20,7 @@
   "botPlugin": {
     "hostApiVersion": 1,
     "intents": [],
-    "commands": [],
+    "commands": ["allow", "register", "remind", "tasks", "task", "settings"],
     "env": [
       {
         "key": "TRACKER_ADMIN_DISCORD_IDS",
@@ -28,6 +28,13 @@
         "required": false,
         "secret": false,
         "description": "Comma-separated Discord user ids (spaces around commas allowed) made tracker admins at start (the first admin). Only ever grants: removing an id here does not revoke it. Unset = no admin is seeded."
+      },
+      {
+        "key": "TRACKER_GUILD_ID",
+        "format": "^[0-9]{17,20}$",
+        "required": false,
+        "secret": false,
+        "description": "The Discord server id whose members may use the tracker (the membership gate), checked on every command and button, in DMs too. Unset = no membership gate: only the admission list (/allow) applies."
       }
     ]
   }

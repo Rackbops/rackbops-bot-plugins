@@ -137,6 +137,26 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (occurrence_id, user_id)
   );
   `,
+  // 2 (rackbops-bot-plugins#79): who admitted each person and when they registered (plan 5.8), and
+  // each person's run of failed DMs with the tasks a pause stopped (plan 5.5). A user row from 0.1.0
+  // has no admissions row: every such row was made by `admit`, so it counts as admitted, unregistered.
+  `
+  CREATE TABLE admissions (
+    user_id TEXT PRIMARY KEY,
+    admitted_by TEXT,
+    admitted_at TEXT NOT NULL,
+    registered_at TEXT
+  );
+
+  CREATE TABLE delivery_health (
+    user_id TEXT PRIMARY KEY,
+    failures INTEGER NOT NULL,
+    last_error TEXT,
+    last_failed_at TEXT,
+    paused_at TEXT,
+    paused_tasks TEXT NOT NULL
+  );
+  `,
 ];
 
 /** Brings `db` up to the newest schema. Idempotent; each step runs in its own transaction. */

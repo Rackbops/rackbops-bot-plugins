@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.2.0] - 2026-09-29
+
+### Added
+
+- The Discord surface (rackbops-bot-plugins#79, the first slice of plan E2): `/allow @user`
+  (admins), `/register [hour] [zone]` with the disclosure that an admin can see every task,
+  `/remind text [when] [repeat]` (a one-off, or daily, weekly or monthly), `/tasks`,
+  `/task done|snooze|history|share`, and `/settings hour`. Every answer is ephemeral, and the
+  commands work in the bot's DMs as well as in a server.
+- The admission gate (only people an admin has `/allow`ed, or the configured admins, can
+  `/register`; everything else needs a registered person) and the membership gate: the new
+  optional `TRACKER_GUILD_ID` names the one server whose members may use the tracker, checked on
+  every command and button, DMs included. Unset = no membership gate.
+- Buttons on every DM: done and snooze for the owner, accept and decline on the one consent DM a
+  shared task sends, an opt-out on every copy a recipient gets, and a Reply button that opens a
+  modal, so the tracker never reads a typed DM and never needs the Message Content intent. A
+  pressed DM is edited to say what happened. A host from before rackbops-discord-bot#323 gets the
+  DM again without buttons.
+- Pausing delivery after three DMs in a row that the host says cannot be delivered: the person's
+  tasks pause (on record in the task's history), a paused recipient is left out of other people's
+  runs instead of failing them, and the person's next command or button resumes everything and
+  tells them why it stopped.
+- Schema 2: `admissions` (who admitted each person, when they registered) and `delivery_health`.
+  A 0.1.0 database migrates in place.
+
+### Fixed
+
+- A due run of a task that is not active (paused) is no longer run: docket 0.3.0's notify lane
+  runs every queued occurrence whatever its task's status, so the tracker's lane now skips them.
+
 ## [0.1.0] - 2026-09-29
 
 ### Added

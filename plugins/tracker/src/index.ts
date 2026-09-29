@@ -1,12 +1,17 @@
 import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Clock, TaskType } from "@rackbops/docket-core";
+import type { Clock, Notifier, TaskType } from "@rackbops/docket-core";
 import { reminder, renewal } from "@rackbops/docket-types";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
+import { parseGuildId } from "./access.js";
+import type { TrackerDeps } from "./actions.js";
+import { Admissions } from "./admissions.js";
 import { ClaimStore } from "./claims.js";
+import { DeliveryHealth } from "./delivery-health.js";
+import { createSurface, type SurfaceWiring } from "./discord.js";
 import { decideHealth, type HealthState, healthResponse } from "./health.js";
-import { reportUnconfirmed } from "./notifier.js";
+import { createDmNotifier, reportUnconfirmed } from "./notifier.js";
 import { runNotifyTick } from "./notify-lane.js";
 import { parseAdminIds, seedAdmins } from "./people.js";
 import { openDatabase } from "./schema.js";
@@ -15,12 +20,13 @@ import { SqliteStore } from "./store.js";
 /**
  * The task tracker (rackbops-bot-plugins#78; plan of record Rackbops/Tooling
  * research/city-hall-task-tracker.md, 5.1): the host of Rackbops/docket on a rackbops-discord-bot
- * instance. This first slice is the core -- docket's Store on SQLite, the notify lane on the host's
- * tick, people and the first admin, `/tracker/healthz`. No commands yet (#79), no buttons (they
- * wait on rackbops-discord-bot#323).
+ * instance: docket's Store on SQLite, the notify lane on the host's tick, people and the first
+ * admin, `/tracker/healthz` (#78), and the Discord surface -- the slash commands, the admission and
+ * membership gates, consent, the buttons and the Reply modal, and pausing delivery after repeated
+ * failures (#79).
  *
- * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS` and nothing else. The database
- * is opened in `activate()` and closed in `dispose()`.
+ * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS` and `TRACKER_GUILD_ID` and
+ * nothing else. The database is opened in `activate()` and closed in `dispose()`.
  */
 
 /** The tracker's database: `<dataDir>/tracker/tracker.sqlite`, a directory of its own (mcp's convention). */
@@ -42,20 +48,40 @@ export interface TrackerOptions {
   /** The database path; defaults to `<dataDir>/tracker/tracker.sqlite`. Tests pass ":memory:". */
   dbPath?: string;
   types?: Readonly<Record<string, TaskType<unknown>>>;
+  /** Test seam for the membership lookup (discord.ts). */
+  membership?: SurfaceWiring["membership"];
 }
+
+/** A Notifier for a host without `dm`: every send is refused, before anything is claimed. */
+const NO_DM: Notifier = {
+  async sendDm() {
+    throw new Error("this bot has no host.dm (rackbops-discord-bot#736)");
+  },
+};
 
 export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugin {
   const adminIds = parseAdminIds(host.env.TRACKER_ADMIN_DISCORD_IDS);
+  const guildId = parseGuildId(host.env.TRACKER_GUILD_ID);
   const clock: Clock = options.clock ?? { now: () => new Date() };
   const types = options.types ?? TRACKER_TYPES;
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
   let db: Database | null = null;
   let store: SqliteStore | null = null;
   let claims: ClaimStore | null = null;
+  let delivery: DeliveryHealth | null = null;
+  let deps: TrackerDeps | null = null;
   let warnedNoDm = false;
+  const dm = host.dm?.bind(host);
+  const surface = createSurface({
+    deps: () => deps,
+    guildId,
+    log: host.log,
+    ...(options.membership ? { membership: options.membership } : {}),
+  });
 
   return {
-    commands: [],
+    commands: surface.commands,
+    interactions: surface.interactions,
 
     async activate() {
       let path = options.dbPath;
@@ -82,6 +108,18 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       db = opened;
       store = openedStore;
       claims = openedClaims;
+      delivery = new DeliveryHealth(opened, openedStore);
+      deps = {
+        store: openedStore,
+        admissions: new Admissions(opened),
+        health: delivery,
+        clock,
+        types,
+        dm,
+        log: host.log,
+        notifier: dm ? createDmNotifier({ store: openedStore, claims: openedClaims, dm, clock, log: host.log, health: delivery }) : NO_DM,
+      };
+      if (guildId === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
       health.blocked = typeof host.dm === "function" ? null : "this bot has no host.dm (it predates rackbops-discord-bot#736)";
       health.activatedAt = clock.now();
     },
@@ -90,6 +128,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       // Null the handles first: a tick the host abandoned, or one that starts after this, finds no
       // store and returns instead of touching a closed database.
       health.activatedAt = null;
+      deps = null;
+      delivery = null;
       store = null;
       claims = null;
       const closing = db;
@@ -102,7 +142,10 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         name: "notify",
         async run(signal) {
           if (!store || !claims) return;
-          const outcome = await runNotifyTick({ store, claims, clock, types, dm: host.dm?.bind(host), log: host.log }, signal);
+          const outcome = await runNotifyTick(
+            { store, claims, clock, types, dm, log: host.log, ...(delivery ? { health: delivery } : {}) },
+            signal,
+          );
           if (outcome.kind === "no-dm") {
             if (!warnedNoDm) host.log.warn("notify lane is off: this bot has no host.dm (rackbops-discord-bot#736)");
             warnedNoDm = true;

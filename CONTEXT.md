@@ -112,6 +112,18 @@ pin only needs to change in one place.
   `import { Database } from "bun:sqlite"` as an import (verified 2026-09-29 on the built
   `plugins/tracker/dist/plugin.js`, then loaded and run under Bun), so a plugin can use
   `bun:sqlite` -- the bot runs on Bun. Not a native dependency: nothing is compiled or shipped.
+- **`@rackbops/docket-core` 0.3.0 leaves two things to its host** (read in its `dist/dispatch.js`,
+  2026-09-29, for `plugins/tracker` #79): `Lanes.tickNotify` runs every queued due occurrence
+  whatever its task's status, so a paused task still fires; and `runOne` fails the whole run when
+  one recipient's send throws. The tracker's notify lane therefore hands docket a view of its
+  store (`laneStore`, `notify-lane.ts`) that drops a non-active task's due runs and a recipient
+  whose delivery is paused. docket's `registrationText` still wraps a usr link the tracker no
+  longer has (plan item 40), so `/register` builds its own text around `ADMIN_DISCLOSURE`.
+- **A plugin checks guild membership through `interaction.client`, not the Host API**, which has no
+  member lookup (`plugins/tracker/src/discord.ts` `lookupMembership`): `guilds.fetch(id)` then
+  `members.fetch({ user })`, a REST call that needs no privileged intent; Discord's 10007 (unknown
+  member) and 10013 (unknown user) mean "not a member". Unit-tested against a fake client only; not
+  yet run against real Discord (inferred from discord.js v14's API, not verified live).
 - **CI job names (`checks`, `test`) intentionally split lint/typecheck-shaped work from tests**,
   matching `/audit`'s "at least two jobs" requirement -- `rackbops-discord-bot`'s own `ci.yml`
   uses a single `checks` job and doesn't split this way; don't use that file as a reference for

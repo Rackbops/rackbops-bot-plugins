@@ -1,6 +1,8 @@
 import { ExecutorUnavailableError, type Clock, type Notifier, type OutgoingMessage, type Store } from "@rackbops/docket-core";
-import type { HostApi, HostMessage, PluginLog } from "../../../packages/api/contract.js";
+import type { HostApi, HostDelivery, HostMessage, PluginLog } from "../../../packages/api/contract.js";
+import { hostButtons } from "./buttons.js";
 import type { ClaimStore, DeliveryClaim } from "./claims.js";
+import type { DeliveryHealth } from "./delivery-health.js";
 
 /**
  * docket's Notifier port over `host.dm` (plan 5.5). docket addresses a tracker user; this looks up
@@ -8,9 +10,13 @@ import type { ClaimStore, DeliveryClaim } from "./claims.js";
  * `ref` naming the occurrence, and for those the (occurrence, user) pair is claimed in the tracker's
  * store before the DM goes out (claims.ts): a claim that already exists is never sent again.
  *
- * Buttons: `message.actions` (done, snooze, opt-out, ...) are not rendered yet -- the host refuses
- * `HostMessage.buttons` until rackbops-discord-bot#323 lands, and the commands that answer a run
- * are rackbops-bot-plugins#79. The text goes out alone.
+ * Buttons (rackbops-bot-plugins#79): `message.actions` (done, snooze, opt-out, ...) go out as
+ * `HostMessage.buttons` (buttons.ts), with a Reply button on a message about one run. A host from
+ * before rackbops-discord-bot#323 refuses buttons before sending anything; the DM is then sent again
+ * without them, as the contract asks, under the same claim.
+ *
+ * Each refusal that says the person cannot be messaged counts toward pausing their delivery, and
+ * each DM that goes through clears the count (delivery-health.ts).
  */
 
 /** What the host rejects `dm` with when Discord says the user cannot be messaged (its code 50007). */
@@ -78,6 +84,14 @@ export interface DmNotifierDeps {
   log: PluginLog;
   /** The tick's signal: once aborted, no new send starts. */
   signal?: AbortSignal;
+  /** Counts refused DMs per person and pauses after three; absent, nothing is counted. */
+  health?: DeliveryHealth;
+}
+
+/** A refusal about the buttons alone, which a send without them avoids (an older host's, above all). */
+export function isButtonRefusal(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /button/i.test(message);
 }
 
 /** The host message for `message`, cut to fit the host's bound; null when it has no text to send. */
@@ -131,7 +145,16 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
       }
 
       try {
-        const delivery = await d.dm(discordId, hostMessage);
+        const buttons = hostButtons(message);
+        let delivery: HostDelivery;
+        try {
+          delivery = await d.dm(discordId, buttons.length > 0 ? { ...hostMessage, buttons } : hostMessage);
+        } catch (err) {
+          if (buttons.length === 0 || !isButtonRefusal(err)) throw err;
+          d.log.warn(`DM sent without buttons: the host refused them (${err instanceof Error ? err.message : String(err)})`);
+          delivery = await d.dm(discordId, hostMessage);
+        }
+        d.health?.recordSuccess(userId);
         if (occurrenceId !== null) {
           d.claims.settle(occurrenceId, userId, "sent", d.clock.now().toISOString(), {
             messageId: delivery.messageId,
@@ -146,7 +169,11 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
         if (occurrenceId !== null) {
           d.claims.settle(occurrenceId, userId, nothingSent ? "failed" : "unconfirmed", d.clock.now().toISOString(), { error: reason });
         }
-        if (unreachable) throw new RecipientUnreachableError(userId);
+        if (unreachable) {
+          const counted = await d.health?.recordFailure(userId, reason, d.clock.now().toISOString());
+          if (counted?.paused) d.log.warn(`paused delivery to ${userId}: ${counted.failures} DMs in a row could not be delivered`);
+          throw new RecipientUnreachableError(userId);
+        }
         throw err;
       }
     },
