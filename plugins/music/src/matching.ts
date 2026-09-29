@@ -154,12 +154,24 @@ export function scoreCandidate(song: SongQuery, candidate: TrackCandidate): numb
  * `high` means the title matched exactly AND the artist matched exactly -- the caller can add it
  * without comment. Anything softer is surfaced to the user as "check these", because a wrong track
  * silently added to a playlist is worse than a named uncertainty.
+ *
+ * Ranking is by TIER first, score second: any candidate with artist agreement (`artist > 0`)
+ * outranks every candidate with none, whatever the titles score. An exact title alone scores 100,
+ * comfortably ahead of a 94 for the right artist's remaster (72 title + 22 partial artist) -- so
+ * ranking by score alone would hand the win to an unrelated artist's exact title over the right
+ * artist's own recording. A tier changes which candidate wins and nothing else: `scoreCandidate`'s
+ * numbers, the match log, and the `score >= 90` floor for `medium` are all unaffected.
  */
 export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandidate[]): Match | undefined {
-  let best: { track: TrackCandidate; score: number } | undefined;
+  let best: { track: TrackCandidate; score: number; tier: number } | undefined;
   for (const candidate of candidates) {
-    const score = scoreCandidate(song, candidate);
-    if (score > 0 && (best === undefined || score > best.score)) best = { track: candidate, score };
+    const breakdown = explainCandidate(song, candidate);
+    if (breakdown.score <= 0) continue;
+    const tier = breakdown.artist > 0 ? 1 : 0;
+    // Strictly greater on both counts, so the first candidate on a full tie (page order) is kept.
+    if (best === undefined || tier > best.tier || (tier === best.tier && breakdown.score > best.score)) {
+      best = { track: candidate, score: breakdown.score, tier };
+    }
   }
   if (best === undefined) return undefined;
 

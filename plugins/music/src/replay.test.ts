@@ -121,6 +121,9 @@ afterAll(() => {
   console.log(`replay: ${unserved.length} queries had no logged page`);
   for (const q of unserved) console.log(`  unserved: ${q}`);
   // #57: normalize() now reads "&"/"+" as "and", so By-Tor & the Snow Dog's studio cut is matched
-  // at high instead of a live recording at low -- 12/5/10 -> 13/4/10, the only entry that moved.
-  expect(tally).toEqual({ right: 13, wrong: 4, missing: 10 });
+  // at high instead of a live recording at low -- 12/5/10 -> 13/4/10.
+  // #58: artist agreement is now a tier above title score, so Blondie's own remaster of Rip Her to
+  // Shreds beats Boomkat's exact but unrelated title -- 13/4/10 -> 14/3/10, the only entry that
+  // moved this time.
+  expect(tally).toEqual({ right: 14, wrong: 3, missing: 10 });
 });

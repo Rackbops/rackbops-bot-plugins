@@ -192,6 +192,30 @@ describe("pickBestTrack", () => {
     ]);
     expect(best!.confidence).toBe("high");
   });
+
+  // #58: names and artists straight from a real logged run (rackbops-bot-plugins#43) -- Boomkat's
+  // exact title (100, no artist agreement) used to outrank Blondie's own remaster (72 + 22 = 94,
+  // partial artist agreement), so an unrelated band's exact title won over the right artist's
+  // recording. Artist agreement is now a tier above title score, so the remaster wins even though
+  // its raw score is lower.
+  test("the right artist's remaster outranks an exact title by an unrelated artist, from the logged page", () => {
+    const song = { name: "Rip Her to Shreds", artist: "Totally Blondie" };
+    const best = pickBestTrack(song, [
+      track("Rip Her To Shreds - Remastered 2001", ["Blondie", "Craig Leon"]),
+      track("Rip Her to Shreds", ["Boomkat"]),
+    ]);
+    expect(best!.track.name).toBe("Rip Her To Shreds - Remastered 2001");
+    expect(best!.confidence).toBe("medium");
+  });
+
+  test("within a tier the score still decides", () => {
+    const best = pickBestTrack(song, [
+      track("Yesterday - Remastered 2015", ["The Beatles"]),
+      track("Yesterday", ["The Beatles"]),
+    ]);
+    expect(best!.track.name).toBe("Yesterday");
+    expect(best!.confidence).toBe("high");
+  });
 });
 
 describe("buildQueries", () => {
