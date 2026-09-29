@@ -1,0 +1,34 @@
+{
+  "name": "@rackbops/plugin-tracker",
+  "version": "0.1.0",
+  "description": "The task tracker for Rackbops Clerk: docket's SQLite store, the notify lane on the host tick, people and admins, and /healthz",
+  "type": "module",
+  "main": "dist/plugin.js",
+  "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rackbops/rackbops-bot-plugins.git",
+    "directory": "plugins/tracker"
+  },
+  "dependencies": {
+    "@rackbops/docket-core": "^0.3.0",
+    "@rackbops/docket-types": "^0.3.0"
+  },
+  "peerDependencies": {
+    "discord.js": "^14.27.0"
+  },
+  "botPlugin": {
+    "hostApiVersion": 1,
+    "intents": [],
+    "commands": [],
+    "env": [
+      {
+        "key": "TRACKER_ADMIN_DISCORD_IDS",
+        "format": "^[0-9]{17,20}(,[0-9]{17,20})*$",
+        "required": false,
+        "secret": false,
+        "description": "Comma-separated Discord user ids made tracker admins at start (the first admin). Only ever grants: removing an id here does not revoke it. Unset = no admin is seeded."
+      }
+    ]
+  }
+}

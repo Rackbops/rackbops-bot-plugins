@@ -5,6 +5,9 @@
   "type": "module",
   "packageManager": "bun@1.4.2",
   "description": "Plugins for rackbops-discord-bot, published as npm bundles + a Plugin Index (plugins.json)",
+  "workspaces": [
+    "plugins/*"
+  ],
   "scripts": {
     "check": "bunx tsc --noEmit",
     "test": "bun test",

@@ -10,6 +10,45 @@
         "typescript": "^7.0.0",
       },
     },
+    "plugins/mcp": {
+      "name": "@rackbops/plugin-mcp",
+      "version": "0.3.0",
+      "peerDependencies": {
+        "discord.js": "^14.27.0",
+      },
+    },
+    "plugins/music": {
+      "name": "@rackbops/plugin-music",
+      "version": "1.5.0",
+      "peerDependencies": {
+        "discord.js": "^14.27.0",
+      },
+    },
+    "plugins/tracker": {
+      "name": "@rackbops/plugin-tracker",
+      "version": "0.1.0",
+      "dependencies": {
+        "@rackbops/docket-core": "^0.3.0",
+        "@rackbops/docket-types": "^0.3.0",
+      },
+      "peerDependencies": {
+        "discord.js": "^14.27.0",
+      },
+    },
+    "plugins/warbandeer": {
+      "name": "@rackbops/plugin-warbandeer",
+      "version": "1.3.0",
+      "peerDependencies": {
+        "discord.js": "^14.27.0",
+      },
+    },
+    "plugins/wow": {
+      "name": "@rackbops/plugin-wow",
+      "version": "1.0.1",
+      "peerDependencies": {
+        "discord.js": "^14.27.0",
+      },
+    },
   },
   "packages": {
     "@discordjs/builders": ["@discordjs/builders@1.14.1", "", { "dependencies": { "@discordjs/formatters": "^0.6.2", "@discordjs/util": "^1.2.0", "@sapphire/shapeshift": "^4.0.0", "discord-api-types": "^0.38.40", "fast-deep-equal": "^3.1.3", "ts-mixer": "^6.0.4", "tslib": "^2.6.3" } }, "sha512-gSKkhXLqs96TCzk66VZuHHl8z2bQMJFGwrXC0f33ngK+FLNau4hU1PYny3DNJfNdSH+gVMzE85/d5FQ2BpcNwQ=="],
@@ -23,6 +62,20 @@
     "@discordjs/util": ["@discordjs/util@1.2.0", "", { "dependencies": { "discord-api-types": "^0.38.33" } }, "sha512-3LKP7F2+atl9vJFhaBjn4nOaSWahZ/yWjOvA4e5pnXkt2qyXRCHLxoBQy81GFtLGCq7K9lPm9R517M1U+/90Qg=="],
 
     "@discordjs/ws": ["@discordjs/ws@1.2.3", "", { "dependencies": { "@discordjs/collection": "^2.1.0", "@discordjs/rest": "^2.5.1", "@discordjs/util": "^1.1.0", "@sapphire/async-queue": "^1.5.2", "@types/ws": "^8.5.10", "@vladfrangu/async_event_emitter": "^2.2.4", "discord-api-types": "^0.38.1", "tslib": "^2.6.2", "ws": "^8.17.0" } }, "sha512-wPlQDxEmlDg5IxhJPuxXr3Vy9AjYq5xCvFWGJyD7w7Np8ZGu+Mc+97LCoEc/+AYCo2IDpKioiH0/c/mj5ZR9Uw=="],
+
+    "@rackbops/docket-core": ["@rackbops/docket-core@0.3.0", "", {}, "sha512-yaCaVefAB5+kjB2ysVMQ3UrXgckmIP73d9Aib2GOzKmwTC3GXxhZXp3oXYTztuP41nHXlnpC+nBnEkrA+gbuug=="],
+
+    "@rackbops/docket-types": ["@rackbops/docket-types@0.3.0", "", { "dependencies": { "@rackbops/docket-core": "^0.3.0" } }, "sha512-r6DMq8CqMlm2EXkyN2IPrKfTCFS4wDtRn4j/85LumLmqaQ5Bcq71pwDppbUf3f7PBj3eEPqIkE42yi/P/wO3JA=="],
+
+    "@rackbops/plugin-mcp": ["@rackbops/plugin-mcp@workspace:plugins/mcp"],
+
+    "@rackbops/plugin-music": ["@rackbops/plugin-music@workspace:plugins/music"],
+
+    "@rackbops/plugin-tracker": ["@rackbops/plugin-tracker@workspace:plugins/tracker"],
+
+    "@rackbops/plugin-warbandeer": ["@rackbops/plugin-warbandeer@workspace:plugins/warbandeer"],
+
+    "@rackbops/plugin-wow": ["@rackbops/plugin-wow@workspace:plugins/wow"],
 
     "@sapphire/async-queue": ["@sapphire/async-queue@1.5.5", "", {}, "sha512-cvGzxbba6sav2zZkH8GPf2oGk9yYoD5qrNWdu9fRehifgnFZJMV+nuy2nON2roRO4yQQ+v7MK/Pktl/HgfsUXg=="],
 
