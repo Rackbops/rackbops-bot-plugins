@@ -1,5 +1,40 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `normalize()` now reads `&` and `+` between two words as the word "and", so setlist.fm's
+  "By-Tor & the Snow Dog" and Spotify's "By-Tor And The Snow Dog" compare equal in both titles and
+  artist names -- the studio recording is now matched at `high` instead of falling to a live cut at
+  `low` (#57).
+- `pickBestTrack` now ranks any candidate with artist agreement above every candidate with none,
+  whatever their titles score -- an exact title from an unrelated artist (e.g. Boomkat's *Rip Her to
+  Shreds*) no longer outranks the right artist's own remaster (Blondie's, partial artist match).
+  Confidence is unaffected; this changes which candidate wins, not how sure the reply is (#58).
+- A song search no longer stops at the first query that finds ANY credible match -- it keeps
+  going past a `medium` or `low` result to try the loose query too, and the more confident of the
+  two wins (ties keep the filtered query's match, which is the more precise of the two). The
+  common case, a confident first hit, still costs exactly one Spotify search; the worst case per
+  song is still bounded at two (rackbops-bot-plugins#61). The match log's `queries` field is now
+  kept whenever more than one query ran, even if the winner was `high` -- previously it was
+  dropped whenever the outcome was `high`, however many queries that took.
+- A song is now searched under every artist name it could be filed under, not only the one
+  setlist.fm gives: the performer, the lead act of a joined performer name (`Pat Benatar & Neil
+  Giraldo` -> `Pat Benatar`), the artist a strict majority of the setlist's cover credits name (a
+  tribute act's own recordings), and last -- for a credited cover -- the original artist, so the
+  performer's own recording of a song it covers is preferred when Spotify has one
+  (rackbops-bot-plugins#63, rackbops-bot-plugins#64). A later name is tried only while the best
+  match so far isn't `high`, and only replaces it when strictly more confident -- a band on
+  Spotify keeps its own recordings over a same-confidence fallback. The reply now names any added
+  song whose winning artist wasn't the one setlist.fm gave, as its last line (so it's the first
+  dropped at the 2000-character ceiling): `Matched under a different artist than setlist.fm names:
+  Heartbreaker -> Pat Benatar.` `music-match-log.json` gains `foundUnder` per song (the artist that
+  actually found it) and keeps `queries` whenever more than one query ran under any name, even a
+  `high` reached only after falling back. Worst case per song is now up to 4 names x 2 queries --
+  200 for 25 covers on a duo tribute set -- while an ordinary band matching under its own name, or
+  any song whose first query is `high`, is unchanged.
+
 ## [1.5.0] - 2026-09-28
 
 ### Added

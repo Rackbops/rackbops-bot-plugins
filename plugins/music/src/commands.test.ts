@@ -71,6 +71,7 @@ function outcome(overrides: Partial<BuildOutcome> = {}): BuildOutcome {
     attempted: 2,
     uncertain: [],
     missing: [],
+    foundElsewhere: [],
     ...overrides,
   };
 }
@@ -116,7 +117,9 @@ describe("formatBuildReply", () => {
             match: {
               track: { uri: "u", name: "Yesterday - Live", artistNames: ["The Beatles"], popularity: 1 },
               confidence: "low",
+              score: 0, // unused by formatBuildReply -- only confidence and the track matter here
             },
+            foundUnder: "The Beatles", // unused here too -- only outcome.foundElsewhere reads it
           },
         ],
       }),
@@ -135,6 +138,57 @@ describe("formatBuildReply", () => {
     const missing = Array.from({ length: 40 }, (_, i) => `A Very Long Song Title Number ${i}`);
     const reply = formatBuildReply(setlist({ artistName: "B".repeat(200), tapeCount: 5 }), outcome({ missing }));
     expect(reply.length).toBeLessThanOrEqual(2000);
+  });
+
+  test("names which songs were matched under a different artist than setlist.fm gave", () => {
+    const reply = formatBuildReply(
+      setlist(),
+      outcome({
+        foundElsewhere: [
+          {
+            song: { name: "Heartbreaker", searchArtist: "Pat Benatar & Neil Giraldo", isCover: false },
+            match: {
+              track: { uri: "u", name: "Heartbreaker", artistNames: ["Pat Benatar"], popularity: 50 },
+              confidence: "high",
+              score: 140,
+            },
+            foundUnder: "Pat Benatar",
+          },
+        ],
+      }),
+    );
+    expect(reply).toContain("Matched under a different artist than setlist.fm names: Heartbreaker -> Pat Benatar.");
+  });
+
+  test("says nothing about a different artist when every song matched under its own", () => {
+    expect(formatBuildReply(setlist(), outcome())).not.toContain("Matched under a different artist");
+  });
+
+  test("the artist-mismatch note is the first dropped at the character ceiling", () => {
+    // A long enough artist name that the tape and missing notes still fit, but there's no room
+    // left for the (last-tried) artist-mismatch note too.
+    const missing = Array.from({ length: 40 }, (_, i) => `A Very Long Song Title Number ${i}`);
+    const reply = formatBuildReply(
+      setlist({ artistName: "B".repeat(1480), tapeCount: 5 }),
+      outcome({
+        missing,
+        foundElsewhere: [
+          {
+            song: { name: "Heartbreaker", searchArtist: "Pat Benatar & Neil Giraldo", isCover: false },
+            match: {
+              track: { uri: "u", name: "Heartbreaker", artistNames: ["Pat Benatar"], popularity: 50 },
+              confidence: "high",
+              score: 140,
+            },
+            foundUnder: "Pat Benatar",
+          },
+        ],
+      }),
+    );
+    expect(reply.length).toBeLessThanOrEqual(2000);
+    expect(reply).toContain("Skipped 5 played from tape");
+    expect(reply).toContain("Couldn't find on Spotify");
+    expect(reply).not.toContain("Matched under a different artist");
   });
 
   test("a setlist with no venue still reads correctly", () => {

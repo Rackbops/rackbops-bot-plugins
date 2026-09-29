@@ -25,6 +25,17 @@ describe("normalize", () => {
   test("collapses whitespace and case", () => {
     expect(normalize("  HEY   Jude  ")).toBe("hey jude");
   });
+
+  test('treats & and + as the word "and", so setlist.fm\'s ampersand meets Spotify\'s "And"', () => {
+    expect(normalize("By-Tor & the Snow Dog")).toBe(normalize("By-Tor And The Snow Dog"));
+    expect(normalize("Rock&Roll")).toBe(normalize("Rock and Roll"));
+    expect(normalize("1+1")).toBe(normalize("1 and 1"));
+  });
+
+  test('a symbol on the edge of a title is still punctuation, not "and"', () => {
+    expect(normalize("Plus +")).toBe("plus");
+    expect(normalize("& Co")).toBe("co");
+  });
 });
 
 describe("scoreCandidate", () => {
@@ -152,6 +163,57 @@ describe("pickBestTrack", () => {
   test("a cover is found under the original artist, which is how flattenSetlist queries it", () => {
     const cover = { name: "Twist and Shout", artist: "The Top Notes" };
     const best = pickBestTrack(cover, [track("Twist and Shout", ["The Top Notes"])]);
+    expect(best!.confidence).toBe("high");
+  });
+
+  // #57: names and artists straight from a real logged run (rackbops-bot-plugins#43, the Rush
+  // setlist) -- setlist.fm credited the cover "By-Tor & the Snow Dog", Spotify's studio track is
+  // "By-Tor And The Snow Dog", and before this fix the studio cut scored 0 (title mismatch) while a
+  // 1980 live recording won at "low".
+  test("picks the studio By-Tor And The Snow Dog at high over the live cut, from the logged page", () => {
+    const song = { name: "By-Tor & the Snow Dog", artist: "Rush" };
+    const best = pickBestTrack(song, [
+      track("By-Tor And The Snow Dog", ["Rush"]),
+      track("By-Tor & The Snow Dog - Live in London - Permanent Waves 1980 Tour", ["Rush"]),
+    ]);
+    expect(best!.track.name).toBe("By-Tor And The Snow Dog");
+    expect(best!.confidence).toBe("high");
+  });
+
+  // An ampersand flanked by real characters on both sides (not at the edge of the title, unlike
+  // "Plus +" or "& Co" above) still has to compare equal to the same title spelled out with "And"
+  // -- using the SAME literal string on both sides here would pass trivially however "&" is
+  // handled, since normalize(x) always equals normalize(x); the candidate is deliberately spelled
+  // differently so this genuinely exercises the "&"-to-"and" conversion.
+  test("an ampersand flanked by real characters on both sides still matches a differently-spelled equivalent", () => {
+    const song = { name: "I Don't Like People (& They Don't Like Me)", artist: "Boston Manor" };
+    const best = pickBestTrack(song, [
+      track("I Don't Like People (And They Don't Like Me)", ["Boston Manor"]),
+    ]);
+    expect(best!.confidence).toBe("high");
+  });
+
+  // #58: names and artists straight from a real logged run (rackbops-bot-plugins#43) -- Boomkat's
+  // exact title (100, no artist agreement) used to outrank Blondie's own remaster (72 + 22 = 94,
+  // partial artist agreement), so an unrelated band's exact title won over the right artist's
+  // recording. Artist agreement is now a tier above title score, so the remaster wins even though
+  // its raw score is lower.
+  test("the right artist's remaster outranks an exact title by an unrelated artist, from the logged page", () => {
+    const song = { name: "Rip Her to Shreds", artist: "Totally Blondie" };
+    const best = pickBestTrack(song, [
+      track("Rip Her To Shreds - Remastered 2001", ["Blondie", "Craig Leon"]),
+      track("Rip Her to Shreds", ["Boomkat"]),
+    ]);
+    expect(best!.track.name).toBe("Rip Her To Shreds - Remastered 2001");
+    expect(best!.confidence).toBe("medium");
+  });
+
+  test("within a tier the score still decides", () => {
+    const best = pickBestTrack(song, [
+      track("Yesterday - Remastered 2015", ["The Beatles"]),
+      track("Yesterday", ["The Beatles"]),
+    ]);
+    expect(best!.track.name).toBe("Yesterday");
     expect(best!.confidence).toBe("high");
   });
 });

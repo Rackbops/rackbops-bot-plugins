@@ -32,12 +32,16 @@ export type MatchConfidence = "high" | "medium" | "low";
 export interface Match {
   track: TrackCandidate;
   confidence: MatchConfidence;
+  /** The winning candidate's `scoreCandidate` -- carried over so a caller comparing two matches
+   *  (across queries) never has to re-score. */
+  score: number;
 }
 
 /**
  * Lowercase, strip accents, drop punctuation, collapse whitespace. Deliberately aggressive: the
  * difference between "Dont Stop Me Now" (setlist.fm, typed by a human at a gig) and "Don't Stop Me
- * Now" (Spotify) must not cost a match, and neither must "Mötley" vs "Motley".
+ * Now" (Spotify) must not cost a match, and neither must "Mötley" vs "Motley", nor "By-Tor & the
+ * Snow Dog" (setlist.fm) vs "By-Tor And The Snow Dog" (Spotify).
  */
 export function normalize(value: string): string {
   return value
@@ -49,6 +53,10 @@ export function normalize(value: string): string {
     // "don t" and lose the match against Spotify's own spelling. Covers the typographic apostrophe
     // too, which is what a copy-paste from a web page actually carries.
     .replace(/['\u2018\u2019\u02bc`]/g, "")
+    // "&" and "+" between two words read as "and": setlist.fm has "By-Tor & the Snow Dog", Spotify
+    // "By-Tor And The Snow Dog", and turning the symbol into a space made them different titles.
+    // Only between non-space characters, so a symbol on its own edge is still just punctuation.
+    .replace(/(?<=\S)\s*[&+]\s*(?=\S)/g, " and ")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 }
@@ -149,12 +157,24 @@ export function scoreCandidate(song: SongQuery, candidate: TrackCandidate): numb
  * `high` means the title matched exactly AND the artist matched exactly -- the caller can add it
  * without comment. Anything softer is surfaced to the user as "check these", because a wrong track
  * silently added to a playlist is worse than a named uncertainty.
+ *
+ * Ranking is by TIER first, score second: any candidate with artist agreement (`artist > 0`)
+ * outranks every candidate with none, whatever the titles score. An exact title alone scores 100,
+ * comfortably ahead of a 94 for the right artist's remaster (72 title + 22 partial artist) -- so
+ * ranking by score alone would hand the win to an unrelated artist's exact title over the right
+ * artist's own recording. A tier changes which candidate wins and nothing else: `scoreCandidate`'s
+ * numbers, the match log, and the `score >= 90` floor for `medium` are all unaffected.
  */
 export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandidate[]): Match | undefined {
-  let best: { track: TrackCandidate; score: number } | undefined;
+  let best: { track: TrackCandidate; score: number; tier: number } | undefined;
   for (const candidate of candidates) {
-    const score = scoreCandidate(song, candidate);
-    if (score > 0 && (best === undefined || score > best.score)) best = { track: candidate, score };
+    const breakdown = explainCandidate(song, candidate);
+    if (breakdown.score <= 0) continue;
+    const tier = breakdown.artist > 0 ? 1 : 0;
+    // Strictly greater on both counts, so the first candidate on a full tie (page order) is kept.
+    if (best === undefined || tier > best.tier || (tier === best.tier && breakdown.score > best.score)) {
+      best = { track: candidate, score: breakdown.score, tier };
+    }
   }
   if (best === undefined) return undefined;
 
@@ -171,11 +191,12 @@ export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandida
   if (exactTitle && exactArtist) confidence = "high";
   else if (someArtistOverlap && best.score >= 90) confidence = "medium";
   else confidence = "low";
-  return { track: best.track, confidence };
+  return { track: best.track, confidence, score: best.score };
 }
 
 /**
- * The ordered search queries to try for one song, stopping at the first that yields a match.
+ * The ordered search queries to try for one song. `findSong` (build.ts) stops early once one of
+ * them is confident (#61) -- it no longer stops at merely the first that yields any match.
  *
  * The field-filtered query is precise but brittle -- Spotify's `track:"..."` filter matches poorly
  * when the title carries punctuation the indexer normalised differently -- so a loose query is
