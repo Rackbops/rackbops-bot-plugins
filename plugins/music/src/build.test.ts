@@ -328,11 +328,26 @@ describe("buildPlaylist traces", () => {
       uri: karaoke.uri,
       title: 72,
       artist: 0,
-      tieBreak: 0.5,
+      // No other candidate on the page shares "Karaoke Crew" as its primary artist (#59).
+      tieBreak: 0,
       penalty: 100,
       score: 0,
     });
     expect(two.queries![1]!.candidates.map((c) => c.name)).toEqual(["Nothing Relevant"]);
+  });
+
+  // #59: tieBreak counts OTHER candidates on the same page that share this one's primary artist and
+  // still title-match, /100 -- not popularity, which a real search never sends.
+  test("a candidate's trace records tieBreak as its count of same-primary-artist editions on the page", async () => {
+    const { client } = fakeSpotify({ One: [candidate("One"), candidate("One - Remastered")] });
+    const result = await buildPlaylist(client, "AT", setlist({ songs: [song("One", "Totally Band")] }));
+    expect(result.ok).toBe(true);
+    const one = result.songs[0]!;
+    // Partial artist agreement ("Totally Band" contains "Band") keeps this below "high" confidence,
+    // so the candidate list survives in the trace.
+    expect(one.outcome).toBe("medium");
+    const trace = one.queries![0]!.candidates.find((c) => c.name === "One")!;
+    expect(trace.tieBreak).toBe(0.01);
   });
 
   // Renamed for #61: `queries` used to be omitted whenever the outcome was "high", however many
@@ -368,8 +383,8 @@ describe("buildPlaylist traces", () => {
     expect(one.hitQuery).toBe(0);
     expect(one.picked?.artists).toEqual(["Someone Else"]);
     expect(one.queries).toHaveLength(2);
-    expect(one.queries![0]!.candidates[0]).toMatchObject({ name: "One", title: 100, artist: 0, penalty: 0, score: 100.5 });
-    expect(one.queries![1]!.candidates[0]).toMatchObject({ name: "One", title: 100, artist: 0, penalty: 0, score: 100.5 });
+    expect(one.queries![0]!.candidates[0]).toMatchObject({ name: "One", title: 100, artist: 0, penalty: 0, score: 100 });
+    expect(one.queries![1]!.candidates[0]).toMatchObject({ name: "One", title: 100, artist: 0, penalty: 0, score: 100 });
   });
 
   test("a medium match keeps its candidate lists too", async () => {
@@ -381,13 +396,15 @@ describe("buildPlaylist traces", () => {
     // Not high, so #61's loose query runs too; same tie as above, the earlier query wins.
     expect(one.hitQuery).toBe(0);
     expect(one.queries).toHaveLength(2);
-    expect(one.queries![0]!.candidates[0]).toMatchObject({ name: "One", title: 100, artist: 22, score: 122.5 });
+    expect(one.queries![0]!.candidates[0]).toMatchObject({ name: "One", title: 100, artist: 22, score: 122 });
   });
 
   test("candidates are recorded in Spotify's order, not the order they scored in", async () => {
-    // The better candidate comes SECOND, so a log that sorted by score would put it first.
+    // The better candidate comes SECOND, so a log that sorted by score would put it first. Two
+    // DIFFERENT single-edition artists, so #59's tieBreak (same-primary-artist siblings) stays 0
+    // for both and doesn't distract from what this test is actually about.
     const live = candidate("Hey Jude - Live", "Someone Else");
-    const studio = candidate("Hey Jude", "Someone Else");
+    const studio = candidate("Hey Jude", "A Different Artist");
     const { client } = fakeSpotify({}, { searchTracks: async () => ({ ok: true, value: [live, studio] }) });
     const result = await buildPlaylist(client, "AT", setlist({ songs: [song("Hey Jude")] }));
     const hey = result.songs[0]!;
@@ -395,7 +412,7 @@ describe("buildPlaylist traces", () => {
     expect(hey.picked?.name).toBe("Hey Jude");
     const listed = hey.queries![0]!.candidates;
     expect(listed.map((c) => c.name)).toEqual(["Hey Jude - Live", "Hey Jude"]);
-    expect(listed.map((c) => c.score)).toEqual([47.5, 100.5]);
+    expect(listed.map((c) => c.score)).toEqual([47, 100]);
   });
 
   test("a cover is traced under the original artist it was searched for", async () => {

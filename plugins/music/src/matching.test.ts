@@ -70,11 +70,10 @@ describe("scoreCandidate", () => {
     expect(scoreCandidate(liveSong, track("Live and Let Die", ["Wings"]))).toBeGreaterThan(130);
   });
 
-  test("popularity only separates otherwise-equal candidates", () => {
+  test("popularity no longer breaks ties -- Spotify search never sends it", () => {
     const popular = scoreCandidate(song, track("Hey Jude", ["The Beatles"], 90));
     const obscure = scoreCandidate(song, track("Hey Jude", ["The Beatles"], 10));
-    expect(popular).toBeGreaterThan(obscure);
-    expect(popular - obscure).toBeLessThan(1);
+    expect(popular).toBe(obscure);
   });
 });
 
@@ -84,27 +83,27 @@ describe("explainCandidate", () => {
   test("parts reproduce scoreCandidate for an exact match", () => {
     const candidate = track("Hey Jude", ["The Beatles"]);
     const breakdown = explainCandidate(song, candidate);
-    expect(breakdown).toEqual({ title: 100, artist: 40, tieBreak: 0.5, penalty: 0, score: 140.5 });
+    expect(breakdown).toEqual({ title: 100, artist: 40, tieBreak: 0, penalty: 0, score: 140 });
     expect(breakdown.score).toBe(scoreCandidate(song, candidate));
     // scoreCandidate delegates to explainCandidate, so the line above cannot fail on its own; this
     // literal is the number the scorer returned before the log existed.
-    expect(scoreCandidate(song, candidate)).toBe(140.5);
+    expect(scoreCandidate(song, candidate)).toBe(140);
   });
 
   test("parts reproduce scoreCandidate for a remaster-suffixed title", () => {
     const candidate = track("Hey Jude - Remastered 2015", ["The Beatles"]);
     const breakdown = explainCandidate(song, candidate);
-    expect(breakdown).toEqual({ title: 72, artist: 40, tieBreak: 0.5, penalty: 0, score: 112.5 });
+    expect(breakdown).toEqual({ title: 72, artist: 40, tieBreak: 0, penalty: 0, score: 112 });
     expect(breakdown.score).toBe(scoreCandidate(song, candidate));
-    expect(scoreCandidate(song, candidate)).toBe(112.5);
+    expect(scoreCandidate(song, candidate)).toBe(112);
   });
 
   test("parts reproduce scoreCandidate for a live-penalised title", () => {
     const candidate = track("Hey Jude - Live at Wembley", ["The Beatles"]);
     const breakdown = explainCandidate(song, candidate);
-    expect(breakdown).toEqual({ title: 72, artist: 40, tieBreak: 0.5, penalty: 25, score: 87.5 });
+    expect(breakdown).toEqual({ title: 72, artist: 40, tieBreak: 0, penalty: 25, score: 87 });
     expect(breakdown.score).toBe(scoreCandidate(song, candidate));
-    expect(scoreCandidate(song, candidate)).toBe(87.5);
+    expect(scoreCandidate(song, candidate)).toBe(87);
   });
 
   test("a title miss is all zeros", () => {
@@ -117,8 +116,31 @@ describe("explainCandidate", () => {
   test("a penalty larger than the rest clamps the total at 0 and keeps the parts", () => {
     const candidate = track("Hey Jude (Karaoke Version)", ["Karaoke Crew"]);
     const breakdown = explainCandidate(song, candidate);
-    expect(breakdown).toEqual({ title: 72, artist: 0, tieBreak: 0.5, penalty: 100, score: 0 });
+    expect(breakdown).toEqual({ title: 72, artist: 0, tieBreak: 0, penalty: 100, score: 0 });
     expect(scoreCandidate(song, candidate)).toBe(0);
+  });
+
+  // #59: tieBreak now counts OTHER same-primary-artist, title-matching candidates on the page,
+  // divided by 100 -- not popularity, which Spotify search never actually sends.
+  test("tieBreak counts other editions of the same primary artist on the page", () => {
+    const remaster = track("Hey Jude - Remastered 2015", ["The Beatles"]);
+    const page = [track("Hey Jude", ["The Beatles"]), remaster, track("Hey Jude", ["Wilson Pickett"])];
+    const breakdown = explainCandidate(song, remaster, page);
+    // Only "Hey Jude" (The Beatles) is another candidate with the same primary artist AND a
+    // title-matching name; Wilson Pickett's does not share the primary artist.
+    expect(breakdown.tieBreak).toBe(0.01);
+  });
+
+  test("tieBreak does not count a same-artist candidate whose title doesn't match at all", () => {
+    const candidate = track("Hey Jude", ["The Beatles"]);
+    const page = [candidate, track("Let It Be", ["The Beatles"])];
+    expect(explainCandidate(song, candidate, page).tieBreak).toBe(0);
+  });
+
+  test("tieBreak excludes the candidate itself even when an identical duplicate is elsewhere on the page", () => {
+    const candidate = track("Hey Jude", ["The Beatles"]);
+    const page = [candidate];
+    expect(explainCandidate(song, candidate, page).tieBreak).toBe(0);
   });
 });
 
@@ -215,6 +237,30 @@ describe("pickBestTrack", () => {
     ]);
     expect(best!.track.name).toBe("Yesterday");
     expect(best!.confidence).toBe("high");
+  });
+
+  // #59: modelled on the corpus's *All Fired Up* -- four exact-titled covers tied on title score,
+  // no artist agreement because the search used the original's own credit. The artist whose
+  // recording exists in more than one edition on the page (Pat Benatar's remaster alongside her
+  // original) is the catalogue artist, and now wins the tie even though it is listed second.
+  test("a tie goes to the artist with more editions on the page, even when it comes second", () => {
+    const song = { name: "All Fired Up", artist: "Rattling Sabres" };
+    const best = pickBestTrack(song, [
+      track("All Fired Up", ["Fastway"]),
+      track("All Fired Up", ["Pat Benatar"]),
+      track("All Fired Up - Remastered", ["Pat Benatar"]),
+    ]);
+    expect(best!.track.artistNames).toEqual(["Pat Benatar"]);
+    expect(best!.track.name).toBe("All Fired Up");
+  });
+
+  test("page order still decides a genuine tie", () => {
+    const song = { name: "Genuine Tie", artist: "Nobody Related" };
+    const best = pickBestTrack(song, [
+      track("Genuine Tie", ["Artist One"]),
+      track("Genuine Tie", ["Artist Two"]),
+    ]);
+    expect(best!.track.artistNames).toEqual(["Artist One"]);
   });
 });
 
