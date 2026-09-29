@@ -127,5 +127,8 @@ afterAll(() => {
   // moved this time.
   // #66: a suite part's title now matches a recording that names the part, so all three 2112 parts
   // move from missing to medium picks -- 14/3/10 -> 17/3/7, no other entry moved.
-  expect(tally).toEqual({ right: 17, wrong: 3, missing: 7 });
+  // #67: a one-character typo in setlist.fm's title text can now match at low, so Detroit 422
+  // moves from missing to a right pick (Blondie's own "Detroit 442 - Remastered") -- 17/3/7 ->
+  // 18/3/6, no other entry moved.
+  expect(tally).toEqual({ right: 18, wrong: 3, missing: 6 });
 });

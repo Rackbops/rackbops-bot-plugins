@@ -6,6 +6,7 @@ import {
   parseSuitePart,
   pickBestTrack,
   scoreCandidate,
+  withinOneEdit,
   type TrackCandidate,
 } from "./matching.js";
 
@@ -61,6 +62,31 @@ describe("parseSuitePart", () => {
 
   test("an ordinary title is not a suite part", () => {
     expect(parseSuitePart(normalize("Tom Sawyer"))).toBeUndefined();
+  });
+});
+
+describe("withinOneEdit", () => {
+  test("a single substitution is one edit", () => {
+    expect(withinOneEdit("detroit 422", "detroit 442")).toBe(true);
+  });
+
+  test("a single insertion is one edit", () => {
+    expect(withinOneEdit("cat", "cats")).toBe(true);
+    expect(withinOneEdit("cat", "cast")).toBe(true);
+  });
+
+  test("a single deletion is one edit", () => {
+    expect(withinOneEdit("cats", "cat")).toBe(true);
+  });
+
+  test("two edits is not one edit", () => {
+    expect(withinOneEdit("cat", "hats")).toBe(false);
+    expect(withinOneEdit("maria", "mario")).toBe(true); // sanity: this one IS one edit
+    expect(withinOneEdit("maria", "marco")).toBe(false); // two substitutions
+  });
+
+  test("equal strings are zero edits, which counts", () => {
+    expect(withinOneEdit("detroit 422", "detroit 422")).toBe(true);
   });
 });
 
@@ -410,6 +436,37 @@ describe("pickBestTrack", () => {
     ]);
     expect(best!.track.name).toBe("2112 Part I: Overture - Single Edit");
     expect(best!.confidence).toBe("medium");
+  });
+
+  // #67: setlist.fm typed "Detroit 422"; Blondie's song is "Detroit 442" -- names and candidates
+  // straight from the real logged run (rackbops-bot-plugins#43).
+  test("a one-edit title with an agreeing artist matches at low", () => {
+    const song = { name: "Detroit 422", artist: "Totally Blondie" };
+    const best = pickBestTrack(song, [track("Detroit 442 - Remastered", ["Blondie"])]);
+    expect(best!.track.name).toBe("Detroit 442 - Remastered");
+    expect(best!.confidence).toBe("low");
+  });
+
+  test("with an unrelated artist a one-edit title does not match", () => {
+    const song = { name: "Detroit 422", artist: "Someone Else" };
+    const best = pickBestTrack(song, [track("Detroit 442 - Remastered", ["Blondie"])]);
+    expect(best).toBeUndefined();
+  });
+
+  test("a title under 8 characters never gets the one-edit fallback", () => {
+    const song = { name: "Maria", artist: "Blondie" };
+    const best = pickBestTrack(song, [track("Mario", ["Blondie"])]);
+    expect(best).toBeUndefined();
+  });
+
+  test("a live one-edit cut still pays the live penalty, ranking below the plain one", () => {
+    const song = { name: "Detroit 422", artist: "Totally Blondie" };
+    const best = pickBestTrack(song, [
+      track("Detroit 442 - Live At The Walnut Theatre, Philadelphia, 1978 / Remastered", ["Blondie"]),
+      track("Detroit 442 - Remastered", ["Blondie"]),
+    ]);
+    expect(best!.track.name).toBe("Detroit 442 - Remastered");
+    expect(best!.confidence).toBe("low");
   });
 });
 

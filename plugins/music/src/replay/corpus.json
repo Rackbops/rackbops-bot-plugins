@@ -2233,7 +2233,10 @@
       "spotify:track:169bqVVPKnu2TInM4qNCjG",
       "spotify:track:2KmxA8W8jzGNZT8wPGNyQ8"
     ],
-    "baseline": "missing"
+    "baseline": {
+      "uri": "spotify:track:169bqVVPKnu2TInM4qNCjG",
+      "confidence": "low"
+    }
   },
   {
     "name": "Picture This",

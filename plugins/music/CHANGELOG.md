@@ -64,6 +64,15 @@
   `N suite part(s) share a recording already added.`, so the added/attempted counts stay honest. A
   genuine repeat of the same part (an encore reprise) still adds twice, exactly like any other
   repeated song (#66).
+- A candidate whose title scores 0 by every other rule may now still match when it's a single
+  character away (one substitution, insertion or deletion) from the song's own title -- or from
+  such a title followed by a space -- AND the artist agrees: setlist.fm's own typo, *Detroit 422*
+  for Blondie's *Detroit 442*, used to go missing entirely. Scored 30, under the `medium` floor
+  even with an exact artist, so a typo match is always `low` and the reply always asks the
+  listener to check it. Only applies to a song title of 8 characters or more, so a one-edit
+  collision on a short title (`Maria`/`Mario`) is never treated as the same song, and only when
+  the artist agrees at all -- a one-edit title from an unrelated artist is a different song, not a
+  typo (#67).
 
 ## [1.5.0] - 2026-09-28
 
