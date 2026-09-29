@@ -52,7 +52,7 @@ describe("SqliteStore beyond the contract", () => {
     })();
     const old = await new SqliteStore(db).createUser({ discordId: "111111111111111111", at: "2026-09-29T12:00:00.000Z" });
     migrate(db);
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
     const admissions = new Admissions(db);
     expect(admissions.get(old.id)).toEqual({ userId: old.id, admittedBy: null, admittedAt: "2026-09-29T12:00:00.000Z", registeredAt: null });
     admissions.markRegistered(old.id, "2026-10-01T12:00:00.000Z");

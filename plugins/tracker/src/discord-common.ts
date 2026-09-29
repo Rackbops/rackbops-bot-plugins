@@ -25,7 +25,7 @@ const UNKNOWN_USER = 10013;
 export interface Interactionish {
   guildId: string | null;
   user: { id: string };
-  client: { guilds: { fetch(id: string): Promise<{ members: { fetch(o: { user: string }): Promise<unknown> } }> } };
+  client: { guilds: { fetch(id: string): Promise<{ members: { fetch(o: { user: string; force?: boolean }): Promise<unknown> } }> } };
 }
 
 /**
@@ -33,13 +33,18 @@ export interface Interactionish {
  * (the host API has no member lookup; plan 5.5). A single-member fetch is a REST call and needs no
  * privileged intent. Discord's "unknown member" or "unknown user" is a no; anything else (the bot
  * left the server, an outage) is `unknown`, which refuses.
+ *
+ * Always `force: true`: without it discord.js answers from its member cache and sends nothing, and
+ * with only the Guilds intent the bot never hears that a member left, so a cached member would stay
+ * a member forever. The in-server path above needs no lookup, so the REST call is only for a DM,
+ * another person, or the web area.
  */
 export async function lookupMembership(interaction: Interactionish, guildId: string | null, discordId: string, log: PluginLog): Promise<Membership> {
   if (guildId === null) return "not-checked";
   if (interaction.guildId === guildId && interaction.user.id === discordId) return "member";
   try {
     const guild = await interaction.client.guilds.fetch(guildId);
-    await guild.members.fetch({ user: discordId });
+    await guild.members.fetch({ user: discordId, force: true });
     return "member";
   } catch (err) {
     const code = (err as { code?: unknown }).code;

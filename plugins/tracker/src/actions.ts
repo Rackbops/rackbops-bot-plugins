@@ -17,6 +17,8 @@ import {
   type Notifier,
   type Schedule,
   type Store,
+  type Task,
+  type TaskListEntry,
   type TaskType,
   type User,
 } from "@rackbops/docket-core";
@@ -25,6 +27,8 @@ import { decideAccess, type Membership, type Need } from "./access.js";
 import type { Admissions } from "./admissions.js";
 import { type DeliveryHealth, PAUSE_AFTER, resumedNotice } from "./delivery-health.js";
 import { admit, PeopleError, setPreferences } from "./people.js";
+import type { Sessions } from "./web/sessions.js";
+import type { LoginLinks } from "./web/signin-link.js";
 
 /**
  * What each slash command does (plan 5.5, 5.8, E2), with no discord.js in sight: discord.ts reads
@@ -42,6 +46,9 @@ export interface TrackerDeps {
   log: PluginLog;
   /** Sends one DM through the tracker's Notifier (claims, buttons, the failure count). */
   notifier: Notifier;
+  /** The web area's one-time sign-in links and its sessions (web/). */
+  logins: LoginLinks;
+  sessions: Sessions;
 }
 
 /** Discord's cap on a message; every answer is cut to it. */
@@ -121,6 +128,23 @@ export async function registerPerson(
   const zoneChanged = updated.timeZone !== user.timeZone;
   if (zoneChanged || updated.preferredHour !== user.preferredHour) await rescheduleOwned(d, updated, zoneChanged);
   return registeredText(updated, first);
+}
+
+/**
+ * The web area's settings form (plan 5.10): the preferred hour and the zone together, validated as
+ * `/register` validates them, with the same rescheduling. Returns null when saved, else the reason.
+ */
+export async function saveSettings(d: TrackerDeps, user: User, input: { hour: number; zone: string }): Promise<string | null> {
+  let updated: User;
+  try {
+    updated = await setPreferences(d.store, user.id, { preferredHour: input.hour, timeZone: input.zone });
+  } catch (err) {
+    if (err instanceof PeopleError) return err.message;
+    throw err;
+  }
+  const zoneChanged = updated.timeZone !== user.timeZone;
+  if (zoneChanged || updated.preferredHour !== user.preferredHour) await rescheduleOwned(d, updated, zoneChanged);
+  return null;
 }
 
 /** `/settings hour` (plan 1.1, 5.13): the hour a reminder without a time of day arrives. */
@@ -211,19 +235,31 @@ export async function remind(d: TrackerDeps, user: User, input: { text: string; 
   return clip(`Reminder \`${task.id}\` set: ${text}\nNext: ${at}${cadence}.`);
 }
 
+/** A paused task of the person's, and who could not be DMed (empty when paused for another reason). */
+export interface PausedTask {
+  task: Task;
+  held: string[];
+}
+
+/** What `/tasks` and the web area's "my tasks" show: the active list (docket's), then the paused ones. */
+export async function loadTaskList(d: Pick<TrackerDeps, "store" | "health">, user: User): Promise<{ entries: TaskListEntry[]; paused: PausedTask[] }> {
+  const entries = await taskList(d.store, { userId: user.id, admin: user.admin });
+  const paused: PausedTask[] = [];
+  for (const task of await d.store.listTasks({ ownerId: user.id, status: "paused" })) {
+    const held = [];
+    for (const id of d.health.pausesFor(task.id).filter((u) => u !== user.id)) held.push((await d.store.getUser(id))?.displayName ?? id);
+    paused.push({ task, held });
+  }
+  return { entries, paused };
+}
+
 /** `/tasks`: the person's own active tasks and the ones they receive, plus their paused ones. */
 export async function listTasks(d: TrackerDeps, user: User): Promise<string> {
-  const now = d.clock.now();
-  const lines = [formatTaskList(await taskList(d.store, { userId: user.id, admin: user.admin }), user, now)];
-  for (const task of await d.store.listTasks({ ownerId: user.id, status: "paused" })) {
-    const held = d.health.pausesFor(task.id).filter((u) => u !== user.id);
-    if (held.length === 0) {
-      lines.push(`Paused: \`${task.id}\` ${task.title}`);
-      continue;
-    }
-    const who = [];
-    for (const id of held) who.push((await d.store.getUser(id))?.displayName ?? id);
-    lines.push(`Paused: \`${task.id}\` ${task.title} -- I could not DM ${who.join(", ")}; \`/task resume ${task.id}\` goes on without them.`);
+  const { entries, paused } = await loadTaskList(d, user);
+  const lines = [formatTaskList(entries, user, d.clock.now())];
+  for (const { task, held } of paused) {
+    if (held.length === 0) lines.push(`Paused: \`${task.id}\` ${task.title}`);
+    else lines.push(`Paused: \`${task.id}\` ${task.title} -- I could not DM ${held.join(", ")}; \`/task resume ${task.id}\` goes on without them.`);
   }
   return clip(lines.join("\n"));
 }

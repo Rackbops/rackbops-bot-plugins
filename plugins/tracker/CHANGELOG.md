@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.3.0] - 2026-09-29
+
+### Added
+
+- The web area's first slice (rackbops-bot-plugins#80, plan 5.10), served under `/tracker/` on
+  the bot's HTTP through the instance's tunnel: my tasks (the same list as `/tasks`, each linking to
+  its history), a task's history (the same data and the same rule as `/task history`: the owner, an
+  accepted recipient or an admin; anyone else gets the same 404 as an unknown id), and settings
+  (preferred hour and time zone, checked as `/register` checks them, recurring reminders moved
+  with them). Server-rendered HTML, forms only, no script, styled with `@rackbops/styles`'
+  rackbops-noir theme bundled into the plugin and served at a hashed path.
+- `/web`: an ephemeral one-time sign-in link, through the usual gates, good for 10 minutes and one
+  use. Opening the link never uses it up (a link preview cannot burn it); its page's Sign in button
+  does, then sets a 7-day session cookie (`HttpOnly; Secure; SameSite=Lax; Path=/tracker/`) and
+  redirects so the token leaves the address bar. Only SHA-256 hashes of link tokens and session
+  ids are stored. Every request re-checks that the person is still on the tracker and registered,
+  and signs them out everywhere when not. Every form post carries a per-session CSRF token, and a
+  post whose `Origin` is not `TRACKER_WEB_URL` (or is `null`) is refused; the sign-in post carries
+  its own double-submit token, so another site cannot sign a person in as someone else. Pages send
+  `Referrer-Policy: same-origin` (under `no-referrer` a browser sends a form's `Origin` as `null`).
+- With `TRACKER_GUILD_ID` set, the web area re-checks membership: a session last confirmed 15
+  minutes ago or more is checked with one member lookup (at most about 3 seconds), through the
+  discord.js Client of an interaction the plugin has handled since start. Someone who left the
+  server is signed out of every session; a lookup that fails, or no interaction yet, is allowed
+  while the last confirmation is under 24 hours old, and signs them out after that. Concurrent
+  requests share one lookup per person, and a person whose lookup failed is not looked up again
+  for a minute.
+- The README says to keep the web origin on a domain whose sibling subdomains are all yours: a
+  sibling can set a `__Secure-` cookie on the parent domain, and `__Host-` cannot be used with
+  `Path=/tracker/`.
+- The new optional `TRACKER_WEB_URL` (not secret): the https origin the bot is reached at, e.g.
+  `https://clerk.example.com`. Links and the allowed `Origin` come from it, never from the
+  request's `Host` header. Unset = no web area: `/web` says so and the pages answer 404; a value
+  that is not a bare https origin refuses to load.
+- Schema 3: `web_login_tokens` and `web_sessions`. A 0.2.0 database migrates in place on first
+  start. **Rolling back** to 0.2.0 afterwards does not work (0.2.0 refuses a newer database); keep
+  a copy of `tracker.sqlite` from before the upgrade to roll back.
+
+### Fixed
+
+- The membership gate (`TRACKER_GUILD_ID`) asked discord.js's member cache rather than Discord:
+  the member lookup now passes `force: true`. With only the Guilds intent the bot never hears that
+  a member left, so someone who had once used the tracker in the server stayed a member forever
+  when they used it from DMs (0.2.0's gate) -- and would have on the web.
+
 ## [0.2.0] - 2026-09-29
 
 ### Added
