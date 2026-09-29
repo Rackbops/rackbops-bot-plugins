@@ -19,17 +19,18 @@
     },
     "plugins/music": {
       "name": "@rackbops/plugin-music",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "peerDependencies": {
         "discord.js": "^14.27.0",
       },
     },
     "plugins/tracker": {
       "name": "@rackbops/plugin-tracker",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
         "@rackbops/docket-core": "^0.3.0",
         "@rackbops/docket-types": "^0.3.0",
+        "@rackbops/styles": "^0.2.42",
       },
       "peerDependencies": {
         "discord.js": "^14.27.0",
@@ -76,6 +77,8 @@
     "@rackbops/plugin-warbandeer": ["@rackbops/plugin-warbandeer@workspace:plugins/warbandeer"],
 
     "@rackbops/plugin-wow": ["@rackbops/plugin-wow@workspace:plugins/wow"],
+
+    "@rackbops/styles": ["@rackbops/styles@0.2.42", "", {}, "sha512-tlQtBVDTQH1F/jakAhorfMCWIhRt/oQPr5yUbd41NFK/AIOCHwiZQsoKUW5AYYOcHibuEC4lmZYzQNDHtmTUWw=="],
 
     "@sapphire/async-queue": ["@sapphire/async-queue@1.5.5", "", {}, "sha512-cvGzxbba6sav2zZkH8GPf2oGk9yYoD5qrNWdu9fRehifgnFZJMV+nuy2nON2roRO4yQQ+v7MK/Pktl/HgfsUXg=="],
 

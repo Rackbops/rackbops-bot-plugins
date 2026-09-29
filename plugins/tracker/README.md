@@ -2,9 +2,10 @@
 
 The task tracker for Rackbops Clerk: the host of [`Rackbops/docket`](https://github.com/Rackbops/docket)
 on a rackbops-discord-bot instance. Plan of record: Rackbops/Tooling
-`research/city-hall-task-tracker.md` (sections 0, 5.1-5.3, 5.5, 5.8). This version is the core
-(rackbops-bot-plugins#78) and the Discord surface of the first slice (#79): reminders by slash
-command, delivered by DM, answered by button, with history.
+`research/city-hall-task-tracker.md` (sections 0, 5.1-5.3, 5.5, 5.8, 5.10). This version is the core
+(rackbops-bot-plugins#78), the Discord surface of the first slice (#79) -- reminders by slash
+command, delivered by DM, answered by button, with history -- and the first slice of the web area
+(#80): sign-in by one-time link, my tasks, a task's history, and settings.
 
 ## Commands
 
@@ -22,6 +23,7 @@ as in a server (plan 5.5, item 39).
 | `/task share task user` | the task's owner | Invites an admitted, registered member who can be DMed: they get one consent DM with accept and decline. |
 | `/task resume task` | the task's owner | Resumes a task paused because a recipient could not be DMed, taking that recipient off it. |
 | `/settings hour hour` | registered | The preferred hour; recurring reminders with no time of their own move to it. |
+| `/web` | registered | A one-time link to sign in to the web area (below), good for 10 minutes and one use. Says so when `TRACKER_WEB_URL` is unset. |
 
 **Gates.** Every command and button checks, in order: membership of the `TRACKER_GUILD_ID`
 server (when set), admission (in the tracker's store), then what the action needs (an admin for
@@ -42,6 +44,48 @@ resumes when the recipient next uses the tracker, or `/task resume` goes on with
 paused for their own DMs is told, and resumed, the next time they use a command or button. A DM
 that goes through clears the count.
 
+## Web area
+
+Served under `/tracker/` on the bot's own HTTP (it needs `HTTP_PORT`) and reached from outside
+only through the instance's tunnel, at `TRACKER_WEB_URL`. Server-rendered HTML with forms and no
+script, styled with `@rackbops/styles`' rackbops-noir theme (bundled into `dist/plugin.js` and
+served at a hashed path, cached for a year).
+
+| Path | What |
+|---|---|
+| `/` | My tasks: the same list as `/tasks` (active tasks owned and received, next run in your zone; paused ones and why), each linking to its history. |
+| `/tasks/<id>` | A task's history: the same as `/task history`, for the owner, an accepted recipient or an admin. Anyone else gets the same 404 as an unknown id. |
+| `/settings` | Preferred hour and time zone, checked as `/register` checks them. |
+| `/signin` | Where a request that is not signed in is sent: says to run `/web`. |
+| `/login?t=...` | The link `/web` gives. |
+
+**Signing in** (plan item 41; the one-time link is the method for now, kept in
+`src/web/signin-link.ts` so another, such as Discord OAuth2, can sit beside it and feed the same
+sessions). `/web` answers, ephemerally, `<TRACKER_WEB_URL>/tracker/login?t=<token>`. Opening it
+does not use it up -- a link preview or a prefetcher would otherwise burn it -- it shows a Sign in
+button; pressing it uses the token (once, within 10 minutes), starts a session and redirects to
+`/tracker/` so the token leaves the address bar. The login pages send `Referrer-Policy:
+no-referrer` and `Cache-Control: no-store` (every page does).
+
+**Sessions and forms.** The session cookie is `__Secure-tracker-session`, `HttpOnly; Secure;
+SameSite=Lax; Path=/tracker/`, for 7 days from sign-in. The store keeps only SHA-256 hashes of
+link tokens and session ids. Every request re-reads the person: one no longer in the tracker's
+store, or no longer registered, is signed out of every session. Every state change is a POST
+carrying the session's CSRF token (compared in constant time), and a POST with an `Origin` other
+than `TRACKER_WEB_URL`'s is refused. The sign-in post has no session yet, so it carries a
+double-submit token from a `SameSite=Strict` cookie the link's page sets: another site cannot sign
+you in as someone else. Sign out is a POST too.
+
+**Headers.** `Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'none';
+form-action 'self'; frame-ancestors 'none'; base-uri 'none'`, `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`. Every value on a page is HTML-escaped. An unknown path is 404; a method
+other than GET or POST (or the wrong one of the two for a path) is 405.
+
+**Not checked on the web:** membership of `TRACKER_GUILD_ID`. The host gives a plugin no member
+lookup outside an interaction, so membership is checked when `/web` issues the link, not on each
+page; a person who leaves the server keeps a session until it expires, unless an admin takes them
+off the tracker.
+
 ## What it does
 
 | Piece | File | Notes |
@@ -53,6 +97,7 @@ that goes through clears the count.
 | People | `src/people.ts`, `src/admissions.ts` | Discord id, time zone, preferred hour, admin flag -- in the tracker's store, never usr; who admitted each person and when they registered. `TRACKER_ADMIN_DISCORD_IDS` only ever grants admin. |
 | Commands | `src/discord.ts`, `src/interactions.ts`, `src/discord-common.ts` (discord.js); `src/actions.ts`, `src/press.ts`, `src/history.ts`, `src/access.ts` | The discord.js files read options and render; the rest is Discord-free over the injected store, clock and notifier. Store writes are handled one at a time; Discord lookups and DMs run outside that queue. |
 | Health | `src/health.ts` | `GET /tracker/healthz` (through the bot's HTTP router): `200` `ok`/`starting`, `503` `inactive`/`stale`/`blocked`. |
+| Web area | `src/web/` | `app.ts` routes (pure over the injected store and clock); `pages.ts` and `html.ts` render; `signin-link.ts` and `sessions.ts` hold the sign-in; `theme.ts` the stylesheet; `command.ts` is `/web`. |
 
 ## Configuration
 
@@ -60,14 +105,17 @@ that goes through clears the count.
 |---|---|---|
 | `TRACKER_ADMIN_DISCORD_IDS` | no | Comma-separated Discord user ids (spaces around commas allowed; an empty entry, as from a trailing comma, is refused and the plugin does not load) made admin at start. Unset = none. Removing an id does not revoke it. |
 | `TRACKER_GUILD_ID` | no | The Discord server whose members may use the tracker. Checked through the interaction's client with a single-member lookup (no privileged intent). Unset = no membership gate, and a warning is logged each time the plugin activates; a malformed value refuses to load. |
+| `TRACKER_WEB_URL` | no | The https origin the bot's HTTP is reached at through its tunnel, e.g. `https://clerk.example.com` (no path). `/web` links and the allowed `Origin` come from it, never from a request's `Host`. Unset = no web area (`/web` says so, the pages answer 404); anything but a bare https origin refuses to load. |
 
-`/tracker/healthz` needs the bot's `HTTP_PORT` set; without it there is no HTTP at all.
+`/tracker/healthz` and the web area need the bot's `HTTP_PORT` set; without it there is no HTTP at all.
 
 ## Not yet
 
-- The web area (E5): editing tasks, the admin view, lifting a decline block, forget-me.
+- The rest of the web area (E5): editing tasks, the admin view, lifting a decline block, forget-me,
+  and the JSON task API. Discord OAuth2 as a second sign-in method, if chosen (plan item 41).
 - The `Fetch` port (then `price` is registered) and the city-hall Executor adapter (the execute lane).
 - An optional Discord-role gate (plan 5.5), and showing unconfirmed deliveries to admins anywhere but the log.
 
-docket-core and docket-types are `devDependencies`: `bun build` bundles them into `dist/plugin.js`,
-and the bot loads that file without installing anything.
+docket-core, docket-types and `@rackbops/styles` are `devDependencies`: `bun build` bundles them
+into `dist/plugin.js` (the theme's CSS as text), and the bot loads that file without installing
+anything.

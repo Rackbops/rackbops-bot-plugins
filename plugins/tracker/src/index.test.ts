@@ -44,10 +44,10 @@ describe("createPlugin", () => {
   it("declares exactly the commands it registers, an interactions handler, and the env keys it reads", () => {
     const plugin = createPlugin(makeFakeHost({ name: "tracker" }));
     expect(plugin.commands?.map((c) => c.name)).toEqual(pkg.botPlugin.commands);
-    expect(pkg.botPlugin.commands).toEqual(["allow", "register", "remind", "tasks", "task", "settings"]);
+    expect(pkg.botPlugin.commands).toEqual(["allow", "register", "remind", "tasks", "task", "settings", "web"]);
     expect(typeof plugin.interactions).toBe("function");
     expect(pkg.botPlugin.intents).toEqual([]);
-    expect(pkg.botPlugin.env.map((e) => e.key)).toEqual(["TRACKER_ADMIN_DISCORD_IDS", "TRACKER_GUILD_ID"]);
+    expect(pkg.botPlugin.env.map((e) => e.key)).toEqual(["TRACKER_ADMIN_DISCORD_IDS", "TRACKER_GUILD_ID", "TRACKER_WEB_URL"]);
   });
 
   it("refuses a malformed TRACKER_GUILD_ID, and accepts it unset", () => {

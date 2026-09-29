@@ -22,6 +22,7 @@ import {
   type Interactionish,
   lookupMembership,
   NO_MENTIONS,
+  type Queue,
   serial,
   STARTING,
   type SurfaceContext,
@@ -29,6 +30,7 @@ import {
 import { taskHistory } from "./history.js";
 import { createInteractionHandler } from "./interactions.js";
 import { finishShare, prepareShare, sendShare } from "./press.js";
+import { type WebLocation, webLink } from "./web/command.js";
 
 export { lookupMembership, type Interactionish, STARTING, FAILED } from "./discord-common.js";
 
@@ -49,6 +51,10 @@ export interface SurfaceWiring {
   log: PluginLog;
   /** Test seam; defaults to asking Discord through the interaction's client. */
   membership?: (interaction: Interactionish, discordId: string) => Promise<Membership>;
+  /** Where the web area is (`TRACKER_WEB_URL`); null = not set up, and `/web` says so. */
+  web: WebLocation | null;
+  /** The one queue for store writes, shared with the web area; a fresh one when absent. */
+  queue?: Queue;
 }
 
 /** What an action answers: the text, or a DM to send outside the queue and a last step back in it. */
@@ -61,7 +67,7 @@ function displayName(user: DiscordUser): string {
 export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; interactions: PluginInteractionHandler } {
   const ctx: SurfaceContext = {
     deps: w.deps,
-    queue: serial(),
+    queue: w.queue ?? serial(),
     membershipOf: (interaction, discordId) =>
       w.membership ? w.membership(interaction, discordId) : lookupMembership(interaction, w.guildId, discordId, w.log),
     log: w.log,
@@ -262,6 +268,11 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .addIntegerOption((o) => o.setName("hour").setDescription("0-23, in your time zone").setRequired(true).setMinValue(0).setMaxValue(23)),
           ),
       handle: (interaction) => run(interaction, "registered", (d, user) => setHour(d, user, interaction.options.getInteger("hour", true))),
+    },
+    {
+      name: "web",
+      build: (b: SlashCommandBuilder) => b.setDescription("Get a one-time link to sign in to the tracker's web area"),
+      handle: (interaction) => run(interaction, "registered", async (d, user) => webLink(d, user, w.web)),
     },
   ];
 
