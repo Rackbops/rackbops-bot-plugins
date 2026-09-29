@@ -76,8 +76,7 @@
     ],
     "right": [
       "spotify:track:1hM2HXmeYuEe1VTf0O1IFU",
-      "spotify:track:7M4higH64Fvcj9FakibdZ5",
-      "spotify:track:3PdvwGsfbvwIFXij7kp24n"
+      "spotify:track:7M4higH64Fvcj9FakibdZ5"
     ],
     "baseline": {
       "uri": "spotify:track:1hM2HXmeYuEe1VTf0O1IFU",
@@ -139,8 +138,7 @@
     ],
     "right": [
       "spotify:track:7fCntOTBEH6rshHhWX7hKG",
-      "spotify:track:6B1j2cfKYbhFL08WSjoyZR",
-      "spotify:track:7gnGcpHtx4bcj7FApIpb61"
+      "spotify:track:6B1j2cfKYbhFL08WSjoyZR"
     ],
     "baseline": {
       "uri": "spotify:track:7fCntOTBEH6rshHhWX7hKG",
@@ -2219,7 +2217,6 @@
     ],
     "right": [
       "spotify:track:169bqVVPKnu2TInM4qNCjG",
-      "spotify:track:3DnjYQmx5DQCQ0vkT0OnxM",
       "spotify:track:2KmxA8W8jzGNZT8wPGNyQ8"
     ],
     "baseline": "missing"

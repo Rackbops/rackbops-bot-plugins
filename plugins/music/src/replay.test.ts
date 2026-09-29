@@ -17,7 +17,9 @@ interface CorpusQuery {
   query: string;
   candidates: CorpusCandidate[];
 }
-type CorpusBaseline = { uri: string; confidence: "medium" | "low" } | "missing";
+// "high" included so a later child (#60) can move a song there without this harness's type
+// needing to change under it.
+type CorpusBaseline = { uri: string; confidence: "high" | "medium" | "low" } | "missing";
 interface CorpusSong {
   name: string;
   searchArtist: string;
@@ -102,9 +104,14 @@ describe.each(corpus.map((entry) => [entry.name, entry] as const))("replay: %s",
       tally.missing++;
       return;
     }
+    // Pinned to the exact baseline first, so a drift is caught as a broken test, not a silently
+    // shifted tally.
     expect(match?.track.uri).toBe(entry.baseline.uri);
     expect(match?.confidence).toBe(entry.baseline.confidence);
-    if (entry.right.includes(entry.baseline.uri)) tally.right++;
+    // The tally itself is evidence independent of the baseline labels: it reads the replay's own
+    // pick against `right`, not the recorded baseline, so it stays honest if a baseline and its
+    // label were ever wrong together.
+    if (entry.right.includes(match!.track.uri)) tally.right++;
     else tally.wrong++;
   });
 });
