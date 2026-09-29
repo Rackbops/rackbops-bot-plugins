@@ -80,7 +80,7 @@
     ],
     "baseline": {
       "uri": "spotify:track:1hM2HXmeYuEe1VTf0O1IFU",
-      "confidence": "medium"
+      "confidence": "high"
     }
   },
   {
@@ -142,7 +142,7 @@
     ],
     "baseline": {
       "uri": "spotify:track:7fCntOTBEH6rshHhWX7hKG",
-      "confidence": "medium"
+      "confidence": "high"
     }
   },
   {
@@ -1194,7 +1194,7 @@
       "spotify:track:2BQ1D2sI2G80dfLTeG5GrR"
     ],
     "baseline": {
-      "uri": "spotify:track:3a3JGuTQNYM3YawGpck7Ql",
+      "uri": "spotify:track:48k0c0x5seBgOOo3Ze7AZv",
       "confidence": "medium"
     }
   },

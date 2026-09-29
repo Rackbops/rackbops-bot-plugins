@@ -75,6 +75,35 @@ describe("scoreCandidate", () => {
     const obscure = scoreCandidate(song, track("Hey Jude", ["The Beatles"], 10));
     expect(popular).toBe(obscure);
   });
+
+  test("a clean remaster suffix scores as exact minus one (#60)", () => {
+    const yesterday = { name: "Yesterday", artist: "The Beatles" };
+    const dreamline = { name: "Dreamline", artist: "Rush" };
+    const rapture = { name: "Rapture", artist: "Blondie" };
+    for (const [candidateSong, name, artist] of [
+      [yesterday, "Yesterday - Remastered 2009", "The Beatles"],
+      [dreamline, "Dreamline - 2004 Remaster", "Rush"],
+      [rapture, "Rapture (Remastered)", "Blondie"],
+      [song, "Hey Jude - Remastered Version", "The Beatles"],
+    ] as const) {
+      expect(explainCandidate(candidateSong, track(name, [artist])).title).toBe(99);
+    }
+  });
+
+  test("an edit or a re-recording is still a prefix, not a clean edition", () => {
+    const dreamline = { name: "Dreamline", artist: "Rush" };
+    const youBetterRun = { name: "You Better Run", artist: "The Rascals" };
+    const maria = { name: "Maria", artist: "Blondie" };
+    const detroit = { name: "Detroit 442", artist: "Blondie" };
+    for (const [candidateSong, name, artist] of [
+      [dreamline, "Dreamline - Retrospective 3 Version", "Rush"],
+      [youBetterRun, "You Better Run - Single Version", "The Young Rascals"],
+      [maria, "Maria - Radio Edit", "Blondie"],
+      [detroit, "Detroit 442 - Take 2", "Blondie"],
+    ] as const) {
+      expect(explainCandidate(candidateSong, track(name, [artist])).title).toBe(72);
+    }
+  });
 });
 
 describe("explainCandidate", () => {
@@ -91,11 +120,13 @@ describe("explainCandidate", () => {
   });
 
   test("parts reproduce scoreCandidate for a remaster-suffixed title", () => {
+    // #60: a clean-edition suffix ("Remastered 2015") scores 99, not the 72 an ordinary suffix
+    // (a live cut, an edit) gets -- it's the same recording, one point short of un-suffixed exact.
     const candidate = track("Hey Jude - Remastered 2015", ["The Beatles"]);
     const breakdown = explainCandidate(song, candidate);
-    expect(breakdown).toEqual({ title: 72, artist: 40, tieBreak: 0, penalty: 0, score: 112 });
+    expect(breakdown).toEqual({ title: 99, artist: 40, tieBreak: 0, penalty: 0, score: 139 });
     expect(breakdown.score).toBe(scoreCandidate(song, candidate));
-    expect(scoreCandidate(song, candidate)).toBe(112);
+    expect(scoreCandidate(song, candidate)).toBe(139);
   });
 
   test("parts reproduce scoreCandidate for a live-penalised title", () => {
@@ -185,7 +216,37 @@ describe("pickBestTrack", () => {
 
   test("a remaster under the right artist is confident enough to add without comment", () => {
     const best = pickBestTrack(song, [track("Yesterday - Remastered 2009", ["The Beatles"])]);
-    expect(best!.confidence).toBe("medium");
+    expect(best!.confidence).toBe("high");
+  });
+
+  test("Yesterday - Remastered 2009 / The Beatles and Dreamline - 2004 Remaster / Rush are high", () => {
+    const yesterday = pickBestTrack(song, [track("Yesterday - Remastered 2009", ["The Beatles"])]);
+    expect(yesterday!.confidence).toBe("high");
+
+    const dreamline = { name: "Dreamline", artist: "Rush" };
+    const rush = pickBestTrack(dreamline, [track("Dreamline - 2004 Remaster", ["Rush"])]);
+    expect(rush!.confidence).toBe("high");
+  });
+
+  test("Dreamline - Retrospective 3 Version and Dreamline - Live are not high", () => {
+    const dreamline = { name: "Dreamline", artist: "Rush" };
+    const retrospective = pickBestTrack(dreamline, [track("Dreamline - Retrospective 3 Version", ["Rush"])]);
+    expect(retrospective!.confidence).not.toBe("high");
+
+    const live = pickBestTrack(dreamline, [track("Dreamline - Live", ["Rush"])]);
+    expect(live!.confidence).not.toBe("high");
+  });
+
+  test("the un-suffixed title still beats its own remaster on the same page", () => {
+    const dreamline = { name: "Dreamline", artist: "Rush" };
+    const best = pickBestTrack(dreamline, [
+      track("Dreamline - 2004 Remaster", ["Rush"]),
+      track("Dreamline", ["Rush"]),
+    ]);
+    // Exact (100) beats a clean-edition suffix (99) by score, not by page order -- the remaster
+    // is listed FIRST here, and the plain title still wins.
+    expect(best!.track.name).toBe("Dreamline");
+    expect(best!.confidence).toBe("high");
   });
 
   test("only a live version available still matches, flagged rather than dropped", () => {
