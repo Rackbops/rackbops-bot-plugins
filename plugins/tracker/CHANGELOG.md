@@ -17,27 +17,41 @@
     delivery paused after failed DMs (`DeliveryHealth.resume`, what their own next command does), lift
     a decline block (docket's `liftBlock`), and remove a person (forget-me, below).
   - The admin flag is read from the store on every request and again in the write queue before every
-    act: an admin whose flag is revoked is refused on their next request. To anyone else every
-    `/tracker/admin` path, any method, answers the unknown page's 404, byte for byte.
+    act: an admin whose flag is revoked is refused on their next request. To a signed-in non-admin
+    every `/tracker/admin` path, any method, answers the unknown page's 404, byte for byte; a visitor
+    who is not signed in is redirected to sign in, as on every signed-in path.
+  - An admin named in `TRACKER_ADMIN_DISCORD_IDS` (made admin again at every start) cannot be revoked
+    or removed from the web: their page says to take them out of the configuration first. Forgetting
+    themselves is allowed, with a note that the next start makes them again unless the configuration
+    no longer names them.
 - Forget-me (plan 5.8): `/tracker/forget`, linked from Settings -- a page, then a post that asks,
   then a post with `confirm=yes` and the typed word `forget`. In one transaction it deletes (not
   archives) the person's tasks, archived ones included, and everything under them; their recipient
   rows, replies, history rows and delivery records on everyone else's tasks; the decline blocks they
   are either side of; their admission, delivery health, sessions and sign-in links; and their person
   row. Another owner's task paused only for them goes back on. Other people's audit columns that
-  named them (`admitted_by`, `lifted_by`) become `forgotten`; their id in another run's error or
-  summary is redacted. They are signed out everywhere and the cookie is cleared; they can come back
+  named them (`admitted_by`, `lifted_by`) become `forgotten`. Text is matched only in the forms the
+  code writes ids into, never as any id-like word; their id in another owner's run error is redacted,
+  not the row deleted. A pause row from before 0.6.0 (it names the display name) is deleted only on a
+  task they received where no other recipient has the same name; one under an older name is kept. They are signed out everywhere and the cookie is cleared; they can come back
   only when an admin allows them again, as a new person with a new id. An admin can remove a person
   the same way, with the same confirmation. Web only: the plan asks for no Discord command.
 - The nav shows Admin to admins.
 
 ### Changed
 
-- The database now runs with `PRAGMA secure_delete = ON`, so a deleted row's bytes are overwritten,
-  and the write-ahead log is checkpointed after an erasure. No schema change (still schema 3).
-- Forget-me waits (at most 20 s, then asks to try again, deleting nothing) until no notify or poll
-  tick is running, so a DM already in flight to the person is not recorded after they are gone; an
-  invitation whose DM comes back after its task or invitee was erased writes nothing.
+- The database now runs with `PRAGMA secure_delete = ON`, so a deleted row's bytes are overwritten.
+  Schema 4 changes no table; bringing an existing database to it runs one `VACUUM`, so pages freed
+  before `secure_delete` was on are rewritten too. The write-ahead log is checkpointed after an
+  erasure without waiting on readers; a busy checkpoint is logged.
+- A pause for a recipient is recorded by their id (`delivery to {u5} paused: ...`) and shown with the
+  name they have when the history is read, instead of the name they had when it was written.
+- Forget-me waits, outside the write queue, until no notify or poll tick is running (at most 20 s,
+  then 503 and nothing deleted), so a DM already in flight to the person is not recorded after they
+  are gone and nobody else's command waits behind it. A failed DM to a person no longer in the store
+  (an invitation's, sent outside any tick) no longer counts toward a pause or writes a row; an
+  invitation whose DM comes back after its task or invitee was erased writes nothing; a `/price`
+  whose page read finishes after its person was forgotten makes nothing.
 - Internal: `DeliveryHealth` exposes its lock (`exclusive`) and `release` for the erasure; docket's
   Store port has no delete, so listing people and blocks and erasing a person are plain SQL in the
   plugin (`src/roster.ts`); docket is unchanged.

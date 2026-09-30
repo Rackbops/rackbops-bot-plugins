@@ -245,6 +245,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         logins: new LoginLinks(opened),
         sessions: new Sessions(opened),
         roster: new Roster(opened),
+        configuredAdmins: new Set(adminIds),
         lanes,
         webEditor: webOrigin !== null,
       };

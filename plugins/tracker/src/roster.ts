@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { BUSY_TIMEOUT_MS } from "./schema.js";
 
 /**
  * The tracker-only reads and the one delete docket's Store port has no method for
@@ -74,15 +75,53 @@ export const ERASED_TABLES = [
   "users",
 ] as const;
 
-/** Whether `text` names the tracker id `id` as a word of its own (so `u1` is not found in `u12`). */
-export function mentions(text: string | null, id: string): boolean {
-  if (text === null) return false;
-  return new RegExp(`(^|[^A-Za-z0-9_])${id}(?![0-9A-Za-z_])`).test(text);
+/**
+ * Whether a history row names person `id`, in the forms the code writes it: docket's consent rows
+ * (the recipient's id alone, or with `24h` / `permanent` on a block; docket consent.js), the
+ * tracker's `recipient_removed` (`<id>: ...`; press.ts, delivery-health.ts) and a pause for a
+ * recipient (`delivery to {<id>} paused: ...`; delivery-health.ts). Nothing else counts, so an id-like
+ * word in other text (`/u2/` in an address) is never taken for them.
+ */
+export function historyNames(kind: string, detail: string, id: string): boolean {
+  switch (kind) {
+  case "recipient_invited":
+  case "recipient_accepted":
+  case "recipient_declined":
+  case "recipient_opted_out":
+    return detail === id;
+  case "blocked":
+    return detail === `${id} 24h` || detail === `${id} permanent`;
+  case "recipient_removed":
+    return detail.startsWith(`${id}: `);
+  case "paused":
+    return detail.startsWith(`delivery to {${id}} paused:`);
+  default:
+    return false;
+  }
 }
 
-/** `text` with every mention of `id` replaced, for a row that is someone else's and stays. */
-export function redact(text: string, id: string): string {
-  return text.replace(new RegExp(`(^|[^A-Za-z0-9_])${id}(?![0-9A-Za-z_])`, "g"), `$1(${FORGOTTEN})`);
+/** docket's `delivered` run event: `<recipient id> <message id>` (docket delivery.js). */
+export function eventNames(type: string, text: string, id: string): boolean {
+  return type === "delivered" && text.startsWith(`${id} `);
+}
+
+/**
+ * The phrases the notifier writes a recipient's id into, which a failed run carries as its error
+ * and its `error` event (notifier.ts: `recipient <id> cannot be messaged`, `no user <id>`, `user
+ * <id> has no valid Discord id`, `delivery to <id> is paused`). Such a row is another owner's
+ * record of their run, so the id is redacted in place, never the row deleted.
+ */
+function errorForms(id: string): RegExp {
+  return new RegExp(`(recipient |user |delivery to )${id}(?![0-9A-Za-z_])`, "g");
+}
+
+export function errorNames(text: string | null, id: string): boolean {
+  return text !== null && errorForms(id).test(text);
+}
+
+/** `text` with the id redacted wherever the notifier wrote it. */
+export function redactError(text: string, id: string): string {
+  return text.replace(errorForms(id), `$1(${FORGOTTEN})`);
 }
 
 export class Roster {
@@ -137,10 +176,31 @@ export class Roster {
   /**
    * After an erasure: copies the write-ahead log back into the database file and truncates it, so
    * the erased pages (overwritten, with `secure_delete` on; schema.ts) do not linger in the log.
-   * Best effort: a reader holding the log open leaves it for SQLite's next checkpoint.
+   * Best effort: false when a reader held the log (`busy`), which then waits for SQLite's next
+ * checkpoint; the caller logs it.
    */
-  checkpoint(): void {
-    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  checkpoint(): boolean {
+    // Without waiting on a reader (the busy timeout would hold the write queue for seconds).
+    this.db.exec("PRAGMA busy_timeout = 0");
+    try {
+      const r = this.db.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number } | null;
+      return !r || Number(r.busy) === 0;
+    } finally {
+      this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+    }
+  }
+
+  /** Whether a recipient of `taskId` (now, or by its history) other than `userId` goes by `name`. */
+  private othersNamed(taskId: string, userId: string, name: string): boolean {
+    const ids = new Set<string>();
+    for (const r of this.db.query("SELECT user_id FROM task_recipients WHERE task_id = ?").all(taskId) as { user_id: string }[]) ids.add(r.user_id);
+    for (const r of this.db.query("SELECT detail FROM task_events WHERE task_id = ? AND kind LIKE 'recipient_%'").all(taskId) as { detail: string }[]) {
+      const id = /^(u[1-9][0-9]*)(:|$)/.exec(r.detail)?.[1];
+      if (id) ids.add(id);
+    }
+    ids.delete(userId);
+    const named = this.db.query("SELECT 1 FROM users WHERE seq = ? AND display_name = ?");
+    return [...ids].some((id) => named.get(Number(id.slice(1)), name) !== null);
   }
 
   /** How many admins there are. */
@@ -174,7 +234,9 @@ export class Roster {
    * are either side of; their admission, delivery health, web sessions and sign-in links; and
    * their person row. Where another person's row keeps an audit column that named them (who
    * admitted someone, who lifted a block), it is set to `FORGOTTEN`; where another person's run
-   * says their id in its error or summary, the id is redacted. Nothing is archived. Returns the
+   * error (or its error event) carries their id in a phrase the notifier writes, the id is redacted.
+   * Text is matched only in the forms the code writes ids into (`historyNames`, `eventNames`,
+   * `errorNames`), never as any id-like word. Nothing is archived. Returns the
    * rows removed per table and the other owners' tasks now held by no pause.
    *
    * Synchronous: a `bun:sqlite` transaction cannot span an `await`, so nothing else on the event
@@ -200,14 +262,18 @@ export class Roster {
         }[]
       ).map((r) => r.task_id);
 
-      // Other owners' tasks they had a part in: only there can a pause's text name them by name.
+      // Other owners' tasks they were a recipient of (now or once): only there can a legacy pause
+      // row name them by name (below).
       const taskIds = (sql: string) => (this.db.query(sql).all(userId) as { t: string }[]).map((r) => r.t);
-      const involved = new Set([
+      const recipientOf = new Set([
         ...pausedFor,
         ...taskIds("SELECT task_id AS t FROM task_recipients WHERE user_id = ?"),
-        ...taskIds("SELECT task_id AS t FROM task_events WHERE actor_id = ?"),
-        ...(this.db.query("SELECT task_id AS t, detail FROM task_events WHERE instr(detail, ?) > 0").all(userId) as { t: string; detail: string }[])
-          .filter((r) => mentions(r.detail, userId))
+        ...(this.db.query("SELECT task_id AS t, kind, detail FROM task_events WHERE instr(detail, ?) > 0").all(userId) as {
+          t: string;
+          kind: string;
+          detail: string;
+        }[])
+          .filter((r) => historyNames(r.kind, r.detail, userId))
           .map((r) => r.t),
       ]);
 
@@ -222,28 +288,36 @@ export class Roster {
       del("occurrences", `task_id IN (${THEIR_TASKS})`, userId);
       del("tasks", "owner_id = ?", userId);
 
-      // What is left names them only in text: a delivery to them, an invitation of them, a pause
-      // for them. The id is a word of its own there (`u5`, `u5 24h`, `u5: ...`); a pause names them
-      // by display name (delivery-health.ts).
-      const named = (table: string, column: string) =>
-        (this.db.query(`SELECT seq, ${column} AS text FROM ${table} WHERE instr(${column}, ?) > 0`).all(userId) as {
-          seq: number;
-          text: string;
-        }[]).filter((r) => mentions(r.text, userId));
-      for (const r of named("events", "text")) del("events", "seq = ?", r.seq);
-      for (const r of named("task_events", "detail")) del("task_events", "seq = ?", r.seq);
+      // What is left names them only in text, in the forms the code writes (historyNames,
+      // eventNames, errorNames): those history rows and delivery events are theirs and go; a run's
+      // error is its owner's record, so only the id in it goes.
+      const containing = (table: string, columns: string, column: string) =>
+        this.db.query(`SELECT seq, ${columns} FROM ${table} WHERE instr(${column}, ?) > 0`).all(userId) as Record<string, string | number>[];
+      for (const r of containing("task_events", "kind, detail", "detail")) {
+        if (historyNames(String(r.kind), String(r.detail), userId)) del("task_events", "seq = ?", Number(r.seq));
+      }
+      for (const r of containing("events", "type, text", "text")) {
+        if (eventNames(String(r.type), String(r.text), userId)) del("events", "seq = ?", Number(r.seq));
+        else if (errorNames(String(r.text), userId)) this.db.query("UPDATE events SET text = ? WHERE seq = ?").run(redactError(String(r.text), userId), r.seq);
+      }
+      for (const r of containing("occurrences", "error", "error")) {
+        if (errorNames(String(r.error), userId)) this.db.query("UPDATE occurrences SET error = ? WHERE seq = ?").run(redactError(String(r.error), userId), r.seq);
+      }
+      // Pause rows from before 0.6.0 name the recipient by the display name of the time. One is
+      // theirs when it is on a task they were a recipient of, names their name now, and no other
+      // recipient of that task goes by the same name. A row written under an older name of theirs
+      // is not found (the gap is documented).
       if (person.display_name !== null) {
-        const paused = `delivery to ${person.display_name} paused:`;
+        const legacy = `delivery to ${person.display_name} paused:`;
         const rowsNaming = this.db.query("SELECT seq, task_id, detail FROM task_events WHERE kind = 'paused' AND actor_id IS NULL").all() as {
           seq: number;
           task_id: string;
           detail: string;
         }[];
-        for (const r of rowsNaming) if (involved.has(r.task_id) && r.detail.startsWith(paused)) del("task_events", "seq = ?", r.seq);
-      }
-      for (const column of ["error", "summary"]) {
-        for (const r of named("occurrences", column)) {
-          this.db.query(`UPDATE occurrences SET ${column} = ? WHERE seq = ?`).run(redact(r.text, userId), r.seq);
+        for (const r of rowsNaming) {
+          if (!recipientOf.has(r.task_id) || !r.detail.startsWith(legacy)) continue;
+          if (this.othersNamed(r.task_id, userId, person.display_name)) continue;
+          del("task_events", "seq = ?", r.seq);
         }
       }
 

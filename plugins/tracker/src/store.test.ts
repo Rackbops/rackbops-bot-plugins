@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -60,6 +60,29 @@ describe("SqliteStore beyond the contract", () => {
     admissions.record(old.id, "u9", "2026-10-03T12:00:00.000Z");
     expect(admissions.get(old.id).registeredAt).toBe("2026-10-01T12:00:00.000Z");
     expect(admissions.isRegistered(old.id)).toBe(true);
+  });
+
+  it("opening a database from before migration 4 vacuums it once, so rows deleted before secure_delete leave no bytes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "tracker-vacuum-"));
+    try {
+      const path = join(dir, "tracker.sqlite");
+      const MARK = "MARKER-a1b2c3d4e5f6";
+      const old = new Database(path, { create: true });
+      old.exec("PRAGMA secure_delete = OFF");
+      for (let v = 0; v < 3; v++) {
+        old.exec(MIGRATIONS[v] as string);
+        old.exec(`PRAGMA user_version = ${v + 1}`);
+      }
+      old.query("INSERT INTO users (discord_id, display_name, time_zone, preferred_hour, admin, created_at) VALUES ('1', ?, 'UTC', 9, 0, 'x')").run(MARK.repeat(50));
+      old.query("DELETE FROM users").run();
+      old.close();
+      const bytes = () => [path, `${path}-wal`].map((p) => (existsSync(p) ? readFileSync(p).toString("latin1") : "")).join("");
+      expect(bytes()).toContain(MARK); // what a copy of the file would still show
+      openDatabase(path).close();
+      expect(bytes()).not.toContain(MARK);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("a file-backed store (WAL) keeps its data across a close and reopen, and keeps counting ids", async () => {

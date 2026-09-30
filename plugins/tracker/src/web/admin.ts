@@ -1,7 +1,17 @@
 import type { User } from "@rackbops/docket-core";
 import type { Membership } from "../access.js";
 import { allowPerson, type TrackerDeps } from "../actions.js";
-import { forgetPerson, liftDeclineBlock, NO_SUCH_PERSON, resumeDelivery, setAdminFlag } from "../admin.js";
+import {
+  BUSY,
+  CONFIGURED_SELF,
+  forgetPerson,
+  isConfiguredAdmin,
+  liftDeclineBlock,
+  NO_SUCH_PERSON,
+  resumeDelivery,
+  setAdminFlag,
+  ticksSettled,
+} from "../admin.js";
 import type { Queue } from "../discord-common.js";
 import type { Done } from "../manage.js";
 import { adminPage, adminTasksPage, CONFIRM_WORD, confirmForgetPage, forgetPage, nameOf, personHref, personPage, type Result } from "./admin-pages.js";
@@ -63,7 +73,7 @@ async function onePerson(a: AdminWeb, id: string, result: Result = null): Promis
   const p = a.d.roster.people().find((x) => x.id === id);
   if (!p) return htmlResponse(notFoundPage(a.v.base, a.v), 404);
   const tasks = await a.d.store.listTasks({ ownerId: p.id });
-  return htmlResponse(personPage(a.v, p, tasks, a.d.clock.now(), result), result && !result.ok ? 400 : 200);
+  return htmlResponse(personPage(a.v, p, tasks, a.d.clock.now(), result, isConfiguredAdmin(a.d, p)), result && !result.ok ? 400 : 200);
 }
 
 /** The admin view's pages (GET): people, all tasks, one person. */
@@ -104,13 +114,16 @@ export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): P
     if (!target) return htmlResponse(notFoundPage(base, a.v), 404);
     const step = confirmed(form);
     const self = target.id === a.v.user.id;
+    const note = self && isConfiguredAdmin(a.d, target) ? { note: CONFIGURED_SELF } : {};
     const page = (error?: string) =>
-      confirmForgetPage(a.v, { action: personHref(a.v, target.id, "forget"), self, name: nameOf(target), ...(error ? { error } : {}) });
+      confirmForgetPage(a.v, { action: personHref(a.v, target.id, "forget"), self, name: nameOf(target), ...note, ...(error ? { error } : {}) });
     if (step === "ask") return htmlResponse(page());
     if (step === "wrong") return htmlResponse(page(WRONG_WORD), 400);
+    // The wait for a running tick is here, before the queue turn: nothing slow runs in the queue.
+    if (!(await ticksSettled(a.d))) return htmlResponse(page(BUSY), 503);
     const done = await fresh(a, true, (me) => forgetPerson(a.d, me, target.id));
     if (done === null) return unknownPage(base);
-    if (!done.ok) return htmlResponse(page(done.error), done.error === NO_SUCH_PERSON ? 404 : 400);
+    if (!done.ok) return htmlResponse(page(done.error), done.error === NO_SUCH_PERSON ? 404 : done.error === BUSY ? 503 : 400);
     if (self) return redirect(`${base}/signin?forgotten=1`, [a.signOutCookie]);
     return peoplePage(a, said(done), 200);
   }
@@ -132,13 +145,16 @@ export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): P
 /** `/forget`, the person's own: the page (GET), the confirmation (POST), the erasure (POST with the word). */
 export async function forgetRoute(a: AdminWeb, method: string, form: URLSearchParams | null): Promise<Response> {
   const base = a.v.base;
-  if (method === "GET" || !form) return htmlResponse(forgetPage(a.v));
-  const page = (error?: string) => confirmForgetPage(a.v, { action: `${base}/forget`, self: true, name: nameOf(a.v.user), ...(error ? { error } : {}) });
+  const note = isConfiguredAdmin(a.d, a.v.user) ? CONFIGURED_SELF : undefined;
+  if (method === "GET" || !form) return htmlResponse(forgetPage(a.v, note));
+  const page = (error?: string) =>
+    confirmForgetPage(a.v, { action: `${base}/forget`, self: true, name: nameOf(a.v.user), ...(note ? { note } : {}), ...(error ? { error } : {}) });
   const step = confirmed(form);
   if (step === "ask") return htmlResponse(page());
   if (step === "wrong") return htmlResponse(page(WRONG_WORD), 400);
+  if (!(await ticksSettled(a.d))) return htmlResponse(page(BUSY), 503);
   const done = await fresh(a, false, (me) => forgetPerson(a.d, me, me.id));
   if (done === null) return redirect(`${base}/signin`, [a.signOutCookie]);
-  if (!done.ok) return htmlResponse(page(done.error), 400);
+  if (!done.ok) return htmlResponse(page(done.error), done.error === BUSY ? 503 : 400);
   return redirect(`${base}/signin?forgotten=1`, [a.signOutCookie]);
 }

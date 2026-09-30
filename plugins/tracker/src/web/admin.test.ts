@@ -2,10 +2,13 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import { NOT_ADMIN, NOT_ADMITTED } from "../access.js";
-import { LAST_ADMIN } from "../admin.js";
+import type { Fetch } from "@rackbops/docket-core";
+import { NO_LONGER_LISTED } from "../actions.js";
+import { CONFIGURED_ADMIN, CONFIGURED_SELF, LAST_ADMIN } from "../admin.js";
+import { CANNOT_SHARE } from "../press.js";
 import { PAUSE_AFTER } from "../delivery-health.js";
-import { ERASED_TABLES, FORGOTTEN, mentions } from "../roster.js";
-import { CONFIRM_WORD } from "./admin-pages.js";
+import { ERASED_TABLES, FORGOTTEN } from "../roster.js";
+import { CONFIGURED_NOTE, CONFIRM_WORD } from "./admin-pages.js";
 import { esc } from "./html.js";
 import { ADMIN, call, cleanup, csrfOf, CURLY, type Jar, LARRY, ORIGIN, people, press, replyText, SESSION, signIn, slash, STRANGER, world } from "./harness.js";
 
@@ -62,6 +65,11 @@ function traces(dbPath: string, id: string, words: readonly string[]): string[] 
     }
   }
   return found;
+}
+
+/** Whether `text` names `id` as a word of its own: the scan's broad test, wider than the erasure's. */
+function mentions(text: string, id: string): boolean {
+  return new RegExp(`(^|[^A-Za-z0-9_])${id}(?![0-9A-Za-z_])`).test(text);
 }
 
 const tick = (p: Plugin) => p.ticks!.find((t) => t.name === "notify")!.run(new AbortController().signal);
@@ -149,11 +157,12 @@ describe("who may use the admin view", () => {
     expect(removeSelf.status).toBe(400);
     expect(query(w.dbPath, "SELECT seq FROM users WHERE seq = 1")).toHaveLength(1);
 
+    // Larry, made an admin here (not by the configuration), revokes himself.
     await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u2/grant");
-    const self = await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u1/revoke");
+    const self = await post(w.plugin, w.larry, w.larryCsrf, "/admin/people/u2/revoke");
     expect(self.status).toBe(303);
     expect(self.headers.get("location")).toBe("/tracker/");
-    expect((await call(w.plugin, "GET", "/admin", { jar: w.admin })).status).toBe(404);
+    expect((await call(w.plugin, "GET", "/admin", { jar: w.larry })).status).toBe(404);
   });
 
   it("every admin post needs the session's CSRF token and this origin", async () => {
@@ -474,5 +483,173 @@ describe("forget-me", () => {
     expect(query(w.dbPath, "SELECT * FROM delivery_pauses")).toEqual([]);
     expect(await slash(w.plugin, "task", CURLY, { sub: "history", strings: { task: "t1" } })).toContain("Next: Sun Oct 4, 9:00");
     expect(traces(w.dbPath, "u2", [LARRY, "Larry"])).toEqual([]);
+  });
+});
+
+describe("review fixes (slice 3)", () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** Waits (a few seconds at most) until `ready`, instead of guessing a delay. */
+  async function until(ready: () => boolean) {
+    for (let i = 0; i < 400 && !ready(); i++) await sleep(5);
+    expect(ready()).toBe(true);
+  }
+  const PAGE = "https://shop.example/u2/widget";
+
+  it("a /price whose page is read while its person is forgotten makes nothing for the gone id", async () => {
+    let open = () => {};
+    let reading = false;
+    const gate = new Promise<void>((r) => (open = r));
+    const ld = { "@type": "Product", offers: { "@type": "Offer", price: "10.00", priceCurrency: "USD" } };
+    const fetch: Fetch = {
+      async get() {
+        reading = true;
+        await gate;
+        return { status: 200, body: `<script type="application/ld+json">${JSON.stringify(ld)}</script>`, headers: {} };
+      },
+    };
+    const w = await setup({ fetch });
+    const answer = slash(w.plugin, "price", LARRY, { strings: { url: PAGE } });
+    await until(() => reading); // its first turn is done; the page read waits outside the queue
+    expect((await post(w.plugin, w.larry, w.larryCsrf, "/forget", { confirm: "yes", word: CONFIRM_WORD })).status).toBe(303);
+    open();
+    expect(await answer).toBe(NO_LONGER_LISTED);
+    expect(query(w.dbPath, "SELECT * FROM tasks")).toEqual([]);
+    expect(traces(w.dbPath, "u2", [LARRY, "Larry"])).toEqual([]);
+  });
+
+  it("an invitation DM that fails after its invitee is forgotten writes nothing about them", async () => {
+    const w = await setup();
+    const curly = await signIn(w.plugin, CURLY);
+    const curlyCsrf = await csrfOf(w.plugin, curly);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "week" } });
+    let release = () => {};
+    w.delivery.hold = new Promise<void>((r) => (release = r));
+    w.delivery.unreachable.add(CURLY);
+    const sharing = slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } });
+    await until(() => w.delivery.held > 0); // the invitation is recorded; its DM waits outside the queue
+    expect((await post(w.plugin, curly, curlyCsrf, "/forget", { confirm: "yes", word: CONFIRM_WORD })).status).toBe(303);
+    w.delivery.hold = null;
+    release();
+    expect(await sharing).toBe(`<@${CURLY}> ${CANNOT_SHARE}`);
+    expect(query(w.dbPath, "SELECT * FROM delivery_health")).toEqual([]);
+    expect(traces(w.dbPath, "u3", [CURLY, "user333"])).toEqual([]);
+  });
+
+  it("forget-me waits for a running tick outside the write queue: everyone else's commands go on meanwhile", async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", CURLY, { strings: { text: "curly-plants", when: "9am", repeat: "day" } });
+    let release = () => {};
+    w.delivery.hold = new Promise<void>((r) => (release = r));
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    const ticking = tick(w.plugin);
+    await until(() => w.delivery.held > 0);
+    const forgetting = post(w.plugin, w.larry, w.larryCsrf, "/forget", { confirm: "yes", word: CONFIRM_WORD });
+    await sleep(20);
+    const other = await Promise.race([slash(w.plugin, "tasks", CURLY), sleep(1000).then(() => "stalled")]);
+    expect(other).toContain("curly-plants");
+    w.delivery.hold = null;
+    release();
+    await ticking;
+    expect((await forgetting).status).toBe(303);
+  });
+
+  it("a pause for a recipient names them by id, shown by the name they have when read", async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", CURLY, { strings: { text: "curly-plants", when: "9am", repeat: "day" } });
+    await slash(w.plugin, "task", CURLY, { sub: "share", strings: { task: "t1" }, users: { user: LARRY } });
+    await press(w.plugin, "tracker:a.t.t1", LARRY);
+    w.delivery.unreachable.add(LARRY);
+    for (const day of ["01", "02", "03"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await tick(w.plugin);
+    }
+    expect(query<{ detail: string }>(w.dbPath, "SELECT detail FROM task_events WHERE kind = 'paused'")[0]?.detail).toStartWith("delivery to {u2} paused:");
+    expect(await slash(w.plugin, "task", CURLY, { sub: "history", strings: { task: "t1" } })).toContain("paused: delivery to Larry paused:");
+    const db = new Database(w.dbPath);
+    db.query("UPDATE users SET display_name = 'Lawrence' WHERE seq = 2").run();
+    db.close();
+    expect(await slash(w.plugin, "task", CURLY, { sub: "history", strings: { task: "t1" } })).toContain("paused: delivery to Lawrence paused:");
+  });
+
+  it("forget-me erases pause rows by id, and an old row by name only where no other recipient has that name", async () => {
+    const w = await setup();
+    for (const text of ["shared-both", "shared-larry"]) await slash(w.plugin, "remind", ADMIN, { strings: { text, when: "9am", repeat: "week" } });
+    for (const [task, who] of [["t1", LARRY], ["t1", CURLY], ["t2", LARRY]] as const) {
+      await slash(w.plugin, "task", ADMIN, { sub: "share", strings: { task }, users: { user: who } });
+      await press(w.plugin, `tracker:a.t.${task}`, who);
+    }
+    const db = new Database(w.dbPath);
+    db.query("UPDATE users SET display_name = 'Larry' WHERE seq = 3").run(); // Curly now goes by Larry too
+    const add = db.query("INSERT INTO task_events (task_id, actor_id, kind, detail, at) VALUES (?, NULL, 'paused', ?, '2026-10-01T12:00:00.000Z')");
+    const legacy = "delivery to Larry paused: 3 DMs in a row could not be delivered";
+    add.run("t1", legacy); // could be either Larry: kept
+    add.run("t2", legacy); // only u2 is on t2: theirs
+    add.run("t1", "delivery to {u3} paused: 3 DMs in a row could not be delivered"); // the other Larry's, by id: kept
+    add.run("t1", "delivery to {u2} paused: 3 DMs in a row could not be delivered"); // u2's, by id
+    db.close();
+    await post(w.plugin, w.larry, w.larryCsrf, "/forget", { confirm: "yes", word: CONFIRM_WORD });
+    expect(query(w.dbPath, "SELECT task_id, detail FROM task_events WHERE kind = 'paused' ORDER BY seq")).toEqual([
+      { task_id: "t1", detail: legacy },
+      { task_id: "t1", detail: "delivery to {u3} paused: 3 DMs in a row could not be delivered" },
+    ]);
+  });
+
+  it("an id-like word in someone else's text is not them: only the forms the code writes are erased or redacted", async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", CURLY, { strings: { text: "curly-plants", when: "9am", repeat: "day" } });
+    const db = new Database(w.dbPath);
+    const at = "2026-10-01T12:00:00.000Z";
+    db.query("INSERT INTO occurrences (task_id, lane, due_at, status, late, dedupe_key, error, created_at) VALUES ('t1', 'notify', ?, 'failed', 0, 'x1', ?, ?)").run(at, `could not read ${PAGE}`, at);
+    db.query("INSERT INTO occurrences (task_id, lane, due_at, status, late, dedupe_key, error, created_at) VALUES ('t1', 'notify', ?, 'failed', 0, 'x2', ?, ?)").run(at, "recipient u2 cannot be messaged (DMs closed, or the bot is blocked)", at);
+    const o = (db.query("SELECT 'o' || seq AS id FROM occurrences WHERE dedupe_key = 'x1'").get() as { id: string }).id;
+    db.query("INSERT INTO events (occurrence_id, agent, type, text, at) VALUES (?, 'docket', 'error', ?, ?)").run(o, `could not read ${PAGE}`, at);
+    db.query("INSERT INTO task_events (task_id, actor_id, kind, detail, at) VALUES ('t1', 'u3', 'edited', ?, ?)").run(`note: ${PAGE}`, at);
+    db.close();
+    await post(w.plugin, w.larry, w.larryCsrf, "/forget", { confirm: "yes", word: CONFIRM_WORD });
+    expect(query(w.dbPath, "SELECT dedupe_key, error FROM occurrences WHERE dedupe_key LIKE 'x%' ORDER BY seq")).toEqual([
+      { dedupe_key: "x1", error: `could not read ${PAGE}` },
+      { dedupe_key: "x2", error: "recipient (forgotten) cannot be messaged (DMs closed, or the bot is blocked)" },
+    ]);
+    expect(query(w.dbPath, "SELECT text FROM events WHERE type = 'error'")).toEqual([{ text: `could not read ${PAGE}` }]);
+    expect(query(w.dbPath, "SELECT detail FROM task_events WHERE kind = 'edited'")).toEqual([{ detail: `note: ${PAGE}` }]);
+  });
+
+  it("a configured admin cannot be revoked or removed by another admin; forgetting themselves is allowed, and a start makes them again", async () => {
+    const w = await setup();
+    await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u2/grant");
+    const revoke = await post(w.plugin, w.larry, w.larryCsrf, "/admin/people/u1/revoke");
+    expect(revoke.status).toBe(400);
+    expect(await revoke.text()).toContain(esc(CONFIGURED_ADMIN));
+    const remove = await post(w.plugin, w.larry, w.larryCsrf, "/admin/people/u1/forget", { confirm: "yes", word: CONFIRM_WORD });
+    expect(remove.status).toBe(400);
+    expect(await remove.text()).toContain(esc(CONFIGURED_ADMIN));
+    const page = await (await call(w.plugin, "GET", "/admin/people/u1", { jar: w.larry })).text();
+    expect(page).toContain(esc(CONFIGURED_NOTE));
+    expect(page).not.toContain("/admin/people/u1/revoke");
+    expect(page).not.toContain("/admin/people/u1/forget");
+    expect(await (await call(w.plugin, "GET", "/forget", { jar: w.admin })).text()).toContain(esc(CONFIGURED_SELF));
+    expect(await (await post(w.plugin, w.admin, w.adminCsrf, "/forget")).text()).toContain(esc(CONFIGURED_SELF));
+
+    expect((await post(w.plugin, w.admin, w.adminCsrf, "/forget", { confirm: "yes", word: CONFIRM_WORD })).status).toBe(303);
+    expect(query(w.dbPath, "SELECT seq FROM users WHERE discord_id = ?", ADMIN)).toEqual([]);
+    await w.plugin.dispose!();
+    await w.plugin.activate!();
+    expect(query(w.dbPath, "SELECT 'u' || seq AS id, admin FROM users WHERE discord_id = ?", ADMIN)).toEqual([{ id: "u4", admin: 1 }]);
+  });
+
+  it("the write-ahead log checkpoint says when a reader kept it busy", async () => {
+    const w = await setup();
+    const reader = new Database(w.dbPath, { readonly: true });
+    reader.exec("BEGIN");
+    reader.query("SELECT * FROM users").all();
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "x", when: "tomorrow 9am" } }); // a write the reader has not seen
+    const { Roster } = await import("../roster.js");
+    const { openDatabase } = await import("../schema.js");
+    const db = openDatabase(w.dbPath);
+    expect(new Roster(db).checkpoint()).toBe(false);
+    reader.exec("COMMIT");
+    reader.close();
+    expect(new Roster(db).checkpoint()).toBe(true);
+    db.close();
   });
 });

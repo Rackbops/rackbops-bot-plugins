@@ -10,6 +10,10 @@ import { framed, type Viewer } from "./pages.js";
  * the session's CSRF token; nothing here changes anything on a GET. No script.
  */
 
+/** Shown on a configured admin's page, where Revoke and Remove are not offered. */
+export const CONFIGURED_NOTE =
+  "Named in TRACKER_ADMIN_DISCORD_IDS: made an admin again at every start, so they cannot be revoked or removed here. Remove them from the configuration first.";
+
 /** The word typed to confirm an erasure: the second post carries it with `confirm=yes`. */
 export const CONFIRM_WORD = "forget";
 
@@ -155,7 +159,7 @@ function post(v: Viewer, p: PersonRow, action: string, label: string, style: str
 }
 
 /** `/admin/people/<id>`: one person, their tasks, and what an admin may do about them. */
-export function personPage(v: Viewer, p: PersonRow, tasks: readonly Task[], now: Date, result: Result = null): string {
+export function personPage(v: Viewer, p: PersonRow, tasks: readonly Task[], now: Date, result: Result = null, configured = false): string {
   return framed(
     v,
     nameOf(p),
@@ -170,10 +174,11 @@ ${flash(result)}
 <li>Delivery: ${delivery(p, v.user, now)}</li>
 <li>Tasks: ${counts(p)}</li>
 </ul>
+${configured ? html`<p class="rb-muted">${CONFIGURED_NOTE}</p>` : null}
 <div class="tr-row">
-${p.admin ? post(v, p, "revoke", "Revoke admin", "rb-btn--ghost") : post(v, p, "grant", "Make admin", "rb-btn--ghost")}
+${p.admin ? (configured ? null : post(v, p, "revoke", "Revoke admin", "rb-btn--ghost")) : post(v, p, "grant", "Make admin", "rb-btn--ghost")}
 ${p.deliveryPausedAt ? post(v, p, "resume-delivery", "Resume delivery", "rb-btn--accent") : null}
-${post(v, p, "forget", "Remove from the tracker", "rb-btn--danger")}
+${configured && p.id !== v.user.id ? null : post(v, p, "forget", "Remove from the tracker", "rb-btn--danger")}
 </div>
 </section>
 <section>
@@ -192,7 +197,7 @@ const WHAT_GOES =
   "and your place on the tasks shared with you; decline blocks either way; delivery pauses; your settings and sign-in sessions; and your place on the list.";
 
 /** `/forget`: what forget-me deletes, and the button that asks for the confirmation. */
-export function forgetPage(v: Viewer): string {
+export function forgetPage(v: Viewer, note?: string): string {
   return framed(
     v,
     "Forget me",
@@ -200,13 +205,14 @@ export function forgetPage(v: Viewer): string {
 <h1>Forget me</h1>
 <p>This deletes everything the tracker holds about you, at once and for good: ${WHAT_GOES}</p>
 <p>Nothing is kept or archived. Messages the bot already sent you stay in your Discord DMs, where only you can delete them. To use the tracker again later, an admin has to <code>/allow</code> you again, and you start from nothing.</p>
+${note ? html`<div class="rb-alert rb-alert--warning" role="note"><p>${note}</p></div>` : null}
 <form method="post" action="${v.base}/forget">${hidden(v)}<button class="rb-btn rb-btn--danger" type="submit">Continue</button></form>
 </section>`,
   );
 }
 
 /** The second step of an erasure, the person's own or an admin's: nothing is deleted until the word is typed and posted. */
-export function confirmForgetPage(v: Viewer, o: { action: string; self: boolean; name: string; error?: string }): string {
+export function confirmForgetPage(v: Viewer, o: { action: string; self: boolean; name: string; error?: string; note?: string }): string {
   const title = o.self ? "Delete everything about you?" : `Remove ${o.name} from the tracker?`;
   const what = o.self
     ? html`<p>Everything the tracker holds about you is deleted: ${WHAT_GOES} You are signed out.</p>`
@@ -217,6 +223,7 @@ export function confirmForgetPage(v: Viewer, o: { action: string; self: boolean;
     html`<section class="rb-card">
 <h1>${title}</h1>
 ${what}
+${o.note ? html`<div class="rb-alert rb-alert--warning" role="note"><p>${o.note}</p></div>` : null}
 ${o.error ? html`<div class="rb-alert rb-alert--danger" role="alert"><p>${o.error}</p></div>` : null}
 <form method="post" action="${o.action}" class="tr-stack">
 ${hidden(v)}

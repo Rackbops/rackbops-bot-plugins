@@ -23,8 +23,27 @@ export const NO_SUCH_BLOCK = "There is no such block in force.";
 export const LAST_ADMIN = "That is the tracker's only admin: make someone else an admin first.";
 export const BUSY = "The tracker is busy sending reminders; nothing was deleted. Try again in a minute.";
 
-/** How long forget-me waits for a running tick to end, each time it looks. */
+/** How long forget-me waits for a running tick to end, before its turn in the queue. */
 export const TICK_WAIT_MS = 20_000;
+
+export const CONFIGURED_ADMIN =
+  "That admin is named in TRACKER_ADMIN_DISCORD_IDS, which makes them an admin again at every start: remove them from the configuration first.";
+export const CONFIGURED_SELF =
+  "You are named in TRACKER_ADMIN_DISCORD_IDS: this erases you now, but the next start makes you an admin again, as a new person, unless you are removed from the configuration first.";
+
+/** Whether the configuration (`TRACKER_ADMIN_DISCORD_IDS`) names this person: the start re-seeds them as an admin. */
+export function isConfiguredAdmin(d: Pick<TrackerDeps, "configuredAdmins">, u: { discordId: string | null }): boolean {
+  return u.discordId !== null && d.configuredAdmins.has(u.discordId);
+}
+
+/**
+ * Forget-me's wait, before its turn in the queue (the queue never holds anything slow;
+ * discord-common.ts): until no notify or poll tick runs, at most `TICK_WAIT_MS`. False when one
+ * still runs; the caller answers BUSY and deletes nothing.
+ */
+export function ticksSettled(d: Pick<TrackerDeps, "lanes">): Promise<boolean> {
+  return d.lanes.idle(TICK_WAIT_MS);
+}
 
 /** The tracker's own `u<n>` id shape; anything else names no one. */
 export function isPersonId(id: string): boolean {
@@ -50,6 +69,7 @@ export async function setAdminFlag(d: TrackerDeps, admin: User, targetId: string
   if (!target) return { ok: false, error: NO_SUCH_PERSON };
   if (target.admin === flag) return { ok: true, text: `${who(target)} ${flag ? "is already" : "is not"} an admin.` };
   if (!flag && d.roster.admins() <= 1) return { ok: false, error: LAST_ADMIN };
+  if (!flag && isConfiguredAdmin(d, target)) return { ok: false, error: CONFIGURED_ADMIN };
   await d.store.updateUser(target.id, { admin: flag });
   d.log.info(`${admin.id} ${flag ? "made" : "revoked"} ${target.id} ${flag ? "an admin" : "as admin"}`);
   return { ok: true, text: flag ? `${who(target)} is now an admin.` : `${who(target)} is no longer an admin.` };
@@ -94,30 +114,31 @@ export async function liftDeclineBlock(d: TrackerDeps, admin: User, blockId: str
  * sessions are among the rows, so they are signed out everywhere at once. They can come back only
  * as a new person: an admin `/allow`s them again, and the tracker never reuses an id.
  *
- * The last admin cannot be forgotten, by themselves or by anyone, for `setAdminFlag`'s reason.
+ * The last admin cannot be forgotten, by themselves or by anyone, for `setAdminFlag`'s reason, and
+ * an admin named in `TRACKER_ADMIN_DISCORD_IDS` cannot be removed by someone else (the next start
+ * would make them again); forgetting themselves is allowed, and the page says what the next start
+ * does. The caller runs `ticksSettled` first, outside the queue.
  */
 export async function forgetPerson(d: TrackerDeps, actor: User, targetId: string): Promise<Done> {
   if (actor.id !== targetId && !actor.admin) return { ok: false, error: NOT_ADMIN };
   const target = await person(d, targetId);
   if (!target) return { ok: false, error: NO_SUCH_PERSON };
   if (target.admin && d.roster.admins() <= 1) return { ok: false, error: LAST_ADMIN };
+  if (actor.id !== target.id && isConfiguredAdmin(d, target)) return { ok: false, error: CONFIGURED_ADMIN };
   const now = d.clock.now();
   // No tick may be running: one with a DM to them in flight would record it after they were gone.
-  // The erasure itself is synchronous, so a tick checked idle inside the lock cannot start before it
-  // ends. The wait is outside the lock, which a tick's failed DM takes; bounded, since the host
-  // stops waiting on a stuck tick but cannot stop it.
-  let erased: Erased | null = null;
-  for (let tries = 0; erased === null && tries < 3; tries++) {
-    if (!(await d.lanes.idle(TICK_WAIT_MS))) break;
-    erased = await d.health.exclusive(async () => {
-      if (d.lanes.busy()) return null;
-      const e = d.roster.erase(target.id);
-      for (const taskId of e.freed) await d.health.release(taskId, null, "resumed: a recipient left the tracker", now);
-      return e;
-    });
-  }
+  // The caller waits for that before its turn in the queue (`ticksSettled`), so nothing slow runs in
+  // the queue; here, inside the queue and the delivery lock, a tick that started since is only
+  // detected, and the answer is BUSY. The erasure itself is synchronous, so no tick can start
+  // between this check and its end.
+  const erased: Erased | null = await d.health.exclusive(async () => {
+    if (d.lanes.busy()) return null;
+    const e = d.roster.erase(target.id);
+    for (const taskId of e.freed) await d.health.release(taskId, null, "resumed: a recipient left the tracker", now);
+    return e;
+  });
   if (erased === null) return { ok: false, error: BUSY };
-  d.roster.checkpoint();
+  if (!d.roster.checkpoint()) d.log.warn(`after forgetting ${target.id}: the write-ahead log is busy, so SQLite's next checkpoint copies it back`);
   const total = Object.values(erased.rows).reduce((a, b) => a + b, 0);
   d.log.info(`forgot ${target.id} (${actor.id === target.id ? "at their own request" : `removed by ${actor.id}`}): ${total} row(s) deleted`);
   return { ok: true, text: actor.id === target.id ? "Everything the tracker held about you is deleted." : `${who(target)} is removed from the tracker.` };

@@ -1,6 +1,6 @@
 import { describeSchedule, type Task, type User } from "@rackbops/docket-core";
 import type { BaselineRule, PriceConfig, RenewalConfig } from "@rackbops/docket-types";
-import { NO_SUCH_TASK, type TaskResult, type TrackerDeps } from "../actions.js";
+import { NO_LONGER_LISTED, NO_SUCH_TASK, type TaskResult, type TrackerDeps } from "../actions.js";
 import type { Queue } from "../discord-common.js";
 import { editPrice, editReminder, editRenewal, renewalDate } from "../edit.js";
 import { loadHistory } from "../history.js";
@@ -32,7 +32,7 @@ export interface Editor {
 
 export const READING = "I am still reading the page of your last new price tracker; try again when it is done.";
 
-const GONE = "You are no longer on this tracker's list.";
+const GONE = NO_LONGER_LISTED;
 
 /** Runs `fn` in the queue with the viewer as the store has them now. */
 function asViewer<T extends { ok: boolean }>(e: Editor, fn: (user: User) => Promise<T>): Promise<T | { ok: false; error: string }> {

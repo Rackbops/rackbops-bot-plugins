@@ -142,8 +142,9 @@ never discord.js's member cache, which with only the Guilds intent never learns 
 has the admin flag -- the one admin definition; `/allow` checks the same flag. `TRACKER_ADMIN_DISCORD_IDS`
 grants it at start; admins grant and revoke it here. The flag is read from the store on every
 request, and again inside the write queue before any admin act, so an admin whose flag is revoked is
-refused on their very next request. To anyone who is not an admin, every `/admin` path -- any method
--- answers the same 404, byte for byte, as an unknown page. An admin sees every person, every task
+refused on their very next request. To a signed-in person who is not an admin, every `/admin` path --
+any method -- answers the same 404, byte for byte, as an unknown page; a visitor who is not signed in
+is sent to sign in, as on every other signed-in path. An admin sees every person, every task
 and every task's page and history, read-only: an admin never edits, pauses or deletes another
 person's task (the owner's acts answer them 404, as in slice 2). What an admin can do, each through
 the function the command path runs:
@@ -154,6 +155,10 @@ the function the command path runs:
   never `/register`.
 - **Make admin / Revoke admin** (plan 5.8). The last admin can be neither revoked nor removed. An
   admin who revokes themselves lands on My tasks. Each change is logged (`u1 made u2 an admin`).
+  An admin named in `TRACKER_ADMIN_DISCORD_IDS` is made an admin again at every start, so their page
+  offers neither Revoke nor Remove, and both are refused: take them out of the configuration first.
+  Such an admin may still forget themselves (if another admin is left); the pages say that the next
+  start makes them again, as a new person, unless the configuration no longer names them.
 - **Resume delivery** of a person paused after failed DMs: `DeliveryHealth.resume`, what the
   person's own next command does -- the count clears and the tasks nothing else holds go back on.
 - **Lift** a decline block in force: docket's `liftBlock`, recorded as that admin's lift.
@@ -178,15 +183,35 @@ in one SQLite transaction in the write queue, **deleted, not archived**:
 What stays, and why: another person's task that they received stays that owner's; one paused only
 because DMs to them failed goes back on. Another person's row keeps its own audit fact but not their
 id -- `admitted_by` of someone they admitted, and `lifted_by` of a block they lifted, become
-`forgotten` ("an admin since forgotten"; null already means "the configuration"). Their id inside
-the error or summary text of someone else's run is replaced with `(forgotten)`. A reply other people
-wrote on the erased person's own tasks is deleted with those tasks. Outside the store, nothing is
-touched: the DMs the bot sent stay in the person's Discord DMs, and the host's log may hold their
-tracker id. The database runs with `secure_delete` on, so erased rows are overwritten, and the
-write-ahead log is checkpointed after an erasure. Forget-me waits (up to 20 seconds, then says to
-try again) until no notify or poll tick is running, so a DM to them already in flight cannot be
-recorded after they are gone. Their sessions are among the rows, so they are signed out everywhere
-at once, and the browser's cookie is cleared. They can come back only as someone new: an admin
+`forgotten` ("an admin since forgotten"; null already means "the configuration"). Text is matched
+only in the forms the code writes a person's id into -- docket's consent rows (`u5`, `u5 24h`), the
+tracker's `u5: ...` removals and `delivery to {u5} paused` pauses, docket's `u5 <message>` delivery
+events, and the notifier's error phrases (`recipient u5 cannot be messaged`, ...) -- never as any
+id-like word, so an address with `/u5/` in someone else's text is left alone. A history row or a
+delivery event of theirs is deleted; the error of someone else's run keeps its row and has the id
+replaced with `(forgotten)`. A pause for a recipient now names them by id and shows their current
+name when read; a pause row written before 0.6.0 names the recipient's display name of the time,
+and is deleted when it is on a task they were a recipient of, names their current name, and no
+other recipient of that task has that name. A row written under an older name of theirs, or shared
+with a same-named recipient, is kept: the one known gap. A reply other people wrote on the erased
+person's own tasks is deleted with those tasks. Outside the store, nothing is touched: the DMs the
+bot sent stay in the person's Discord DMs, and the host's log may hold their tracker id.
+
+Bytes: the database runs with `secure_delete` on, so a deleted row is overwritten, and the first
+start of 0.6.0 on an existing database runs one `VACUUM` (schema 4, which changes no table), so pages
+freed before that are rewritten too. Not a VACUUM per erasure: it rewrites the whole file under an
+exclusive lock, and `secure_delete` already covers every later delete. After an erasure the
+write-ahead log is checkpointed without waiting; when a reader keeps it busy, that is logged and
+SQLite's next checkpoint copies it back.
+
+Timing: forget-me first waits, outside the write queue, until no notify or poll tick is running (at
+most 20 seconds; then it answers 503, try again, and deletes nothing), so a reminder DM to them
+already in flight cannot be recorded after they are gone -- and no one else's command waits behind
+it. Inside the queue it only checks that no tick started meanwhile (else the same 503). A DM sent
+outside any tick -- an invitation's -- that fails after they are gone writes nothing: the failure
+count is not kept for a person no longer in the store, and the withdrawn invitation is not
+recorded. A `/price` whose page is read while its person is forgotten makes nothing. Their sessions
+are among the rows, so they are signed out everywhere at once, and the browser's cookie is cleared. They can come back only as someone new: an admin
 `/allow`s them again, and the tracker never reuses an id.
 
 **Choose the web origin's domain with care.** A host under the same parent domain as

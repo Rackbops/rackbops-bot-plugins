@@ -193,10 +193,24 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX web_sessions_user ON web_sessions (user_id);
   CREATE INDEX web_sessions_expiry ON web_sessions (expires_at);
   `,
+  // 4 (rackbops-bot-plugins#80, slice 3): no table changes. It marks the one-time VACUUM that
+  // `openDatabase` runs when it brings a database past this step: forget-me needs deleted rows gone
+  // from the file, and `secure_delete` (on since 0.6.0) overwrites only what is deleted after it is
+  // on -- pages freed before (by 0.5.0's deletes of queued runs, sessions, sign-in links) could still
+  // hold old bytes. A VACUUM cannot run inside the migration's transaction, hence the marker.
+  `
+  SELECT 1;
+  `,
 ];
 
-/** Brings `db` up to the newest schema. Idempotent; each step runs in its own transaction. */
-export function migrate(db: Database): void {
+/** How long a statement waits on another connection's lock before SQLITE_BUSY. */
+export const BUSY_TIMEOUT_MS = 5000;
+
+/** The migration after which `openDatabase` runs its one VACUUM (see migration 4). */
+export const VACUUM_AT = 4;
+
+/** Brings `db` up to the newest schema. Idempotent; each step runs in its own transaction. Returns the version it found. */
+export function migrate(db: Database): number {
   const current = (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
   if (current > MIGRATIONS.length) {
     throw new Error(`tracker database is at schema ${current}, newer than this plugin knows (${MIGRATIONS.length})`);
@@ -207,15 +221,25 @@ export function migrate(db: Database): void {
       db.exec(`PRAGMA user_version = ${version + 1}`);
     })();
   }
+  return current;
 }
 
 /** Opens (creating if absent) the tracker's database file and migrates it. `":memory:"` for tests. */
 export function openDatabase(path: string): Database {
   const db = new Database(path, { create: true });
   if (path !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
   // Forget-me (roster.ts): a deleted row's bytes are overwritten, not left in a free page.
   db.exec("PRAGMA secure_delete = ON");
-  migrate(db);
+  const found = migrate(db);
+  // Once, when a database that existed before migration 4 first opens here: rewrites the file, so
+  // no page freed before `secure_delete` was on keeps old bytes; then the log is emptied. Not after
+  // every erasure: from here on `secure_delete` covers each delete, and a VACUUM rewrites the whole
+  // file under an exclusive lock -- a stall of the bot's one write queue on each forget-me for no
+  // gain. A brand-new database has nothing to clear.
+  if (path !== ":memory:" && found > 0 && found < VACUUM_AT) {
+    db.exec("VACUUM");
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  }
   return db;
 }

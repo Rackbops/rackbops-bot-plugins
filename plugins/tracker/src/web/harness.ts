@@ -47,16 +47,19 @@ export async function world(opts: { webUrl?: string | null; guild?: boolean; web
   const sent: { userId: string; message: unknown }[] = [];
   /**
    * Set `refuse` to have the host refuse every DM as undeliverable (Discord's "cannot be messaged");
-   * put a Discord id in `unreachable` to refuse only theirs; set `hold` to keep every DM waiting on it.
+   * put a Discord id in `unreachable` to refuse only theirs; set `hold` to keep every DM waiting on it (`held` counts the DMs that waited).
    */
-  const delivery = { refuse: false, unreachable: new Set<string>(), hold: null as Promise<void> | null };
+  const delivery = { refuse: false, unreachable: new Set<string>(), hold: null as Promise<void> | null, held: 0 };
   const plugin = createPlugin(
     makeFakeHost({
       name: "tracker",
       env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, ...(webUrl ? { TRACKER_WEB_URL: webUrl } : {}), ...(opts.guild ? { TRACKER_GUILD_ID: GUILD } : {}) },
       log: { info() {}, warn() {}, error() {} },
       dm: async (userId: string, message: unknown) => {
-        if (delivery.hold) await delivery.hold;
+        if (delivery.hold) {
+          delivery.held++;
+          await delivery.hold;
+        }
         if (delivery.refuse || delivery.unreachable.has(userId)) throw new Error(HOST_CANNOT_MESSAGE);
         sent.push({ userId, message });
         return { guildId: null, channelId: "c", messageId: "m" };

@@ -28,6 +28,18 @@ export const PAUSE_AFTER = 3;
 
 export const PAUSE_DETAIL = `delivery paused: ${PAUSE_AFTER} DMs in a row could not be delivered (DMs closed, or the bot is blocked)`;
 
+/**
+ * A pause for a recipient names them by tracker id in braces (`{u5}`), never by name: history
+ * renders the name when it is read (history.ts), so a later name change shows, and forget-me finds
+ * the row by id (roster.ts). Rows written before 0.6.0 carry the display name of the time instead.
+ */
+export function recipientPauseDetail(userId: string): string {
+  return `delivery to {${userId}} paused: ${PAUSE_AFTER} DMs in a row could not be delivered`;
+}
+
+/** A person named in a history row's detail by `recipientPauseDetail`'s braces. */
+export const PERSON_REF = /\{(u[1-9][0-9]*)\}/g;
+
 /** Whether this failure is the one that pauses: pure, so the threshold is tested on its own. */
 export function decidePause(failures: number, alreadyPaused: boolean): boolean {
   return !alreadyPaused && failures >= PAUSE_AFTER;
@@ -129,6 +141,9 @@ export class DeliveryHealth {
   async recordFailure(userId: string, error: string, at: string): Promise<FailureResult> {
     const notices: Notice[] = [];
     const result = await this.locked(async (): Promise<FailureResult> => {
+      // Forgotten while the DM was out (an invitation's DM runs outside every lock): nothing may
+      // name them again. The erasure runs on this same lock, so the check cannot race it.
+      if (!(await this.store.getUser(userId))) return { failures: 0, paused: false };
       this.db
         .query(
           `INSERT INTO delivery_health (user_id, failures, last_error, last_failed_at) VALUES (?, 1, ?, ?)
@@ -170,7 +185,7 @@ export class DeliveryHealth {
       const { changes } = this.db.query("INSERT INTO delivery_pauses (task_id, user_id, at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING").run(task.id, userId, at);
       if (changes === 0 || task.status !== "active") continue;
       await this.store.updateTask(task.id, { status: "paused", at });
-      const detail = asRecipient ? `delivery to ${name(recipient, userId)} paused: ${PAUSE_AFTER} DMs in a row could not be delivered` : PAUSE_DETAIL;
+      const detail = asRecipient ? recipientPauseDetail(userId) : PAUSE_DETAIL;
       await this.store.addTaskEvent({ taskId: task.id, actorId: null, kind: "paused", detail, at });
       if (asRecipient) {
         const owner = await this.store.getUser(task.ownerId);
