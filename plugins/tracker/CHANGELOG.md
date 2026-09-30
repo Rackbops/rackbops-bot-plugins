@@ -41,8 +41,10 @@
 ### Changed
 
 - The database now runs with `PRAGMA secure_delete = ON`, so a deleted row's bytes are overwritten.
-  Schema 4 changes no table; bringing an existing database to it runs one `VACUUM`, so pages freed
-  before `secure_delete` was on are rewritten too. The write-ahead log is checkpointed after an
+  The first start on an existing database runs one `VACUUM`, so pages freed before `secure_delete`
+  was on are rewritten too. It is recorded in a `tracker_meta` table, not a schema bump -- the schema
+  stays at 3, so a rollback to 0.5.0 still opens the database. A VACUUM that fails (a reader holds
+  the file) is logged as a warning without failing activation, and retried at the next start. The write-ahead log is checkpointed after an
   erasure without waiting on readers; a busy checkpoint is logged.
 - A pause for a recipient is recorded by their id (`delivery to {u5} paused: ...`) and shown with the
   name they have when the history is read, instead of the name they had when it was written.

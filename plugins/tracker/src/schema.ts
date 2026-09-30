@@ -193,21 +193,10 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX web_sessions_user ON web_sessions (user_id);
   CREATE INDEX web_sessions_expiry ON web_sessions (expires_at);
   `,
-  // 4 (rackbops-bot-plugins#80, slice 3): no table changes. It marks the one-time VACUUM that
-  // `openDatabase` runs when it brings a database past this step: forget-me needs deleted rows gone
-  // from the file, and `secure_delete` (on since 0.6.0) overwrites only what is deleted after it is
-  // on -- pages freed before (by 0.5.0's deletes of queued runs, sessions, sign-in links) could still
-  // hold old bytes. A VACUUM cannot run inside the migration's transaction, hence the marker.
-  `
-  SELECT 1;
-  `,
 ];
 
 /** How long a statement waits on another connection's lock before SQLITE_BUSY. */
 export const BUSY_TIMEOUT_MS = 5000;
-
-/** The migration after which `openDatabase` runs its one VACUUM (see migration 4). */
-export const VACUUM_AT = 4;
 
 /** Brings `db` up to the newest schema. Idempotent; each step runs in its own transaction. Returns the version it found. */
 export function migrate(db: Database): number {
@@ -227,19 +216,57 @@ export function migrate(db: Database): number {
 /** Opens (creating if absent) the tracker's database file and migrates it. `":memory:"` for tests. */
 export function openDatabase(path: string): Database {
   const db = new Database(path, { create: true });
-  if (path !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
-  db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
-  // Forget-me (roster.ts): a deleted row's bytes are overwritten, not left in a free page.
-  db.exec("PRAGMA secure_delete = ON");
-  const found = migrate(db);
-  // Once, when a database that existed before migration 4 first opens here: rewrites the file, so
-  // no page freed before `secure_delete` was on keeps old bytes; then the log is emptied. Not after
-  // every erasure: from here on `secure_delete` covers each delete, and a VACUUM rewrites the whole
-  // file under an exclusive lock -- a stall of the bot's one write queue on each forget-me for no
-  // gain. A brand-new database has nothing to clear.
-  if (path !== ":memory:" && found > 0 && found < VACUUM_AT) {
-    db.exec("VACUUM");
-    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  try {
+    if (path !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
+    db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+    // Forget-me (roster.ts): a deleted row's bytes are overwritten, not left in a free page.
+    db.exec("PRAGMA secure_delete = ON");
+    migrate(db);
+    return db;
+  } catch (err) {
+    db.close();
+    throw err;
   }
-  return db;
+}
+
+/**
+ * Housekeeping state kept outside the versioned schema: a key/value table made IF NOT EXISTS, never
+ * by a migration, so `PRAGMA user_version` stays what the tables are (3) and an older plugin (0.5.0),
+ * which checks only `user_version` and never reads this table, still opens the database after a
+ * downgrade. Not a person's data: forget-me has nothing to erase here.
+ */
+export const META_TABLE = "tracker_meta";
+const VACUUMED = "vacuumed_for_secure_delete";
+
+export type VacuumOutcome = { ran: false } | { ran: true } | { ran: false; error: string };
+
+/**
+ * The one VACUUM forget-me needs (rackbops-bot-plugins#80, slice 3): `secure_delete` (on since
+ * 0.6.0) overwrites only what is deleted after it is on, so pages freed earlier (0.5.0's deletes of
+ * queued runs, sessions, sign-in links) could still hold old bytes until the file is rewritten.
+ * Once per database: the marker is written only after the VACUUM and the log's checkpoint succeed,
+ * so a failure (a reader holding the file, a full disk) is reported, not thrown, and the next start
+ * tries again. It does not wait on another connection (busy_timeout 0 for the duration), so a
+ * reader cannot stall activation. Not after every erasure: a VACUUM rewrites the whole file under an
+ * exclusive lock -- a stall of the bot's one write queue each time -- and `secure_delete` already
+ * covers every later delete.
+ */
+export function vacuumOnce(db: Database, path: string): VacuumOutcome {
+  if (path === ":memory:") return { ran: false };
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS ${META_TABLE} (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    if (db.query(`SELECT 1 FROM ${META_TABLE} WHERE key = ?`).get(VACUUMED) !== null) return { ran: false };
+    db.exec("PRAGMA busy_timeout = 0");
+    try {
+      db.exec("VACUUM");
+      const r = db.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number } | null;
+      if (r && Number(r.busy) !== 0) throw new Error("the write-ahead log is busy");
+    } finally {
+      db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+    }
+    db.query(`INSERT INTO ${META_TABLE} (key, value) VALUES (?, ?)`).run(VACUUMED, new Date().toISOString());
+    return { ran: true };
+  } catch (err) {
+    return { ran: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }

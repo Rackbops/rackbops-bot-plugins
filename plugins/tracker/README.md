@@ -198,8 +198,11 @@ person's own tasks is deleted with those tasks. Outside the store, nothing is to
 bot sent stay in the person's Discord DMs, and the host's log may hold their tracker id.
 
 Bytes: the database runs with `secure_delete` on, so a deleted row is overwritten, and the first
-start of 0.6.0 on an existing database runs one `VACUUM` (schema 4, which changes no table), so pages
-freed before that are rewritten too. Not a VACUUM per erasure: it rewrites the whole file under an
+start of 0.6.0 on an existing database runs one `VACUUM`, so pages freed before that are rewritten
+too. That one-time VACUUM is recorded in a small `tracker_meta` table, not by a schema bump: the
+schema stays at 3, so rolling back to 0.5.0 still opens the database. If the VACUUM cannot run (a
+reader holds the file), the start goes on, a warning is logged, and the next start tries again.
+Not a VACUUM per erasure: it rewrites the whole file under an
 exclusive lock, and `secure_delete` already covers every later delete. After an erasure the
 write-ahead log is checkpointed without waiting; when a reader keeps it busy, that is logged and
 SQLite's next checkpoint copies it back.

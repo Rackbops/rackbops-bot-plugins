@@ -17,7 +17,7 @@ import { decideHealth, type HealthState, healthResponse } from "./health.js";
 import { createDmNotifier, reportUnconfirmed } from "./notifier.js";
 import { type NotifyTickKind, runNotifyTick } from "./notify-lane.js";
 import { parseAdminIds, seedAdmins } from "./people.js";
-import { openDatabase } from "./schema.js";
+import { openDatabase, vacuumOnce } from "./schema.js";
 import { Roster } from "./roster.js";
 import { SqliteStore } from "./store.js";
 import { createWebHandler } from "./web/app.js";
@@ -201,6 +201,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       const openedStore = new SqliteStore(opened);
       const openedClaims = new ClaimStore(opened);
       try {
+        const vacuum = vacuumOnce(opened, path);
+        if ("error" in vacuum) host.log.warn(`could not vacuum the tracker's database (${vacuum.error}); trying again at the next start`);
         const granted = await seedAdmins(openedStore, adminIds, clock.now());
         const admissions = new Admissions(opened);
         for (const id of adminIds) {

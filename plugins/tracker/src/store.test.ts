@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { STORE_CONTRACT } from "@rackbops/docket-core";
 import { Admissions } from "./admissions.js";
-import { MIGRATIONS, migrate, openDatabase } from "./schema.js";
+import { makeFakeHost } from "../../../packages/testkit/index.js";
+import { createPlugin } from "./index.js";
+import { META_TABLE, MIGRATIONS, migrate, openDatabase, vacuumOnce } from "./schema.js";
 import { SqliteStore } from "./store.js";
 
 describe("SqliteStore passes docket's STORE_CONTRACT", () => {
@@ -62,7 +64,7 @@ describe("SqliteStore beyond the contract", () => {
     expect(admissions.isRegistered(old.id)).toBe(true);
   });
 
-  it("opening a database from before migration 4 vacuums it once, so rows deleted before secure_delete leave no bytes", () => {
+  it("vacuums an existing database once, so rows deleted before secure_delete leave no bytes; schema stays 3", () => {
     const dir = mkdtempSync(join(tmpdir(), "tracker-vacuum-"));
     try {
       const path = join(dir, "tracker.sqlite");
@@ -78,8 +80,60 @@ describe("SqliteStore beyond the contract", () => {
       old.close();
       const bytes = () => [path, `${path}-wal`].map((p) => (existsSync(p) ? readFileSync(p).toString("latin1") : "")).join("");
       expect(bytes()).toContain(MARK); // what a copy of the file would still show
-      openDatabase(path).close();
+      const db = openDatabase(path);
+      expect(vacuumOnce(db, path)).toEqual({ ran: true });
+      expect(vacuumOnce(db, path)).toEqual({ ran: false }); // once
+      db.close();
       expect(bytes()).not.toContain(MARK);
+
+      // 0.5.0 still opens it after a downgrade: its migrate() refused only a user_version above its
+      // three migrations, and it never reads tracker_meta.
+      const again = new Database(path);
+      const version = (again.query("PRAGMA user_version").get() as { user_version: number }).user_version;
+      expect(version).toBe(3);
+      const known050 = 3;
+      expect(() => {
+        if (version > known050) throw new Error(`tracker database is at schema ${version}, newer than this plugin knows (${known050})`);
+      }).not.toThrow();
+      expect(MIGRATIONS).toHaveLength(known050);
+      again.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a VACUUM that fails does not fail activation: it is logged, and the next start runs it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tracker-vacuum-"));
+    try {
+      const dbPath = join(dir, "tracker.sqlite");
+      openDatabase(dbPath).close(); // an existing database, never vacuumed
+      const reader = new Database(dbPath, { readonly: true });
+      reader.exec("BEGIN");
+      reader.query("SELECT * FROM users").all();
+      const warnings: string[] = [];
+      const plugin = createPlugin(
+        makeFakeHost({ name: "tracker", env: {}, log: { info() {}, warn: (m: string) => void warnings.push(m), error() {} } }),
+        { dbPath },
+      );
+      await plugin.activate!();
+      expect(warnings.some((m) => m.includes("could not vacuum the tracker's database"))).toBe(true);
+      const marked = () => {
+        const db = new Database(dbPath, { readonly: true });
+        try {
+          return db.query(`SELECT count(*) AS n FROM ${META_TABLE}`).get() as { n: number };
+        } finally {
+          db.close();
+        }
+      };
+      expect(marked().n).toBe(0);
+      reader.exec("COMMIT");
+      reader.close();
+      await plugin.dispose!();
+      warnings.length = 0;
+      await plugin.activate!();
+      expect(warnings.filter((m) => m.includes("vacuum"))).toEqual([]);
+      expect(marked().n).toBe(1);
+      await plugin.dispose!();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
