@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-30T22:02:11.897Z",
+  "generatedAt": "2026-09-30T23:25:37.232Z",
   "plugins": [
     {
       "name": "mcp",
@@ -164,7 +164,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks, an admin view, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
@@ -203,6 +203,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "0.9.0",
+          "publishedAt": "2026-09-30T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.9.0",
+          "notes": "### Changed\n\n- Adopts `@rackbops/docket-core` and `@rackbops/docket-types` 0.4.0 (their README's \"Adopting\n  0.4.0\"). Delivery moves into docket: it claims each (run, person) in the store's `deliveries`\n  before the DM and settles it after, retries a DM that can be retried (three tries, a minute apart\n  and doubling), and never resends one whose outcome is unknown (unconfirmed, logged as a warning).\n  The tracker's own claim table and its claim logic (`src/claims.ts`) are gone.\n- The notifier maps the host's answers to docket's errors: cannot be messaged (Discord 50007), an\n  unknown user, or a person with no user row or Discord id is `DeliveryFailedError(msg, true)`\n  (failed for good), replacing `RecipientUnreachableError`; a message the host refuses for its\n  content is a plain `DeliveryFailedError` (retried); a person whose delivery is paused is\n  `ExecutorUnavailableError` (deferred until the resume); anything else is left to docket, which\n  settles it unconfirmed.\n- A run whose DM failed is now `done`, not `failed`: a run fires once its record is written, and its\n  other recipients still get their copies. A run missed while its task was paused for failed DMs\n  now fires late on resume, as a run missed under a hand pause already did.\n- Pause after three failed DMs counts once per run per person, a DM the host says cannot reach\n  them (50007, as before) and now also Discord's unknown user (10013), so the owner of a task hears\n  when a recipient's account is gone. A retried, deferred or unconfirmed DM does not count. A\n  failure to record the count is logged and never replaces the send's own error.\n- An invitation that cannot be delivered says why by cause: \"their DMs are closed, or they\n  blocked the bot\" only for 50007, \"I can't reach them on Discord\" otherwise.\n- Answering a run (`/task done`, `/task snooze`, `/task decide`, the buttons, Reply) finds the\n  latest run that has fired, including one still owed to a recipient; a fired run still finishing\n  answers docket's \"still finishing\" message. The editor's \"next run\", the API's `nextAt` and a\n  zone or hour change skip a run that has already fired.\n- One task at a time (`src/locks.ts`): a task's runs, its answers and its edits (the editor, pause,\n  resume, delete, a zone or hour change) take that task's lock. The notify and poll ticks run one\n  pass of docket's `tickNotify` per task with work, each under its lock, through a view of the store\n  limited to that task.\n- At start the plugin runs docket's `recover()`: a run left running is requeued (its start cleared),\n  and a delivery claim left open is settled unconfirmed and logged, never resent.\n- Delete drops the task's queued runs that have not fired, one at a time with the Store's\n  `deleteOccurrence`. A run that fired and was put back to finish is kept for docket to finish, and\n  docket ends what it still owed unsent, as for any archived task: nothing more is sent.\n- Forget-me also erases, through docket's `deleteDeliveries` and on the person's own tasks, every\n  delivery row, the charges (`usage`) made for them or on their tasks, and the budget notices kept\n  for them.\n- `/register`'s reply is docket's `registrationText`.\n\n### Removed\n\n- The Store's `findUserBySubject`, `usrSubject` and `deleteQueuedOccurrences` (docket 0.4.0 took\n  them out of the port).\n\n### Migration\n\n- Schema 5. `occurrences.record` (a run's record once fired) and `series.key` (unique when set)\n  are added; `deliveries`, `usage` and `notices` are created; `delivery_claims` is copied into\n  `deliveries` and dropped -- sent stays sent, failed stays failed (one attempt), a reported\n  unconfirmed stays unconfirmed; a claim never settled, and an unconfirmed one 0.8.0 never\n  reported, stay claimed, so the first start's `recover()` settles each unconfirmed and logs it\n  once; none is owed, so no DM of before the upgrade is sent again;\n  `users.usr_subject` and its index are dropped. A rollback to 0.8.0 needs a backup from before the\n  upgrade: 0.8.0 does not open a schema 5 database."
+        },
         {
           "version": "0.8.0",
           "publishedAt": "2026-09-30T00:00:00.000Z",

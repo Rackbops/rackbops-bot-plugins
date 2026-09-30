@@ -1,6 +1,7 @@
 import {
   describeSchedule,
   formatInstant,
+  hasFired,
   nextDue,
   type Occurrence,
   type PeriodSchedule,
@@ -29,7 +30,8 @@ import { askText, firstAskIfDue, type PeriodUnit, renewalPlan } from "./tracked.
  * records its own `schedule_changed`), exactly as a zone or hour move does. Nothing here changes
  * when nothing was changed. A field left out, or left empty, keeps what the task has (an empty note
  * or price name is the one way to clear it: no note, the page's address). A price's page (`url`, `near`) is not editable: a different page is a
- * different tracker, and its readings would not compare.
+ * different tracker, and its readings would not compare. Each edit runs under the task's lock
+ * (locks.ts), so no run of the task fires between docket's cancel and its new schedule.
  */
 
 async function owned(d: TrackerDeps, user: User, taskId: string, type: string): Promise<Task | string> {
@@ -53,9 +55,10 @@ async function applyEdit(d: TrackerDeps, task: Task, user: User, patch: Omit<Tas
   return updated;
 }
 
+/** The next run still to fire: a queued run that fired and was put back to finish is not one. */
 async function nextRun(d: TrackerDeps, task: Task): Promise<Occurrence | null> {
   const queued = await d.store.listOccurrences({ taskId: task.id, status: "queued" });
-  return queued[0] ?? null;
+  return queued.find((o) => !hasFired(o)) ?? null;
 }
 
 function savedText(task: Task, user: User, next: Occurrence | null, now: Date, what: string): string {
@@ -73,7 +76,11 @@ export interface ReminderEdit {
 
 const blank = (v: string | undefined): v is undefined => v === undefined || v.trim() === "";
 
-export async function editReminder(d: TrackerDeps, user: User, taskId: string, input: ReminderEdit): Promise<TaskResult> {
+export function editReminder(d: TrackerDeps, user: User, taskId: string, input: ReminderEdit): Promise<TaskResult> {
+  return d.locks.run(taskId.trim(), () => editReminderLocked(d, user, taskId, input));
+}
+
+async function editReminderLocked(d: TrackerDeps, user: User, taskId: string, input: ReminderEdit): Promise<TaskResult> {
   const task = await owned(d, user, taskId, "reminder");
   if (typeof task === "string") return { ok: false, error: task };
   const config = (task.config ?? {}) as { text?: string };
@@ -125,7 +132,7 @@ export function renewalDate(task: Task, owner: User, now: Date): string {
 async function askedAbout(d: TrackerDeps, task: Task, owner: User, date: string): Promise<boolean> {
   const old = task.schedule;
   if (old?.kind !== "period") return false;
-  const fired = (await d.store.listOccurrences({ taskId: task.id })).filter((o) => o.status !== "queued" && !o.dedupeKey.startsWith(SNOOZE_PREFIX));
+  const fired = (await d.store.listOccurrences({ taskId: task.id })).filter((o) => (o.status !== "queued" || hasFired(o)) && !o.dedupeKey.startsWith(SNOOZE_PREFIX));
   return fired.some((o) => periodDate(old, new Date(o.dueAt), owner.timeZone) === date);
 }
 
@@ -150,7 +157,11 @@ export interface RenewalEdit {
  * otherwise become the 30th for good). Only a different date re-anchors; a new schedule gets
  * `/renewal`'s first-ask rule (`firstAskIfDue`), but a date already asked about is not asked again.
  */
-export async function editRenewal(d: TrackerDeps, user: User, taskId: string, input: RenewalEdit): Promise<TaskResult> {
+export function editRenewal(d: TrackerDeps, user: User, taskId: string, input: RenewalEdit): Promise<TaskResult> {
+  return d.locks.run(taskId.trim(), () => editRenewalLocked(d, user, taskId, input));
+}
+
+async function editRenewalLocked(d: TrackerDeps, user: User, taskId: string, input: RenewalEdit): Promise<TaskResult> {
   const task = await owned(d, user, taskId, "renewal");
   if (typeof task === "string") return { ok: false, error: task };
   if (task.schedule?.kind !== "period") return { ok: false, error: FINISHED };
@@ -195,7 +206,11 @@ export async function editRenewal(d: TrackerDeps, user: User, taskId: string, in
 }
 
 /** A price's name, interval, drop and baseline; the page stays the one it was made for. Left out keeps; an empty name is the page's address. */
-export async function editPrice(d: TrackerDeps, user: User, taskId: string, input: PriceSettings): Promise<TaskResult> {
+export function editPrice(d: TrackerDeps, user: User, taskId: string, input: PriceSettings): Promise<TaskResult> {
+  return d.locks.run(taskId.trim(), () => editPriceLocked(d, user, taskId, input));
+}
+
+async function editPriceLocked(d: TrackerDeps, user: User, taskId: string, input: PriceSettings): Promise<TaskResult> {
   const task = await owned(d, user, taskId, "price");
   if (typeof task === "string") return { ok: false, error: task };
   const config = task.config as PriceConfig;

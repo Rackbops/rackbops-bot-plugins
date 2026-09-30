@@ -36,13 +36,14 @@ interface Sent {
   message: HostMessage;
 }
 
-function world(opts: { members?: Set<string>; unreachable?: Set<string> } = {}) {
+function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: Set<string> } = {}) {
   const clock = clockAt(START);
   const sent: Sent[] = [];
   const unreachable = opts.unreachable ?? new Set<string>();
   let n = 0;
   const dm: NonNullable<HostApi["dm"]> = async (userId, message) => {
     if (unreachable.has(userId)) throw new Error(HOST_CANNOT_MESSAGE);
+    if (opts.gone?.has(userId)) throw Object.assign(new Error("Unknown User"), { code: 10013 });
     sent.push({ userId, message });
     n++;
     return { guildId: null, channelId: `c${n}`, messageId: `m${n}` };
@@ -469,10 +470,21 @@ describe("consent, the opt-out, and the Reply modal", () => {
     await slash(w.plugin, "register", CURLY);
     await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "week" } });
     expect(await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } })).toContain(
-      "so the invitation is withdrawn",
+      "(their DMs are closed, or they blocked the bot), so the invitation is withdrawn",
     );
     w.unreachable.clear();
     expect(await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } })).toContain("Invited");
+  });
+
+  it("an invitation to an account Discord no longer knows says it cannot reach them, not that their DMs are closed", async () => {
+    const w = world({ gone: new Set([CURLY]) });
+    await withLarry(w);
+    await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
+    await slash(w.plugin, "register", CURLY);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "week" } });
+    const said = await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } });
+    expect(said).toContain("(I can't reach them on Discord), so the invitation is withdrawn");
+    expect(said).not.toContain("DMs are closed");
   });
 });
 
@@ -505,8 +517,10 @@ describe("pause after repeated failed DMs", () => {
     expect(back).toContain(`I could not DM you ${PAUSE_AFTER} times in a row, so your reminders were paused. 2 task(s) are back on.`);
     expect(back).toContain("`t1` pills");
     expect(back).not.toContain("Paused:");
-    await tick(w.plugin); // Saturday's pills fires, late; walk is next due Sun 9:00
-    expect(w.sent.map((s) => s.message.content)).toEqual(["pills"]);
+    // Saturday's pills fires, late, and so does Saturday's walk: docket 0.4.0 queues a run's next the
+    // moment it fires, before its DM failed and paused the task. Walk is next due Sun 9:00.
+    await tick(w.plugin);
+    expect(w.sent.map((s) => s.message.content)).toEqual(["pills", "walk"]);
     expect(await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t2" } })).toContain("Next: Sun Oct 4, 9:00");
     expect(await slash(w.plugin, "tasks", LARRY)).not.toContain("I could not DM you");
   });

@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.9.0] - 2026-09-30
+
+### Changed
+
+- Adopts `@rackbops/docket-core` and `@rackbops/docket-types` 0.4.0 (their README's "Adopting
+  0.4.0"). Delivery moves into docket: it claims each (run, person) in the store's `deliveries`
+  before the DM and settles it after, retries a DM that can be retried (three tries, a minute apart
+  and doubling), and never resends one whose outcome is unknown (unconfirmed, logged as a warning).
+  The tracker's own claim table and its claim logic (`src/claims.ts`) are gone.
+- The notifier maps the host's answers to docket's errors: cannot be messaged (Discord 50007), an
+  unknown user, or a person with no user row or Discord id is `DeliveryFailedError(msg, true)`
+  (failed for good), replacing `RecipientUnreachableError`; a message the host refuses for its
+  content is a plain `DeliveryFailedError` (retried); a person whose delivery is paused is
+  `ExecutorUnavailableError` (deferred until the resume); anything else is left to docket, which
+  settles it unconfirmed.
+- A run whose DM failed is now `done`, not `failed`: a run fires once its record is written, and its
+  other recipients still get their copies. A run missed while its task was paused for failed DMs
+  now fires late on resume, as a run missed under a hand pause already did.
+- Pause after three failed DMs counts once per run per person, a DM the host says cannot reach
+  them (50007, as before) and now also Discord's unknown user (10013), so the owner of a task hears
+  when a recipient's account is gone. A retried, deferred or unconfirmed DM does not count. A
+  failure to record the count is logged and never replaces the send's own error.
+- An invitation that cannot be delivered says why by cause: "their DMs are closed, or they
+  blocked the bot" only for 50007, "I can't reach them on Discord" otherwise.
+- Answering a run (`/task done`, `/task snooze`, `/task decide`, the buttons, Reply) finds the
+  latest run that has fired, including one still owed to a recipient; a fired run still finishing
+  answers docket's "still finishing" message. The editor's "next run", the API's `nextAt` and a
+  zone or hour change skip a run that has already fired.
+- One task at a time (`src/locks.ts`): a task's runs, its answers and its edits (the editor, pause,
+  resume, delete, a zone or hour change) take that task's lock. The notify and poll ticks run one
+  pass of docket's `tickNotify` per task with work, each under its lock, through a view of the store
+  limited to that task.
+- At start the plugin runs docket's `recover()`: a run left running is requeued (its start cleared),
+  and a delivery claim left open is settled unconfirmed and logged, never resent.
+- Delete drops the task's queued runs that have not fired, one at a time with the Store's
+  `deleteOccurrence`. A run that fired and was put back to finish is kept for docket to finish, and
+  docket ends what it still owed unsent, as for any archived task: nothing more is sent.
+- Forget-me also erases, through docket's `deleteDeliveries` and on the person's own tasks, every
+  delivery row, the charges (`usage`) made for them or on their tasks, and the budget notices kept
+  for them.
+- `/register`'s reply is docket's `registrationText`.
+
+### Removed
+
+- The Store's `findUserBySubject`, `usrSubject` and `deleteQueuedOccurrences` (docket 0.4.0 took
+  them out of the port).
+
+### Migration
+
+- Schema 5. `occurrences.record` (a run's record once fired) and `series.key` (unique when set)
+  are added; `deliveries`, `usage` and `notices` are created; `delivery_claims` is copied into
+  `deliveries` and dropped -- sent stays sent, failed stays failed (one attempt), a reported
+  unconfirmed stays unconfirmed; a claim never settled, and an unconfirmed one 0.8.0 never
+  reported, stay claimed, so the first start's `recover()` settles each unconfirmed and logs it
+  once; none is owed, so no DM of before the upgrade is sent again;
+  `users.usr_subject` and its index are dropped. A rollback to 0.8.0 needs a backup from before the
+  upgrade: 0.8.0 does not open a schema 5 database.
+
 ## [0.8.0] - 2026-09-30
 
 ### Added

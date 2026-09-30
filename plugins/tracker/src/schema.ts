@@ -2,9 +2,10 @@ import { Database } from "bun:sqlite";
 
 /**
  * The tracker's own SQLite schema (plan 5.2, rev17): a fresh store in the plugin's data file,
- * behind docket's Store port, plus the tracker-only `delivery_claims` table (plan 5.5). Each
- * migration runs once, in order, recorded in `PRAGMA user_version`; a shipped migration is never
- * edited, only followed by a new one.
+ * behind docket's Store port, plus the tracker-only tables (admissions, delivery health, the web
+ * area's sign-in). Each migration runs once, in order, recorded in `PRAGMA user_version`; a shipped
+ * migration is never edited, only followed by a new one -- so migration 1 still creates the
+ * `usr_subject` column and the `delivery_claims` table that migration 5 takes away.
  *
  * Every table has an `seq INTEGER PRIMARY KEY AUTOINCREMENT`: the public id is a one-letter prefix
  * plus that number (`u1`, `t12`, the same shape as docket's MemoryStore), which carries no dot, so
@@ -210,6 +211,87 @@ export const MIGRATIONS: readonly string[] = [
     member_checked_at TEXT
   );
   CREATE INDEX api_tokens_user ON api_tokens (user_id);
+  `,
+  // 5 (docket 0.4.0, Rackbops/docket#18): what docket's Store port asks of a host since 0.4.0.
+  // - `occurrences.record`: a run's outcome as JSON, set when it fires (null before; every row an
+  //   older plugin wrote stays null, which docket reads as a run that has not fired or, once done,
+  //   one that finished before records existed).
+  // - `series.key`: a run's point identity, unique when set, so an outcome applied twice appends
+  //   once. Older points keep null.
+  // - `deliveries`: one row per (run, person), docket's delivery claim. The tracker's own
+  //   `delivery_claims` (0.1.0 to 0.8.0) is copied into it and dropped, so a DM a claim says went
+  //   out, or may have, is never sent again: `sent` stays sent; `failed` becomes failed for good
+  //   (one attempt); an `unconfirmed` the old plugin already reported (`reported_at` set) stays
+  //   `unconfirmed`. A `claimed` row, and an `unconfirmed` one never reported, become docket's
+  //   `claimed` (its error kept), so the first start's `recover()` settles each unconfirmed and
+  //   `activate` logs it once -- the report 0.8.0 owed. None of them is owed (`retry_at` null), so
+  //   none is ever resent. `seq` keeps insertion order for rows planned at one instant.
+  // - `usage` and `notices`: docket's model-run charges and its once-only notice keys (budget.ts),
+  //   which the execute lane writes; the tracker runs no execute lane yet, so both stay empty.
+  // - `users.usr_subject` goes (people are not usr accounts, plan item 40): its index first, as
+  //   SQLite drops no indexed column. Never written by any release, so nothing is lost.
+  // A database at 5 is refused by 0.8.0 and older (their `migrate` throws on a newer schema).
+  `
+  ALTER TABLE occurrences ADD COLUMN record TEXT;
+
+  ALTER TABLE series ADD COLUMN key TEXT;
+  CREATE UNIQUE INDEX series_key ON series (key) WHERE key IS NOT NULL;
+
+  CREATE TABLE deliveries (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurrence_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message_id TEXT,
+    error TEXT,
+    attempts INTEGER NOT NULL,
+    deferrals INTEGER NOT NULL,
+    retry_at TEXT,
+    created_at TEXT NOT NULL,
+    claimed_at TEXT,
+    settled_at TEXT,
+    UNIQUE (occurrence_id, user_id)
+  );
+  CREATE INDEX deliveries_user ON deliveries (user_id);
+  CREATE INDEX deliveries_owed ON deliveries (retry_at) WHERE retry_at IS NOT NULL;
+  CREATE INDEX deliveries_status ON deliveries (status);
+  INSERT INTO deliveries (occurrence_id, user_id, status, message_id, error, attempts, deferrals, retry_at, created_at, claimed_at, settled_at)
+    SELECT occurrence_id, user_id,
+      CASE
+        WHEN status IN ('sent', 'failed') THEN status
+        WHEN status = 'unconfirmed' AND reported_at IS NOT NULL THEN 'unconfirmed'
+        ELSE 'claimed'
+      END,
+      message_id, error,
+      CASE WHEN status = 'failed' THEN 1 ELSE 0 END,
+      0, NULL, claimed_at, claimed_at,
+      CASE
+        WHEN status IN ('sent', 'failed') OR (status = 'unconfirmed' AND reported_at IS NOT NULL)
+          THEN COALESCE(settled_at, claimed_at)
+        ELSE NULL
+      END
+    FROM delivery_claims ORDER BY claimed_at, occurrence_id, user_id;
+  DROP TABLE delivery_claims;
+
+  CREATE TABLE usage (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    task_id TEXT,
+    occurrence_id TEXT,
+    source TEXT NOT NULL,
+    calls INTEGER NOT NULL,
+    cost_usd REAL NOT NULL,
+    at TEXT NOT NULL
+  );
+  CREATE INDEX usage_user ON usage (user_id, at);
+
+  CREATE TABLE notices (
+    key TEXT PRIMARY KEY,
+    at TEXT NOT NULL
+  );
+
+  DROP INDEX users_usr_subject;
+  ALTER TABLE users DROP COLUMN usr_subject;
   `,
 ];
 

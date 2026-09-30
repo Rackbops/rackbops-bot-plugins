@@ -5,7 +5,6 @@ import { decideAccess, MEMBERSHIP_UNKNOWN, NOT_ADMIN, NOT_ADMITTED, NOT_MEMBER, 
 const person = (admin = false): User => ({
   id: "u1",
   discordId: "111111111111111111",
-  usrSubject: null,
   displayName: null,
   timeZone: "America/New_York",
   preferredHour: 9,

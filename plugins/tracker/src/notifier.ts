@@ -1,22 +1,34 @@
-import { ExecutorUnavailableError, type Clock, type Notifier, type OutgoingMessage, type Store } from "@rackbops/docket-core";
+import { DeliveryFailedError, ExecutorUnavailableError, type Clock, type Notifier, type OutgoingMessage, type Store } from "@rackbops/docket-core";
 import type { HostApi, HostDelivery, HostMessage, PluginLog } from "../../../packages/api/contract.js";
 import { hostButtons } from "./buttons.js";
-import type { ClaimStore, DeliveryClaim } from "./claims.js";
 import type { DeliveryHealth } from "./delivery-health.js";
 
 /**
  * docket's Notifier port over `host.dm` (plan 5.5). docket addresses a tracker user; this looks up
- * their Discord id and DMs them as the bot. Every send docket's `deliver` makes carries a
- * `ref` naming the occurrence, and for those the (occurrence, user) pair is claimed in the tracker's
- * store before the DM goes out (claims.ts): a claim that already exists is never sent again.
+ * their Discord id and DMs them as the bot. It keeps no claim of its own (docket 0.4.0): docket's
+ * `deliver` claims each (run, person) in the Store's `deliveries` before it calls `sendDm` and
+ * settles the claim from how `sendDm` ends -- so how a failure is thrown decides what comes next:
+ *
+ * - `DeliveryFailedError(message, true)`: the person cannot be messaged at all -- the host's
+ *   "recipient cannot be messaged" (Discord 50007: DMs closed, the bot blocked), Discord's unknown
+ *   user (10013), or no tracker user or Discord id to send to. Failed for good at once.
+ * - `DeliveryFailedError(message)`: the host refused this message before sending anything (its own
+ *   checks of the id, the content, the buttons). docket tries twice more, then gives up.
+ * - `ExecutorUnavailableError`: the person's delivery is paused (delivery-health.ts). Nothing went
+ *   out and no attempt is counted; docket defers the send, and holds it while the task is paused.
+ * - anything else (a Discord API error, a timeout): it may have gone out. docket settles it
+ *   `unconfirmed` and never resends it; this logs it once, as the admin's notice (plan 5.5).
  *
  * Buttons (rackbops-bot-plugins#79): `message.actions` (done, snooze, opt-out, ...) go out as
  * `HostMessage.buttons` (buttons.ts), with a Reply button on a message about one run. A host from
  * before rackbops-discord-bot#323 refuses buttons before sending anything; the DM is then sent again
- * without them, as the contract asks, under the same claim.
+ * without them, as the contract asks, under docket's same claim.
  *
- * Each refusal that says the person cannot be messaged counts toward pausing their delivery, and
- * each DM that goes through clears the count (delivery-health.ts).
+ * Each "cannot be messaged" and each unknown user counts toward pausing the person's delivery (so
+ * the owner of a task hears when a recipient's account is gone), and each DM that goes through
+ * clears the count (delivery-health.ts). Nothing else counts: not a refused message, not a
+ * deferral, not an unconfirmed send. A failure to count is logged, never in place of the send's
+ * own error.
  */
 
 /** What the host rejects `dm` with when Discord says the user cannot be messaged (its code 50007). */
@@ -24,9 +36,6 @@ export const HOST_CANNOT_MESSAGE = "recipient cannot be messaged";
 
 /** Discord's own cap on a message's content, as the host checks it: after wrapping bare links. */
 export const MAX_CONTENT = 2000;
-
-/** What a claim with no recorded send is written as in docket's `delivered` event (never a real id). */
-export const UNCONFIRMED_MESSAGE_ID = "unconfirmed";
 
 /** The host's own id check (rackbops-discord-bot src/routing/model.ts SNOWFLAKE_RE). */
 const HOST_SNOWFLAKE = /^[0-9]{5,25}$/;
@@ -39,14 +48,19 @@ export function wrapBareUrls(content: string): string {
   );
 }
 
+/** Discord's "unknown user": the account is gone, so no send can ever reach it. */
+const UNKNOWN_USER = 10013;
+
+export function isUnknownUser(err: unknown): boolean {
+  if (typeof err === "object" && err !== null && (err as { code?: unknown }).code === UNKNOWN_USER) return true;
+  return (err instanceof Error ? err.message : String(err)) === "Unknown User";
+}
+
 /**
- * Errors `host.dm` raises before anything reaches Discord: its own id and message checks
- * (rackbops-discord-bot src/plugins/host.ts `dm`, hostMessage.ts `validateHostMessage`) and a
- * `users.fetch` that finds no such user (delivery.ts `sendPayloadDm`, Discord code 10013). Nothing
- * went out, so the claim is released (`failed`, which a later run may take again).
+ * The host's own checks, which refuse a DM before anything reaches Discord (rackbops-discord-bot
+ * src/plugins/host.ts `dm`, hostMessage.ts `validateHostMessage`): nothing went out.
  */
-export function isPreSendError(err: unknown): boolean {
-  if (typeof err === "object" && err !== null && (err as { code?: unknown }).code === 10013) return true;
+export function isHostRefusal(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return (
     message === "userId is not a valid id" ||
@@ -54,36 +68,33 @@ export function isPreSendError(err: unknown): boolean {
     message === "content must be a string" ||
     message === "content is empty" ||
     message === "interactive buttons are not supported yet" ||
-    message === "Unknown User" ||
-    message.startsWith("content is longer than")
+    message.startsWith("content is longer than") ||
+    isButtonRefusal(err)
   );
 }
 
 /**
- * A DM the host refused because the person's DMs are closed or they blocked the bot. docket fails
- * the run with this message (its delivery-failure outcome in 0.3.0: the occurrence is `failed`,
- * the error is on record, and the schedule's next run is still materialized).
+ * docket's error for a failed `host.dm`, from what the host said: `DeliveryFailedError` only when
+ * nothing went out (`unreachable` when the person can never be messaged); otherwise the error
+ * itself, unchanged -- the DM may have gone out, and docket settles it unconfirmed, never resent.
  */
-export class RecipientUnreachableError extends Error {
-  override name = "RecipientUnreachableError";
-  constructor(readonly userId: string) {
-    super(`recipient ${userId} cannot be messaged (DMs closed, or the bot is blocked)`);
-  }
+export function deliveryError(err: unknown): unknown {
+  const reason = err instanceof Error ? err.message : String(err);
+  if (reason === HOST_CANNOT_MESSAGE || isUnknownUser(err)) return new DeliveryFailedError(reason, true);
+  if (isHostRefusal(err)) return new DeliveryFailedError(reason);
+  return err;
 }
 
-/** A DM that could never be sent as it stands (a bad Discord id, an empty message); nothing was claimed. */
-export class UndeliverableError extends Error {
-  override name = "UndeliverableError";
+/** Whether `err` says the person cannot be messaged at all: what an invitation is withdrawn on. */
+export function isUnreachable(err: unknown): boolean {
+  return err instanceof DeliveryFailedError && err.unreachable;
 }
 
 export interface DmNotifierDeps {
   store: Store;
-  claims: ClaimStore;
   dm: NonNullable<HostApi["dm"]>;
   clock: Clock;
   log: PluginLog;
-  /** The tick's signal: once aborted, no new send starts. */
-  signal?: AbortSignal;
   /** Counts refused DMs per person and pauses after three; absent, nothing is counted. */
   health?: DeliveryHealth;
 }
@@ -121,46 +132,19 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
   return {
     async sendDm(userId, message) {
       const user = await d.store.getUser(userId);
-      if (!user) throw new UndeliverableError(`no user ${userId}`);
+      if (!user) throw new DeliveryFailedError(`no user ${userId}`, true);
       const discordId = user.discordId;
-      if (!discordId || !HOST_SNOWFLAKE.test(discordId)) throw new UndeliverableError(`user ${userId} has no valid Discord id`);
+      if (!discordId || !HOST_SNOWFLAKE.test(discordId)) throw new DeliveryFailedError(`user ${userId} has no valid Discord id`, true);
       const hostMessage = toHostMessage(message);
-      if (!hostMessage) throw new UndeliverableError("the message has no text");
-      const occurrenceId = message.ref?.occurrenceId ?? null;
+      if (!hostMessage) throw new DeliveryFailedError("the message has no text");
 
-      if (occurrenceId !== null) {
-        const existing = d.claims.get(occurrenceId, userId);
-        // Sent before (the crash came before docket recorded it): record it, never send again.
-        if (existing?.status === "sent") return { messageId: existing.messageId || UNCONFIRMED_MESSAGE_ID };
-        if (existing && existing.status !== "failed") {
-          // Claimed and never settled, or settled unconfirmed: it may have gone out. Not resent.
-          if (existing.status === "claimed") {
-            d.claims.settle(occurrenceId, userId, "unconfirmed", d.clock.now().toISOString(), { error: "claimed, never settled" });
-          }
-          reportUnconfirmed(d.claims, d.log, existing, d.clock.now().toISOString());
-          return { messageId: UNCONFIRMED_MESSAGE_ID };
-        }
-      }
-
-      // A person whose delivery paused earlier in this tick (or before) is held, not failed: the
-      // run goes back to the queue, and the lane skips it while its task is paused.
+      // A person whose delivery paused (earlier in this tick, or before) is held, not failed: docket
+      // defers the send, and once their tasks are paused it waits there for the resume.
       if (d.health?.isPaused(userId)) throw new ExecutorUnavailableError(`delivery to ${userId} is paused`);
 
-      // docket 0.3.0 has no signal of its own: the error it requeues on (rather than failing the
-      // run) is ExecutorUnavailableError, so an aborted tick leaves this run queued for the next.
-      if (d.signal?.aborted) throw new ExecutorUnavailableError("the tick was aborted before this send");
-
-      if (occurrenceId !== null) {
-        const at = d.clock.now().toISOString();
-        if (!d.claims.claim(occurrenceId, userId, discordId, at)) {
-          // Someone claimed it between the read above and here; never send on their claim.
-          return { messageId: UNCONFIRMED_MESSAGE_ID };
-        }
-      }
-
+      const buttons = hostButtons(message);
+      let delivery: HostDelivery;
       try {
-        const buttons = hostButtons(message);
-        let delivery: HostDelivery;
         try {
           delivery = await d.dm(discordId, buttons.length > 0 ? { ...hostMessage, buttons } : hostMessage);
         } catch (err) {
@@ -168,37 +152,24 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
           d.log.warn(`DM sent without buttons: the host refused them (${err instanceof Error ? err.message : String(err)})`);
           delivery = await d.dm(discordId, hostMessage);
         }
-        d.health?.recordSuccess(userId);
-        if (occurrenceId !== null) {
-          d.claims.settle(occurrenceId, userId, "sent", d.clock.now().toISOString(), {
-            messageId: delivery.messageId,
-            channelId: delivery.channelId,
-          });
-        }
-        return { messageId: delivery.messageId };
       } catch (err) {
+        const mapped = deliveryError(err);
         const reason = err instanceof Error ? err.message : String(err);
-        const unreachable = reason === HOST_CANNOT_MESSAGE;
-        const nothingSent = unreachable || isPreSendError(err);
-        if (occurrenceId !== null) {
-          d.claims.settle(occurrenceId, userId, nothingSent ? "failed" : "unconfirmed", d.clock.now().toISOString(), { error: reason });
+        if (reason === HOST_CANNOT_MESSAGE || isUnknownUser(err)) {
+          try {
+            const counted = await d.health?.recordFailure(userId, reason, d.clock.now().toISOString());
+            if (counted?.paused) d.log.warn(`paused delivery to ${userId}: ${counted.failures} DMs in a row could not be delivered`);
+          } catch (countErr) {
+            d.log.error(`could not count a failed DM to ${userId}`, countErr);
+          }
+        } else if (!(mapped instanceof DeliveryFailedError)) {
+          const what = message.ref?.occurrenceId ? `delivery of ${message.ref.occurrenceId}` : "a DM";
+          d.log.warn(`${what} to ${userId} is unconfirmed (${reason}); it will not be resent`);
         }
-        if (unreachable) {
-          const counted = await d.health?.recordFailure(userId, reason, d.clock.now().toISOString());
-          if (counted?.paused) d.log.warn(`paused delivery to ${userId}: ${counted.failures} DMs in a row could not be delivered`);
-          throw new RecipientUnreachableError(userId);
-        }
-        throw err;
+        throw mapped;
       }
+      d.health?.recordSuccess(userId);
+      return { messageId: delivery.messageId };
     },
   };
-}
-
-/** Logs a claim that may or may not have been delivered, once per claim. */
-export function reportUnconfirmed(claims: ClaimStore, log: PluginLog, claim: DeliveryClaim, at: string): void {
-  if (claim.reportedAt !== null) return;
-  const what =
-    claim.status === "claimed" ? `claimed ${claim.claimedAt}, never settled` : `unconfirmed since ${claim.claimedAt} (${claim.error ?? "no detail"})`;
-  log.warn(`delivery of ${claim.occurrenceId} to ${claim.userId} was ${what}; it will not be resent`);
-  claims.markReported(claim.occurrenceId, claim.userId, at);
 }
