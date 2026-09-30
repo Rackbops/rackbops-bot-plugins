@@ -17,7 +17,7 @@ export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "pric
 
 export type Values = Readonly<Record<string, string>>;
 
-interface Field {
+export interface Field {
   name: string;
   label: string;
   kind: "text" | "number" | "date" | "url" | "select";

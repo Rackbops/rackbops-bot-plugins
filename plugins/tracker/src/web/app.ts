@@ -5,6 +5,9 @@ import { loadTaskList, saveSettings, type TrackerDeps } from "../actions.js";
 import type { Queue } from "../discord-common.js";
 import { MAX_ZONE } from "../limits.js";
 import { adminGet, adminPost, type AdminWeb, forgetRoute, unknownPage } from "./admin.js";
+import { handleApi, json, RATE_BURST, RATE_PER_SECOND, RateLimiter, type Recheck } from "./api.js";
+import { problem } from "./api-tasks.js";
+import { tokensGet, tokensPost, tokenRevokePost } from "./tokens.js";
 import { actionPost, editGet, editPost, type Editor, newGet, newPost, taskPage } from "./editor.js";
 import { notice } from "./editor-pages.js";
 import { cookie, htmlResponse, readBody, readCookie, redirect } from "./html.js";
@@ -21,6 +24,8 @@ import { STYLESHEET, STYLESHEET_PATH } from "./theme.js";
  * server, no network -- so the tests call it with a `Request` and read the `Response`.
  *
  * - Public: the stylesheet, `/signin` (how to get a link), `/login` (the one-time link).
+ * - `/api/...`: the JSON task API (api.ts), which authenticates by bearer token only and never
+ *   reads the session cookie; it shares this closure's membership re-check and price-read guard.
  * - Everything else needs a session, re-checked on every request against the store: a person no
  *   longer in it, or no longer registered, is signed out (every one of their sessions dropped).
  * - Every state change is a POST carrying the session's CSRF token (compared in constant time),
@@ -108,8 +113,11 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   // failed.
   const inFlight = new Map<string, Promise<Membership | null>>();
   const failedAt = new Map<string, number>();
-  // New price trackers whose page is being read, per tracker user id (editor.ts).
+  // New price trackers whose page is being read, per tracker user id (editor.ts): the web's and
+  // the API's alike, so one person has one in flight wherever they asked.
   const reading = new Set<string>();
+  // The task API's per-token rate limit (api.ts).
+  const limiter = new RateLimiter(RATE_BURST, RATE_PER_SECOND);
 
   async function authenticate(d: TrackerDeps, request: Request): Promise<Auth> {
     const id = readCookie(request, SESSION_COOKIE);
@@ -144,12 +152,17 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     return lookupWithin(() => shared, MEMBER_CHECK_TIMEOUT_MS);
   }
 
-  async function recheckMembership(d: TrackerDeps, session: Session, user: User): Promise<Auth | null> {
-    if (w.guildId === null) return null;
+  /**
+   * The membership re-check, for a session and an API token alike (`checkedAt` is theirs): "ok",
+   * or "not-member" -- then every session and every API token of the person is gone -- or "unknown"
+   * once the last confirmation is too old to trust (the caller decides what that ends).
+   */
+  async function recheck(d: TrackerDeps, user: User, checkedAt: string | null): Promise<Recheck> {
+    if (w.guildId === null) return "ok";
     const now = d.clock.now().getTime();
-    const age = session.memberCheckedAt ? now - Date.parse(session.memberCheckedAt) : Number.POSITIVE_INFINITY;
+    const age = checkedAt ? now - Date.parse(checkedAt) : Number.POSITIVE_INFINITY;
     const fresh = (limit: number) => age >= 0 && age < limit;
-    if (fresh(MEMBER_RECHECK_MS)) return null;
+    if (fresh(MEMBER_RECHECK_MS)) return "ok";
     const lastFailed = failedAt.get(user.id);
     const backingOff = lastFailed !== undefined && now - lastFailed >= 0 && now - lastFailed < MEMBER_RETRY_MS;
     let found: Membership | null = "unknown";
@@ -160,13 +173,22 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     }
     if (found === "not-member") {
       d.sessions.deleteForUser(user.id);
-      return { kind: "signed-out", note: LEFT_SERVER };
+      d.apiTokens.deleteForUser(user.id);
+      return "not-member";
     }
     if (found === "member") {
-      d.sessions.confirmMember(user.id, d.clock.now().toISOString());
-      return null;
+      const at = d.clock.now().toISOString();
+      d.sessions.confirmMember(user.id, at);
+      d.apiTokens.confirmMember(user.id, at);
+      return "ok";
     }
-    if (fresh(MEMBER_GRACE_MS)) return null;
+    return fresh(MEMBER_GRACE_MS) ? "ok" : "unknown";
+  }
+
+  async function recheckMembership(d: TrackerDeps, session: Session, user: User): Promise<Auth | null> {
+    const found = await recheck(d, user, session.memberCheckedAt);
+    if (found === "ok") return null;
+    if (found === "not-member") return { kind: "signed-out", note: LEFT_SERVER };
     d.sessions.deleteForUser(user.id);
     return { kind: "signed-out", note: RECHECK_FAILED };
   }
@@ -231,6 +253,13 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   }
 
   return async (request, info) => {
+    // The JSON task API (api.ts): bearer tokens, never the cookie, and its own methods and errors.
+    if (info.path === "/api" || info.path.startsWith("/api/")) {
+      if (w.origin === null) return plain(404, "Not found");
+      const d = w.deps();
+      if (!d) return json(problem(503, "starting", "The tracker is starting up; try again in a minute.", { "Retry-After": "60" }));
+      return handleApi({ d, queue: w.queue, reading, base, limiter, recheck: (user, at) => recheck(d, user, at) }, request, info.path);
+    }
     const method = request.method;
     if (method !== "GET" && method !== "POST") return plain(405, "Method not allowed", { Allow: "GET, POST" });
     if (w.origin === null) return plain(404, "Not found");
@@ -294,9 +323,14 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
         return actionPost(e, r.id, r.action, form);
       case "forget":
         return forgetRoute(a, method, form);
+      case "tokens":
+        return tokensPost(d, v, auth.session, form);
+      case "token-revoke":
+        return tokenRevokePost(d, v, r.id);
       case "admin-allow":
       case "admin-act":
       case "admin-lift":
+      case "admin-token-revoke":
         return adminPost(a, r, form);
       default:
         return plain(405, "Method not allowed", { Allow: allowed });
@@ -316,6 +350,8 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       return newGet(e, r.type);
     case "forget":
       return forgetRoute(a, method, null);
+    case "tokens":
+      return tokensGet(d, v);
     case "admin":
     case "admin-tasks":
     case "admin-person":

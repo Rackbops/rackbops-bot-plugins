@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.7.0] - 2026-09-30
+
+### Added
+
+- The JSON task API (rackbops-bot-plugins#80, slice 4; plan 5.10, E5): "the tracker's task API that
+  a later intake agent (E10, deferred) would use", under `/tracker/api/v1/` when `TRACKER_WEB_URL` is
+  set. `GET /me`, `GET /types` (each type's create and edit fields: the readable intake spec of plan
+  item 31), `GET /tasks`, `POST /tasks`, `GET /tasks/<id>` (with its history), `PATCH /tasks/<id>`,
+  `POST /tasks/<id>/pause` and `/resume`, and `DELETE /tasks/<id>`, over the token owner's own
+  reminders, renewals and price trackers. Every write runs through the web editor's own calls, fed
+  the same fields read the same way (`src/web/form-input.ts`), in the same write queue: the same
+  defaults, limits, caps (200 live tasks, 20 price trackers, counted wherever made) and messages.
+  JSON bodies only (`415` otherwise), at most 16 KiB, one object, only the type's fields; errors are
+  `{"error": {"code", "message"}}`. Anyone else's task -- one shared with the owner, or any task to
+  an admin's token -- answers exactly as an unknown id (`404`). No CORS header ever, and a request
+  carrying an `Origin` header is refused (`403`): the API is for programs, not browser pages. The
+  README documents every endpoint, the errors and examples.
+- Personal API tokens, the API's only authentication (`Authorization: Bearer trk_...`); the session
+  cookie is never read by the API, since every plugin shares one browser origin. Made and revoked on
+  the web area's new `/tokens` page (linked from Settings): named, expiring in 30, 90 (the default)
+  or 365 days or never, shown once, stored only as a SHA-256, with made, last-used and expiry times;
+  at most 10 live per person. An admin sees a person's tokens on their admin page and revokes any of
+  them. A token acts as its owner, on the owner's own tasks only; every request re-reads the owner
+  (gone or no longer registered: `401`) and, with `TRACKER_GUILD_ID`, re-checks membership on the
+  web's schedule. A per-token rate limit: 60 at once, then one a second (`429` with `Retry-After`).
+  The log names a token by its id (`k1`), never its secret.
+
+### Changed
+
+- **Schema 4** (migration 4 adds the `api_tokens` table). **This blocks a rollback to 0.6.0 or
+  older**: their `migrate` refuses a database at a schema newer than they know, so the plugin would
+  not activate. To roll back, restore a backup taken before 0.7.0 first (or, knowing that it drops
+  every API token, delete the `api_tokens` table and set `PRAGMA user_version = 3`).
+- Forget-me also erases the person's API tokens (the schema-coverage test includes the new table).
+- One who has left the `TRACKER_GUILD_ID` server loses every API token as well as every session,
+  whether the web or the API found it; a membership lookup that keeps failing ends the web session
+  after 24 hours as before, but only refuses the API (`503`) and keeps the tokens.
+- One new price tracker's page read in flight per person is now shared by the web editor and the API.
+- Internal: the editor's form readers moved to `src/web/form-input.ts`, and its writes
+  (`makeTask`, `saveEdit`, `actOn`) are exported for the API; behaviour unchanged.
+
 ## [0.6.0] - 2026-09-30
 
 ### Added

@@ -10,7 +10,26 @@ import { PAUSE_AFTER } from "../delivery-health.js";
 import { ERASED_TABLES, FORGOTTEN } from "../roster.js";
 import { CONFIGURED_NOTE, CONFIRM_WORD } from "./admin-pages.js";
 import { esc } from "./html.js";
-import { ADMIN, call, cleanup, csrfOf, CURLY, type Jar, LARRY, ORIGIN, people, press, replyText, SESSION, signIn, slash, STRANGER, world } from "./harness.js";
+import {
+  ADMIN,
+  api,
+  call,
+  cleanup,
+  csrfOf,
+  CURLY,
+  type Jar,
+  LARRY,
+  makeToken,
+  ORIGIN,
+  people,
+  press,
+  replyText,
+  SESSION,
+  signIn,
+  slash,
+  STRANGER,
+  world,
+} from "./harness.js";
 
 /**
  * The admin view and forget-me (rackbops-bot-plugins#80, slice 3), through the plugin's own `http`
@@ -91,6 +110,7 @@ const ADMIN_ROUTES: readonly [string, string, Record<string, string>?][] = [
   ["POST", "/admin/people/u3/resume-delivery"],
   ["POST", "/admin/people/u3/forget", { confirm: "yes", word: CONFIRM_WORD }],
   ["POST", "/admin/blocks/b1/lift"],
+  ["POST", "/admin/tokens/k1/revoke"],
   // The wrong method, too: to a non-admin it is the unknown page, not a 405 that says the path exists.
   ["POST", "/admin"],
   ["GET", "/admin/allow"],
@@ -342,12 +362,14 @@ describe("forget-me", () => {
     await tick(w.plugin);
     w.delivery.unreachable.clear();
     await slash(w.plugin, "web", LARRY); // an unused sign-in link
+    const token = await makeToken(w.plugin, w.larry, "larry-agent"); // an API token
+    expect((await api(w.plugin, "GET", "/me", { token })).status).toBe(200);
     const where = new Set(traces(w.dbPath, "u2", [LARRY, "Larry", "larry-"]).map((t) => t.split(".")[0]));
     // Everywhere a person can be, but a price's series and a pause (their own tests' business).
     expect([...where].sort()).toEqual(
       [...ERASED_TABLES].filter((t) => t !== "series" && t !== "delivery_pauses").sort(),
     );
-    return w;
+    return { ...w, token };
   }
 
   it("two steps and a typed word; then every row that names them is gone, from every table, and they are signed out", async () => {
@@ -390,6 +412,8 @@ describe("forget-me", () => {
     expect(curlyRows(w.dbPath)).toEqual(curlyBefore);
     expect((await call(w.plugin, "GET", "/", { jar: curly })).status).toBe(200);
     expect(await slash(w.plugin, "task", CURLY, { sub: "history", strings: { task: "t2" } })).toContain("curly-plants");
+    // His API token is gone with him.
+    expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(401);
     // Larry's old cookie signs no one in.
     const stale = await call(w.plugin, "GET", "/", { jar: oldCookie });
     expect(stale.status).toBe(303);
@@ -421,6 +445,7 @@ describe("forget-me", () => {
     expect(await done.text()).toContain("Larry is removed from the tracker.");
     expect(traces(w.dbPath, "u2", [LARRY, "Larry", "larry-"])).toEqual([]);
     expect((await call(w.plugin, "GET", "/", { jar: w.larry })).status).toBe(303);
+    expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(401);
     expect((await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u2/forget", { confirm: "yes", word: CONFIRM_WORD })).status).toBe(404);
   });
 

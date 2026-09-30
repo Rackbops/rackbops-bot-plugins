@@ -8,8 +8,9 @@ command, delivered by DM, answered by button, with history -- the first slice of
 (#80): sign-in by one-time link, my tasks, a task's history, and settings -- renewals and
 the price tracker (#81, plan E6): two more types on the notify side, no model, nothing sent to
 city-hall -- the web area's task editor (#80, slice 2): make, edit, pause, resume and delete
-your own tasks from the web, under the commands' own rules -- and the admin view and forget-me (#80,
-slice 3).
+your own tasks from the web, under the commands' own rules -- the admin view and forget-me (#80,
+slice 3) -- and the JSON task API with personal API tokens (#80, slice 4), for a program acting as
+you, such as a later intake agent (plan E10).
 
 ## Commands
 
@@ -65,12 +66,15 @@ served at a hashed path, cached for a year).
 | `/new/reminder`, `/new/renewal`, `/new/price` | The editor's new-task forms (GET), and making one (POST). |
 | `/tasks/<id>/edit` | The owner's edit form (GET) and saving it (POST). |
 | `/tasks/<id>/pause`, `/resume`, `/delete` | POST only. Delete answers a confirmation first; only a second post carrying `confirm=yes` deletes. |
-| `/settings` | Preferred hour and time zone, checked as `/register` checks them. |
+| `/settings` | Preferred hour and time zone, checked as `/register` checks them. Links to API tokens and Forget me. |
+| `/tokens` | Your API tokens (below): each one's name, when it was made, last used and expires, with Revoke; and the form to make one (POST), which shows the new token once. |
+| `/tokens/<id>/revoke` | POST only: revokes one of your own tokens. Anyone else's answers the same 404 as an unknown id. |
 | `/forget` | Forget me (below): what it deletes (GET); a POST asks for the confirmation; a POST with `confirm=yes` and the word `forget` erases. Linked from Settings. |
 | `/admin` | Admins only: everyone on the list, the decline blocks in force (each with Lift), and a form to allow a person by Discord id. |
 | `/admin/tasks` | Admins only: every task in the store, with its owner, status and how many receive it, each linking to its page. |
 | `/admin/people/<id>` | Admins only: one person -- Discord id, registration, zone and hour, delivery, task counts, their tasks -- with Make admin or Revoke admin, Resume delivery (when paused), and Remove from the tracker. |
-| `/admin/allow`, `/admin/people/<id>/grant`, `/revoke`, `/resume-delivery`, `/forget`, `/admin/blocks/<id>/lift` | Admins only, POST only: the acts below. |
+| `/admin/allow`, `/admin/people/<id>/grant`, `/revoke`, `/resume-delivery`, `/forget`, `/admin/blocks/<id>/lift`, `/admin/tokens/<id>/revoke` | Admins only, POST only: the acts below. |
+| `/api/v1/...` | The JSON task API (below): bearer tokens only, never the cookie. |
 | `/signin` | Where a request that is not signed in is sent: says to run `/web`. |
 | `/login?t=...` | The link `/web` gives. |
 
@@ -162,6 +166,8 @@ the function the command path runs:
 - **Resume delivery** of a person paused after failed DMs: `DeliveryHealth.resume`, what the
   person's own next command does -- the count clears and the tasks nothing else holds go back on.
 - **Lift** a decline block in force: docket's `liftBlock`, recorded as that admin's lift.
+- **Revoke an API token** of anyone's, from their page, which lists their tokens (never the
+  secret). It stops working at once; the owner is not told. Logged by token id.
 - **Remove from the tracker**: forget-me for that person (below), with the same confirmation.
 
 Not here yet, though plan 5.10 lists them: grants, budgets and retry (they belong to the execute
@@ -178,7 +184,8 @@ in one SQLite transaction in the write queue, **deleted, not archived**:
   made or that name them (an invitation of them, a pause for them), the run events and delivery
   claims of DMs to them, and their pause rows;
 - every decline block they are either side of;
-- their admission, delivery health, web sessions and unused sign-in links, and their person row.
+- their admission, delivery health, web sessions, unused sign-in links and API tokens, and their
+  person row.
 
 What stays, and why: another person's task that they received stays that owner's; one paused only
 because DMs to them failed goes back on. Another person's row keeps its own audit fact but not their
@@ -199,8 +206,8 @@ bot sent stay in the person's Discord DMs, and the host's log may hold their tra
 
 Bytes: the database runs with `secure_delete` on, so a deleted row is overwritten, and the first
 start of 0.6.0 on an existing database runs one `VACUUM`, so pages freed before that are rewritten
-too. That one-time VACUUM is recorded in a small `tracker_meta` table, not by a schema bump: the
-schema stays at 3, so rolling back to 0.5.0 still opens the database. If the VACUUM cannot run (a
+too. That one-time VACUUM is recorded in a small `tracker_meta` table, not by a schema bump (0.6.0
+kept the schema at 3; 0.7.0's API tokens are schema 4, see the CHANGELOG). If the VACUUM cannot run (a
 reader holds the file), the start goes on, a warning is logged, and the next start tries again.
 Not a VACUUM per erasure: it rewrites the whole file under an
 exclusive lock, and `secure_delete` already covers every later delete. After an erasure the
@@ -223,6 +230,114 @@ are among the rows, so they are signed out everywhere at once, and the browser's
 The `__Host-` prefix, which would stop that, requires `Path=/` and so cannot be used with
 `Path=/tracker/`. Put the bot on a host whose sibling subdomains are all yours.
 
+## Task API
+
+A JSON API over your own tasks, for a program that acts as you -- a script, or the plain-language
+intake agent the plan defers (E10, item 31), which would end its dialogue by posting a task here.
+It is served under `/tracker/api/v1/` on the same origin as the web area, and only when
+`TRACKER_WEB_URL` is set. Every write goes through the same functions as the web editor and the
+slash commands -- the same fields, defaults, limits, caps and messages -- in the same write queue.
+
+**Tokens.** Make one on the web area's `/tokens` page (linked from Settings): a name, and an expiry
+of 30, 90 (the default) or 365 days, or never. The page shows the token once -- `trk_` and 43
+characters -- and the tracker keeps only its SHA-256, so neither a copy of the database nor the
+page later shows it again. At most 10 live tokens per person. Each lists when it was made, last used
+and expires, and can be revoked there at once; an admin sees and revokes anyone's from the admin
+view's page for that person. Forget-me erases a person's tokens with the rest. The log names a
+token by its id (`k1`), never by its secret.
+
+**Authentication.** `Authorization: Bearer <token>` on every request. The web area's session
+cookie is never read here: every plugin shares one browser origin, so a cookie-authenticated JSON
+API could be called by any script on it. A token acts as its owner with the owner's rights only,
+and only on the owner's own tasks -- an admin's token included; an admin's wider reads stay on the
+signed-in web pages. Every request re-reads the owner, as the web does a session: a person no
+longer on the tracker, or no longer registered, is refused; with `TRACKER_GUILD_ID` set, membership
+is re-checked on the web's schedule (after 15 minutes, one lookup, shared with the web), and one who
+has left the server loses every token and every session; a lookup that keeps failing lets them on
+for 24 hours from the last confirmation, then answers 503 until one succeeds (the token is kept).
+A token is looked up by the SHA-256 of what was sent, so the comparison is over a hash the sender
+cannot steer.
+
+**Browsers.** No answer carries a CORS header, and a request with an `Origin` header -- which a
+browser adds to every cross-origin request and to any same-origin one that is not a GET -- is
+refused with 403: the API is for programs, not pages. A browser page cannot send a cross-origin
+`Authorization` header without a CORS preflight, which is refused. What this cannot stop: a script
+of another plugin on the same origin can already use the web area as a signed-in person, making a
+token included; put nothing on that origin you do not trust (as for the cookies, above).
+
+**Limits.** Each token may make 60 requests at once, refilled at one per second; over that, `429`
+with `Retry-After`. A limited request is refused before its owner is looked up. A body is at most
+16 KiB, read no further. One new price tracker's page read in flight per person, shared with the
+web editor (`409 busy`).
+
+**Requests.** A `POST` or `PATCH` body is one JSON object with `Content-Type: application/json`
+(else `415`), and names only the fields listed for that type (else `400 unknown_field`), each of
+its JSON type: text as a string, a whole number or a number as a JSON number. A field left out of a
+create gets the command's default; a field left out of an edit keeps what the task has, and an empty
+string does the same, except that an empty `note` clears a renewal's note and an empty `name` gives
+a price back the page's address -- exactly as the web editor's empty fields do.
+
+| Method and path | What |
+|---|---|
+| `GET /api/v1/me` | The token's owner (id, name, zone, preferred hour) and the token (id, name, made, expires). |
+| `GET /api/v1/types` | Each type's create and edit fields: name, JSON type, required, description, and limits (`maxLength`, `minimum`, `maximum`, `enum`) -- the web editor's own field list, as a readable intake spec (plan item 31). |
+| `GET /api/v1/tasks` | Your tasks that are not deleted -- active, paused and done -- oldest first. Not the ones shared with you. |
+| `POST /api/v1/tasks` | Makes one: `type` is `reminder`, `renewal` or `price`, and the rest are that type's create fields. `201`, with `Location`. A price's page is read first, and nothing is made unless a price is found in it. |
+| `GET /api/v1/tasks/<id>` | One of your tasks (a deleted one too), with its history: the newest runs and changes, as `/task history` shows them. |
+| `PATCH /api/v1/tasks/<id>` | Edits it: the fields to change. A price's page is not editable. |
+| `POST /api/v1/tasks/<id>/pause`, `/resume` | Body `{}`. As the web's Pause and Resume, and `/task resume`. |
+| `DELETE /api/v1/tasks/<id>` | Deletes it as the web does: archived, nothing more sent, history kept. No confirmation step. |
+
+A task is `{"id", "type", "title", "status", "cadence", "nextAt", "createdAt", "updatedAt",
+"settings"}`: `status` is `active`, `paused`, `done` or `deleted`; `cadence` is the schedule in
+words, in your zone; `nextAt` the next run's instant (UTC), null when paused or nothing is due;
+`settings` the values an edit would keep (a price also names its `url`). A write answers
+`{"task", "message"}`, `message` being the words the web and the command say.
+
+**Errors** are `{"error": {"code": "...", "message": "..."}}`:
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `invalid` | A rule refused a value; `message` is the rule's own words, as the web editor shows them. Also a field of the wrong JSON type, or no `type`. |
+| 400 | `unknown_field` | A field that type does not take (on a pause or resume, any field). |
+| 400 | `invalid_json` | The body is not JSON, or not one object. |
+| 401 | `unauthorized` | No `Authorization` header. With `WWW-Authenticate: Bearer realm="tracker"`. |
+| 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered: one answer for all. |
+| 403 | `origin_refused` | The request carried an `Origin` header. |
+| 403 | `not_member` | The owner has left the `TRACKER_GUILD_ID` server; their tokens are revoked. |
+| 404 | `not_found` | No such endpoint, or no such task of yours. Anyone else's task -- one shared with you, or any task to an admin's token -- answers exactly as an unknown id. |
+| 405 | `method_not_allowed` | With `Allow`. |
+| 409 | `conflict` | A finished task edited, or a pause of a task not active (a resume of one not paused). |
+| 409 | `limit_reached` | 200 active or paused tasks, or 20 price trackers, as the commands count them. |
+| 409 | `busy` | Your last new price tracker's page is still being read. |
+| 413 | `too_large` | Body over 16 KiB. |
+| 415 | `unsupported_media_type` | Not `application/json`. |
+| 429 | `rate_limited` | With `Retry-After`. |
+| 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours; the type is not available on this bot. |
+
+**Example.**
+
+```
+$ curl -s https://clerk.example.com/tracker/api/v1/tasks \
+    -H "Authorization: Bearer $TRACKER_TOKEN" -H "Content-Type: application/json" \
+    -d '{"type": "reminder", "text": "water the plants", "when": "tomorrow 9am", "repeat": "week"}'
+{"task":{"id":"t7","type":"reminder","title":"water the plants","status":"active",
+ "cadence":"weekly on Fri at 9:00","nextAt":"2026-10-02T13:00:00.000Z",
+ "createdAt":"2026-10-01T12:00:00.000Z","updatedAt":"2026-10-01T12:00:00.000Z",
+ "settings":{"text":"water the plants","repeat":"week"}},
+ "message":"Reminder `t7` set: water the plants\nNext: Fri Oct 2, 9:00, weekly on Fri at 9:00."}
+
+$ curl -s -X PATCH https://clerk.example.com/tracker/api/v1/tasks/t7 \
+    -H "Authorization: Bearer $TRACKER_TOKEN" -H "Content-Type: application/json" \
+    -d '{"repeat": "day"}'
+
+$ curl -s -X POST https://clerk.example.com/tracker/api/v1/tasks/t7/pause \
+    -H "Authorization: Bearer $TRACKER_TOKEN" -H "Content-Type: application/json" -d '{}'
+
+$ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: Bearer $TRACKER_TOKEN"
+{"error":{"code":"not_found","message":"No such task."}}
+```
+
 ## What it does
 
 | Piece | File | Notes |
@@ -237,7 +352,8 @@ The `__Host-` prefix, which would stop that, requires `Path=/` and so cannot be 
 | Commands | `src/discord.ts`, `src/interactions.ts`, `src/discord-common.ts` (discord.js); `src/actions.ts`, `src/press.ts`, `src/history.ts`, `src/access.ts` | The discord.js files read options and render; the rest is Discord-free over the injected store, clock and notifier. Store writes are handled one at a time; Discord lookups and DMs run outside that queue. |
 | Health | `src/health.ts` | `GET /tracker/healthz` (through the bot's HTTP router): `200` `ok`/`starting`, `503` `inactive`/`stale`/`blocked`. |
 | Admin, forget-me | `src/admin.ts`, `src/roster.ts`; `src/web/admin.ts`, `src/web/admin-pages.ts` | The admin acts and forget-me, Discord-free; the SQL docket's Store has no method for (listing people and blocks, erasing a person); the routes and pages. |
-| Web area | `src/web/` | `app.ts` authenticates and dispatches (pure over the injected store and clock), `routes.ts` names the paths; `pages.ts`, `editor-pages.ts` and `html.ts` render; `editor.ts` reads the editor's forms and calls the shared rules; `signin-link.ts` and `sessions.ts` hold the sign-in; `theme.ts` the stylesheet; `command.ts` is `/web`. |
+| Web area | `src/web/` | `app.ts` authenticates and dispatches (pure over the injected store and clock), `routes.ts` names the paths; `pages.ts`, `editor-pages.ts` and `html.ts` render; `form-input.ts` reads the editor's fields and `editor.ts` calls the shared rules with them; `signin-link.ts` and `sessions.ts` hold the sign-in; `theme.ts` the stylesheet; `command.ts` is `/web`. |
+| Task API | `src/web/api.ts`, `src/web/api-tasks.ts`, `src/web/api-tokens.ts`, `src/web/tokens.ts`, `src/web/token-pages.ts` | The JSON API's authentication, gates and rate limit; its task routes over editor.ts's writes; the tokens (SQL, hashed); the tokens page and its routes. |
 | Task rules | `src/reminders.ts`, `src/tracked.ts`, `src/price.ts`, `src/edit.ts`, `src/manage.ts`, `src/limits.ts` | What makes, edits, pauses, resumes and deletes a task, and the limits on it, Discord-free, for the commands and the web editor alike. |
 
 ## Configuration
@@ -252,8 +368,10 @@ The `__Host-` prefix, which would stop that, requires `Path=/` and so cannot be 
 
 ## Not yet
 
-- The rest of the web area (E5): sharing a task from the web, the JSON task API, and the admin
-  view's grants, budgets and retry (with the execute lane). Discord OAuth2 as a second sign-in
+- The rest of the web area (E5): sharing a task from the web, and the admin view's grants, budgets
+  and retry (with the execute lane). The task API covers reminders, renewals and prices only --
+  not `/task done`, `snooze`, `decide`, `share` or the settings -- and no intake agent uses it yet
+  (E10, deferred). Discord OAuth2 as a second sign-in
   method, if chosen (plan item 41).
 - The city-hall Executor adapter (the execute lane).
 - Editing in Discord (the editor is on the web only), and changing a price tracker's page or `near` after it is made (make a new one); a free-form pattern for `price` (`near` is the safe subset: a user's regular expression run on a large page could hang the bot).

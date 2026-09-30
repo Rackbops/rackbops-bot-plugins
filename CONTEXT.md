@@ -133,6 +133,10 @@ pin only needs to change in one place.
   `members.fetch({ user })`, a REST call that needs no privileged intent; Discord's 10007 (unknown
   member) and 10013 (unknown user) mean "not a member". Unit-tested against a fake client only; not
   yet run against real Discord (inferred from discord.js v14's API, not verified live).
+- **The host hands a plugin's `http` every method, not only GET and POST** (read in
+  rackbops-discord-bot `src/plugins/host.ts`, 2026-09-30, for `plugins/tracker` #80 slice 4): the
+  buffered `Request` is rebuilt with `method: request.method`, so `PATCH`, `DELETE` and `OPTIONS`
+  reach the plugin, which answers its own `405`s. The tracker's JSON task API relies on it.
 - **CI job names (`checks`, `test`) intentionally split lint/typecheck-shaped work from tests**,
   matching `/audit`'s "at least two jobs" requirement -- `rackbops-discord-bot`'s own `ci.yml`
   uses a single `checks` job and doesn't split this way; don't use that file as a reference for

@@ -3,6 +3,8 @@ import { type BlockRow, FORGOTTEN, type PersonRow } from "../roster.js";
 import { prose, taskHref } from "./editor-pages.js";
 import { html, type Html } from "./html.js";
 import { framed, type Viewer } from "./pages.js";
+import type { ApiToken } from "./api-tokens.js";
+import { adminTokenHref, tokenTable } from "./token-pages.js";
 
 /**
  * The admin view and forget-me's pages (rackbops-bot-plugins#80, slice 3; plan 5.10), pure: data
@@ -159,7 +161,15 @@ function post(v: Viewer, p: PersonRow, action: string, label: string, style: str
 }
 
 /** `/admin/people/<id>`: one person, their tasks, and what an admin may do about them. */
-export function personPage(v: Viewer, p: PersonRow, tasks: readonly Task[], now: Date, result: Result = null, configured = false): string {
+export function personPage(
+  v: Viewer,
+  p: PersonRow,
+  tasks: readonly Task[],
+  now: Date,
+  result: Result = null,
+  configured = false,
+  tokens: readonly ApiToken[] = [],
+): string {
   return framed(
     v,
     nameOf(p),
@@ -188,13 +198,18 @@ ${
     ? html`<p class="rb-muted">None.</p>`
     : html`<ul>${tasks.map((t) => html`<li><a class="rb-link" href="${taskHref(v, t.id)}">${t.title}</a> -- ${t.type}, ${t.status === "archived" ? "deleted" : t.status}</li>`)}</ul>`
 }
+</section>
+<section>
+<h2>Their API tokens</h2>
+<p class="rb-muted">Each acts as them on their own tasks. Revoking one stops it at once; they are not told.</p>
+${tokenTable(v, tokens, now, (id) => adminTokenHref(v, id))}
 </section>`,
   );
 }
 
 const WHAT_GOES =
   "every task (deleted ones too) with its runs, replies and history; your replies, answers and history on other people's tasks, " +
-  "and your place on the tasks shared with you; decline blocks either way; delivery pauses; your settings and sign-in sessions; and your place on the list.";
+  "and your place on the tasks shared with you; decline blocks either way; delivery pauses; your settings, sign-in sessions and API tokens; and your place on the list.";
 
 /** `/forget`: what forget-me deletes, and the button that asks for the confirmation. */
 export function forgetPage(v: Viewer, note?: string): string {
