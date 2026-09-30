@@ -39,7 +39,7 @@ describe("people in the store", () => {
   it("admits a person once, with the tracker's defaults (US Eastern, 9:00), and no usr subject", async () => {
     const store = fresh();
     const u = await admit(store, A, NOW);
-    expect(u).toMatchObject({ discordId: A, timeZone: DEFAULT_TIME_ZONE, preferredHour: DEFAULT_PREFERRED_HOUR, admin: false, usrSubject: null });
+    expect(u).toMatchObject({ discordId: A, timeZone: DEFAULT_TIME_ZONE, preferredHour: DEFAULT_PREFERRED_HOUR, admin: false });
     expect((await admit(store, A, NOW)).id).toBe(u.id);
     await expect(admit(store, "nope", NOW)).rejects.toThrow(PeopleError);
   });
@@ -71,7 +71,6 @@ describe("people in the store", () => {
     const admin = await store.findUserByDiscordId(A);
     expect(await identity.actorForDiscord(A)).toEqual({ userId: admin?.id ?? "", admin: true });
     expect(await identity.actorForDiscord(B)).toBeNull();
-    expect(await identity.actorForSubject("any")).toBeNull();
   });
 
   it("two admissions racing for one Discord id leave one row: the loser reads back the winner", async () => {

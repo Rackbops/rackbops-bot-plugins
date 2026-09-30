@@ -1,20 +1,20 @@
 import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Clock, Fetch, Notifier, TaskType } from "@rackbops/docket-core";
+import { DeliveryFailedError, Lanes, type Clock, type Fetch, type Notifier, type TaskType } from "@rackbops/docket-core";
 import { price, reminder, renewal } from "@rackbops/docket-types";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds } from "./access.js";
 import type { TickGate, TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
-import { ClaimStore } from "./claims.js";
 import { DeliveryHealth } from "./delivery-health.js";
 import { createPageFetch } from "./fetch.js";
 import type { Membership } from "./access.js";
 import { type Interactionish, lookupMembership, serial } from "./discord-common.js";
 import { createSurface, type SurfaceWiring } from "./discord.js";
 import { decideHealth, type HealthState, healthResponse } from "./health.js";
-import { createDmNotifier, reportUnconfirmed } from "./notifier.js";
+import { TaskLocks } from "./locks.js";
+import { createDmNotifier } from "./notifier.js";
 import { type NotifyTickKind, runNotifyTick } from "./notify-lane.js";
 import { parseAdminIds, seedAdmins } from "./people.js";
 import { openDatabase, vacuumOnce } from "./schema.js";
@@ -71,10 +71,10 @@ export interface TrackerOptions {
   webMembership?: (discordId: string) => Promise<Membership | null>;
 }
 
-/** A Notifier for a host without `dm`: every send is refused, before anything is claimed. */
+/** A Notifier for a host without `dm`: every send is refused, and nothing went out. */
 const NO_DM: Notifier = {
   async sendDm() {
-    throw new Error("this bot has no host.dm (rackbops-discord-bot#736)");
+    throw new DeliveryFailedError("this bot has no host.dm (rackbops-discord-bot#736)");
   },
 };
 
@@ -88,13 +88,14 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
   let db: Database | null = null;
   let store: SqliteStore | null = null;
-  let claims: ClaimStore | null = null;
   let delivery: DeliveryHealth | null = null;
   let deps: TrackerDeps | null = null;
   let warnedNoDm = false;
   const dm = host.dm?.bind(host);
-  // One queue for every store write, from Discord and from the web area alike.
+  // One queue for every store write, from Discord and from the web area alike, and one lock per task
+  // that the ticks and the queue's replies and edits of that task share (locks.ts).
   const queue = serial();
+  const locks = new TaskLocks();
   const surface = createSurface({
     deps: () => deps,
     guildIds,
@@ -105,11 +106,11 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   });
 
   async function tick(kind: NotifyTickKind, signal?: AbortSignal) {
-    if (!store || !claims) return;
+    if (!store) return;
     const outcome = await runNotifyTick(
       {
         store,
-        claims,
+        locks,
         clock,
         types,
         dm,
@@ -200,7 +201,6 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       }
       const opened = openDatabase(path);
       const openedStore = new SqliteStore(opened);
-      const openedClaims = new ClaimStore(opened);
       try {
         const vacuum = vacuumOnce(opened, path);
         if ("error" in vacuum) host.log.warn(`could not vacuum the tracker's database (${vacuum.error}); trying again at the next start`);
@@ -211,18 +211,19 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           if (admin) admissions.record(admin.id, null, clock.now().toISOString());
         }
         if (granted.length > 0) host.log.info(`made ${granted.length} admin(s) from TRACKER_ADMIN_DISCORD_IDS`);
-        // docket's recover(): work a crash left running goes back to the queue; delivery claims keep
-        // it from sending twice.
-        const requeued = await openedStore.requeueRunning();
+        // docket's recover(), once at start: work a crash left running goes back to the queue (a run
+        // that fired resumes from its record, never running its type again), and every send left
+        // mid-way is settled unconfirmed and never resent -- logged here, as the admin's notice.
+        const open = await openedStore.listDeliveries({ status: "claimed" });
+        const requeued = await new Lanes({ store: openedStore, clock, types, notifier: NO_DM }).recover();
         if (requeued.length > 0) host.log.warn(`requeued ${requeued.length} occurrence(s) left running: ${requeued.join(", ")}`);
-        for (const c of openedClaims.listUnsettled()) reportUnconfirmed(openedClaims, host.log, c, clock.now().toISOString());
+        for (const c of open) host.log.warn(`delivery of ${c.occurrenceId} to ${c.userId} was claimed ${c.claimedAt ?? "?"} and never settled; it will not be resent`);
       } catch (err) {
         opened.close();
         throw err;
       }
       db = opened;
       store = openedStore;
-      claims = openedClaims;
       // The owner of a task a recipient's failures paused is told once, by a plain DM: not counted
       // toward the owner's own pause (they may simply be offline), and `/tasks` shows it regardless.
       delivery = new DeliveryHealth(opened, openedStore, {
@@ -244,7 +245,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         fetch: pageFetch(),
         dm,
         log: host.log,
-        notifier: dm ? createDmNotifier({ store: openedStore, claims: openedClaims, dm, clock, log: host.log, health: delivery }) : NO_DM,
+        notifier: dm ? createDmNotifier({ store: openedStore, dm, clock, log: host.log, health: delivery }) : NO_DM,
+        locks,
         logins: new LoginLinks(opened),
         sessions: new Sessions(opened),
         apiTokens: new ApiTokens(opened),
@@ -265,7 +267,6 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       deps = null;
       delivery = null;
       store = null;
-      claims = null;
       const closing = db;
       db = null;
       closing?.close();

@@ -1,6 +1,6 @@
 {
   "name": "@rackbops/plugin-tracker",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks, an admin view, forget-me, and a JSON task API with personal API tokens",
   "type": "module",
   "main": "dist/plugin.js",
@@ -11,8 +11,8 @@
     "directory": "plugins/tracker"
   },
   "devDependencies": {
-    "@rackbops/docket-core": "^0.3.0",
-    "@rackbops/docket-types": "^0.3.0",
+    "@rackbops/docket-core": "^0.4.0",
+    "@rackbops/docket-types": "^0.4.0",
     "@rackbops/styles": "^0.2.42"
   },
   "peerDependencies": {

@@ -11,7 +11,7 @@ import {
 import type { Membership } from "./access.js";
 import { answeredText, clip, NO_SUCH_TASK, replyLanes, type TrackerDeps } from "./actions.js";
 import { MAX_REPLY_TEXT } from "./buttons.js";
-import { RecipientUnreachableError } from "./notifier.js";
+import { isUnreachable } from "./notifier.js";
 
 /**
  * Sharing, the buttons, and the Reply modal (plan 5.5): consent with accept and decline, the
@@ -96,7 +96,7 @@ export async function finishShare(d: TrackerDeps, p: PendingShare, err: unknown)
     detail: `${p.targetId}: the invitation could not be delivered`,
     at: d.clock.now().toISOString(),
   });
-  if (err instanceof RecipientUnreachableError) {
+  if (isUnreachable(err)) {
     return `I could not DM <@${p.targetDiscordId}> (their DMs are closed, or they blocked the bot), so the invitation is withdrawn.`;
   }
   d.log.error(`invitation DM for ${p.taskId} to ${p.targetId} failed`, err);
@@ -113,8 +113,24 @@ const CONSENT_TEXT: Record<string, string> = {
   opt_out: "You will not get this task's messages any more.",
 };
 
-/** A button with a docket reply reference, pressed by `user`. */
+/** The task a reply reference is about (by its task, or by its run's), or null when it names none. */
+async function taskOfRef(d: TrackerDeps, ref: string): Promise<string | null> {
+  const decoded = decodeReplyRef(ref);
+  if (!decoded) return null;
+  if (decoded.scope === "t") return decoded.id;
+  return (await d.store.getOccurrence(decoded.id))?.taskId ?? null;
+}
+
+/**
+ * A button with a docket reply reference, pressed by `user`: checked and answered under the task's
+ * lock (locks.ts), so a run of the task never lands between docket's check and its answer.
+ */
 export async function press(d: TrackerDeps, user: User, ref: string): Promise<PressResult> {
+  const taskId = await taskOfRef(d, ref);
+  return taskId === null ? pressLocked(d, user, ref) : d.locks.run(taskId, () => pressLocked(d, user, ref));
+}
+
+async function pressLocked(d: TrackerDeps, user: User, ref: string): Promise<PressResult> {
   const verdict = await replyForRef(d.store, ref, user.id);
   if (!verdict.ok) return { ok: false, error: verdict.error };
   const { input } = verdict;
@@ -147,8 +163,14 @@ export async function replyRefusal(d: TrackerDeps, user: User, occurrenceId: str
   return mine?.state === "accepted" ? null : "That is not yours to reply to.";
 }
 
-/** The Reply modal's submit: the text is kept on the task, against the run it answers. */
+/** The Reply modal's submit: the text is kept on the task, against the run it answers, under the task's lock. */
 export async function submitReply(d: TrackerDeps, user: User, occurrenceId: string, text: string): Promise<string> {
+  const taskId = (await d.store.getOccurrence(occurrenceId))?.taskId;
+  const act = () => submitReplyLocked(d, user, occurrenceId, text);
+  return taskId === undefined ? act() : d.locks.run(taskId, act);
+}
+
+async function submitReplyLocked(d: TrackerDeps, user: User, occurrenceId: string, text: string): Promise<string> {
   const refusal = await replyRefusal(d, user, occurrenceId);
   if (refusal) return refusal;
   const trimmed = text.trim();

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { BUSY_TIMEOUT_MS } from "./schema.js";
+import { deleteDeliveriesOf } from "./store.js";
 
 /**
  * The tracker-only reads and the one delete docket's Store port has no method for
@@ -59,7 +60,7 @@ type Count = { n: number };
 /** The tables the erasure touches, in the order it deletes from them. Every table in the schema is here. */
 export const ERASED_TABLES = [
   "events",
-  "delivery_claims",
+  "deliveries",
   "replies",
   "task_events",
   "series",
@@ -73,6 +74,8 @@ export const ERASED_TABLES = [
   "web_sessions",
   "web_login_tokens",
   "api_tokens",
+  "usage",
+  "notices",
   "users",
 ] as const;
 
@@ -101,16 +104,20 @@ export function historyNames(kind: string, detail: string, id: string): boolean 
   }
 }
 
-/** docket's `delivered` run event: `<recipient id> <message id>` (docket delivery.js). */
+/**
+ * docket's `delivered` run event: `<recipient id> <message id>` (docket 0.3.0 delivery.js). docket
+ * 0.4.0 writes none -- who got a run is in its deliveries -- but rows from before 0.9.0 keep them.
+ */
 export function eventNames(type: string, text: string, id: string): boolean {
   return type === "delivered" && text.startsWith(`${id} `);
 }
 
 /**
- * The phrases the notifier writes a recipient's id into, which a failed run carries as its error
- * and its `error` event (notifier.ts: `recipient <id> cannot be messaged`, `no user <id>`, `user
- * <id> has no valid Discord id`, `delivery to <id> is paused`). Such a row is another owner's
- * record of their run, so the id is redacted in place, never the row deleted.
+ * The phrases the notifier writes a recipient's id into (notifier.ts: `recipient <id> cannot be
+ * messaged`, `no user <id>`, `user <id> has no valid Discord id`, `delivery to <id> is paused`).
+ * Before 0.9.0 a failed run carried one as its error and its `error` event; such a row is another
+ * owner's record of their run, so the id is redacted in place, never the row deleted. Since 0.9.0
+ * the phrase lands only on the person's own delivery row, which the erasure deletes.
  */
 function errorForms(id: string): RegExp {
   return new RegExp(`(recipient |user |delivery to )${id}(?![0-9A-Za-z_])`, "g");
@@ -229,11 +236,13 @@ export class Roster {
   /**
    * Erases the person `userId` from the tracker's store, in one transaction (plan 5.8, "Forget
    * me"): their tasks, whatever their status, and everything under them -- runs, run events,
-   * replies (anyone's), history, series, recipients, delivery claims and pauses; on everyone
-   * else's tasks, their recipient rows, their replies, the history rows they made or that name
-   * them, the run events and claims of DMs to them, and their pauses; every decline block they
-   * are either side of; their admission, delivery health, web sessions, sign-in links and API tokens; and
-   * their person row. Where another person's row keeps an audit column that named them (who
+   * replies (anyone's), history, series, recipients, deliveries (anyone's copy), charges and
+   * pauses; on everyone else's tasks, their recipient rows, their replies, the history rows they
+   * made or that name them, the run events and delivery rows of DMs to them (docket's
+   * `deleteDeliveries`, by the very statement `SqliteStore.deleteDeliveries` runs: the port's
+   * `await` cannot sit inside this synchronous transaction), and their pauses; every decline block
+   * they are either side of; their admission, delivery health, web sessions, sign-in links, API
+   * tokens, charges and budget notices; and their person row. Where another person's row keeps an audit column that named them (who
    * admitted someone, who lifted a block), it is set to `FORGOTTEN`; where another person's run
    * error (or its error event) carries their id in a phrase the notifier writes, the id is redacted.
    * Text is matched only in the forms the code writes ids into (`historyNames`, `eventNames`,
@@ -280,7 +289,9 @@ export class Roster {
 
       // Everything under their own tasks, then the rows that are theirs on anyone's.
       del("events", `occurrence_id IN (${THEIR_RUNS})`, userId);
-      del("delivery_claims", `occurrence_id IN (${THEIR_RUNS}) OR user_id = ?`, userId, userId);
+      del("deliveries", `occurrence_id IN (${THEIR_RUNS})`, userId);
+      rows.deliveries = (rows.deliveries ?? 0) + deleteDeliveriesOf(this.db, userId);
+      del("usage", `task_id IN (${THEIR_TASKS}) OR user_id = ?`, userId, userId);
       del("replies", `task_id IN (${THEIR_TASKS}) OR user_id = ?`, userId, userId);
       del("task_events", `task_id IN (${THEIR_TASKS}) OR actor_id = ?`, userId, userId);
       del("series", `task_id IN (${THEIR_TASKS})`, userId);
@@ -330,6 +341,8 @@ export class Roster {
       del("web_sessions", "user_id = ?", userId);
       del("web_login_tokens", "user_id = ?", userId);
       del("api_tokens", "user_id = ?", userId);
+      // docket's once-only budget notices name a person in their key (`budget:person:<id>:<day>`).
+      del("notices", "key LIKE 'budget:person:' || ? || ':%'", userId);
       del("users", "seq = ?", Number(seq));
 
       const held = this.db.query("SELECT 1 FROM delivery_pauses WHERE task_id = ? LIMIT 1");

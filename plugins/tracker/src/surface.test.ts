@@ -505,8 +505,10 @@ describe("pause after repeated failed DMs", () => {
     expect(back).toContain(`I could not DM you ${PAUSE_AFTER} times in a row, so your reminders were paused. 2 task(s) are back on.`);
     expect(back).toContain("`t1` pills");
     expect(back).not.toContain("Paused:");
-    await tick(w.plugin); // Saturday's pills fires, late; walk is next due Sun 9:00
-    expect(w.sent.map((s) => s.message.content)).toEqual(["pills"]);
+    // Saturday's pills fires, late, and so does Saturday's walk: docket 0.4.0 queues a run's next the
+    // moment it fires, before its DM failed and paused the task. Walk is next due Sun 9:00.
+    await tick(w.plugin);
+    expect(w.sent.map((s) => s.message.content)).toEqual(["pills", "walk"]);
     expect(await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t2" } })).toContain("Next: Sun Oct 4, 9:00");
     expect(await slash(w.plugin, "tasks", LARRY)).not.toContain("I could not DM you");
   });

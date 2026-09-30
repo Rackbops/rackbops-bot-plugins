@@ -1,6 +1,9 @@
 import type { Database } from "bun:sqlite";
 import type {
   ConsentState,
+  Delivery,
+  DeliveryFilter,
+  DeliverySettle,
   InviteBlock,
   Lane,
   NewBlock,
@@ -10,12 +13,15 @@ import type {
   NewSeriesPoint,
   NewTask,
   NewTaskEvent,
+  NewUsage,
   NewUser,
   Occurrence,
   OccurrenceEvent,
   OccurrenceFilter,
   OccurrencePatch,
+  OccurrenceStatus,
   Reply,
+  RunRecord,
   SeriesFilter,
   SeriesPoint,
   Store,
@@ -24,7 +30,10 @@ import type {
   TaskFilter,
   TaskPatch,
   TaskRecipient,
+  Usage,
+  UsageFilter,
   User,
+  UserFilter,
   UserPatch,
 } from "@rackbops/docket-core";
 
@@ -38,6 +47,12 @@ import type {
  * read and its write: two callers on the one event loop cannot interleave inside a method, which is
  * what makes `createOccurrence`'s dedupe (`ON CONFLICT (dedupe_key) DO NOTHING`) and the
  * read-merge-write updates safe without a transaction.
+ *
+ * The guarded writes docket 0.4.0 relies on are single statements, so they hold even across
+ * connections: `updateOccurrenceIf` is one `UPDATE ... WHERE seq = ? AND status = ?`, `claimDelivery`
+ * one `UPDATE ... WHERE retry_at IS NOT NULL`, `deleteOccurrence` one `DELETE ... AND status =
+ * 'queued'`, and `planDelivery`, `addSeriesPoint` (keyed) and `claimNotice` an `INSERT ... ON
+ * CONFLICT DO NOTHING`.
  *
  * Stricter than MemoryStore in one way: a Discord id belongs to at most one user (a partial UNIQUE
  * index), so `createUser` and `updateUser` reject a duplicate. people.ts's `admit` relies on it.
@@ -75,7 +90,6 @@ function toUser(r: Row): User {
   return {
     id: idOf("u", r.seq),
     discordId: str(r.discord_id),
-    usrSubject: str(r.usr_subject),
     displayName: str(r.display_name),
     timeZone: String(r.time_zone),
     preferredHour: Number(r.preferred_hour),
@@ -132,6 +146,7 @@ function toOccurrence(r: Row): Occurrence {
     summary: str(r.summary),
     costUsd: r.cost_usd === null || r.cost_usd === undefined ? null : Number(r.cost_usd),
     error: str(r.error),
+    record: r.record === null || r.record === undefined ? null : (parse(r.record) as RunRecord | null),
     createdAt: String(r.created_at),
   };
 }
@@ -171,7 +186,45 @@ function toReply(r: Row): Reply {
 }
 
 function toPoint(r: Row): SeriesPoint {
-  return { id: idOf("s", r.seq), taskId: String(r.task_id), at: String(r.at), value: Number(r.value), unit: str(r.unit), note: str(r.note) };
+  return { id: idOf("s", r.seq), taskId: String(r.task_id), key: str(r.key), at: String(r.at), value: Number(r.value), unit: str(r.unit), note: str(r.note) };
+}
+
+function toUsage(r: Row): Usage {
+  return {
+    id: idOf("c", r.seq),
+    userId: String(r.user_id),
+    taskId: str(r.task_id),
+    occurrenceId: str(r.occurrence_id),
+    source: String(r.source) as Usage["source"],
+    calls: Number(r.calls),
+    costUsd: Number(r.cost_usd),
+    at: String(r.at),
+  };
+}
+
+function toDelivery(r: Row): Delivery {
+  return {
+    occurrenceId: String(r.occurrence_id),
+    userId: String(r.user_id),
+    status: String(r.status) as Delivery["status"],
+    messageId: str(r.message_id),
+    error: str(r.error),
+    attempts: Number(r.attempts),
+    deferrals: Number(r.deferrals),
+    retryAt: str(r.retry_at),
+    createdAt: String(r.created_at),
+    claimedAt: str(r.claimed_at),
+    settledAt: str(r.settled_at),
+  };
+}
+
+/**
+ * Forget-me's delete of one person's delivery rows, as one statement: `SqliteStore.deleteDeliveries`
+ * runs it, and so does roster.ts's erasure inside its own transaction (a `bun:sqlite` transaction
+ * cannot span the port's `await`), so both erase exactly the same rows.
+ */
+export function deleteDeliveriesOf(db: Database, userId: string): number {
+  return db.query("DELETE FROM deliveries WHERE user_id = ?").run(userId).changes;
 }
 
 export class SqliteStore implements Store {
@@ -212,17 +265,11 @@ export class SqliteStore implements Store {
     return r ? toUser(r) : null;
   }
 
-  async findUserBySubject(usrSubject: string): Promise<User | null> {
-    const r = this.one("SELECT * FROM users WHERE usr_subject = ? ORDER BY seq LIMIT 1", usrSubject);
-    return r ? toUser(r) : null;
-  }
-
   async createUser(u: NewUser): Promise<User> {
     const { lastInsertRowid } = this.run(
-      `INSERT INTO users (discord_id, usr_subject, display_name, time_zone, preferred_hour, admin, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO users (discord_id, display_name, time_zone, preferred_hour, admin, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
       u.discordId ?? null,
-      u.usrSubject ?? null,
       u.displayName ?? null,
       u.timeZone ?? DEFAULT_TIME_ZONE,
       u.preferredHour ?? DEFAULT_PREFERRED_HOUR,
@@ -237,17 +284,15 @@ export class SqliteStore implements Store {
     const next: User = {
       ...cur,
       ...(patch.discordId !== undefined ? { discordId: patch.discordId } : {}),
-      ...(patch.usrSubject !== undefined ? { usrSubject: patch.usrSubject } : {}),
       ...(patch.displayName !== undefined ? { displayName: patch.displayName } : {}),
       ...(patch.timeZone !== undefined ? { timeZone: patch.timeZone } : {}),
       ...(patch.preferredHour !== undefined ? { preferredHour: patch.preferredHour } : {}),
       ...(patch.admin !== undefined ? { admin: patch.admin } : {}),
     };
     this.run(
-      `UPDATE users SET discord_id = ?, usr_subject = ?, display_name = ?, time_zone = ?, preferred_hour = ?, admin = ?
+      `UPDATE users SET discord_id = ?, display_name = ?, time_zone = ?, preferred_hour = ?, admin = ?
        WHERE seq = ?`,
       next.discordId,
-      next.usrSubject,
       next.displayName,
       next.timeZone,
       next.preferredHour,
@@ -255,6 +300,14 @@ export class SqliteStore implements Store {
       seqOf("u", id),
     );
     return toUser(this.mustGet("users", "u", id, "user"));
+  }
+
+  async listUsers(filter: UserFilter = {}): Promise<User[]> {
+    const rows =
+      filter.admin === undefined
+        ? this.all("SELECT * FROM users ORDER BY seq")
+        : this.all("SELECT * FROM users WHERE admin = ? ORDER BY seq", filter.admin ? 1 : 0);
+    return rows.map(toUser);
   }
 
   // --- tasks ---------------------------------------------------------------------------------
@@ -402,34 +455,47 @@ export class SqliteStore implements Store {
   }
 
   async updateOccurrence(id: string, patch: OccurrencePatch): Promise<Occurrence> {
-    const cur = toOccurrence(this.mustGet("occurrences", "o", id, "occurrence"));
-    const next: Occurrence = {
-      ...cur,
-      ...(patch.status !== undefined ? { status: patch.status } : {}),
-      ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
-      ...(patch.finishedAt !== undefined ? { finishedAt: patch.finishedAt } : {}),
-      ...(patch.late !== undefined ? { late: patch.late } : {}),
-      ...(patch.summary !== undefined ? { summary: patch.summary } : {}),
-      ...(patch.costUsd !== undefined ? { costUsd: patch.costUsd } : {}),
-      ...(patch.error !== undefined ? { error: patch.error } : {}),
-    };
-    this.run(
-      `UPDATE occurrences SET status = ?, started_at = ?, finished_at = ?, late = ?, summary = ?, cost_usd = ?, error = ?
-       WHERE seq = ?`,
-      next.status,
-      next.startedAt,
-      next.finishedAt,
-      next.late ? 1 : 0,
-      next.summary,
-      next.costUsd,
-      next.error,
-      seqOf("o", id),
-    );
+    this.mustGet("occurrences", "o", id, "occurrence");
+    this.patchOccurrence(id, patch, null);
     return toOccurrence(this.mustGet("occurrences", "o", id, "occurrence"));
   }
 
-  async deleteQueuedOccurrences(taskId: string): Promise<number> {
-    return this.run("DELETE FROM occurrences WHERE task_id = ? AND status = 'queued'", taskId).changes;
+  async updateOccurrenceIf(id: string, expected: OccurrenceStatus, patch: OccurrencePatch): Promise<Occurrence | null> {
+    if (!this.patchOccurrence(id, patch, expected)) return null;
+    return toOccurrence(this.mustGet("occurrences", "o", id, "occurrence"));
+  }
+
+  /**
+   * One `UPDATE` setting only the columns `patch` names, guarded by `expected` when given (the
+   * compare-and-set). True when a row changed. Named columns only, so a guarded write never reads
+   * first: nothing it did not name can be overwritten with a stale value.
+   */
+  private patchOccurrence(id: string, patch: OccurrencePatch, expected: OccurrenceStatus | null): boolean {
+    const seq = seqOf("o", id);
+    if (seq === null) return false;
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    const set = (column: string, value: unknown) => (sets.push(`${column} = ?`), params.push(value));
+    if (patch.status !== undefined) set("status", patch.status);
+    if (patch.startedAt !== undefined) set("started_at", patch.startedAt);
+    if (patch.finishedAt !== undefined) set("finished_at", patch.finishedAt);
+    if (patch.late !== undefined) set("late", patch.late ? 1 : 0);
+    if (patch.summary !== undefined) set("summary", patch.summary);
+    if (patch.costUsd !== undefined) set("cost_usd", patch.costUsd);
+    if (patch.error !== undefined) set("error", patch.error);
+    if (patch.record !== undefined) set("record", patch.record === null ? null : json(patch.record));
+    // An empty patch still has to answer whether the guard held: a no-op assignment does.
+    if (sets.length === 0) sets.push("seq = seq");
+    params.push(seq);
+    const guard = expected === null ? "" : " AND status = ?";
+    if (expected !== null) params.push(expected);
+    return this.run(`UPDATE occurrences SET ${sets.join(", ")} WHERE seq = ?${guard}`, ...params).changes > 0;
+  }
+
+  async deleteOccurrence(id: string): Promise<boolean> {
+    const seq = seqOf("o", id);
+    if (seq === null) return false;
+    return this.run("DELETE FROM occurrences WHERE seq = ? AND status = 'queued'", seq).changes > 0;
   }
 
   async requeueRunning(lane?: Lane): Promise<string[]> {
@@ -437,7 +503,8 @@ export class SqliteStore implements Store {
       lane === undefined
         ? this.all("SELECT seq FROM occurrences WHERE status = 'running' ORDER BY seq")
         : this.all("SELECT seq FROM occurrences WHERE status = 'running' AND lane = ? ORDER BY seq", lane);
-    for (const r of rows) this.run("UPDATE occurrences SET status = 'queued' WHERE seq = ?", r.seq);
+    // Fully unstarted (docket 0.4.0): `started_at` back to null; `record` is kept, so a fired run resumes.
+    for (const r of rows) this.run("UPDATE occurrences SET status = 'queued', started_at = NULL WHERE seq = ? AND status = 'running'", r.seq);
     return rows.map((r) => idOf("o", r.seq));
   }
 
@@ -500,14 +567,22 @@ export class SqliteStore implements Store {
   }
 
   async addSeriesPoint(p: NewSeriesPoint): Promise<SeriesPoint> {
-    const { lastInsertRowid } = this.run(
-      "INSERT INTO series (task_id, at, value, unit, note) VALUES (?, ?, ?, ?, ?)",
+    const key = p.key ?? null;
+    const { changes, lastInsertRowid } = this.run(
+      "INSERT INTO series (task_id, key, at, value, unit, note) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (key) WHERE key IS NOT NULL DO NOTHING",
       p.taskId,
+      key,
       p.at,
       p.value,
       p.unit ?? null,
       p.note ?? null,
     );
+    if (changes === 0) {
+      // The key is stored: the point a run already appended, unchanged.
+      const known = this.one("SELECT * FROM series WHERE key = ?", key);
+      if (!known) throw new Error(`series point ${key} was neither added nor found`);
+      return toPoint(known);
+    }
     return toPoint(this.mustGet("series", "s", idOf("s", lastInsertRowid), "series point"));
   }
 
@@ -518,5 +593,99 @@ export class SqliteStore implements Store {
         : this.all("SELECT * FROM series WHERE task_id = ? AND at >= ? ORDER BY at, seq", taskId, filter.since);
     const kept = filter.limit === undefined ? points : points.slice(-filter.limit);
     return kept.map(toPoint);
+  }
+
+  // --- usage and notices (docket's budget.ts; written only by an execute lane) ----------------
+
+  async addUsage(u: NewUsage): Promise<Usage> {
+    const { lastInsertRowid } = this.run(
+      "INSERT INTO usage (user_id, task_id, occurrence_id, source, calls, cost_usd, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      u.userId,
+      u.taskId,
+      u.occurrenceId,
+      u.source,
+      u.calls,
+      u.costUsd,
+      u.at,
+    );
+    return toUsage(this.mustGet("usage", "c", idOf("c", lastInsertRowid), "usage"));
+  }
+
+  async listUsage(filter: UsageFilter = {}): Promise<Usage[]> {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter.userId !== undefined) (where.push("user_id = ?"), params.push(filter.userId));
+    if (filter.since !== undefined) (where.push("at >= ?"), params.push(filter.since));
+    if (filter.before !== undefined) (where.push("at < ?"), params.push(filter.before));
+    const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    return this.all(`SELECT * FROM usage ${clause} ORDER BY at, seq`, ...params).map(toUsage);
+  }
+
+  async claimNotice(key: string, at: string): Promise<boolean> {
+    return this.run("INSERT INTO notices (key, at) VALUES (?, ?) ON CONFLICT (key) DO NOTHING", key, at).changes === 1;
+  }
+
+  // --- deliveries (docket's delivery.ts: one row per run and person, claimed before each send) --
+
+  private delivery(occurrenceId: string, userId: string): Delivery | null {
+    const r = this.one("SELECT * FROM deliveries WHERE occurrence_id = ? AND user_id = ?", occurrenceId, userId);
+    return r ? toDelivery(r) : null;
+  }
+
+  async planDelivery(occurrenceId: string, userId: string, at: string): Promise<Delivery | null> {
+    const { changes } = this.run(
+      `INSERT INTO deliveries (occurrence_id, user_id, status, attempts, deferrals, retry_at, created_at)
+       VALUES (?, ?, 'pending', 0, 0, ?, ?)
+       ON CONFLICT (occurrence_id, user_id) DO NOTHING`,
+      occurrenceId,
+      userId,
+      at,
+      at,
+    );
+    return changes === 1 ? this.delivery(occurrenceId, userId) : null;
+  }
+
+  async claimDelivery(occurrenceId: string, userId: string, at: string): Promise<Delivery | null> {
+    const { changes } = this.run(
+      `UPDATE deliveries SET status = 'claimed', claimed_at = ?, retry_at = NULL
+       WHERE occurrence_id = ? AND user_id = ? AND retry_at IS NOT NULL`,
+      at,
+      occurrenceId,
+      userId,
+    );
+    return changes === 1 ? this.delivery(occurrenceId, userId) : null;
+  }
+
+  async settleDelivery(occurrenceId: string, userId: string, settle: DeliverySettle): Promise<Delivery> {
+    const { changes } = this.run(
+      `UPDATE deliveries SET status = ?, message_id = ?, error = ?, attempts = ?, deferrals = ?, retry_at = ?, settled_at = ?
+       WHERE occurrence_id = ? AND user_id = ?`,
+      settle.status,
+      settle.messageId ?? null,
+      settle.error ?? null,
+      settle.attempts,
+      settle.deferrals,
+      settle.retryAt,
+      settle.at,
+      occurrenceId,
+      userId,
+    );
+    if (changes === 0) throw new Error(`no delivery ${occurrenceId}:${userId}`);
+    return this.delivery(occurrenceId, userId) as Delivery;
+  }
+
+  async listDeliveries(filter: DeliveryFilter = {}): Promise<Delivery[]> {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter.occurrenceId !== undefined) (where.push("occurrence_id = ?"), params.push(filter.occurrenceId));
+    if (filter.userId !== undefined) (where.push("user_id = ?"), params.push(filter.userId));
+    if (filter.status !== undefined) (where.push("status = ?"), params.push(filter.status));
+    if (filter.dueBefore !== undefined) (where.push("retry_at IS NOT NULL AND retry_at <= ?"), params.push(filter.dueBefore));
+    const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    return this.all(`SELECT * FROM deliveries ${clause} ORDER BY created_at, seq`, ...params).map(toDelivery);
+  }
+
+  async deleteDeliveries(userId: string): Promise<number> {
+    return deleteDeliveriesOf(this.db, userId);
   }
 }

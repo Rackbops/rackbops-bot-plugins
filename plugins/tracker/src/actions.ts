@@ -1,17 +1,18 @@
 import {
-  ADMIN_DISCLOSURE,
   formatInstant,
   formatTaskList,
+  hasFired,
   Lanes,
   parseWhen,
+  registrationText,
   ReplyRefusedError,
   reschedule,
-  SNOOZE_PREFIX,
   taskList,
   visibleTask,
   type Clock,
   type Fetch,
   type Notifier,
+  type Occurrence,
   type Schedule,
   type Store,
   type Task,
@@ -24,6 +25,7 @@ import { decideAccess, type Membership, type Need } from "./access.js";
 import type { Admissions } from "./admissions.js";
 import { type DeliveryHealth, PAUSE_AFTER, resumedNotice } from "./delivery-health.js";
 import { MAX_LIVE_TASKS, MAX_WHEN } from "./limits.js";
+import type { TaskLocks } from "./locks.js";
 import { admit, PeopleError, setPreferences } from "./people.js";
 import { heldRuns, restoreHeldRun } from "./retime.js";
 import type { Roster } from "./roster.js";
@@ -47,8 +49,10 @@ export interface TrackerDeps {
   fetch: Fetch | null;
   dm: HostApi["dm"];
   log: PluginLog;
-  /** Sends one DM through the tracker's Notifier (claims, buttons, the failure count). */
+  /** Sends one DM through the tracker's Notifier (buttons, error mapping, the failure count). */
   notifier: Notifier;
+  /** One task at a time: its runs (the ticks), its replies and its edits (locks.ts). */
+  locks: TaskLocks;
   /** The web area's one-time sign-in links and its sessions (web/). */
   logins: LoginLinks;
   sessions: Sessions;
@@ -115,14 +119,15 @@ export async function allowPerson(
   return `Allowed <@${target.discordId}>: they can now use \`/register\`.`;
 }
 
-/** The reply to `/register`: when things arrive, and the disclosure (plan 1.1, 5.5, 5.8). */
+/**
+ * The reply to `/register`: when things arrive, and the disclosure (plan 1.1, 5.5, 5.8) -- docket's
+ * `registrationText`, with the tracker's pause-after-three as its note.
+ */
 export function registeredText(user: User, first: boolean): string {
-  return [
-    first ? "You are registered." : "Your settings are updated.",
-    `Reminders reach you by DM. One without a time of day arrives at ${String(user.preferredHour).padStart(2, "0")}:00, ${user.timeZone} time.`,
-    `Your tasks are private to you and anyone you choose to share them with. ${ADMIN_DISCLOSURE}`,
-    `Keep DMs from this server open: after ${PAUSE_AFTER} DMs in a row that cannot be delivered, your reminders pause until you next use a command.`,
-  ].join("\n");
+  return registrationText(user, {
+    first,
+    notes: [`Keep DMs from this server open: after ${PAUSE_AFTER} DMs in a row that cannot be delivered, your reminders pause until you next use a command.`],
+  });
 }
 
 /** `/register [hour] [zone]` (plan 5.8): the admitted person's first contact; running it again edits. */
@@ -196,28 +201,29 @@ async function rescheduleOwned(d: TrackerDeps, owner: User, zoneChanged: boolean
     const s = task.schedule;
     if (!s || (s.kind !== "calendar" && s.kind !== "period")) continue;
     if (!zoneChanged && s.hour !== undefined) continue;
-    const held = task.status === "paused" ? await heldRuns(d.store, task) : [];
-    const updated = await rescheduleKeepingSnoozes(d, task, owner, s, owner.id);
-    if (held.length > 0) await restoreHeldRun(d.store, updated, held, before, owner, d.clock.now());
+    await d.locks.run(task.id, async () => {
+      // Re-read under the lock: a run may have finished it since the list above.
+      const current = await d.store.getTask(task.id);
+      if (!current || (current.status !== "active" && current.status !== "paused")) return;
+      const held = current.status === "paused" ? await heldRuns(d.store, current) : [];
+      const updated = await rescheduleKeepingSnoozes(d, current, owner, s, owner.id);
+      if (held.length > 0) await restoreHeldRun(d.store, updated, held, before, owner, d.clock.now());
+    });
     moved++;
   }
   return moved;
 }
 
 /**
- * docket's `reschedule` -- cancel what is queued, record the change, materialize the next run --
- * keeping the task's snoozes. docket drops every queued occurrence, a snooze's run included; a
- * snooze is an instant the person asked for, not a time the schedule computed, so it is put back as
- * it was (same due instant, same `snooze:` key, so its chain to the run it re-asks is unchanged).
- * The one path for a schedule change: a zone or hour move, and an edit on the web.
+ * docket's `reschedule` -- cancel the queued scheduled runs, record the change, materialize the next
+ * run. Since docket 0.4.0 it keeps a snooze's run (an instant the person asked for, not one the
+ * schedule computed) and any run that has fired, which the tracker used to put back itself. The one
+ * path for a schedule change: a zone or hour move, and an edit on the web. The caller holds the
+ * task's lock (locks.ts), as docket asks: a run firing mid-edit would materialize from the old
+ * schedule beside the new one.
  */
 export async function rescheduleKeepingSnoozes(d: TrackerDeps, task: Task, owner: User, schedule: Schedule, actorId: string): Promise<Task> {
-  const snoozes = (await d.store.listOccurrences({ taskId: task.id, status: "queued" })).filter((o) => o.dedupeKey.startsWith(SNOOZE_PREFIX));
-  const now = d.clock.now();
-  const { task: updated } = await reschedule(d.store, task, owner, schedule, actorId, now);
-  for (const o of snoozes) {
-    await d.store.createOccurrence({ taskId: o.taskId, lane: o.lane, dueAt: o.dueAt, dedupeKey: o.dedupeKey, at: now.toISOString() });
-  }
+  const { task: updated } = await reschedule(d.store, task, owner, schedule, actorId, d.clock.now());
   return updated;
 }
 
@@ -269,7 +275,11 @@ export async function listTasks(d: TrackerDeps, user: User): Promise<string> {
   return clip(lines.join("\n"));
 }
 
-/** A Lanes for replies only: answering never sends, so its Notifier is the tracker's but unused. */
+/**
+ * A Lanes for replies only: answering never sends, so its Notifier is the tracker's but unused. The
+ * caller holds the task's lock (`answerOnce`, press.ts), since docket's "once per run" holds only
+ * while a task's replies and runs go one at a time.
+ */
 export function replyLanes(d: TrackerDeps): Lanes {
   return new Lanes({ store: d.store, clock: d.clock, types: d.types, notifier: d.notifier });
 }
@@ -281,8 +291,25 @@ export async function ownTask(d: Pick<TrackerDeps, "store">, user: User, taskId:
 }
 
 /**
+ * Whether a run is one an owner's `/task done`, `snooze` or `decide` may be about: it has run
+ * (`running`, `done`, `failed`), or it fired and was put back to finish (docket 0.4.0: `queued` with
+ * its record stored). A fired run is `done` while it still owes a send to anyone, so a run that
+ * still owes delivery counts; one put back to finish counts too, and docket refuses it with "still
+ * finishing" (`STILL_FINISHING`) rather than this picking an older run behind it.
+ */
+export function answerable(o: Occurrence): boolean {
+  return o.status === "running" || o.status === "done" || o.status === "failed" || (o.status === "queued" && hasFired(o));
+}
+
+/** The task's latest answerable run: the one docket's `Lanes.reply` asks a host to pick. */
+export async function latestRun(d: Pick<TrackerDeps, "store">, taskId: string): Promise<Occurrence | null> {
+  return (await d.store.listOccurrences({ taskId })).filter(answerable).at(-1) ?? null;
+}
+
+/**
  * `/task done` and `/task snooze` (plan 5.5, item 34): the owner answers the task's latest fired
  * run -- the one docket's `Lanes.reply` asks a host to pick -- with docket deciding whether it may.
+ * Picked and answered under the task's lock, so a run of the task never lands in between.
  */
 export async function answerLatest(
   d: TrackerDeps,
@@ -292,10 +319,11 @@ export async function answerLatest(
   if (input.until !== undefined && input.until.trim().length > MAX_WHEN) return `\`until\` is longer than ${MAX_WHEN} characters.`;
   const task = await ownTask(d, user, input.taskId);
   if (!task) return NO_SUCH_TASK;
-  const fired = (await d.store.listOccurrences({ taskId: task.id })).filter(
-    (o) => o.status === "running" || o.status === "done" || o.status === "failed",
-  );
-  const latest = fired.at(-1);
+  return d.locks.run(task.id, () => answerLatestLocked(d, user, task, input));
+}
+
+async function answerLatestLocked(d: TrackerDeps, user: User, task: Task, input: { kind: "done" | "snooze"; until?: string }): Promise<string> {
+  const latest = await latestRun(d, task.id);
   if (!latest) return "That task has not reminded you yet, so there is nothing to answer.";
   let payload: unknown = null;
   if (input.kind === "snooze" && input.until !== undefined && input.until.trim() !== "") {

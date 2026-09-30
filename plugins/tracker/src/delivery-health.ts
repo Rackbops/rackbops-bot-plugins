@@ -7,9 +7,16 @@ import type { PluginLog } from "../../../packages/api/contract.js";
  * closed, left the server) the task pauses and the owner is told"; plan 6, "Discord DM
  * reachability"). The count is kept per person, since a closed DM fails every task of theirs alike:
  * each DM the host refuses with "cannot be messaged" adds one, and any DM that goes through clears
- * it. At `PAUSE_AFTER` the person's delivery is paused, and so is every active task that would DM
- * them -- the ones they own and the ones they receive -- each with a `delivery_pauses` row naming
- * them and a `paused` task event:
+ * it. Nothing else counts: a message the host refused (retried by docket), a deferral, a send that
+ * may have gone out. Under docket 0.4.0 each person's copy of a run is its own delivery, and an
+ * unreachable copy fails for good at once, never retried (notifier.ts), so the count goes up once
+ * per run per person -- three runs, not three ticks or three retries of one run -- and one
+ * unreachable recipient no longer keeps the owner or anyone else from their copy. At `PAUSE_AFTER`
+ * the person's delivery is paused, and so is every active task that would DM them -- the ones they
+ * own and the ones they receive -- each with a `delivery_pauses` row naming them and a `paused`
+ * task event. docket then starts none of those tasks' runs and holds what their runs still owe,
+ * with a fresh round of tries for the resume; a send to the paused person that is already under
+ * way is deferred (notifier.ts), never failed:
  *
  * - The owner of a task paused for a recipient is DMed once, and `/tasks` names the reason. The
  *   task resumes when that recipient next uses the tracker, or when the owner runs `/task resume`,

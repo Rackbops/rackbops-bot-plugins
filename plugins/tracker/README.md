@@ -46,11 +46,27 @@ A pressed DM is edited to say what happened.
 
 **Pause after failed DMs** (plan 5.5). Three DMs in a row that the host says cannot be delivered
 pause the person's delivery and every active task that would DM them, theirs and the ones they
-receive (a `paused` event in each task's history); their other runs due in that tick are held, not
-failed. The owner of a task paused for a recipient is DMed once and sees why in `/tasks`; the task
+receive (a `paused` event in each task's history); a DM to them still owed is deferred, not failed.
+The owner of a task paused for a recipient is DMed once and sees why in `/tasks`; the task
 resumes when the recipient next uses the tracker, or `/task resume` goes on without them. A person
 paused for their own DMs is told, and resumed, the next time they use a command or button. A DM
-that goes through clears the count.
+that goes through clears the count. Only a DM the host says cannot reach that person (Discord's
+50007) counts, once per run: docket fails it for good at once. A DM refused for
+its content is retried by docket (three tries, a minute apart and doubling) and does not count; nor
+does one whose outcome is unknown (see Delivery below).
+
+**Delivery** (docket 0.4.0). docket records each DM in the store's `deliveries` table before it is
+sent (a claim) and settles it after: sent, failed (for good, or owed and retried later), or
+unconfirmed -- the send may or may not have reached Discord, so it is never resent, and a warning is
+logged. A run has fired once its record is written; the other recipients of a run still get their
+copies when one of them cannot be reached, and the run is `done`, not `failed`, whatever a DM did.
+At start the plugin runs docket's `recover()`: a run left running is requeued, and a claim left open
+by a stop mid-send is settled unconfirmed and logged.
+
+**One task at a time.** A task's runs, the answers to them (buttons, `/task done`, Reply) and its
+edits (the editor, pause, resume, delete, a zone or hour change) take that task's lock
+(`src/locks.ts`), so none of them overlap. The notify and poll ticks run one pass per task that has
+work; an answer that lands while its own task runs waits for that pass.
 
 ## Web area
 
@@ -179,10 +195,11 @@ area). Two posts: the first asks, the second must carry `confirm=yes` and the wo
 in one SQLite transaction in the write queue, **deleted, not archived**:
 
 - every task they own, archived ones too, with everything under it: runs, run events, replies
-  (anyone's), history, series, recipients, delivery claims and pauses;
+  (anyone's), history, series, recipients, deliveries (anyone's), charges and pauses;
 - on everyone else's tasks: their recipient rows, their replies and answers, the history rows they
-  made or that name them (an invitation of them, a pause for them), the run events and delivery
-  claims of DMs to them, and their pause rows;
+  made or that name them (an invitation of them, a pause for them), the run events and deliveries
+  of DMs to them (docket's `deleteDeliveries`), charges made for them, and their pause rows;
+- the budget notices kept for them (`budget:person:<id>:...`);
 - every decline block they are either side of;
 - their admission, delivery health, web sessions, unused sign-in links and API tokens, and their
   person row.
@@ -193,7 +210,8 @@ id -- `admitted_by` of someone they admitted, and `lifted_by` of a block they li
 `forgotten` ("an admin since forgotten"; null already means "the configuration"). Text is matched
 only in the forms the code writes a person's id into -- docket's consent rows (`u5`, `u5 24h`), the
 tracker's `u5: ...` removals and `delivery to {u5} paused` pauses, docket's `u5 <message>` delivery
-events, and the notifier's error phrases (`recipient u5 cannot be messaged`, ...) -- never as any
+events, and the notifier's error phrases (`recipient u5 cannot be messaged`, ...; both written only
+before 0.9.0, when a run's own row recorded its DMs) -- never as any
 id-like word, so an address with `/u5/` in someone else's text is left alone. A history row or a
 delivery event of theirs is deleted; the error of someone else's run keeps its row and has the id
 replaced with `(forgotten)`. A pause for a recipient now names them by id and shows their current
@@ -359,11 +377,12 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 
 | Piece | File | Notes |
 |---|---|---|
-| Store | `src/store.ts`, `src/schema.ts` | docket's `Store` port on `bun:sqlite`, in `<dataDir>/tracker/tracker.sqlite` (WAL). A Discord id belongs to at most one user. Schema versioned by `PRAGMA user_version`; a shipped migration is never edited. `store.test.ts` runs docket's `STORE_CONTRACT` against it. |
-| Notify lane | `src/notify-lane.ts` | docket's `Lanes.tickNotify` on two host ticks, every 60 s, through a view of the store that skips a paused task's due runs: `notify` runs every type but the page readers, `poll` runs only them (`price`) with the Fetch port, so a slow page never holds up a reminder. Registers `reminder`, `renewal` and `price`. The execute lane is not ticked. |
+| Store | `src/store.ts`, `src/schema.ts` | docket's `Store` port on `bun:sqlite`, in `<dataDir>/tracker/tracker.sqlite` (WAL). A Discord id belongs to at most one user. Schema versioned by `PRAGMA user_version`; a shipped migration is never edited. Schema 5 (0.9.0) is docket 0.4.0's: a run's `record`, a series point's `key`, `deliveries` (from `delivery_claims`), `usage` and `notices`. `store.test.ts` runs docket's `STORE_CONTRACT` against it. |
+| Notify lane | `src/notify-lane.ts` | docket's `Lanes.tickNotify` on two host ticks, every 60 s, one pass per task with work (a due run, a run in flight, a DM owed or claimed), each under that task's lock through a view of the store limited to that task: `notify` runs every type but the page readers, `poll` runs only them (`price`) with the Fetch port, so a slow page never holds up a reminder. Registers `reminder`, `renewal` and `price`. The execute lane is not ticked. |
 | Page reads | `src/fetch.ts` | docket's `Fetch` port for `price`: http or https on the default port, no credentials, every resolved address public (no loopback, private, link-local, CGNAT, multicast or reserved range, IPv4 or IPv6), redirects followed by hand and re-checked (at most 5), 15 s including the name lookup, at most 3 MB kept. The body is then rebuilt in linear time (`src/page.ts`) to just what extraction reads -- JSON-LD, meta tags, and the page with every `<` blanked, so `near` still reads text, attributes and script data -- because docket's extraction patterns take quadratic time on a page of unclosed tags. A read the tick's abort cuts short requeues its run instead of counting a miss. A DNS answer that changes between the check and the read is not caught here. |
 | Renewals, prices | `src/tracked.ts`, `src/price.ts`, `src/series.ts`, `src/page.ts` | `/renewal`, `/price` and `/task decide`; the series lines of `/task history`. The series (docket's `series` table, schema 1) holds a renewal's paid amounts and a price's readings. |
-| Delivery | `src/notifier.ts`, `src/claims.ts`, `src/buttons.ts` | docket's `Notifier` over `host.dm`, with the buttons. Each (occurrence, person) is claimed in `delivery_claims` before the DM is sent and settled after; a claim never settled is not resent -- it is logged once, as unconfirmed. |
+| Delivery | `src/notifier.ts`, `src/buttons.ts` | docket's `Notifier` over `host.dm`, with the buttons. docket claims each (run, person) in the store's `deliveries` before the DM and settles it after. The notifier maps the host's answers to docket's errors: cannot be messaged (50007) or an unknown user is `DeliveryFailedError(msg, true)` (failed for good; 50007 counts toward the pause); a message refused for its content is a plain `DeliveryFailedError` (retried); a paused person is `ExecutorUnavailableError` (deferred); anything else is rethrown, so docket settles it unconfirmed and never resends it. |
+| Task lock | `src/locks.ts` | One task at a time: its runs, answers and edits never overlap (docket 0.4.0 asks the host to serialize per task). |
 | Pause | `src/delivery-health.ts` | The per-person failure count, the pause and the resume. |
 | People | `src/people.ts`, `src/admissions.ts` | Discord id, time zone, preferred hour, admin flag -- in the tracker's store, never usr; who admitted each person and when they registered. `TRACKER_ADMIN_DISCORD_IDS` only ever grants admin. |
 | Commands | `src/discord.ts`, `src/interactions.ts`, `src/discord-common.ts` (discord.js); `src/actions.ts`, `src/press.ts`, `src/history.ts`, `src/access.ts` | The discord.js files read options and render; the rest is Discord-free over the injected store, clock and notifier. Store writes are handled one at a time; Discord lookups and DMs run outside that queue. |
@@ -392,7 +411,7 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
   method, if chosen (plan item 41).
 - The city-hall Executor adapter (the execute lane).
 - Editing in Discord (the editor is on the web only), and changing a price tracker's page or `near` after it is made (make a new one); a free-form pattern for `price` (`near` is the safe subset: a user's regular expression run on a large page could hang the bot).
-- An optional Discord-role gate (plan 5.5), and showing unconfirmed deliveries to admins anywhere but the log.
+- An optional Discord-role gate (plan 5.5), and showing unconfirmed deliveries to admins anywhere but the log, or a run's deliveries in its history.
 
 docket-core, docket-types and `@rackbops/styles` are `devDependencies`: `bun build` bundles them
 into `dist/plugin.js` (the theme's CSS as text), and the bot loads that file without installing

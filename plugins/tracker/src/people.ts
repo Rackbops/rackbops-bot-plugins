@@ -1,4 +1,4 @@
-import { isTimeZone, type Actor, type Identity, type Store, type User } from "@rackbops/docket-core";
+import { isTimeZone, type Identity, type Store, type User } from "@rackbops/docket-core";
 
 /**
  * People (plan 5.8, rev17, item 40): each person is a row in the tracker's own store -- Discord id,
@@ -97,17 +97,13 @@ export async function setPreferences(store: Store, userId: string, prefs: Prefer
 
 /**
  * docket's Identity port from the tracker's own store. The lanes do not use it; the commands
- * (#79) will. `actorForSubject` always answers null: people are not usr accounts (item 40), so no
- * usr subject is ever written -- docket still carries `usrSubject` and this method (docket#18).
+ * (#79) will. People are not usr accounts (plan item 40), so a Discord id is the only way in.
  */
 export function localIdentity(store: Store): Identity {
-  const actor = (u: User | null): Actor | null => (u ? { userId: u.id, admin: u.admin } : null);
   return {
     async actorForDiscord(discordId) {
-      return actor(await store.findUserByDiscordId(discordId));
-    },
-    async actorForSubject() {
-      return null;
+      const u = await store.findUserByDiscordId(discordId);
+      return u ? { userId: u.id, admin: u.admin } : null;
     },
   };
 }

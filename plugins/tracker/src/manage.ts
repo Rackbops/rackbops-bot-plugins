@@ -1,19 +1,20 @@
-import { materialize, type Task, type User } from "@rackbops/docket-core";
+import { hasFired, materialize, type Task, type User } from "@rackbops/docket-core";
 import { NO_SUCH_TASK, ownTask, type TrackerDeps } from "./actions.js";
 
 /**
  * Pausing, resuming and deleting a task (rackbops-bot-plugins#80, plan 5.10's task editor): the
  * owner's own acts on their own task, with no discord.js, for the web editor and `/task resume`
- * alike. Every write here runs in the surface's one queue.
+ * alike. Every write here runs in the surface's one queue, under the task's lock (locks.ts).
  *
- * - A pause by the owner sets the task `paused`; its queued run stays, and the notify lane skips a
- *   paused task's due runs (`laneStore`), so nothing is sent. It is told apart from a pause for
+ * - A pause by the owner sets the task `paused`; its queued run stays, and docket runs no paused
+ *   task's due runs and holds its owed sends, so nothing is sent. It is told apart from a pause for
  *   failed DMs by having no `delivery_pauses` row, so a person's delivery resuming never un-pauses it.
  * - A resume sets it `active` again and gives it its next run (docket's catch-up: a run missed while
  *   paused fires once, late). A task paused for failed DMs resumes as `/task resume` always did,
  *   without the recipients who could not be DMed.
- * - A delete archives: the task leaves every list and nothing more is sent, its queued runs are
- *   dropped, and its history stays on record (an admin can see every task, plan 1.1). The store has
+ * - A delete archives: the task leaves every list and nothing more is sent, its queued runs that
+ *   have not fired are dropped (one fired and put back to finish is kept: docket finishes it, and
+ *   ends what it still owed unsent, as for any archived task), and its history stays on record (an admin can see every task, plan 1.1). The store has
  *   no way to erase a task; only forget-me erases, and it erases the whole person (admin.ts).
  */
 
@@ -32,7 +33,16 @@ export function editable(task: Task): boolean {
 
 export const FINISHED = "That task has finished, so it cannot be changed. Set a new one instead.";
 
-export async function pauseTask(d: TrackerDeps, user: User, taskId: string): Promise<Done> {
+/** `act` on the owner's task under the task's lock, the id as the person typed it. */
+function locked(d: TrackerDeps, taskId: string, act: () => Promise<Done>): Promise<Done> {
+  return d.locks.run(taskId.trim(), act);
+}
+
+export function pauseTask(d: TrackerDeps, user: User, taskId: string): Promise<Done> {
+  return locked(d, taskId, () => pauseLocked(d, user, taskId));
+}
+
+async function pauseLocked(d: TrackerDeps, user: User, taskId: string): Promise<Done> {
   const task = await ownLiveTask(d, user, taskId);
   if (!task) return { ok: false, error: NO_SUCH_TASK };
   if (task.status !== "active") return { ok: false, error: `That task is ${task.status}, not active.` };
@@ -47,7 +57,11 @@ export async function pauseTask(d: TrackerDeps, user: User, taskId: string): Pro
  * recipients who could not be DMed; one the owner paused simply goes on. The owner's own delivery
  * pause is lifted first, as using a command does (`enter`), since they are here asking.
  */
-export async function resumeTask(d: TrackerDeps, user: User, taskId: string): Promise<Done> {
+export function resumeTask(d: TrackerDeps, user: User, taskId: string): Promise<Done> {
+  return locked(d, taskId, () => resumeLocked(d, user, taskId));
+}
+
+async function resumeLocked(d: TrackerDeps, user: User, taskId: string): Promise<Done> {
   const task = await ownLiveTask(d, user, taskId);
   if (!task) return { ok: false, error: NO_SUCH_TASK };
   if (task.status !== "paused") return { ok: false, error: `That task is ${task.status}, not paused.` };
@@ -70,11 +84,17 @@ export async function resumeTask(d: TrackerDeps, user: User, taskId: string): Pr
   return { ok: true, text: `Resumed \`${task.id}\`${without}.` };
 }
 
-export async function deleteTask(d: TrackerDeps, user: User, taskId: string): Promise<Done> {
+export function deleteTask(d: TrackerDeps, user: User, taskId: string): Promise<Done> {
+  return locked(d, taskId, () => deleteLocked(d, user, taskId));
+}
+
+async function deleteLocked(d: TrackerDeps, user: User, taskId: string): Promise<Done> {
   const task = await ownLiveTask(d, user, taskId);
   if (!task) return { ok: false, error: NO_SUCH_TASK };
   const at = d.clock.now().toISOString();
-  await d.store.deleteQueuedOccurrences(task.id);
+  for (const o of await d.store.listOccurrences({ taskId: task.id, status: "queued" })) {
+    if (!hasFired(o)) await d.store.deleteOccurrence(o.id);
+  }
   await d.store.updateTask(task.id, { status: "archived", at });
   await d.store.addTaskEvent({ taskId: task.id, actorId: user.id, kind: "archived", detail: "deleted by the owner", at });
   return { ok: true, text: `Deleted \`${task.id}\` ${task.title}.` };

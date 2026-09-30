@@ -9,7 +9,9 @@ import type { TrackerDeps } from "./actions.js";
  * at a time. docket's "once per run" holds only when a task's replies are handled one at a time
  * (`Lanes.reply`), so every store write goes through the queue -- and nothing slow does: a Discord
  * lookup or a DM runs before or after its turn, never inside it, so one slow call cannot make every
- * other press miss Discord's three-second deadline.
+ * other press miss Discord's three-second deadline. A turn that answers or edits one task also takes
+ * that task's lock (locks.ts), shared with the ticks, so it waits out a run of the same task in
+ * flight -- the one wait a turn may have, bounded by one task's pass.
  */
 
 export const STARTING = "The tracker is starting up; try again in a minute.";

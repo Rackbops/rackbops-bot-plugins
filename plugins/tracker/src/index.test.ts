@@ -124,7 +124,7 @@ describe("the plugin end to end on a real data file", () => {
     await plugin.dispose!();
   });
 
-  it("requeues a run a crash left running, without resending a delivery it had claimed", async () => {
+  it("recovers a run a crash left running after it fired: resumed from its record, its open claim never resent", async () => {
     const dataDir = tempDir();
     const clock = clockAt("2026-10-01T12:01:00.000Z");
     mkdirSync(join(dataDir, DB_DIR));
@@ -142,8 +142,12 @@ describe("the plugin end to end on a real data file", () => {
       at: START,
     });
     const occurrence = await materialize(store, task, owner, clock.now());
-    await store.updateOccurrence(occurrence?.id ?? "", { status: "running" });
-    db.query("INSERT INTO delivery_claims (occurrence_id, user_id, discord_id, status, claimed_at) VALUES (?, ?, ?, 'claimed', ?)").run(occurrence?.id ?? "", owner.id, ADMIN, START);
+    const id = occurrence?.id ?? "";
+    // The crash came mid-send: the run fired (its record stored), its copy planned and claimed.
+    const record = { outcome: { notify: { text: "t", actions: ["done" as const] } }, costUsd: null, firedAt: START, appliedAt: START, resumes: 0 };
+    await store.updateOccurrence(id, { status: "running", startedAt: START, record });
+    await store.planDelivery(id, owner.id, START);
+    await store.claimDelivery(id, owner.id, START);
     db.close();
 
     const delivery = makeFakeDelivery();
@@ -154,10 +158,47 @@ describe("the plugin end to end on a real data file", () => {
     );
     await plugin.activate!();
     expect(warnings.some((w) => w.includes("requeued 1 occurrence"))).toBe(true);
+    expect(warnings.some((w) => w.includes(`delivery of ${id} to ${owner.id} was claimed`) && w.includes("will not be resent"))).toBe(true);
     await plugin.ticks![0]!.run();
     expect(delivery.calls.dm).toHaveLength(0);
     const reopened = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
-    expect((await reopened.getOccurrence(occurrence?.id ?? ""))?.status).toBe("done");
+    const after = await reopened.getOccurrence(id);
+    expect(after?.status).toBe("done");
+    expect(after?.record).toEqual(record);
+    expect((await reopened.listDeliveries({ occurrenceId: id })).map((d) => [d.status, d.retryAt])).toEqual([["unconfirmed", null]]);
+    await plugin.dispose!();
+  });
+
+  it("a run a crash left running before it fired goes back unstarted and runs once", async () => {
+    const dataDir = tempDir();
+    const clock = clockAt("2026-10-01T12:01:00.000Z");
+    mkdirSync(join(dataDir, DB_DIR));
+    const db = openDatabase(join(dataDir, DB_DIR, DB_FILE));
+    const store = new SqliteStore(db);
+    const owner = await admit(store, ADMIN, clock.now());
+    const task = await store.createTask({
+      ownerId: owner.id,
+      type: "reminder",
+      title: "t",
+      config: { text: "t" },
+      schedule: { kind: "once", at: "2026-10-01T12:01:00.000Z" },
+      lane: "notify",
+      capabilities: ["notify"],
+      at: START,
+    });
+    const occurrence = await materialize(store, task, owner, clock.now());
+    await store.updateOccurrence(occurrence?.id ?? "", { status: "running", startedAt: START });
+    db.close();
+
+    const delivery = makeFakeDelivery();
+    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, ...delivery }), { clock });
+    await plugin.activate!();
+    const reopened = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
+    expect((await reopened.getOccurrence(occurrence?.id ?? ""))?.startedAt).toBeNull();
+    await plugin.ticks![0]!.run();
+    await plugin.ticks![0]!.run();
+    expect(delivery.calls.dm).toHaveLength(1);
+    expect((await reopened.listDeliveries({ occurrenceId: occurrence?.id ?? "" })).map((d) => d.status)).toEqual(["sent"]);
     await plugin.dispose!();
   });
 

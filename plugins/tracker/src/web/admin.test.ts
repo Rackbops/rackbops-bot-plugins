@@ -365,10 +365,12 @@ describe("forget-me", () => {
     const token = await makeToken(w, w.larry, "larry-agent"); // an API token
     expect((await api(w.plugin, "GET", "/me", { token })).status).toBe(200);
     const where = new Set(traces(w.dbPath, "u2", [LARRY, "Larry", "larry-"]).map((t) => t.split(".")[0]));
-    // Everywhere a person can be, but a price's series and a pause (their own tests' business).
-    expect([...where].sort()).toEqual(
-      [...ERASED_TABLES].filter((t) => t !== "series" && t !== "delivery_pauses").sort(),
-    );
+    // Everywhere a person can be, but a price's series and a pause (their own tests' business), and
+    // the execute lane's charges and budget notices, which no tick here writes (roster.test.ts).
+    const elsewhere = new Set(["series", "delivery_pauses", "usage", "notices"]);
+    expect([...where].sort()).toEqual([...ERASED_TABLES].filter((t) => !elsewhere.has(t)).sort());
+    // His copies of runs are in docket's deliveries, and so are the copies of his runs to Curly.
+    expect(query(w.dbPath, "SELECT DISTINCT user_id FROM deliveries ORDER BY user_id")).toEqual([{ user_id: "u2" }, { user_id: "u3" }]);
     return { ...w, token };
   }
 

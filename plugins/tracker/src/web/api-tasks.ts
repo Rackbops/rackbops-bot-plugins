@@ -1,4 +1,4 @@
-import { describeSchedule, type Task, type User } from "@rackbops/docket-core";
+import { describeSchedule, hasFired, type Task, type User } from "@rackbops/docket-core";
 import type { PriceConfig } from "@rackbops/docket-types";
 import { NO_LONGER_LISTED, NO_SUCH_TASK, ownTask, type TrackerDeps } from "../actions.js";
 import { loadHistory } from "../history.js";
@@ -95,11 +95,11 @@ export function refusal(error: string): ApiAnswer {
   return problem(400, "invalid", error);
 }
 
-/** The next queued run's instant, or null (nothing queued, or paused). */
+/** The next queued run's instant, or null (nothing queued, or paused). A run put back to finish has fired: not next. */
 async function nextAt(d: TrackerDeps, task: Task): Promise<string | null> {
   if (task.status !== "active") return null;
   const queued = await d.store.listOccurrences({ taskId: task.id, status: "queued" });
-  return queued[0]?.dueAt ?? null;
+  return queued.find((o) => !hasFired(o))?.dueAt ?? null;
 }
 
 /**
