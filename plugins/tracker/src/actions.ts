@@ -26,6 +26,7 @@ import { type DeliveryHealth, PAUSE_AFTER, resumedNotice } from "./delivery-heal
 import { MAX_LIVE_TASKS, MAX_WHEN } from "./limits.js";
 import { admit, PeopleError, setPreferences } from "./people.js";
 import { heldRuns, restoreHeldRun } from "./retime.js";
+import type { Roster } from "./roster.js";
 import type { Sessions } from "./web/sessions.js";
 import type { LoginLinks } from "./web/signin-link.js";
 
@@ -50,8 +51,18 @@ export interface TrackerDeps {
   /** The web area's one-time sign-in links and its sessions (web/). */
   logins: LoginLinks;
   sessions: Sessions;
+  /** Whether a notify or poll tick is running, and a bounded wait for none to be (index.ts). */
+  lanes: TickGate;
+  /** People, blocks and forget-me's erasure: the SQL docket's Store has no method for (roster.ts). */
+  roster: Roster;
   /** Whether the web area (and its task editor) is set up: `TRACKER_WEB_URL`. Answers mention it only then. */
   webEditor: boolean;
+}
+
+/** The ticks as forget-me sees them: whether one runs now, and a wait of at most `ms` for none to (false when it timed out). */
+export interface TickGate {
+  busy(): boolean;
+  idle(ms: number): Promise<boolean>;
 }
 
 /** Discord's cap on a message; every answer is cut to it. */

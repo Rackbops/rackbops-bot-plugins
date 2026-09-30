@@ -14,7 +14,7 @@ import { NO_SUCH_TASK, ownTask, type TrackerDeps } from "./actions.js";
  *   without the recipients who could not be DMed.
  * - A delete archives: the task leaves every list and nothing more is sent, its queued runs are
  *   dropped, and its history stays on record (an admin can see every task, plan 1.1). The store has
- *   no way to erase a task; forget-me is its own slice.
+ *   no way to erase a task; only forget-me erases, and it erases the whole person (admin.ts).
  */
 
 export type Done = { ok: true; text: string } | { ok: false; error: string };

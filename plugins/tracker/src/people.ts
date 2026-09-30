@@ -5,7 +5,7 @@ import { isTimeZone, type Actor, type Identity, type Store, type User } from "@r
  * preferred hour, time zone, admin flag -- never a usr account, and nothing here calls usr or
  * recall (items 37, 40). The admin flag is the tracker's one admin definition (5.10); the first
  * admin comes from the instance's configuration (`TRACKER_ADMIN_DISCORD_IDS`), and later admins are
- * granted from the web area (not built yet).
+ * granted and revoked from the web area's admin view (admin.ts).
  */
 
 /** The tracker's default zone until a person sets one (plan 1.1, 5.2: US Eastern). */

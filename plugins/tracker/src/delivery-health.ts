@@ -95,6 +95,14 @@ export class DeliveryHealth {
     return next;
   }
 
+  /**
+   * Runs `fn` on the same lock as a pause and a resume, so it never interleaves with one: what
+   * forget-me's erasure uses (admin.ts), then `release`s the tasks it freed from inside `fn`.
+   */
+  exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    return this.locked(fn);
+  }
+
   get(userId: string): HealthRow | null {
     const r = this.db.query("SELECT * FROM delivery_health WHERE user_id = ?").get(userId) as Row | null;
     if (!r) return null;
@@ -180,8 +188,11 @@ export class DeliveryHealth {
     }
   }
 
-  /** Sets a task active again once nothing holds it paused, and gives it its next run. */
-  private async release(taskId: string, actorId: string, detail: string, now: Date): Promise<boolean> {
+  /**
+   * Sets a task active again once nothing holds it paused, and gives it its next run. Only from
+   * inside the lock: `resume`, `resumeTask`, or `exclusive`.
+   */
+  async release(taskId: string, actorId: string | null, detail: string, now: Date): Promise<boolean> {
     if (this.pausesFor(taskId).length > 0) return false;
     const task = await this.store.getTask(taskId);
     if (!task || task.status !== "paused") return false;

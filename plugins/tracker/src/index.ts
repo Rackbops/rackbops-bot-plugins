@@ -5,7 +5,7 @@ import type { Clock, Fetch, Notifier, TaskType } from "@rackbops/docket-core";
 import { price, reminder, renewal } from "@rackbops/docket-types";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildId } from "./access.js";
-import type { TrackerDeps } from "./actions.js";
+import type { TickGate, TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
 import { ClaimStore } from "./claims.js";
 import { DeliveryHealth } from "./delivery-health.js";
@@ -18,6 +18,7 @@ import { createDmNotifier, reportUnconfirmed } from "./notifier.js";
 import { type NotifyTickKind, runNotifyTick } from "./notify-lane.js";
 import { parseAdminIds, seedAdmins } from "./people.js";
 import { openDatabase } from "./schema.js";
+import { Roster } from "./roster.js";
 import { SqliteStore } from "./store.js";
 import { createWebHandler } from "./web/app.js";
 import { parseWebUrl } from "./web/config.js";
@@ -31,8 +32,9 @@ import { LoginLinks } from "./web/signin-link.js";
  * admin, `/tracker/healthz` (#78), and the Discord surface -- the slash commands, the admission and
  * membership gates, consent, the buttons and the Reply modal, and pausing delivery after repeated
  * failures (#79), the web area's first slice -- sign-in by one-time link, my tasks, history,
- * settings (#80) -- and renewals and the price tracker, with the fenced page reads on a tick of
- * their own (#81).
+ * settings (#80) -- renewals and the price tracker, with the fenced page reads on a tick of
+ * their own (#81) -- the web task editor (#80, slice 2) -- and the admin view and forget-me (#80,
+ * slice 3).
  *
  * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID` and
  * `TRACKER_WEB_URL` and nothing else. The database is opened in `activate()` and closed in `dispose()`.
@@ -129,6 +131,30 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     if (failed > 0) host.log.warn(`${kind === "poll" ? "poll" : "notify"} lane: ${ran} ran, ${failed} failed`);
   }
 
+  // The ticks still running (one the host stopped waiting on included): forget-me waits for none
+  // to be, so a DM in flight to the person cannot write about them after they are erased (admin.ts).
+  const running = new Set<Promise<unknown>>();
+  const tracked = (p: Promise<void>): Promise<void> => {
+    running.add(p);
+    const done = () => void running.delete(p);
+    void p.then(done, done);
+    return p;
+  };
+  const lanes: TickGate = {
+    busy: () => running.size > 0,
+    async idle(ms) {
+      const until = Date.now() + ms;
+      while (running.size > 0) {
+        const left = until - Date.now();
+        if (left <= 0) return false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([Promise.allSettled([...running]), new Promise((r) => (timer = setTimeout(r, left)))]);
+        clearTimeout(timer);
+      }
+      return true;
+    },
+  };
+
   // The web area's member re-check needs Discord, and the host API has no member lookup: it asks
   // through the discord.js Client of the last interaction the plugin handled (`interaction.client`
   // is the bot's one long-lived Client). Held here only, never stored; none until the first one.
@@ -218,6 +244,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         notifier: dm ? createDmNotifier({ store: openedStore, claims: openedClaims, dm, clock, log: host.log, health: delivery }) : NO_DM,
         logins: new LoginLinks(opened),
         sessions: new Sessions(opened),
+        roster: new Roster(opened),
+        lanes,
         webEditor: webOrigin !== null,
       };
       if (guildId === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
@@ -241,14 +269,14 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     ticks: [
       {
         name: "notify",
-        run: (signal) => tick("notify", signal),
+        run: (signal) => tracked(tick("notify", signal)),
       },
       {
         // The price tracker's page reads (#81), on a tick of their own after `notify`: the host awaits
         // a plugin's ticks in order and stops waiting on one after 30 s, so a slow page never holds up
         // a reminder due now (notify-lane.ts).
         name: "poll",
-        run: (signal) => tick("poll", signal),
+        run: (signal) => tracked(tick("poll", signal)),
       },
     ],
 

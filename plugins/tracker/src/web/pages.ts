@@ -21,7 +21,7 @@ function name(u: User): string {
 }
 
 export function framed(v: Viewer, title: string, body: Html): string {
-  return page({ base: v.base, title, signedIn: { name: name(v.user), csrf: v.csrf }, body });
+  return page({ base: v.base, title, signedIn: { name: name(v.user), csrf: v.csrf, admin: v.user.admin }, body });
 }
 
 /** Where a request that is not signed in lands. */
@@ -122,7 +122,7 @@ ${paused}
 }
 
 /** A task's page; `controls` are the owner's (editor-pages.ts), `flash` what the last action did. */
-export function historyPage(v: Viewer, h: HistoryView, extra: { controls?: Html | null; flash?: Html | null } = {}): string {
+export function historyPage(v: Viewer, h: HistoryView, extra: { controls?: Html | null; flash?: Html | null; owner?: string | null } = {}): string {
   const runs =
     h.runs.length === 0
       ? html`<p class="rb-muted">No runs yet.</p>`
@@ -143,6 +143,7 @@ export function historyPage(v: Viewer, h: HistoryView, extra: { controls?: Html 
 <p><a class="rb-link" href="${v.base}/">My tasks</a></p>
 <h1>${h.task.title}</h1>
 ${extra.flash ?? null}
+${extra.owner ? html`<p class="rb-muted">Owned by ${extra.owner}; you can see it, not change it.</p>` : null}
 <p>${h.task.type}, ${h.task.status === "archived" ? "deleted" : h.task.status}, ${h.cadence}. Next: ${h.task.status === "active" ? (h.next ?? "nothing scheduled") : "nothing, while it is not active"}.</p>
 ${extra.controls ?? null}
 </section>
@@ -191,6 +192,10 @@ ${form.error ? html`<div class="rb-alert rb-alert--danger" role="alert"><p class
 </div>
 <div><button class="rb-btn rb-btn--primary" type="submit">Save</button></div>
 </form>
+</section>
+<section>
+<h2>Forget me</h2>
+<p>Delete everything the tracker holds about you, for good. <a class="rb-link" href="${v.base}/forget">Forget me</a></p>
 </section>`,
   );
 }

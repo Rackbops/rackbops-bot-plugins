@@ -180,8 +180,10 @@ export async function newPost(e: Editor, type: EditorType, form: URLSearchParams
 export async function taskPage(e: Editor, id: string, done: string | null, error?: string): Promise<Response> {
   const view = await loadHistory(e.d, e.v.user, id);
   if (!view) return htmlResponse(notFoundPage(e.v.base, e.v), 404);
-  const controls = view.task.ownerId === e.v.user.id ? ownerControls(e.v, view.task) : null;
-  return htmlResponse(historyPage(e.v, view, { controls, flash: notice(done, error) }), error ? 400 : 200);
+  const own = view.task.ownerId === e.v.user.id;
+  const controls = own ? ownerControls(e.v, view.task) : null;
+  const owner = own ? null : ((await e.d.store.getUser(view.task.ownerId))?.displayName ?? view.task.ownerId);
+  return htmlResponse(historyPage(e.v, view, { controls, flash: notice(done, error), owner }), error ? 400 : 200);
 }
 
 /** The edit form's values as the task stands: what each field would say to keep it as it is. */

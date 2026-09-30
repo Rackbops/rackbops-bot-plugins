@@ -7,8 +7,9 @@ on a rackbops-discord-bot instance. Plan of record: Rackbops/Tooling
 command, delivered by DM, answered by button, with history -- the first slice of the web area
 (#80): sign-in by one-time link, my tasks, a task's history, and settings -- renewals and
 the price tracker (#81, plan E6): two more types on the notify side, no model, nothing sent to
-city-hall -- and the web area's task editor (#80, slice 2): make, edit, pause, resume and delete
-your own tasks from the web, under the commands' own rules.
+city-hall -- the web area's task editor (#80, slice 2): make, edit, pause, resume and delete
+your own tasks from the web, under the commands' own rules -- and the admin view and forget-me (#80,
+slice 3).
 
 ## Commands
 
@@ -65,6 +66,11 @@ served at a hashed path, cached for a year).
 | `/tasks/<id>/edit` | The owner's edit form (GET) and saving it (POST). |
 | `/tasks/<id>/pause`, `/resume`, `/delete` | POST only. Delete answers a confirmation first; only a second post carrying `confirm=yes` deletes. |
 | `/settings` | Preferred hour and time zone, checked as `/register` checks them. |
+| `/forget` | Forget me (below): what it deletes (GET); a POST asks for the confirmation; a POST with `confirm=yes` and the word `forget` erases. Linked from Settings. |
+| `/admin` | Admins only: everyone on the list, the decline blocks in force (each with Lift), and a form to allow a person by Discord id. |
+| `/admin/tasks` | Admins only: every task in the store, with its owner, status and how many receive it, each linking to its page. |
+| `/admin/people/<id>` | Admins only: one person -- Discord id, registration, zone and hour, delivery, task counts, their tasks -- with Make admin or Revoke admin, Resume delivery (when paused), and Remove from the tracker. |
+| `/admin/allow`, `/admin/people/<id>/grant`, `/revoke`, `/resume-delivery`, `/forget`, `/admin/blocks/<id>/lift` | Admins only, POST only: the acts below. |
 | `/signin` | Where a request that is not signed in is sent: says to run `/web`. |
 | `/login?t=...` | The link `/web` gives. |
 
@@ -130,7 +136,58 @@ while the last confirmation is under 24 hours old, and are then signed out and t
 again. Concurrent requests share one lookup per person, and after a failed one that person is not
 looked up again for a minute, so an outage or rate limit does not pile up calls. A confirmation
 time in the future (a clock set back) counts as stale. Every lookup asks Discord (`force: true`),
-never discord.js's member cache, which with only the Guilds intent never learns that someone left. There is no way yet to take a person off the tracker (forget-me and the admin view, below).
+never discord.js's member cache, which with only the Guilds intent never learns that someone left.
+
+**The admin view** (slice 3, plan 5.8, 5.10). An admin is a person whose row in the tracker's store
+has the admin flag -- the one admin definition; `/allow` checks the same flag. `TRACKER_ADMIN_DISCORD_IDS`
+grants it at start; admins grant and revoke it here. The flag is read from the store on every
+request, and again inside the write queue before any admin act, so an admin whose flag is revoked is
+refused on their very next request. To anyone who is not an admin, every `/admin` path -- any method
+-- answers the same 404, byte for byte, as an unknown page. An admin sees every person, every task
+and every task's page and history, read-only: an admin never edits, pauses or deletes another
+person's task (the owner's acts answer them 404, as in slice 2). What an admin can do, each through
+the function the command path runs:
+
+- **Allow** a person by Discord id: `/allow`'s own `allowPerson`, with the same server-membership
+  check when `TRACKER_GUILD_ID` is set (one bounded lookup; no Discord client yet since a restart
+  refuses, as an unknown answer does). A form cannot tell a bot's id from a person's; a bot's row can
+  never `/register`.
+- **Make admin / Revoke admin** (plan 5.8). The last admin can be neither revoked nor removed. An
+  admin who revokes themselves lands on My tasks. Each change is logged (`u1 made u2 an admin`).
+- **Resume delivery** of a person paused after failed DMs: `DeliveryHealth.resume`, what the
+  person's own next command does -- the count clears and the tasks nothing else holds go back on.
+- **Lift** a decline block in force: docket's `liftBlock`, recorded as that admin's lift.
+- **Remove from the tracker**: forget-me for that person (below), with the same confirmation.
+
+Not here yet, though plan 5.10 lists them: grants, budgets and retry (they belong to the execute
+lane, which is not built) and an admin pause of someone else's task.
+
+**Forget me** (plan 5.8). A signed-in person erases themselves from `/forget` (web only: the plan
+asks for no Discord command, so without `TRACKER_WEB_URL` the only path is an admin with the web
+area). Two posts: the first asks, the second must carry `confirm=yes` and the word `forget`. Then,
+in one SQLite transaction in the write queue, **deleted, not archived**:
+
+- every task they own, archived ones too, with everything under it: runs, run events, replies
+  (anyone's), history, series, recipients, delivery claims and pauses;
+- on everyone else's tasks: their recipient rows, their replies and answers, the history rows they
+  made or that name them (an invitation of them, a pause for them), the run events and delivery
+  claims of DMs to them, and their pause rows;
+- every decline block they are either side of;
+- their admission, delivery health, web sessions and unused sign-in links, and their person row.
+
+What stays, and why: another person's task that they received stays that owner's; one paused only
+because DMs to them failed goes back on. Another person's row keeps its own audit fact but not their
+id -- `admitted_by` of someone they admitted, and `lifted_by` of a block they lifted, become
+`forgotten` ("an admin since forgotten"; null already means "the configuration"). Their id inside
+the error or summary text of someone else's run is replaced with `(forgotten)`. A reply other people
+wrote on the erased person's own tasks is deleted with those tasks. Outside the store, nothing is
+touched: the DMs the bot sent stay in the person's Discord DMs, and the host's log may hold their
+tracker id. The database runs with `secure_delete` on, so erased rows are overwritten, and the
+write-ahead log is checkpointed after an erasure. Forget-me waits (up to 20 seconds, then says to
+try again) until no notify or poll tick is running, so a DM to them already in flight cannot be
+recorded after they are gone. Their sessions are among the rows, so they are signed out everywhere
+at once, and the browser's cookie is cleared. They can come back only as someone new: an admin
+`/allow`s them again, and the tracker never reuses an id.
 
 **Choose the web origin's domain with care.** A host under the same parent domain as
 `TRACKER_WEB_URL` that you do not control can set a `__Secure-` cookie on the parent domain
@@ -151,6 +208,7 @@ The `__Host-` prefix, which would stop that, requires `Path=/` and so cannot be 
 | People | `src/people.ts`, `src/admissions.ts` | Discord id, time zone, preferred hour, admin flag -- in the tracker's store, never usr; who admitted each person and when they registered. `TRACKER_ADMIN_DISCORD_IDS` only ever grants admin. |
 | Commands | `src/discord.ts`, `src/interactions.ts`, `src/discord-common.ts` (discord.js); `src/actions.ts`, `src/press.ts`, `src/history.ts`, `src/access.ts` | The discord.js files read options and render; the rest is Discord-free over the injected store, clock and notifier. Store writes are handled one at a time; Discord lookups and DMs run outside that queue. |
 | Health | `src/health.ts` | `GET /tracker/healthz` (through the bot's HTTP router): `200` `ok`/`starting`, `503` `inactive`/`stale`/`blocked`. |
+| Admin, forget-me | `src/admin.ts`, `src/roster.ts`; `src/web/admin.ts`, `src/web/admin-pages.ts` | The admin acts and forget-me, Discord-free; the SQL docket's Store has no method for (listing people and blocks, erasing a person); the routes and pages. |
 | Web area | `src/web/` | `app.ts` authenticates and dispatches (pure over the injected store and clock), `routes.ts` names the paths; `pages.ts`, `editor-pages.ts` and `html.ts` render; `editor.ts` reads the editor's forms and calls the shared rules; `signin-link.ts` and `sessions.ts` hold the sign-in; `theme.ts` the stylesheet; `command.ts` is `/web`. |
 | Task rules | `src/reminders.ts`, `src/tracked.ts`, `src/price.ts`, `src/edit.ts`, `src/manage.ts`, `src/limits.ts` | What makes, edits, pauses, resumes and deletes a task, and the limits on it, Discord-free, for the commands and the web editor alike. |
 
@@ -166,9 +224,9 @@ The `__Host-` prefix, which would stop that, requires `Path=/` and so cannot be 
 
 ## Not yet
 
-- The rest of the web area (E5): the admin view, lifting a decline block, forget-me (which would
-  erase a deleted task), sharing a task from the web, and the JSON task API. Until forget-me and the admin view exist, nobody can be taken off the
-  tracker, so a web session ends only by sign-out, expiry, or the membership re-check. Discord OAuth2 as a second sign-in method, if chosen (plan item 41).
+- The rest of the web area (E5): sharing a task from the web, the JSON task API, and the admin
+  view's grants, budgets and retry (with the execute lane). Discord OAuth2 as a second sign-in
+  method, if chosen (plan item 41).
 - The city-hall Executor adapter (the execute lane).
 - Editing in Discord (the editor is on the web only), and changing a price tracker's page or `near` after it is made (make a new one); a free-form pattern for `price` (`near` is the safe subset: a user's regular expression run on a large page could hang the bot).
 - An optional Discord-role gate (plan 5.5), and showing unconfirmed deliveries to admins anywhere but the log.

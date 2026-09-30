@@ -86,6 +86,8 @@ export async function sendShare(d: TrackerDeps, p: PendingShare): Promise<unknow
  */
 export async function finishShare(d: TrackerDeps, p: PendingShare, err: unknown): Promise<string> {
   if (err === null) return `Invited <@${p.targetDiscordId}> to \`${p.taskId}\`. They get a DM to accept or decline.`;
+  // Forgotten (or the task erased) while the DM was out: nothing is left to withdraw, and no row may name them again.
+  if (!(await d.store.getUser(p.targetId)) || !(await d.store.getTask(p.taskId))) return `<@${p.targetDiscordId}> ${CANNOT_SHARE}`;
   await d.store.removeRecipient(p.taskId, p.targetId);
   await d.store.addTaskEvent({
     taskId: p.taskId,

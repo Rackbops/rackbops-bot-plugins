@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.6.0] - 2026-09-30
+
+### Added
+
+- The web area's admin view (rackbops-bot-plugins#80, slice 3; plan 5.8, 5.10), for tracker admins
+  only -- the admin flag in the tracker's store, the one admin definition `/allow` already checks:
+  - `/tracker/admin`: everyone on the list (registered or only admitted, zone and hour, delivery on
+    or paused, tasks owned by status and received), who admitted each, the decline blocks in force,
+    and a form to allow a person by Discord id. `/tracker/admin/tasks`: every task with its owner,
+    status and recipients. `/tracker/admin/people/<id>`: one person and their tasks. Any task's page
+    and history is readable by an admin (it already was, through `/tracker/tasks/<id>`), now with who
+    owns it; an admin still cannot edit, pause or delete someone else's task.
+  - Admin acts, each through the function the command path runs: allow (`/allow`'s `allowPerson`,
+    with its membership check), make or revoke an admin (never the last one), resume a person's
+    delivery paused after failed DMs (`DeliveryHealth.resume`, what their own next command does), lift
+    a decline block (docket's `liftBlock`), and remove a person (forget-me, below).
+  - The admin flag is read from the store on every request and again in the write queue before every
+    act: an admin whose flag is revoked is refused on their next request. To anyone else every
+    `/tracker/admin` path, any method, answers the unknown page's 404, byte for byte.
+- Forget-me (plan 5.8): `/tracker/forget`, linked from Settings -- a page, then a post that asks,
+  then a post with `confirm=yes` and the typed word `forget`. In one transaction it deletes (not
+  archives) the person's tasks, archived ones included, and everything under them; their recipient
+  rows, replies, history rows and delivery records on everyone else's tasks; the decline blocks they
+  are either side of; their admission, delivery health, sessions and sign-in links; and their person
+  row. Another owner's task paused only for them goes back on. Other people's audit columns that
+  named them (`admitted_by`, `lifted_by`) become `forgotten`; their id in another run's error or
+  summary is redacted. They are signed out everywhere and the cookie is cleared; they can come back
+  only when an admin allows them again, as a new person with a new id. An admin can remove a person
+  the same way, with the same confirmation. Web only: the plan asks for no Discord command.
+- The nav shows Admin to admins.
+
+### Changed
+
+- The database now runs with `PRAGMA secure_delete = ON`, so a deleted row's bytes are overwritten,
+  and the write-ahead log is checkpointed after an erasure. No schema change (still schema 3).
+- Forget-me waits (at most 20 s, then asks to try again, deleting nothing) until no notify or poll
+  tick is running, so a DM already in flight to the person is not recorded after they are gone; an
+  invitation whose DM comes back after its task or invitee was erased writes nothing.
+- Internal: `DeliveryHealth` exposes its lock (`exclusive`) and `release` for the erasure; docket's
+  Store port has no delete, so listing people and blocks and erasing a person are plain SQL in the
+  plugin (`src/roster.ts`); docket is unchanged.
+
 ## [0.5.0] - 2026-09-29
 
 ### Added

@@ -4,11 +4,12 @@ import type { PluginHttpInfo } from "../../../../packages/api/contract.js";
 import { loadTaskList, saveSettings, type TrackerDeps } from "../actions.js";
 import type { Queue } from "../discord-common.js";
 import { MAX_ZONE } from "../limits.js";
+import { adminGet, adminPost, type AdminWeb, forgetRoute, unknownPage } from "./admin.js";
 import { actionPost, editGet, editPost, type Editor, newGet, newPost, taskPage } from "./editor.js";
 import { notice } from "./editor-pages.js";
 import { cookie, htmlResponse, readBody, readCookie, redirect } from "./html.js";
 import { errorPage, loginPage, notFoundPage, settingsPage, signInHelpPage, tasksPage, type Viewer } from "./pages.js";
-import { methodsOf, route } from "./routes.js";
+import { isAdminRoute, methodsOf, route } from "./routes.js";
 import { randomToken, safeEqual } from "./secrets.js";
 import { SESSION_TTL_MS, type Session } from "./sessions.js";
 import { LINK_TTL_MS } from "./signin-link.js";
@@ -71,6 +72,12 @@ function plain(status: number, text: string, extra: Record<string, string> = {})
     status,
     headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", ...extra },
   });
+}
+
+/** What the sign-in help page says after a sign-out or an erasure: fixed texts, nothing from the address. */
+function signInNote(q: URLSearchParams): string | undefined {
+  if (q.get("forgotten") === "1") return "Everything the tracker held about you is deleted, and you are signed out.";
+  return q.get("out") === "1" ? "You are signed out." : undefined;
 }
 
 type Auth =
@@ -164,6 +171,12 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     return { kind: "signed-out", note: RECHECK_FAILED };
   }
 
+  /** `/allow`'s membership check from the web: one bounded lookup; no Discord client yet is `unknown`, which refuses. */
+  async function memberOf(discordId: string): Promise<Membership> {
+    if (w.guildId === null) return "not-checked";
+    return (await lookupWithin(() => w.membership(discordId), MEMBER_CHECK_TIMEOUT_MS)) ?? "unknown";
+  }
+
   async function readForm(request: Request): Promise<URLSearchParams | null> {
     const type = request.headers.get("content-type") ?? "";
     if (!type.toLowerCase().startsWith("application/x-www-form-urlencoded")) return null;
@@ -240,20 +253,28 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
         })
       );
     }
-    if (path === "/signin") return only("GET") ?? htmlResponse(signInHelpPage(base, url.searchParams.get("out") === "1" ? "You are signed out." : undefined));
+    if (path === "/signin") return only("GET") ?? htmlResponse(signInHelpPage(base, signInNote(url.searchParams)));
     if (path === "/login") return method === "GET" ? loginGet(d, url) : loginPost(d, request);
 
     // Signed in.
     const r = route(path);
     if (r === null) return htmlResponse(notFoundPage(base), 404);
     const allowed = methodsOf(r);
-    if (!allowed.split(", ").includes(method)) return plain(405, "Method not allowed", { Allow: allowed });
+    const admin = isAdminRoute(r);
+    // An admin route's method is checked only once the viewer is known to be an admin, so to anyone
+    // else it answers exactly as an unknown path does.
+    if (!admin && !allowed.split(", ").includes(method)) return plain(405, "Method not allowed", { Allow: allowed });
 
     const auth = await authenticate(d, request);
     if (auth.kind === "signed-out") return htmlResponse(signInHelpPage(base, auth.note), 403, { "Set-Cookie": clear(SESSION_COOKIE) });
     if (auth.kind !== "ok") return redirect(`${base}/signin`, auth.kind === "stale" ? [clear(SESSION_COOKIE)] : []);
+    // The one admin definition, read from the store on this request (authenticate re-read the row):
+    // an admin whose flag was revoked a moment ago is refused now, not at their next sign-in.
+    if (admin && !auth.user.admin) return unknownPage(base);
+    if (admin && !allowed.split(", ").includes(method)) return plain(405, "Method not allowed", { Allow: allowed });
     const v: Viewer = { base, user: auth.user, csrf: auth.session.csrf };
     const e: Editor = { d, v, queue: w.queue, reading };
+    const a: AdminWeb = { d, v, queue: w.queue, memberOf: (id) => memberOf(id), signOutCookie: clear(SESSION_COOKIE) };
 
     if (method === "POST") {
       const form = await readForm(request);
@@ -271,6 +292,12 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
         return editPost(e, r.id, form);
       case "act":
         return actionPost(e, r.id, r.action, form);
+      case "forget":
+        return forgetRoute(a, method, form);
+      case "admin-allow":
+      case "admin-act":
+      case "admin-lift":
+        return adminPost(a, r, form);
       default:
         return plain(405, "Method not allowed", { Allow: allowed });
       }
@@ -287,6 +314,12 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       return editGet(e, r.id);
     case "new":
       return newGet(e, r.type);
+    case "forget":
+      return forgetRoute(a, method, null);
+    case "admin":
+    case "admin-tasks":
+    case "admin-person":
+      return adminGet(a, r);
     default:
       return htmlResponse(
         settingsPage(v, { hour: String(auth.user.preferredHour), zone: auth.user.timeZone, saved: url.searchParams.get("saved") === "1" }),

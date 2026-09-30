@@ -119,6 +119,11 @@ pin only needs to change in one place.
   store (`laneStore`, `notify-lane.ts`) that drops a non-active task's due runs, and pauses every
   task that would DM a person whose delivery paused (`delivery-health.ts`), as plan 5.5 asks. docket's `registrationText` still wraps a usr link the tracker no
   longer has (plan item 40), so `/register` builds its own text around `ADMIN_DISCLOSURE`.
+- **`@rackbops/docket-core` 0.3.0's Store port has no delete of a person or a task, and no list of
+  people or of blocks** (read in its `dist/ports.d.ts`, 2026-09-30, for `plugins/tracker` #80 slice
+  3): only `deleteQueuedOccurrences`, `removeRecipient` and per-pair `listBlocks`. So the tracker's
+  admin view and forget-me run plain SQL over the plugin's own database (`plugins/tracker/src/roster.ts`),
+  as `admissions.ts` and `delivery-health.ts` already do; docket is not changed.
 - **`TRACKER_GUILD_ID`'s server-membership gate is an addition beyond the plan.** Plan 5.5's
   "membership gate" is the admission list alone, with a Discord-role check left unknown; checking
   membership of one configured server came with #79's brief, not the plan of record. Not verified

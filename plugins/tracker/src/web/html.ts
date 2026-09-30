@@ -70,7 +70,7 @@ export interface Frame {
   base: string;
   title: string;
   /** Present when signed in: the nav and the sign-out form. */
-  signedIn?: { name: string; csrf: string };
+  signedIn?: { name: string; csrf: string; admin?: boolean };
   body: Html;
 }
 
@@ -80,6 +80,7 @@ export function page(f: Frame): string {
 <span class="rb-muted">${f.signedIn.name}</span>
 <a class="rb-link" href="${f.base}/">My tasks</a>
 <a class="rb-link" href="${f.base}/settings">Settings</a>
+${f.signedIn.admin ? html`<a class="rb-link" href="${f.base}/admin">Admin</a>` : null}
 <form method="post" action="${f.base}/logout"><input type="hidden" name="csrf" value="${f.signedIn.csrf}"><button class="rb-btn rb-btn--ghost rb-btn--sm" type="submit">Sign out</button></form>
 </nav>`
     : null;

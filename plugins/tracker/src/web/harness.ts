@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Fetch } from "@rackbops/docket-core";
-import type { ChatInputCommandInteraction } from "discord.js";
+import type { ChatInputCommandInteraction, MessageComponentInteraction, ModalSubmitInteraction } from "discord.js";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import type { Membership } from "../access.js";
@@ -45,15 +45,19 @@ export async function world(opts: { webUrl?: string | null; guild?: boolean; web
   const clock = clockAt(START);
   const webUrl = opts.webUrl === undefined ? ORIGIN : opts.webUrl;
   const sent: { userId: string; message: unknown }[] = [];
-  /** Set `refuse` to have the host refuse every DM as undeliverable (Discord's "cannot be messaged"). */
-  const delivery = { refuse: false };
+  /**
+   * Set `refuse` to have the host refuse every DM as undeliverable (Discord's "cannot be messaged");
+   * put a Discord id in `unreachable` to refuse only theirs; set `hold` to keep every DM waiting on it.
+   */
+  const delivery = { refuse: false, unreachable: new Set<string>(), hold: null as Promise<void> | null };
   const plugin = createPlugin(
     makeFakeHost({
       name: "tracker",
       env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, ...(webUrl ? { TRACKER_WEB_URL: webUrl } : {}), ...(opts.guild ? { TRACKER_GUILD_ID: GUILD } : {}) },
       log: { info() {}, warn() {}, error() {} },
       dm: async (userId: string, message: unknown) => {
-        if (delivery.refuse) throw new Error(HOST_CANNOT_MESSAGE);
+        if (delivery.hold) await delivery.hold;
+        if (delivery.refuse || delivery.unreachable.has(userId)) throw new Error(HOST_CANNOT_MESSAGE);
         sent.push({ userId, message });
         return { guildId: null, channelId: "c", messageId: "m" };
       },
@@ -179,4 +183,54 @@ export async function signIn(plugin: Plugin, discordId: string): Promise<Jar> {
 
 export async function csrfOf(plugin: Plugin, jar: Jar): Promise<string> {
   return hidden(await (await call(plugin, "GET", "/settings", { jar })).text(), "csrf");
+}
+
+/** Presses the button `customId` on a DM as `userId`; answers what the press said (edits, follow-ups, replies). */
+export async function press(plugin: Plugin, customId: string, userId: string): Promise<string[]> {
+  const said: string[] = [];
+  const interaction = {
+    customId,
+    guildId: null,
+    user: { id: userId },
+    message: { content: "the message" },
+    deferred: false,
+    replied: false,
+    isModalSubmit: () => false,
+    isMessageComponent: () => true,
+    deferUpdate: async () => {
+      interaction.deferred = true;
+    },
+    editReply: async (x: { content: string }) => void said.push(x.content),
+    followUp: async (x: { content: string }) => void said.push(x.content),
+    reply: async (x: { content: string }) => {
+      interaction.replied = true;
+      said.push(x.content);
+    },
+    showModal: async () => {},
+  };
+  await plugin.interactions!(interaction as unknown as MessageComponentInteraction);
+  return said;
+}
+
+/** Submits the Reply modal of run `occurrenceId` as `userId` with `text`. */
+export async function replyText(plugin: Plugin, occurrenceId: string, userId: string, text: string): Promise<string> {
+  const edits: { content: string }[] = [];
+  const interaction = {
+    customId: `tracker:m.o.${occurrenceId}`,
+    guildId: null,
+    user: { id: userId },
+    deferred: false,
+    replied: false,
+    isModalSubmit: () => true,
+    isMessageComponent: () => false,
+    fields: { getTextInputValue: () => text },
+    deferReply: async () => {
+      interaction.deferred = true;
+    },
+    editReply: async (x: { content: string }) => void edits.push(x),
+    followUp: async () => {},
+    reply: async () => {},
+  };
+  await plugin.interactions!(interaction as unknown as ModalSubmitInteraction);
+  return edits[0]?.content ?? "";
 }

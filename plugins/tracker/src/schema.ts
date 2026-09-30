@@ -214,6 +214,8 @@ export function openDatabase(path: string): Database {
   const db = new Database(path, { create: true });
   if (path !== ":memory:") db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA busy_timeout = 5000");
+  // Forget-me (roster.ts): a deleted row's bytes are overwritten, not left in a free page.
+  db.exec("PRAGMA secure_delete = ON");
   migrate(db);
   return db;
 }
