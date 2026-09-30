@@ -33,10 +33,10 @@ as in a server (plan 5.5, item 39).
 | `/settings hour hour` | registered | The preferred hour; recurring reminders with no time of their own move to it. |
 | `/web` | registered | A one-time link to sign in to the web area (below), good for 10 minutes and one use. Says so when `TRACKER_WEB_URL` is unset. |
 
-**Gates.** Every command and button checks, in order: membership of the `TRACKER_GUILD_ID`
-server (when set), admission (in the tracker's store), then what the action needs (an admin for
-`/allow`, admission for `/register`, registration for the rest). A person nobody admitted is told
-to ask an admin to `/allow` them. Decline and opt-out skip the membership and registration gates,
+**Gates.** Every command and button checks, in order: membership of a `TRACKER_GUILD_ID`
+server (when set; a member of any listed server passes), admission (in the tracker's store), then
+what the action needs (an admin for `/allow`, admission for `/register`, registration for the
+rest). A person nobody admitted is told to ask an admin to `/allow` them. Decline and opt-out skip the membership and registration gates,
 so anyone can always stop the messages; the Reply button checks membership when its modal is sent.
 
 **Buttons.** The owner's DM carries Done, Snooze 1h and Reply; a recipient's copy carries the
@@ -131,10 +131,10 @@ other than GET or POST (or the wrong one of the two for a path) is 405.
 
 **Membership on the web.** With `TRACKER_GUILD_ID` set, `/web` issues a link only to a member,
 and the session remembers when that was confirmed. A web request more than 15 minutes after the
-last confirmation re-checks with one member lookup (about 3 seconds at most, outside the write
-queue), through the discord.js Client of an interaction the plugin has handled since it started
-(the host API has no member lookup of its own; the Client is held in memory, never stored).
-Not a member: every session of theirs ends, on a page that says why. A member: the time is
+last confirmation re-checks with one member lookup (every listed server asked at once, about 3
+seconds at most, outside the write queue), through the discord.js Client of an interaction the
+plugin has handled since it started (the host API has no member lookup of its own; the Client is
+held in memory, never stored). Not a member of any listed server: every session of theirs ends, on a page that says why. A member: the time is
 refreshed. A failed or slow lookup, or no interaction yet since a restart: they stay signed in
 while the last confirmation is under 24 hours old, and are then signed out and told to run `/web`
 again. Concurrent requests share one lookup per person, and after a failed one that person is not
@@ -257,8 +257,8 @@ and only on the owner's own tasks -- an admin's token included; an admin's wider
 signed-in web pages. Every request re-reads the owner, as the web does a session: a person no
 longer on the tracker, or no longer registered, is refused and their tokens deleted; with `TRACKER_GUILD_ID` set, membership
 is re-checked on the web's schedule (after 15 minutes, one lookup, shared with the web), and one who
-has left the server loses every token and every session; a lookup that keeps failing lets them on
-for 24 hours from the last confirmation, then answers 503 until one succeeds (the token is kept).
+has left every listed server loses every token and every session; a lookup that keeps failing
+lets them on for 24 hours from the last confirmation, then answers 503 until one succeeds (the token is kept).
 A token is looked up by the SHA-256 of what was sent, so the comparison is over a hash the sender
 cannot steer.
 
@@ -321,7 +321,7 @@ and a `PATCH` naming it is refused (`unknown_field`). A write answers
 | 401 | `unauthorized` | No `Authorization` header. With `WWW-Authenticate: Bearer realm="tracker"`. |
 | 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered (their tokens are then deleted): one answer for all. |
 | 403 | `origin_refused` | The request carried an `Origin` header. |
-| 403 | `not_member` | The owner has left the `TRACKER_GUILD_ID` server; their tokens are revoked. |
+| 403 | `not_member` | The owner has left every `TRACKER_GUILD_ID` server; their tokens are revoked. |
 | 404 | `not_found` | No such endpoint, or no such task of yours. Anyone else's task -- one shared with you, or any task to an admin's token -- answers exactly as an unknown id. |
 | 405 | `method_not_allowed` | With `Allow`. |
 | 409 | `conflict` | A finished task edited, or a pause of a task not active (a resume of one not paused). |
@@ -378,7 +378,7 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 | Env key | Secret | Meaning |
 |---|---|---|
 | `TRACKER_ADMIN_DISCORD_IDS` | no | Comma-separated Discord user ids (spaces around commas allowed; an empty entry, as from a trailing comma, is refused and the plugin does not load) made admin at start. Unset = none. Removing an id does not revoke it. |
-| `TRACKER_GUILD_ID` | no | The Discord server whose members may use the tracker. Checked through the interaction's client with a single-member lookup (no privileged intent). Unset = no membership gate, and a warning is logged each time the plugin activates; a malformed value refuses to load. |
+| `TRACKER_GUILD_ID` | no | The Discord server whose members may use the tracker, or a comma-separated list of them (spaces around commas allowed; a repeated id counts once): a member of any listed server passes. Checked through the interaction's client with a single-member lookup per server (no privileged intent), all asked at once; a yes from any server is a member, a no from every server is not, and otherwise the answer is unknown (refused, never revoked). Inside a listed server, the person running a command needs no lookup. Unset = no membership gate, and a warning is logged each time the plugin activates; a malformed or empty entry anywhere in the list refuses to load, naming it. One store and one admission list serve every listed server; there are no per-server admins. |
 | `TRACKER_WEB_URL` | no | The https origin the bot's HTTP is reached at through its tunnel, e.g. `https://clerk.example.com` (no path). `/web` links and the allowed `Origin` come from it, never from a request's `Host`. Unset = no web area (`/web` says so, the pages answer 404); anything but a bare https origin refuses to load. |
 
 `/tracker/healthz` and the web area need the bot's `HTTP_PORT` set; without it there is no HTTP at all.

@@ -54,6 +54,8 @@ describe("createPlugin", () => {
     expect(() => createPlugin(makeFakeHost({ name: "tracker", env: { TRACKER_GUILD_ID: "my server" } }))).toThrow("TRACKER_GUILD_ID");
     createPlugin(makeFakeHost({ name: "tracker", env: { TRACKER_GUILD_ID: "123456789012345678" } }));
     createPlugin(makeFakeHost({ name: "tracker", env: { TRACKER_GUILD_ID: "" } }));
+    createPlugin(makeFakeHost({ name: "tracker", env: { TRACKER_GUILD_ID: "123456789012345678,876543210987654321" } }));
+    expect(() => createPlugin(makeFakeHost({ name: "tracker", env: { TRACKER_GUILD_ID: "123456789012345678,my server" } }))).toThrow('"my server"');
   });
 
   it("every command builds into valid slash-command JSON", () => {

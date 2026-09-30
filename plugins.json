@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-30T02:51:53.816Z",
+  "generatedAt": "2026-09-30T22:00:17.872Z",
   "plugins": [
     {
       "name": "mcp",
@@ -164,7 +164,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks, an admin view, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
@@ -189,8 +189,8 @@
         },
         {
           "key": "TRACKER_GUILD_ID",
-          "format": "^[0-9]{17,20}$",
-          "description": "The Discord server id whose members may use the tracker (the membership gate), checked on every command and button, in DMs too. Unset = no membership gate: only the admission list (/allow) applies.",
+          "format": "^ *[0-9]{17,20}( *, *[0-9]{17,20})* *$",
+          "description": "The Discord server id whose members may use the tracker (the membership gate), or a comma-separated list of server ids (spaces around commas allowed): a member of any listed server passes. Checked on every command and button, in DMs too. Unset = no membership gate: only the admission list (/allow) applies.",
           "required": false,
           "secret": false
         },
@@ -203,6 +203,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "0.8.0",
+          "publishedAt": "2026-09-30T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.8.0",
+          "notes": "### Added\n\n- `TRACKER_GUILD_ID` takes a comma-separated list of Discord server ids as well as one\n  (rackbops-bot-plugins#106), so one tracker can serve more than one server: a member of any listed\n  server passes the membership gate. Every place that checks membership follows -- commands and\n  buttons, `/web`'s link, `/allow` (Discord and the admin page), the web session's re-check and the\n  API token's. The servers are asked at once (one single-member lookup each, `force: true` as\n  before), so a lookup still takes about as long as one. A yes from any server is a member; a no\n  from every server is not, and only that signs a person out and revokes their API tokens; a no\n  from one server and a failed lookup on another is unknown, which refuses without revoking, so an\n  outage on one server cannot sign out its members. Inside a listed server, the person running a\n  command needs no lookup, as before. Spaces around commas are allowed and a repeated id counts\n  once; a malformed or empty entry anywhere in the list (a trailing comma included) refuses to load,\n  naming it. A single id loads and behaves exactly as before, so an existing setting needs no change.\n  One store and one admission list serve every listed server; there are no per-server admins.\n  No schema change: a rollback to 0.7.0 is safe, as long as the setting is set back to one id first\n  (0.7.0 refuses to load a list)."
+        },
         {
           "version": "0.7.0",
           "publishedAt": "2026-09-30T00:00:00.000Z",

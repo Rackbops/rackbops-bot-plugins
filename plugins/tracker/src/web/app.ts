@@ -60,9 +60,9 @@ export interface WebWiring {
   deps(): TrackerDeps | null;
   /** The surface's one queue: a store write from here takes its turn with the commands' and buttons'. */
   queue: Queue;
-  /** `TRACKER_GUILD_ID`; null = no membership gate, and no re-check. */
-  guildId: string | null;
-  /** One member lookup of `TRACKER_GUILD_ID`; null when there is no Discord client to ask yet. */
+  /** `TRACKER_GUILD_ID`'s servers; null = no membership gate, and no re-check. */
+  guildIds: readonly string[] | null;
+  /** One membership lookup across `TRACKER_GUILD_ID`'s servers; null when there is no Discord client to ask yet. */
   membership(discordId: string): Promise<Membership | null>;
 }
 
@@ -161,7 +161,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
    * once the last confirmation is too old to trust (the caller decides what that ends).
    */
   async function recheck(d: TrackerDeps, user: User, checkedAt: string | null): Promise<Recheck> {
-    if (w.guildId === null) return "ok";
+    if (w.guildIds === null) return "ok";
     const now = d.clock.now().getTime();
     const age = checkedAt ? now - Date.parse(checkedAt) : Number.POSITIVE_INFINITY;
     const fresh = (limit: number) => age >= 0 && age < limit;
@@ -198,7 +198,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
 
   /** `/allow`'s membership check from the web: one bounded lookup; no Discord client yet is `unknown`, which refuses. */
   async function memberOf(discordId: string): Promise<Membership> {
-    if (w.guildId === null) return "not-checked";
+    if (w.guildIds === null) return "not-checked";
     return (await lookupWithin(() => w.membership(discordId), MEMBER_CHECK_TIMEOUT_MS)) ?? "unknown";
   }
 

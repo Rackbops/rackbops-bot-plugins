@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Clock, Fetch, Notifier, TaskType } from "@rackbops/docket-core";
 import { price, reminder, renewal } from "@rackbops/docket-types";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
-import { parseGuildId } from "./access.js";
+import { parseGuildIds } from "./access.js";
 import type { TickGate, TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
 import { ClaimStore } from "./claims.js";
@@ -80,7 +80,7 @@ const NO_DM: Notifier = {
 
 export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugin {
   const adminIds = parseAdminIds(host.env.TRACKER_ADMIN_DISCORD_IDS);
-  const guildId = parseGuildId(host.env.TRACKER_GUILD_ID);
+  const guildIds = parseGuildIds(host.env.TRACKER_GUILD_ID);
   const webOrigin = parseWebUrl(host.env.TRACKER_WEB_URL);
   const clock: Clock = options.clock ?? { now: () => new Date() };
   const types = options.types ?? TRACKER_TYPES;
@@ -97,10 +97,10 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const queue = serial();
   const surface = createSurface({
     deps: () => deps,
-    guildId,
+    guildIds,
     log: host.log,
     queue,
-    web: webOrigin ? { origin: webOrigin, name: host.name, gated: guildId !== null } : null,
+    web: webOrigin ? { origin: webOrigin, name: host.name, gated: guildIds !== null } : null,
     ...(options.membership ? { membership: options.membership } : {}),
   });
 
@@ -166,14 +166,14 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   };
   const clientMembership = async (discordId: string): Promise<Membership | null> => {
     if (!discordClient) return null;
-    return lookupMembership({ guildId: null, user: { id: discordId }, client: discordClient }, guildId, discordId, host.log);
+    return lookupMembership({ guildId: null, user: { id: discordId }, client: discordClient }, guildIds, discordId, host.log);
   };
   const web = createWebHandler({
     name: host.name,
     origin: webOrigin,
     deps: () => deps,
     queue,
-    guildId,
+    guildIds,
     membership: options.webMembership ?? clientMembership,
   });
   const interactions = surface.interactions;
@@ -253,7 +253,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         lanes,
         webEditor: webOrigin !== null,
       };
-      if (guildId === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
+      if (guildIds === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
       health.blocked = typeof host.dm === "function" ? null : "this bot has no host.dm (it predates rackbops-discord-bot#736)";
       health.activatedAt = clock.now();
     },

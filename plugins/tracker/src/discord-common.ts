@@ -29,21 +29,37 @@ export interface Interactionish {
 }
 
 /**
- * Whether `discordId` is a member of `guildId`, asked of Discord through the interaction's client
- * (the host API has no member lookup; plan 5.5). A single-member fetch is a REST call and needs no
- * privileged intent. Discord's "unknown member" or "unknown user" is a no; anything else (the bot
- * left the server, an outage) is `unknown`, which refuses.
+ * Whether `discordId` is a member of any of `guildIds`, asked of Discord through the interaction's
+ * client (the host API has no member lookup; plan 5.5). A single-member fetch is a REST call and
+ * needs no privileged intent. Discord's "unknown member" or "unknown user" is a no for that server;
+ * anything else (the bot left the server, an outage) is `unknown` for it. A yes from any server is
+ * `member`; otherwise one `unknown` makes the whole answer `unknown`, which refuses and never
+ * revokes, so an outage on one server cannot sign a member of it out; only a no from every server
+ * is `not-member`.
  *
  * Always `force: true`: without it discord.js answers from its member cache and sends nothing, and
  * with only the Guilds intent the bot never hears that a member left, so a cached member would stay
- * a member forever. The in-server path above needs no lookup, so the REST call is only for a DM,
- * another person, or the web area.
+ * a member forever. The in-server path below needs no lookup, so the REST calls are only for a DM,
+ * another person, the web area, or a listed server's member acting from a server not listed. The
+ * servers are asked together, so a lookup takes as long as the slowest one, not their sum.
  */
-export async function lookupMembership(interaction: Interactionish, guildId: string | null, discordId: string, log: PluginLog): Promise<Membership> {
-  if (guildId === null) return "not-checked";
-  if (interaction.guildId === guildId && interaction.user.id === discordId) return "member";
+export async function lookupMembership(
+  interaction: Interactionish,
+  guildIds: readonly string[] | null,
+  discordId: string,
+  log: PluginLog,
+): Promise<Membership> {
+  if (guildIds === null) return "not-checked";
+  if (interaction.guildId !== null && guildIds.includes(interaction.guildId) && interaction.user.id === discordId) return "member";
+  const answers = await Promise.all(guildIds.map((guildId) => memberOf(interaction.client, guildId, discordId, log)));
+  if (answers.includes("member")) return "member";
+  if (answers.includes("unknown")) return "unknown";
+  return "not-member";
+}
+
+async function memberOf(client: Interactionish["client"], guildId: string, discordId: string, log: PluginLog): Promise<"member" | "not-member" | "unknown"> {
   try {
-    const guild = await interaction.client.guilds.fetch(guildId);
+    const guild = await client.guilds.fetch(guildId);
     await guild.members.fetch({ user: discordId, force: true });
     return "member";
   } catch (err) {

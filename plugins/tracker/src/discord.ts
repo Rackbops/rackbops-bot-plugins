@@ -49,8 +49,8 @@ export { lookupMembership, type Interactionish, STARTING, FAILED } from "./disco
 export interface SurfaceWiring {
   /** The live deps; null before `activate()` and after `dispose()`. */
   deps(): TrackerDeps | null;
-  /** `TRACKER_GUILD_ID`; null = no membership gate. */
-  guildId: string | null;
+  /** `TRACKER_GUILD_ID`'s servers; null = no membership gate. */
+  guildIds: readonly string[] | null;
   log: PluginLog;
   /** Test seam; defaults to asking Discord through the interaction's client. */
   membership?: (interaction: Interactionish, discordId: string) => Promise<Membership>;
@@ -72,7 +72,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
     deps: w.deps,
     queue: w.queue ?? serial(),
     membershipOf: (interaction, discordId) =>
-      w.membership ? w.membership(interaction, discordId) : lookupMembership(interaction, w.guildId, discordId, w.log),
+      w.membership ? w.membership(interaction, discordId) : lookupMembership(interaction, w.guildIds, discordId, w.log),
     log: w.log,
   };
   const membershipOf = (interaction: ChatInputCommandInteraction, discordId: string) =>

@@ -126,8 +126,8 @@ pin only needs to change in one place.
   as `admissions.ts` and `delivery-health.ts` already do; docket is not changed.
 - **`TRACKER_GUILD_ID`'s server-membership gate is an addition beyond the plan.** Plan 5.5's
   "membership gate" is the admission list alone, with a Discord-role check left unknown; checking
-  membership of one configured server came with #79's brief, not the plan of record. Not verified
-  live against Discord (below).
+  membership of one configured server came with #79's brief, not the plan of record; a list of
+  servers (a member of any one passes) came with #106. Not verified live against Discord (below).
 - **A plugin checks guild membership through `interaction.client`, not the Host API**, which has no
   member lookup (`plugins/tracker/src/discord.ts` `lookupMembership`): `guilds.fetch(id)` then
   `members.fetch({ user })`, a REST call that needs no privileged intent; Discord's 10007 (unknown

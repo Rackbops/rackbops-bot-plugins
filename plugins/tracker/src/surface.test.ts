@@ -22,6 +22,7 @@ const LARRY = "222222222222222222";
 const CURLY = "333333333333333333";
 const STRANGER = "444444444444444444";
 const GUILD = "999999999999999999";
+const GUILD_B = "888888888888888888";
 // 2026-10-01 is a Thursday; 12:00 UTC is 08:00 in New York (EDT).
 const START = "2026-10-01T12:00:00.000Z";
 
@@ -64,7 +65,7 @@ function world(opts: { members?: Set<string>; unreachable?: Set<string> } = {}) 
   return { plugin, clock, sent, unreachable, warnings };
 }
 
-type Options = { sub?: string; strings?: Record<string, string>; ints?: Record<string, number>; users?: Record<string, string> };
+type Options = { sub?: string; strings?: Record<string, string>; ints?: Record<string, number>; users?: Record<string, string>; client?: unknown; guildId?: string };
 
 /** Runs a slash command as `userId` and returns the ephemeral answer's text. */
 async function slash(plugin: Plugin, name: string, userId: string, o: Options = {}): Promise<string> {
@@ -74,7 +75,8 @@ async function slash(plugin: Plugin, name: string, userId: string, o: Options = 
   let deferred: unknown = null;
   const interaction = {
     commandName: name,
-    guildId: null,
+    guildId: o.guildId ?? null,
+    ...(o.client ? { client: o.client } : {}),
     user: { id: userId, username: `user${userId.slice(0, 3)}`, globalName: userId === LARRY ? "Larry" : null, bot: false },
     options: {
       getSubcommand: () => o.sub ?? "",
@@ -307,17 +309,88 @@ describe("lookupMembership", () => {
     guilds: { fetch: async () => ({ members: { fetch: fetchMember } }) },
   });
   const at = (guildId: string | null, fetchMember: () => Promise<unknown>): Interactionish => ({ guildId, user: { id: LARRY }, client: client(fetchMember) });
+  const unknownMember = () => Promise.reject(Object.assign(new Error("Unknown Member"), { code: 10007 }));
+  const missingAccess = () => Promise.reject(Object.assign(new Error("Missing Access"), { code: 50001 }));
 
   it("is not checked without a guild, a yes inside the guild, and asks Discord from a DM", async () => {
     expect(await lookupMembership(at(null, async () => ({})), null, LARRY, log)).toBe("not-checked");
-    expect(await lookupMembership(at(GUILD, async () => Promise.reject(new Error("unused"))), GUILD, LARRY, log)).toBe("member");
-    expect(await lookupMembership(at(null, async () => ({})), GUILD, LARRY, log)).toBe("member");
-    expect(await lookupMembership(at(null, async () => Promise.reject(Object.assign(new Error("Unknown Member"), { code: 10007 }))), GUILD, LARRY, log)).toBe(
-      "not-member",
+    expect(await lookupMembership(at(GUILD, async () => Promise.reject(new Error("unused"))), [GUILD], LARRY, log)).toBe("member");
+    expect(await lookupMembership(at(null, async () => ({})), [GUILD], LARRY, log)).toBe("member");
+    expect(await lookupMembership(at(null, unknownMember), [GUILD], LARRY, log)).toBe("not-member");
+    expect(await lookupMembership(at(null, missingAccess), [GUILD], LARRY, log)).toBe("unknown");
+  });
+
+  /** A client whose servers answer per id: "yes", "no" (unknown member) or "down" (any other error). */
+  const perServer = (answers: Record<string, "yes" | "no" | "down">, asked: string[] = []) => ({
+    guilds: {
+      fetch: async (id: string) => ({
+        members: {
+          fetch: async (o: { user: string; force?: boolean }) => {
+            asked.push(`${id}/${o.user}/${o.force === true}`);
+            const a = answers[id];
+            if (a === "yes") return { id: o.user };
+            return a === "no" ? unknownMember() : missingAccess();
+          },
+        },
+      }),
+    },
+  });
+  const from = (guildId: string | null, c: Interactionish["client"]): Interactionish => ({ guildId, user: { id: LARRY }, client: c });
+
+  it("with two servers: a member of either passes; a no from both is not-member; a no and a failure is unknown", async () => {
+    const both = [GUILD, GUILD_B];
+    const asked: string[] = [];
+    expect(await lookupMembership(from(null, perServer({ [GUILD]: "no", [GUILD_B]: "yes" }, asked)), both, LARRY, log)).toBe("member");
+    expect(asked.sort()).toEqual([`${GUILD_B}/${LARRY}/true`, `${GUILD}/${LARRY}/true`]);
+    expect(await lookupMembership(from(null, perServer({ [GUILD]: "yes", [GUILD_B]: "down" })), both, LARRY, log)).toBe("member");
+    expect(await lookupMembership(from(null, perServer({ [GUILD]: "no", [GUILD_B]: "no" })), both, LARRY, log)).toBe("not-member");
+    expect(await lookupMembership(from(null, perServer({ [GUILD]: "no", [GUILD_B]: "down" })), both, LARRY, log)).toBe("unknown");
+    expect(await lookupMembership(from(null, perServer({ [GUILD]: "down", [GUILD_B]: "down" })), both, LARRY, log)).toBe("unknown");
+  });
+
+  it("with two servers: inside either listed one is a yes with no lookup; inside an unlisted one still asks", async () => {
+    const asked: string[] = [];
+    const c = perServer({ [GUILD]: "no", [GUILD_B]: "no" }, asked);
+    expect(await lookupMembership(from(GUILD_B, c), [GUILD, GUILD_B], LARRY, log)).toBe("member");
+    expect(asked).toEqual([]);
+    expect(await lookupMembership(from("777777777777777777", c), [GUILD, GUILD_B], LARRY, log)).toBe("not-member");
+    expect(asked).toHaveLength(2);
+    // Inside a listed server, but asking about someone else: a lookup.
+    expect(await lookupMembership(from(GUILD, c), [GUILD, GUILD_B], CURLY, log)).toBe("not-member");
+  });
+
+  it("end to end, TRACKER_GUILD_ID=A,B: a member of only B uses every command; a member of neither is refused as today", async () => {
+    const plugin = createPlugin(
+      makeFakeHost({
+        name: "tracker",
+        env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, TRACKER_GUILD_ID: `${GUILD}, ${GUILD_B}` },
+        log,
+        dm: async () => ({ guildId: null, channelId: "c", messageId: "m" }),
+      }),
+      { clock: clockAt(START), dbPath: ":memory:" },
     );
-    expect(await lookupMembership(at(null, async () => Promise.reject(Object.assign(new Error("Missing Access"), { code: 50001 }))), GUILD, LARRY, log)).toBe(
-      "unknown",
-    );
+    await plugin.activate!();
+    const members: Record<string, Set<string>> = { [GUILD]: new Set([ADMIN]), [GUILD_B]: new Set([LARRY]) };
+    const c = {
+      guilds: {
+        fetch: async (id: string) => ({
+          members: {
+            fetch: async (o: { user: string }) => (members[id]?.has(o.user) ? { id: o.user } : unknownMember()),
+          },
+        }),
+      },
+    };
+    expect(await slash(plugin, "register", ADMIN, { client: c })).toContain("You are registered.");
+    expect(await slash(plugin, "allow", ADMIN, { client: c, users: { user: LARRY } })).toContain("Allowed");
+    expect(await slash(plugin, "allow", ADMIN, { client: c, users: { user: CURLY } })).toBe(`<@${CURLY}> is not a member of this tracker's server.`);
+    expect(await slash(plugin, "register", LARRY, { client: c })).toContain("You are registered.");
+    expect(await slash(plugin, "tasks", LARRY, { client: c })).toBe("You have no active tasks.");
+    // From inside server B itself, no lookup is needed.
+    expect(await slash(plugin, "tasks", LARRY, { client: perServer({}), guildId: GUILD_B })).toBe("You have no active tasks.");
+    expect(await slash(plugin, "register", STRANGER, { client: c })).toBe(NOT_MEMBER);
+    // Larry leaves B: now a member of neither, and refused.
+    members[GUILD_B]?.delete(LARRY);
+    expect(await slash(plugin, "tasks", LARRY, { client: c })).toBe(NOT_MEMBER);
   });
 });
 
