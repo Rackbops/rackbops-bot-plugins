@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { extractPrice } from "@rackbops/docket-types";
 import { MAX_METAS, pageForExtraction } from "./page.js";
-import { nearPattern } from "./tracked.js";
+import { nearPattern } from "./price.js";
 
 /** The page rebuilt for price extraction (rackbops-bot-plugins#81): same prices, no slow scans. */
 

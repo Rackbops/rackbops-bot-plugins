@@ -1,10 +1,5 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { ChatInputCommandInteraction } from "discord.js";
-import type { Plugin } from "../../../../packages/api/contract.js";
 import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import pkg from "../../package.json" with { type: "json" };
 import { type Membership, NOT_ADMITTED } from "../access.js";
@@ -23,160 +18,30 @@ import { STYLESHEET_PATH } from "./theme.js";
  * pages, and escaping. No server: each request is a `Request` handed to `plugin.http`.
  */
 
-const ADMIN = "111111111111111111";
-const LARRY = "222222222222222222";
-const CURLY = "333333333333333333";
-const STRANGER = "444444444444444444";
-const ORIGIN = "https://clerk.example.com";
-const START = "2026-10-01T12:00:00.000Z";
-const dirs: string[] = [];
+import {
+  ADMIN,
+  call,
+  cleanup,
+  csrfOf,
+  CURLY,
+  GUILD,
+  hidden,
+  type Jar,
+  LARRY,
+  LOGIN,
+  openLink,
+  ORIGIN,
+  people,
+  SESSION,
+  signIn,
+  slash,
+  STRANGER,
+  tokenOf,
+  type WebLookup,
+  world,
+} from "./harness.js";
 
-afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
-
-function clockAt(iso: string) {
-  let now = new Date(iso);
-  return { now: () => new Date(now), set: (s: string) => (now = new Date(s)), advance: (ms: number) => (now = new Date(now.getTime() + ms)) };
-}
-
-const GUILD = "999999999999999999";
-
-type WebLookup = (discordId: string) => Promise<Membership | null>;
-
-async function world(opts: { webUrl?: string | null; guild?: boolean; webMembership?: WebLookup } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), "tracker-web-"));
-  dirs.push(dir);
-  const dbPath = join(dir, "tracker.sqlite");
-  const clock = clockAt(START);
-  const webUrl = opts.webUrl === undefined ? ORIGIN : opts.webUrl;
-  const plugin = createPlugin(
-    makeFakeHost({
-      name: "tracker",
-      env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, ...(webUrl ? { TRACKER_WEB_URL: webUrl } : {}), ...(opts.guild ? { TRACKER_GUILD_ID: GUILD } : {}) },
-      log: { info() {}, warn() {}, error() {} },
-      dm: async () => ({ guildId: null, channelId: "c", messageId: "m" }),
-    }),
-    {
-      clock,
-      dbPath,
-      // The command side's gate: everyone is a member when there is one.
-      ...(opts.guild ? { membership: async (): Promise<Membership> => "member" } : {}),
-      ...(opts.webMembership ? { webMembership: opts.webMembership } : {}),
-    },
-  );
-  await plugin.activate!();
-  return { plugin, clock, dbPath };
-}
-
-async function slash(
-  plugin: Plugin,
-  name: string,
-  userId: string,
-  o: { strings?: Record<string, string>; users?: Record<string, string>; client?: unknown } = {},
-): Promise<string> {
-  const command = plugin.commands?.find((c) => c.name === name);
-  if (!command) throw new Error(`no command ${name}`);
-  const edits: { content: string }[] = [];
-  let deferred: unknown = null;
-  const interaction = {
-    commandName: name,
-    guildId: null,
-    ...(o.client ? { client: o.client } : {}),
-    user: { id: userId, username: `user${userId.slice(0, 3)}`, globalName: userId === LARRY ? "Larry" : null, bot: false },
-    options: {
-      getSubcommand: () => "",
-      getString: (k: string) => o.strings?.[k] ?? null,
-      getInteger: () => null,
-      getUser: (k: string) => (o.users?.[k] ? { id: o.users[k], bot: false } : null),
-    },
-    deferReply: async (x: unknown) => void (deferred = x),
-    editReply: async (x: { content: string }) => void edits.push(x),
-  };
-  await command.handle(interaction as unknown as ChatInputCommandInteraction);
-  expect(deferred).toMatchObject({ flags: 64 });
-  return edits[0]?.content ?? "";
-}
-
-/** Admin, Larry and Curly all registered. */
-async function people(plugin: Plugin) {
-  await slash(plugin, "register", ADMIN);
-  for (const id of [LARRY, CURLY]) {
-    await slash(plugin, "allow", ADMIN, { users: { user: id } });
-    await slash(plugin, "register", id);
-  }
-}
-
-type Jar = Map<string, string>;
-
-interface Call {
-  jar?: Jar;
-  form?: Record<string, string>;
-  origin?: string | null;
-  headers?: Record<string, string>;
-}
-
-async function call(plugin: Plugin, method: string, pathAndQuery: string, c: Call = {}): Promise<Response> {
-  const [path = "/", query] = pathAndQuery.split("?");
-  const headers = new Headers(c.headers ?? {});
-  if (c.jar && c.jar.size > 0) headers.set("cookie", [...c.jar].map(([k, v]) => `${k}=${v}`).join("; "));
-  if (c.form) headers.set("content-type", "application/x-www-form-urlencoded");
-  if (c.origin !== undefined && c.origin !== null) headers.set("origin", c.origin);
-  // The Host header is whatever the client says: the handler must never build from it.
-  const request = new Request(`https://evil.example.net/tracker${path}${query ? `?${query}` : ""}`, {
-    method,
-    headers,
-    ...(c.form ? { body: new URLSearchParams(c.form).toString() } : {}),
-  });
-  const res = await plugin.http!(request, { path, clientIp: "unknown" });
-  if (c.jar) {
-    for (const sc of res.headers.getSetCookie()) {
-      const [pair = ""] = sc.split(";");
-      const eq = pair.indexOf("=");
-      const k = pair.slice(0, eq);
-      const v = pair.slice(eq + 1);
-      if (/Max-Age=0\b/.test(sc)) c.jar.delete(k);
-      else c.jar.set(k, v);
-    }
-  }
-  return res;
-}
-
-function tokenOf(answer: string): string {
-  const m = /<https:\/\/clerk\.example\.com\/tracker\/login\?t=([A-Za-z0-9_-]+)>/.exec(answer);
-  if (!m?.[1]) throw new Error(`no link in: ${answer}`);
-  return m[1];
-}
-
-function hidden(body: string, name: string): string {
-  const m = new RegExp(`name="${name}" value="([^"]*)"`).exec(body);
-  if (!m) throw new Error(`no hidden ${name}`);
-  return m[1] ?? "";
-}
-
-const SESSION = "__Secure-tracker-session";
-const LOGIN = "__Secure-tracker-login";
-
-/** Opens the link's page into `jar` and returns its form fields. */
-async function openLink(plugin: Plugin, token: string, jar: Jar) {
-  const res = await call(plugin, "GET", `/login?t=${token}`, { jar });
-  const body = await res.text();
-  return { res, body, form: body.includes('name="t"') ? { t: hidden(body, "t"), csrf: hidden(body, "csrf") } : null };
-}
-
-/** `/web`, open the link, press Sign in: a jar holding a session. */
-async function signIn(plugin: Plugin, discordId: string): Promise<Jar> {
-  const jar: Jar = new Map();
-  const { form } = await openLink(plugin, tokenOf(await slash(plugin, "web", discordId)), jar);
-  const res = await call(plugin, "POST", "/login", { jar, form: form ?? {}, origin: ORIGIN });
-  expect(res.status).toBe(303);
-  expect(jar.has(SESSION)).toBe(true);
-  return jar;
-}
-
-async function csrfOf(plugin: Plugin, jar: Jar): Promise<string> {
-  return hidden(await (await call(plugin, "GET", "/settings", { jar })).text(), "csrf");
-}
+afterEach(cleanup);
 
 describe("TRACKER_WEB_URL", () => {
   it("takes a bare https origin and nothing else, and matches the manifest's format", () => {

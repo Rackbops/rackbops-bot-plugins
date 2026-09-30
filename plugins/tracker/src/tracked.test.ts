@@ -6,7 +6,7 @@ import { makeFakeHost } from "../../../packages/testkit/index.js";
 import { FetchRefusedError } from "./fetch.js";
 import { createPlugin } from "./index.js";
 import { FETCH_TYPES, takesType } from "./notify-lane.js";
-import { MAX_PRICE_TASKS, nearPattern } from "./tracked.js";
+import { MAX_PRICE_TASKS, nearPattern } from "./price.js";
 
 /**
  * Renewals and the price tracker end to end (rackbops-bot-plugins#81), through the plugin's own

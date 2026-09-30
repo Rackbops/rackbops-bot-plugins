@@ -3,9 +3,12 @@ import { type Membership, NOT_MEMBER } from "../access.js";
 import type { PluginHttpInfo } from "../../../../packages/api/contract.js";
 import { loadTaskList, saveSettings, type TrackerDeps } from "../actions.js";
 import type { Queue } from "../discord-common.js";
-import { loadHistory } from "../history.js";
-import { cookie, htmlResponse, readCookie, redirect } from "./html.js";
-import { errorPage, historyPage, loginPage, notFoundPage, settingsPage, signInHelpPage, tasksPage, type Viewer } from "./pages.js";
+import { MAX_ZONE } from "../limits.js";
+import { actionPost, editGet, editPost, type Editor, newGet, newPost, taskPage } from "./editor.js";
+import { notice } from "./editor-pages.js";
+import { cookie, htmlResponse, readBody, readCookie, redirect } from "./html.js";
+import { errorPage, loginPage, notFoundPage, settingsPage, signInHelpPage, tasksPage, type Viewer } from "./pages.js";
+import { methodsOf, route } from "./routes.js";
 import { randomToken, safeEqual } from "./secrets.js";
 import { SESSION_TTL_MS, type Session } from "./sessions.js";
 import { LINK_TTL_MS } from "./signin-link.js";
@@ -57,10 +60,11 @@ export interface WebWiring {
   membership(discordId: string): Promise<Membership | null>;
 }
 
-/** The biggest form body read: the forms here are a few short fields. */
-export const MAX_FORM_BYTES = 8 * 1024;
-
-const TASK_PATH = /^\/tasks\/([^/]+)$/;
+/**
+ * The biggest form body read. The longest form is a reminder of 1500 characters, which
+ * percent-encoded can take about 13.5 KiB; anything bigger is refused before it is parsed.
+ */
+export const MAX_FORM_BYTES = 32 * 1024;
 
 function plain(status: number, text: string, extra: Record<string, string> = {}): Response {
   return new Response(text, {
@@ -97,6 +101,8 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   // failed.
   const inFlight = new Map<string, Promise<Membership | null>>();
   const failedAt = new Map<string, number>();
+  // New price trackers whose page is being read, per tracker user id (editor.ts).
+  const reading = new Set<string>();
 
   async function authenticate(d: TrackerDeps, request: Request): Promise<Auth> {
     const id = readCookie(request, SESSION_COOKIE);
@@ -161,9 +167,8 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   async function readForm(request: Request): Promise<URLSearchParams | null> {
     const type = request.headers.get("content-type") ?? "";
     if (!type.toLowerCase().startsWith("application/x-www-form-urlencoded")) return null;
-    const body = await request.text();
-    if (Buffer.byteLength(body) > MAX_FORM_BYTES) return null;
-    return new URLSearchParams(body);
+    const body = await readBody(request, MAX_FORM_BYTES);
+    return body === null ? null : new URLSearchParams(body);
   }
 
   function forbidden(): Response {
@@ -201,7 +206,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     const zone = (form.get("zone") ?? "").trim();
     let error: string | null = null;
     if (!/^([0-9]|1[0-9]|2[0-3])$/.test(hour)) error = "The preferred hour must be a whole hour from 0 to 23.";
-    else if (zone === "" || zone.length > 64) error = "Give a time zone, such as America/New_York.";
+    else if (zone === "" || zone.length > MAX_ZONE) error = "Give a time zone, such as America/New_York.";
     else {
       error = await w.queue(async () => {
         const fresh = await d.store.getUser(v.user.id);
@@ -239,42 +244,49 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     if (path === "/login") return method === "GET" ? loginGet(d, url) : loginPost(d, request);
 
     // Signed in.
-    const task = TASK_PATH.exec(path);
-    const route = path === "/" ? "tasks" : path === "/settings" ? "settings" : path === "/logout" ? "logout" : task ? "history" : null;
-    if (route === null) return htmlResponse(notFoundPage(base), 404);
-    const wrong = route === "logout" ? only("POST") : route === "settings" ? null : only("GET");
-    if (wrong) return wrong;
+    const r = route(path);
+    if (r === null) return htmlResponse(notFoundPage(base), 404);
+    const allowed = methodsOf(r);
+    if (!allowed.split(", ").includes(method)) return plain(405, "Method not allowed", { Allow: allowed });
 
     const auth = await authenticate(d, request);
     if (auth.kind === "signed-out") return htmlResponse(signInHelpPage(base, auth.note), 403, { "Set-Cookie": clear(SESSION_COOKIE) });
     if (auth.kind !== "ok") return redirect(`${base}/signin`, auth.kind === "stale" ? [clear(SESSION_COOKIE)] : []);
     const v: Viewer = { base, user: auth.user, csrf: auth.session.csrf };
+    const e: Editor = { d, v, queue: w.queue, reading };
 
     if (method === "POST") {
       const form = await readForm(request);
       if (!form) return plain(400, "Bad request");
       if (!safeEqual(auth.session.csrf, form.get("csrf") ?? "")) return forbidden();
-      if (route === "logout") {
+      switch (r.kind) {
+      case "logout":
         d.sessions.delete(auth.id);
         return redirect(`${base}/signin?out=1`, [clear(SESSION_COOKIE)]);
+      case "settings":
+        return settingsPost(d, v, form);
+      case "new":
+        return newPost(e, r.type, form);
+      case "edit":
+        return editPost(e, r.id, form);
+      case "act":
+        return actionPost(e, r.id, r.action, form);
+      default:
+        return plain(405, "Method not allowed", { Allow: allowed });
       }
-      return settingsPost(d, v, form);
     }
 
     const now = d.clock.now();
-    switch (route) {
+    const done = url.searchParams.get("done");
+    switch (r.kind) {
     case "tasks":
-      return htmlResponse(tasksPage(v, await loadTaskList(d, auth.user), now));
-    case "history": {
-      let id: string;
-      try {
-        id = decodeURIComponent(task?.[1] ?? "");
-      } catch {
-        return htmlResponse(notFoundPage(base, v), 404);
-      }
-      const view = await loadHistory(d, auth.user, id);
-      return view ? htmlResponse(historyPage(v, view)) : htmlResponse(notFoundPage(base, v), 404);
-    }
+      return htmlResponse(tasksPage(v, await loadTaskList(d, auth.user), now, notice(done)));
+    case "task":
+      return taskPage(e, r.id, done);
+    case "edit":
+      return editGet(e, r.id);
+    case "new":
+      return newGet(e, r.type);
     default:
       return htmlResponse(
         settingsPage(v, { hour: String(auth.user.preferredHour), zone: auth.user.timeZone, saved: url.searchParams.get("saved") === "1" }),

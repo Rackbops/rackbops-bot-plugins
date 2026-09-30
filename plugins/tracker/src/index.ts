@@ -218,6 +218,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         notifier: dm ? createDmNotifier({ store: openedStore, claims: openedClaims, dm, clock, log: host.log, health: delivery }) : NO_DM,
         logins: new LoginLinks(opened),
         sessions: new Sessions(opened),
+        webEditor: webOrigin !== null,
       };
       if (guildId === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
       health.blocked = typeof host.dm === "function" ? null : "this bot has no host.dm (it predates rackbops-discord-bot#736)";

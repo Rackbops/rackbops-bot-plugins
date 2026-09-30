@@ -129,3 +129,27 @@ export function readCookie(request: Request, name: string): string | null {
 export function cookie(name: string, value: string, o: { base: string; maxAgeSeconds: number; sameSite: "Lax" | "Strict" }): string {
   return `${name}=${value}; Path=${o.base}/; Max-Age=${o.maxAgeSeconds}; HttpOnly; Secure; SameSite=${o.sameSite}`;
 }
+
+/**
+ * The request body as text, or null when it is over `max` bytes: a declared length over it is
+ * refused unread, and the body is read only up to `max + 1` bytes, whatever it declared.
+ */
+export async function readBody(request: Request, max: number): Promise<string | null> {
+  const declared = request.headers.get("content-length");
+  if (declared !== null && !(/^[0-9]{1,12}$/.test(declared) && Number(declared) <= max)) return null;
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
