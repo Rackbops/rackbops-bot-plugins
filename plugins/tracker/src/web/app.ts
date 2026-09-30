@@ -7,7 +7,7 @@ import { MAX_ZONE } from "../limits.js";
 import { adminGet, adminPost, type AdminWeb, forgetRoute, unknownPage } from "./admin.js";
 import { FAILED_BURST, FAILED_PER_SECOND, handleApi, json, RATE_BURST, RATE_PER_SECOND, RateLimiter, type Recheck } from "./api.js";
 import { problem } from "./api-tasks.js";
-import { tokensGet, tokensPost, tokenRevokePost } from "./tokens.js";
+import { CreationLog, tokensGet, tokensPost, tokenRevokePost } from "./tokens.js";
 import { actionPost, editGet, editPost, type Editor, newGet, newPost, taskPage } from "./editor.js";
 import { notice } from "./editor-pages.js";
 import { cookie, htmlResponse, readBody, readCookie, redirect } from "./html.js";
@@ -119,6 +119,8 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   // The task API's per-token rate limit (api.ts).
   const limiter = new RateLimiter(RATE_BURST, RATE_PER_SECOND);
   const failed = new RateLimiter(FAILED_BURST, FAILED_PER_SECOND);
+  // API token creations per person per hour (tokens.ts): each sends a DM.
+  const created = new CreationLog();
 
   async function authenticate(d: TrackerDeps, request: Request): Promise<Auth> {
     const id = readCookie(request, SESSION_COOKIE);
@@ -325,7 +327,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       case "forget":
         return forgetRoute(a, method, form);
       case "tokens":
-        return tokensPost(d, v, auth.session, form);
+        return tokensPost(d, v, auth.session, form, created);
       case "token-revoke":
         return tokenRevokePost(d, v, r.id);
       case "admin-allow":

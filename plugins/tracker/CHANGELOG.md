@@ -22,7 +22,9 @@
   cookie is never read by the API, since every plugin shares one browser origin. Made and revoked on
   the web area's new `/tokens` page (linked from Settings): named, expiring in 30, 90 (the default)
   or 365 days (always), stored only as a SHA-256, with made, last-used (written at most once a
-  minute) and expiry times; at most 10 live per person. The secret is sent once by Discord DM and
+  minute) and expiry times; at most 10 live per person, and at most 10 made per person per rolling
+  hour, revoked ones counted (in memory), so making and revoking cannot flood anyone's DMs.
+  The secret is sent once by Discord DM and
   never appears in a web response, so another plugin's script on the shared origin cannot read one
   off the page; a token whose DM fails is deleted at once and the page says so. An admin sees a
   person's tokens on their admin page and revokes any of them. A token acts as its owner, on the

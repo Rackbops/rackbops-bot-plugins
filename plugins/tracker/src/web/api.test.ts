@@ -9,7 +9,7 @@ import { MAX_TOKENS_PER_PERSON } from "./api-tokens.js";
 import { NOT_FOUND_MESSAGE } from "./api-tasks.js";
 import { MEMBER_GRACE_MS, MEMBER_RECHECK_MS } from "./app.js";
 import { sha256 } from "./secrets.js";
-import { TOKEN_NOT_SENT } from "./tokens.js";
+import { MAX_CREATIONS_PER_HOUR, TOKEN_NOT_SENT, TOO_MANY_CREATED } from "./tokens.js";
 import {
   ADMIN,
   api,
@@ -387,11 +387,37 @@ describe("tokens on the web", () => {
     await refused({ name: "ok", expiry: "never" }, "Choose when the token expires");
     expect((await form(w.plugin, w.larry, "stale", "/tokens", { name: "x", expiry: "90" })).status).toBe(403);
     for (let i = 1; i < MAX_TOKENS_PER_PERSON; i++) await makeToken(w, w.larry, `t${i}`);
+    w.clock.advance(60 * 60 * 1000); // past the hourly limit on making them, which has its own test
     await refused({ name: "eleventh", expiry: "90" }, `You already have ${MAX_TOKENS_PER_PERSON} API tokens`);
     expect(query(w.dbPath, "SELECT seq FROM api_tokens")).toHaveLength(MAX_TOKENS_PER_PERSON);
     // Expired ones do not count.
     w.clock.advance(91 * 24 * 60 * 60 * 1000);
     await makeToken(w, await signIn(w.plugin, LARRY), "after");
+  });
+
+  it("at most ten tokens made per person per rolling hour, revoked ones counted; the eleventh sends no DM; it resets", async () => {
+    const w = await setup(); // made one at START
+    const csrf = await csrfOf(w.plugin, w.larry);
+    w.clock.advance(30 * 60 * 1000);
+    for (let i = 1; i < MAX_CREATIONS_PER_HOUR; i++) {
+      await makeToken(w, w.larry, `t${i}`);
+      expect((await form(w.plugin, w.larry, csrf, `/tokens/k${i + 1}/revoke`)).status).toBe(200);
+    }
+    expect(query(w.dbPath, "SELECT seq FROM api_tokens")).toHaveLength(1);
+    const dms = w.sent.length;
+    const eleventh = await form(w.plugin, w.larry, csrf, "/tokens", { name: "eleventh", expiry: "30" });
+    expect(eleventh.status).toBe(400);
+    expect(await eleventh.text()).toContain(TOO_MANY_CREATED);
+    expect(w.sent.length).toBe(dms);
+    expect(query(w.dbPath, "SELECT seq FROM api_tokens")).toHaveLength(1);
+    // Someone else is unaffected.
+    await makeToken(w, await signIn(w.plugin, CURLY), "curly");
+    // An hour after the first, its slot is free again; the rest free up an hour after they were made.
+    w.clock.advance(30 * 60 * 1000);
+    await makeToken(w, w.larry, "again");
+    expect((await form(w.plugin, w.larry, csrf, "/tokens", { name: "more", expiry: "30" })).status).toBe(400);
+    w.clock.advance(30 * 60 * 1000);
+    await makeToken(w, w.larry, "later");
   });
 
   it("an admin sees a person's tokens and revokes one; a non-admin cannot", async () => {

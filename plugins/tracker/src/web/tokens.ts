@@ -18,6 +18,36 @@ import { tokensPage } from "./token-pages.js";
  * instead, through the host's `dm`; if that DM fails, the token is deleted and the page says so.
  */
 
+/** Token creations per person per rolling hour, revoked ones included: each is a DM. */
+export const MAX_CREATIONS_PER_HOUR = 10;
+const HOUR_MS = 60 * 60 * 1000;
+export const TOO_MANY_CREATED = `You have made ${MAX_CREATIONS_PER_HOUR} tokens in the last hour, the most one person may. Try again later.`;
+
+/**
+ * When each person made their recent tokens, in memory only (tracker user id -> times): bounds how
+ * many token DMs a script riding someone's session can cause. A restart forgets it; it holds no
+ * content, only ids and times, and an entry empties itself within the hour.
+ */
+export class CreationLog {
+  private readonly made = new Map<string, number[]>();
+
+  /** The times within the last hour, pruning the rest (and dropping a person with none). */
+  private recent(userId: string, nowMs: number): number[] {
+    const times = (this.made.get(userId) ?? []).filter((t) => t > nowMs - HOUR_MS && t <= nowMs);
+    if (times.length === 0) this.made.delete(userId);
+    else this.made.set(userId, times);
+    return times;
+  }
+
+  full(userId: string, nowMs: number): boolean {
+    return this.recent(userId, nowMs).length >= MAX_CREATIONS_PER_HOUR;
+  }
+
+  record(userId: string, nowMs: number): void {
+    this.made.set(userId, [...this.recent(userId, nowMs), nowMs]);
+  }
+}
+
 export const TOKEN_SENT = "Your new token is in your Discord DMs from this bot. It is not shown here, and the tracker keeps only a hash of it.";
 export const TOKEN_NOT_SENT = "I could not DM you the token, so none was made. Open your DMs from this server's members and try again.";
 
@@ -34,7 +64,7 @@ export function tokensGet(d: TrackerDeps, v: Viewer): Response {
   return htmlResponse(tokensPage(v, d.apiTokens.listFor(v.user.id, d.clock.now()), d.clock.now()));
 }
 
-export async function tokensPost(d: TrackerDeps, v: Viewer, session: Session, form: URLSearchParams): Promise<Response> {
+export async function tokensPost(d: TrackerDeps, v: Viewer, session: Session, form: URLSearchParams, log: CreationLog): Promise<Response> {
   const now = d.clock.now();
   const name = (form.get("name") ?? "").slice(0, 200);
   const expiry = form.get("expiry") ?? String(DEFAULT_EXPIRY_DAYS);
@@ -44,9 +74,11 @@ export async function tokensPost(d: TrackerDeps, v: Viewer, session: Session, fo
   if (days === undefined) return refuse("Choose when the token expires.");
   const discordId = v.user.discordId;
   if (!d.dm || !discordId) return refuse(TOKEN_NOT_SENT);
+  if (log.full(v.user.id, now.getTime())) return refuse(TOO_MANY_CREATED);
   // The token inherits the session's membership confirmation, as a session inherits its link's.
   const made = d.apiTokens.create(v.user.id, { name, days }, now, session.memberCheckedAt);
   if (!made.ok) return refuse(made.error);
+  log.record(v.user.id, now.getTime());
   try {
     await d.dm(discordId, { content: tokenMessage(made.row.name, made.token, made.row.expiresAt) });
   } catch (err) {

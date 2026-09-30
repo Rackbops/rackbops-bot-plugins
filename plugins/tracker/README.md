@@ -243,7 +243,9 @@ of 30, 90 (the default) or 365 days -- every token expires. The token -- `trk_` 
 is sent to you once, by Discord DM from the bot; it never appears in any web page or response, and
 the tracker keeps only its SHA-256. If that DM cannot be delivered (DMs closed), the token is
 deleted at once and the page says so: open your DMs and try again. At most 10 live tokens per
-person. Each lists when it was made, last used (recorded at most once a minute) and expires, and
+person, and at most 10 made per person in any rolling hour, revoked ones counted (each is a DM, so
+a script riding your session cannot flood your DMs by making and revoking); the count is kept in
+memory only, so a restart clears it. Each lists when it was made, last used (recorded at most once a minute) and expires, and
 can be revoked there at once; an admin sees and revokes anyone's from the admin view's page for
 that person. Forget-me erases a person's tokens with the rest. The log names a token by its id
 (`k1`), never by its secret.
