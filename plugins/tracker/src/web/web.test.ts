@@ -20,15 +20,18 @@ import { STYLESHEET_PATH } from "./theme.js";
 
 import {
   ADMIN,
+  api,
   call,
   cleanup,
   csrfOf,
   CURLY,
   GUILD,
+  GUILD_B,
   hidden,
   type Jar,
   LARRY,
   LOGIN,
+  makeToken,
   openLink,
   ORIGIN,
   people,
@@ -386,7 +389,7 @@ describe("membership re-check (TRACKER_GUILD_ID set)", () => {
       },
     };
     const log = { info() {}, warn() {}, error() {} };
-    expect(await lookupMembership({ guildId: null, user: { id: LARRY }, client }, GUILD, LARRY, log)).toBe("not-member");
+    expect(await lookupMembership({ guildId: null, user: { id: LARRY }, client }, [GUILD], LARRY, log)).toBe("not-member");
   });
 
   it("a lookup that hangs counts as unknown after the timeout", async () => {
@@ -416,6 +419,43 @@ describe("membership re-check (TRACKER_GUILD_ID set)", () => {
     clock.advance(MEMBER_RECHECK_MS);
     expect((await call(plugin, "GET", "/", { jar })).status).toBe(403);
     expect(asked).toEqual([`${GUILD}/${LARRY}`]);
+  });
+
+  it("with two servers: a member of only one keeps the session; leaving both signs out and deletes API tokens", async () => {
+    const { plugin, clock, dbPath, sent } = await world({ guild: `${GUILD},${GUILD_B}` });
+    await people(plugin);
+    const jar = await signIn(plugin, LARRY);
+    const token = await makeToken({ plugin, sent }, jar);
+    const members: Record<string, Set<string>> = { [GUILD]: new Set(), [GUILD_B]: new Set([LARRY]) };
+    const asked: string[] = [];
+    const client = {
+      guilds: {
+        fetch: async (id: string) => ({
+          members: {
+            fetch: async (o: { user: string; force?: boolean }) => {
+              asked.push(`${id}/${o.user}/${o.force === true}`);
+              if (members[id]?.has(o.user)) return { id: o.user };
+              throw Object.assign(new Error("Unknown Member"), { code: 10007 });
+            },
+          },
+        }),
+      },
+    };
+    await slash(plugin, "tasks", CURLY, { client });
+    clock.advance(MEMBER_RECHECK_MS);
+    expect((await call(plugin, "GET", "/", { jar })).status).toBe(200);
+    expect(asked.sort()).toEqual([`${GUILD_B}/${LARRY}/true`, `${GUILD}/${LARRY}/true`]);
+    members[GUILD_B]?.delete(LARRY);
+    clock.advance(MEMBER_RECHECK_MS);
+    expect((await call(plugin, "GET", "/", { jar })).status).toBe(403);
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      expect(db.query("SELECT seq FROM api_tokens").all()).toEqual([]);
+      expect(db.query("SELECT id_hash FROM web_sessions").all()).toEqual([]);
+    } finally {
+      db.close();
+    }
+    expect((await api(plugin, "GET", "/me", { token })).status).toBe(401);
   });
 
   it("with no gate, nothing is looked up, however old the session", async () => {

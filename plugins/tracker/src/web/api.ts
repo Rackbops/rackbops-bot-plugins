@@ -47,7 +47,7 @@ export const FAILED_BURST = 30;
 export const FAILED_PER_SECOND = 0.5;
 const FAILED_KEY = "failed";
 
-/** What the owner re-check found (app.ts): let them on, they have left the server, or it could not tell for too long. */
+/** What the owner re-check found (app.ts): let them on, they have left every listed server, or it could not tell for too long. */
 export type Recheck = "ok" | "not-member" | "unknown";
 
 export interface ApiWiring {

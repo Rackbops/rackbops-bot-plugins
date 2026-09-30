@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.8.0] - 2026-09-30
+
+### Added
+
+- `TRACKER_GUILD_ID` takes a comma-separated list of Discord server ids as well as one
+  (rackbops-bot-plugins#106), so one tracker can serve more than one server: a member of any listed
+  server passes the membership gate. Every place that checks membership follows -- commands and
+  buttons, `/web`'s link, `/allow` (Discord and the admin page), the web session's re-check and the
+  API token's. The servers are asked at once (one single-member lookup each, `force: true` as
+  before), and the first yes answers at once, so a slow server cannot hold up a member of another. A yes from any server is a member; a no
+  from every server is not, and only that signs a person out and revokes their API tokens; a no
+  from one server and a failed lookup on another is unknown, which refuses without revoking, so an
+  outage on one server cannot sign out its members. Inside a listed server, the person running a
+  command needs no lookup, as before. Spaces around commas are allowed and a repeated id counts
+  once; a malformed or empty entry anywhere in the list (a trailing comma included) refuses to load,
+  naming it. A single id loads and behaves exactly as before, so an existing setting needs no change.
+  One store and one admission list serve every listed server; there are no per-server admins.
+  No schema change: a rollback to 0.7.0 is safe, as long as the setting is set back to one id first
+  (0.7.0 refuses to load a list).
+
 ## [0.7.0] - 2026-09-30
 
 ### Added

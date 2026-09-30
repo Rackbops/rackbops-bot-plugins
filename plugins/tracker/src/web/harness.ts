@@ -35,10 +35,13 @@ export function clockAt(iso: string) {
 }
 
 export const GUILD = "999999999999999999";
+/** A second server, for a `TRACKER_GUILD_ID` list. */
+export const GUILD_B = "888888888888888888";
 
 export type WebLookup = (discordId: string) => Promise<Membership | null>;
 
-export async function world(opts: { webUrl?: string | null; guild?: boolean; webMembership?: WebLookup; fetch?: Fetch; logs?: string[] } = {}) {
+/** `guild`: true sets `TRACKER_GUILD_ID` to `GUILD`; a string is the setting itself. */
+export async function world(opts: { webUrl?: string | null; guild?: boolean | string; webMembership?: WebLookup; fetch?: Fetch; logs?: string[] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "tracker-web-"));
   dirs.push(dir);
   const dbPath = join(dir, "tracker.sqlite");
@@ -53,7 +56,7 @@ export async function world(opts: { webUrl?: string | null; guild?: boolean; web
   const plugin = createPlugin(
     makeFakeHost({
       name: "tracker",
-      env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, ...(webUrl ? { TRACKER_WEB_URL: webUrl } : {}), ...(opts.guild ? { TRACKER_GUILD_ID: GUILD } : {}) },
+      env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, ...(webUrl ? { TRACKER_WEB_URL: webUrl } : {}), ...(opts.guild ? { TRACKER_GUILD_ID: typeof opts.guild === "string" ? opts.guild : GUILD } : {}) },
       log: opts.logs
         ? {
             info: (m: string) => void opts.logs?.push(m),

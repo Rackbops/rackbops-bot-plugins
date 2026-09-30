@@ -1,6 +1,6 @@
 {
   "name": "@rackbops/plugin-tracker",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks, an admin view, forget-me, and a JSON task API with personal API tokens",
   "type": "module",
   "main": "dist/plugin.js",
@@ -32,10 +32,10 @@
       },
       {
         "key": "TRACKER_GUILD_ID",
-        "format": "^[0-9]{17,20}$",
+        "format": "^ *[0-9]{17,20}( *, *[0-9]{17,20})* *$",
         "required": false,
         "secret": false,
-        "description": "The Discord server id whose members may use the tracker (the membership gate), checked on every command and button, in DMs too. Unset = no membership gate: only the admission list (/allow) applies."
+        "description": "The Discord server id whose members may use the tracker (the membership gate), or a comma-separated list of server ids (spaces around commas allowed): a member of any listed server passes. Checked on every command and button, in DMs too. Unset = no membership gate: only the admission list (/allow) applies."
       },
       {
         "key": "TRACKER_WEB_URL",
