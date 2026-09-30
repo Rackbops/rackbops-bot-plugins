@@ -41,7 +41,7 @@ export interface Interactionish {
  * with only the Guilds intent the bot never hears that a member left, so a cached member would stay
  * a member forever. The in-server path below needs no lookup, so the REST calls are only for a DM,
  * another person, the web area, or a listed server's member acting from a server not listed. The
- * servers are asked together, so a lookup takes as long as the slowest one, not their sum.
+ * servers are asked together and the first yes answers at once; a no or unknown waits for them all.
  */
 export async function lookupMembership(
   interaction: Interactionish,
@@ -51,10 +51,13 @@ export async function lookupMembership(
 ): Promise<Membership> {
   if (guildIds === null) return "not-checked";
   if (interaction.guildId !== null && guildIds.includes(interaction.guildId) && interaction.user.id === discordId) return "member";
-  const answers = await Promise.all(guildIds.map((guildId) => memberOf(interaction.client, guildId, discordId, log)));
-  if (answers.includes("member")) return "member";
-  if (answers.includes("unknown")) return "unknown";
-  return "not-member";
+  const lookups = guildIds.map((guildId) => memberOf(interaction.client, guildId, discordId, log));
+  // The first yes answers at once, so a slow or hung server cannot hold up a member of another.
+  const firstYes = new Promise<"member">((resolve) => {
+    for (const l of lookups) void l.then((a) => a === "member" && resolve("member"));
+  });
+  const all = Promise.all(lookups).then((answers) => (answers.includes("unknown") ? "unknown" : answers.includes("member") ? "member" : "not-member"));
+  return Promise.race([firstYes, all]);
 }
 
 async function memberOf(client: Interactionish["client"], guildId: string, discordId: string, log: PluginLog): Promise<"member" | "not-member" | "unknown"> {

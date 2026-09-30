@@ -9,7 +9,7 @@
   server passes the membership gate. Every place that checks membership follows -- commands and
   buttons, `/web`'s link, `/allow` (Discord and the admin page), the web session's re-check and the
   API token's. The servers are asked at once (one single-member lookup each, `force: true` as
-  before), so a lookup still takes about as long as one. A yes from any server is a member; a no
+  before), and the first yes answers at once, so a slow server cannot hold up a member of another. A yes from any server is a member; a no
   from every server is not, and only that signs a person out and revokes their API tokens; a no
   from one server and a failed lookup on another is unknown, which refuses without revoking, so an
   outage on one server cannot sign out its members. Inside a listed server, the person running a

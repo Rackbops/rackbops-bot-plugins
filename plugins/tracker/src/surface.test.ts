@@ -348,6 +348,17 @@ describe("lookupMembership", () => {
     expect(await lookupMembership(from(null, perServer({ [GUILD]: "down", [GUILD_B]: "down" })), both, LARRY, log)).toBe("unknown");
   });
 
+  it("with two servers: a yes from one answers at once, even while the other hangs", async () => {
+    const hung = {
+      guilds: {
+        fetch: async (id: string) => ({
+          members: { fetch: async (o: { user: string }) => (id === GUILD_B ? new Promise(() => {}) : { id: o.user }) },
+        }),
+      },
+    };
+    expect(await lookupMembership(from(null, hung), [GUILD, GUILD_B], LARRY, log)).toBe("member");
+  });
+
   it("with two servers: inside either listed one is a yes with no lookup; inside an unlisted one still asks", async () => {
     const asked: string[] = [];
     const c = perServer({ [GUILD]: "no", [GUILD_B]: "no" }, asked);

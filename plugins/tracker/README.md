@@ -131,7 +131,7 @@ other than GET or POST (or the wrong one of the two for a path) is 405.
 
 **Membership on the web.** With `TRACKER_GUILD_ID` set, `/web` issues a link only to a member,
 and the session remembers when that was confirmed. A web request more than 15 minutes after the
-last confirmation re-checks with one member lookup (every listed server asked at once, about 3
+last confirmation re-checks membership (one lookup per listed server, all at once, the first yes enough; about 3
 seconds at most, outside the write queue), through the discord.js Client of an interaction the
 plugin has handled since it started (the host API has no member lookup of its own; the Client is
 held in memory, never stored). Not a member of any listed server: every session of theirs ends, on a page that says why. A member: the time is
@@ -256,7 +256,7 @@ API could be called by any script on it. A token acts as its owner with the owne
 and only on the owner's own tasks -- an admin's token included; an admin's wider reads stay on the
 signed-in web pages. Every request re-reads the owner, as the web does a session: a person no
 longer on the tracker, or no longer registered, is refused and their tokens deleted; with `TRACKER_GUILD_ID` set, membership
-is re-checked on the web's schedule (after 15 minutes, one lookup, shared with the web), and one who
+is re-checked on the web's schedule (after 15 minutes, one check, shared with the web), and one who
 has left every listed server loses every token and every session; a lookup that keeps failing
 lets them on for 24 hours from the last confirmation, then answers 503 until one succeeds (the token is kept).
 A token is looked up by the SHA-256 of what was sent, so the comparison is over a hash the sender
