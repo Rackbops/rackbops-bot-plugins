@@ -291,14 +291,16 @@ export async function ownTask(d: Pick<TrackerDeps, "store">, user: User, taskId:
 }
 
 /**
- * Whether a run is one an owner's `/task done`, `snooze` or `decide` may be about: it has run
- * (`running`, `done`, `failed`), or it fired and was put back to finish (docket 0.4.0: `queued` with
- * its record stored). A fired run is `done` while it still owes a send to anyone, so a run that
- * still owes delivery counts; one put back to finish counts too, and docket refuses it with "still
+ * Whether a run is one an owner's `/task done`, `snooze` or `decide` may be about: it ended (`done`,
+ * `failed`), or it has fired (docket 0.4.0: its record stored) and is still `running` or was put
+ * back to finish (`queued`). A `running` or `queued` run with no record has sent nothing, so there
+ * is nothing about it to answer. A fired run is `done` while it still owes a send to anyone, so a run
+ * that still owes delivery counts; one still finishing counts too, and docket refuses it with "still
  * finishing" (`STILL_FINISHING`) rather than this picking an older run behind it.
  */
 export function answerable(o: Occurrence): boolean {
-  return o.status === "running" || o.status === "done" || o.status === "failed" || (o.status === "queued" && hasFired(o));
+  if (o.status === "done" || o.status === "failed") return true;
+  return (o.status === "running" || o.status === "queued") && hasFired(o);
 }
 
 /** The task's latest answerable run: the one docket's `Lanes.reply` asks a host to pick. */

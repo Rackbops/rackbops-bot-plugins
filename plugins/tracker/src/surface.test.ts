@@ -36,13 +36,14 @@ interface Sent {
   message: HostMessage;
 }
 
-function world(opts: { members?: Set<string>; unreachable?: Set<string> } = {}) {
+function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: Set<string> } = {}) {
   const clock = clockAt(START);
   const sent: Sent[] = [];
   const unreachable = opts.unreachable ?? new Set<string>();
   let n = 0;
   const dm: NonNullable<HostApi["dm"]> = async (userId, message) => {
     if (unreachable.has(userId)) throw new Error(HOST_CANNOT_MESSAGE);
+    if (opts.gone?.has(userId)) throw Object.assign(new Error("Unknown User"), { code: 10013 });
     sent.push({ userId, message });
     n++;
     return { guildId: null, channelId: `c${n}`, messageId: `m${n}` };
@@ -469,10 +470,21 @@ describe("consent, the opt-out, and the Reply modal", () => {
     await slash(w.plugin, "register", CURLY);
     await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "week" } });
     expect(await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } })).toContain(
-      "so the invitation is withdrawn",
+      "(their DMs are closed, or they blocked the bot), so the invitation is withdrawn",
     );
     w.unreachable.clear();
     expect(await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } })).toContain("Invited");
+  });
+
+  it("an invitation to an account Discord no longer knows says it cannot reach them, not that their DMs are closed", async () => {
+    const w = world({ gone: new Set([CURLY]) });
+    await withLarry(w);
+    await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
+    await slash(w.plugin, "register", CURLY);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "week" } });
+    const said = await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } });
+    expect(said).toContain("(I can't reach them on Discord), so the invitation is withdrawn");
+    expect(said).not.toContain("DMs are closed");
   });
 });
 

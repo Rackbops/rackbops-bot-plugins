@@ -11,7 +11,7 @@ import {
 import type { Membership } from "./access.js";
 import { answeredText, clip, NO_SUCH_TASK, replyLanes, type TrackerDeps } from "./actions.js";
 import { MAX_REPLY_TEXT } from "./buttons.js";
-import { isUnreachable } from "./notifier.js";
+import { HOST_CANNOT_MESSAGE, isUnreachable } from "./notifier.js";
 
 /**
  * Sharing, the buttons, and the Reply modal (plan 5.5): consent with accept and decline, the
@@ -97,7 +97,13 @@ export async function finishShare(d: TrackerDeps, p: PendingShare, err: unknown)
     at: d.clock.now().toISOString(),
   });
   if (isUnreachable(err)) {
-    return `I could not DM <@${p.targetDiscordId}> (their DMs are closed, or they blocked the bot), so the invitation is withdrawn.`;
+    // Discord's 50007 is closed DMs or a block; anything else unreachable (an unknown user, no
+    // Discord id) is not about their DMs.
+    const why =
+      err instanceof Error && err.message === HOST_CANNOT_MESSAGE
+        ? "their DMs are closed, or they blocked the bot"
+        : "I can't reach them on Discord";
+    return `I could not DM <@${p.targetDiscordId}> (${why}), so the invitation is withdrawn.`;
   }
   d.log.error(`invitation DM for ${p.taskId} to ${p.targetId} failed`, err);
   return "The invitation could not be sent; try again in a minute.";

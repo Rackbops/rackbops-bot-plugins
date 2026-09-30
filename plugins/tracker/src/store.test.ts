@@ -122,7 +122,9 @@ describe("SqliteStore beyond the contract", () => {
     ).toEqual([
       ["o1", "u1", "sent", "m1", null, 0, null, AT, AT],
       ["o1", "u2", "failed", null, "recipient cannot be messaged", 1, null, AT, AT],
-      ["o2", "u1", "unconfirmed", null, "claimed, never settled", 0, null, LATER, LATER],
+      // Never settled, or settled and never reported: left claimed for the first start's recover()
+      // to settle and log.
+      ["o2", "u1", "claimed", null, null, 0, null, LATER, null],
       ["o2", "u2", "unconfirmed", null, "socket hang up", 0, null, LATER, LATER],
     ]);
     expect(await store.listDeliveries({ dueBefore: "2099-01-01T00:00:00.000Z" })).toEqual([]);

@@ -217,7 +217,10 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         const open = await openedStore.listDeliveries({ status: "claimed" });
         const requeued = await new Lanes({ store: openedStore, clock, types, notifier: NO_DM }).recover();
         if (requeued.length > 0) host.log.warn(`requeued ${requeued.length} occurrence(s) left running: ${requeued.join(", ")}`);
-        for (const c of open) host.log.warn(`delivery of ${c.occurrenceId} to ${c.userId} was claimed ${c.claimedAt ?? "?"} and never settled; it will not be resent`);
+        for (const c of open) {
+          const why = c.error ? ` (${c.error})` : "";
+          host.log.warn(`delivery of ${c.occurrenceId} to ${c.userId} claimed ${c.claimedAt ?? "?"} is unconfirmed${why}; it will not be resent`);
+        }
       } catch (err) {
         opened.close();
         throw err;

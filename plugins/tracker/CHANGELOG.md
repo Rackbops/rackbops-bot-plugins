@@ -18,8 +18,12 @@
 - A run whose DM failed is now `done`, not `failed`: a run fires once its record is written, and its
   other recipients still get their copies. A run missed while its task was paused for failed DMs
   now fires late on resume, as a run missed under a hand pause already did.
-- Pause after three failed DMs counts as before: once per run per person, and only a DM the host
-  says cannot reach them (50007). A retried, deferred or unconfirmed DM does not count.
+- Pause after three failed DMs counts once per run per person, a DM the host says cannot reach
+  them (50007, as before) and now also Discord's unknown user (10013), so the owner of a task hears
+  when a recipient's account is gone. A retried, deferred or unconfirmed DM does not count. A
+  failure to record the count is logged and never replaces the send's own error.
+- An invitation that cannot be delivered says why by cause: "their DMs are closed, or they
+  blocked the bot" only for 50007, "I can't reach them on Discord" otherwise.
 - Answering a run (`/task done`, `/task snooze`, `/task decide`, the buttons, Reply) finds the
   latest run that has fired, including one still owed to a recipient; a fired run still finishing
   answers docket's "still finishing" message. The editor's "next run", the API's `nextAt` and a
@@ -30,8 +34,9 @@
   limited to that task.
 - At start the plugin runs docket's `recover()`: a run left running is requeued (its start cleared),
   and a delivery claim left open is settled unconfirmed and logged, never resent.
-- Delete drops the task's queued runs one at a time with the Store's `deleteOccurrence`; a run that
-  has fired is kept to finish its deliveries.
+- Delete drops the task's queued runs that have not fired, one at a time with the Store's
+  `deleteOccurrence`. A run that fired and was put back to finish is kept for docket to finish, and
+  docket ends what it still owed unsent, as for any archived task: nothing more is sent.
 - Forget-me also erases, through docket's `deleteDeliveries` and on the person's own tasks, every
   delivery row, the charges (`usage`) made for them or on their tasks, and the budget notices kept
   for them.
@@ -46,8 +51,10 @@
 
 - Schema 5. `occurrences.record` (a run's record once fired) and `series.key` (unique when set)
   are added; `deliveries`, `usage` and `notices` are created; `delivery_claims` is copied into
-  `deliveries` and dropped -- sent stays sent, failed stays failed (one attempt), claimed and
-  unconfirmed become unconfirmed, and none is owed, so no DM of before the upgrade is sent again;
+  `deliveries` and dropped -- sent stays sent, failed stays failed (one attempt), a reported
+  unconfirmed stays unconfirmed; a claim never settled, and an unconfirmed one 0.8.0 never
+  reported, stay claimed, so the first start's `recover()` settles each unconfirmed and logs it
+  once; none is owed, so no DM of before the upgrade is sent again;
   `users.usr_subject` and its index are dropped. A rollback to 0.8.0 needs a backup from before the
   upgrade: 0.8.0 does not open a schema 5 database.
 

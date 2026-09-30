@@ -24,9 +24,11 @@ import type { DeliveryHealth } from "./delivery-health.js";
  * before rackbops-discord-bot#323 refuses buttons before sending anything; the DM is then sent again
  * without them, as the contract asks, under docket's same claim.
  *
- * Each "cannot be messaged" counts toward pausing the person's delivery, and each DM that goes
- * through clears the count (delivery-health.ts). Nothing else counts: not a refused message, not a
- * deferral, not an unconfirmed send.
+ * Each "cannot be messaged" and each unknown user counts toward pausing the person's delivery (so
+ * the owner of a task hears when a recipient's account is gone), and each DM that goes through
+ * clears the count (delivery-health.ts). Nothing else counts: not a refused message, not a
+ * deferral, not an unconfirmed send. A failure to count is logged, never in place of the send's
+ * own error.
  */
 
 /** What the host rejects `dm` with when Discord says the user cannot be messaged (its code 50007). */
@@ -49,7 +51,7 @@ export function wrapBareUrls(content: string): string {
 /** Discord's "unknown user": the account is gone, so no send can ever reach it. */
 const UNKNOWN_USER = 10013;
 
-function isUnknownUser(err: unknown): boolean {
+export function isUnknownUser(err: unknown): boolean {
   if (typeof err === "object" && err !== null && (err as { code?: unknown }).code === UNKNOWN_USER) return true;
   return (err instanceof Error ? err.message : String(err)) === "Unknown User";
 }
@@ -153,9 +155,13 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
       } catch (err) {
         const mapped = deliveryError(err);
         const reason = err instanceof Error ? err.message : String(err);
-        if (reason === HOST_CANNOT_MESSAGE) {
-          const counted = await d.health?.recordFailure(userId, reason, d.clock.now().toISOString());
-          if (counted?.paused) d.log.warn(`paused delivery to ${userId}: ${counted.failures} DMs in a row could not be delivered`);
+        if (reason === HOST_CANNOT_MESSAGE || isUnknownUser(err)) {
+          try {
+            const counted = await d.health?.recordFailure(userId, reason, d.clock.now().toISOString());
+            if (counted?.paused) d.log.warn(`paused delivery to ${userId}: ${counted.failures} DMs in a row could not be delivered`);
+          } catch (countErr) {
+            d.log.error(`could not count a failed DM to ${userId}`, countErr);
+          }
         } else if (!(mapped instanceof DeliveryFailedError)) {
           const what = message.ref?.occurrenceId ? `delivery of ${message.ref.occurrenceId}` : "a DM";
           d.log.warn(`${what} to ${userId} is unconfirmed (${reason}); it will not be resent`);

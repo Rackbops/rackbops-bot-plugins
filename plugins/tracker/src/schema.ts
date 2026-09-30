@@ -220,9 +220,12 @@ export const MIGRATIONS: readonly string[] = [
   //   once. Older points keep null.
   // - `deliveries`: one row per (run, person), docket's delivery claim. The tracker's own
   //   `delivery_claims` (0.1.0 to 0.8.0) is copied into it and dropped, so a DM a claim says went
-  //   out, or may have, is never sent again: `sent` stays sent; `claimed` (never settled) and
-  //   `unconfirmed` become `unconfirmed`; `failed` becomes failed for good (one attempt). None of
-  //   them is owed (`retry_at` null). `seq` keeps insertion order for rows planned at one instant.
+  //   out, or may have, is never sent again: `sent` stays sent; `failed` becomes failed for good
+  //   (one attempt); an `unconfirmed` the old plugin already reported (`reported_at` set) stays
+  //   `unconfirmed`. A `claimed` row, and an `unconfirmed` one never reported, become docket's
+  //   `claimed` (its error kept), so the first start's `recover()` settles each unconfirmed and
+  //   `activate` logs it once -- the report 0.8.0 owed. None of them is owed (`retry_at` null), so
+  //   none is ever resent. `seq` keeps insertion order for rows planned at one instant.
   // - `usage` and `notices`: docket's model-run charges and its once-only notice keys (budget.ts),
   //   which the execute lane writes; the tracker runs no execute lane yet, so both stay empty.
   // - `users.usr_subject` goes (people are not usr accounts, plan item 40): its index first, as
@@ -254,11 +257,19 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX deliveries_status ON deliveries (status);
   INSERT INTO deliveries (occurrence_id, user_id, status, message_id, error, attempts, deferrals, retry_at, created_at, claimed_at, settled_at)
     SELECT occurrence_id, user_id,
-      CASE status WHEN 'sent' THEN 'sent' WHEN 'failed' THEN 'failed' ELSE 'unconfirmed' END,
-      message_id,
-      CASE WHEN status = 'claimed' THEN 'claimed, never settled' ELSE error END,
+      CASE
+        WHEN status IN ('sent', 'failed') THEN status
+        WHEN status = 'unconfirmed' AND reported_at IS NOT NULL THEN 'unconfirmed'
+        ELSE 'claimed'
+      END,
+      message_id, error,
       CASE WHEN status = 'failed' THEN 1 ELSE 0 END,
-      0, NULL, claimed_at, claimed_at, COALESCE(settled_at, claimed_at)
+      0, NULL, claimed_at, claimed_at,
+      CASE
+        WHEN status IN ('sent', 'failed') OR (status = 'unconfirmed' AND reported_at IS NOT NULL)
+          THEN COALESCE(settled_at, claimed_at)
+        ELSE NULL
+      END
     FROM delivery_claims ORDER BY claimed_at, occurrence_id, user_id;
   DROP TABLE delivery_claims;
 

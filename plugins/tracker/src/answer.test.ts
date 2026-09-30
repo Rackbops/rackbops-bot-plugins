@@ -92,10 +92,11 @@ describe("answering a run that still owes a delivery", () => {
     expect(await s.store.listReplies(s.task.id)).toEqual([]);
   });
 
-  it("a queued run that has not fired is not answerable", async () => {
+  it("a queued or running run that has not fired is not answerable", async () => {
     const s = await setup();
     const queued = await s.store.getOccurrence(s.first?.id ?? "");
     expect(queued && answerable(queued)).toBe(false);
+    expect(queued && answerable({ ...queued, status: "running", startedAt: DUE })).toBe(false);
     expect(await answerLatest(s.d, s.owner, { taskId: s.task.id, kind: "done" })).toContain("nothing to answer");
   });
 

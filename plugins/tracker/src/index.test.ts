@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,7 +9,7 @@ import { makeFakeDelivery, makeFakeHost } from "../../../packages/testkit/index.
 import pkg from "../package.json" with { type: "json" };
 import { createPlugin, DB_DIR, DB_FILE, TRACKER_TYPES } from "./index.js";
 import { admit } from "./people.js";
-import { openDatabase } from "./schema.js";
+import { MIGRATIONS, openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
 
 const ADMIN = "111111111111111111";
@@ -158,7 +159,7 @@ describe("the plugin end to end on a real data file", () => {
     );
     await plugin.activate!();
     expect(warnings.some((w) => w.includes("requeued 1 occurrence"))).toBe(true);
-    expect(warnings.some((w) => w.includes(`delivery of ${id} to ${owner.id} was claimed`) && w.includes("will not be resent"))).toBe(true);
+    expect(warnings.some((w) => w.includes(`delivery of ${id} to ${owner.id} claimed ${START} is unconfirmed`) && w.includes("will not be resent"))).toBe(true);
     await plugin.ticks![0]!.run();
     expect(delivery.calls.dm).toHaveLength(0);
     const reopened = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
@@ -167,6 +168,51 @@ describe("the plugin end to end on a real data file", () => {
     expect(after?.record).toEqual(record);
     expect((await reopened.listDeliveries({ occurrenceId: id })).map((d) => [d.status, d.retryAt])).toEqual([["unconfirmed", null]]);
     await plugin.dispose!();
+  });
+
+  it("the first start on a 0.8.0 database logs its open and unreported claims once, and resends none", async () => {
+    const dataDir = tempDir();
+    mkdirSync(join(dataDir, DB_DIR));
+    // A schema 4 file as 0.8.0 left it: one claim never settled, one unconfirmed it never reported,
+    // one unconfirmed it did report.
+    const old = new Database(join(dataDir, DB_DIR, DB_FILE));
+    for (let v = 0; v < 4; v++) {
+      old.exec(MIGRATIONS[v] as string);
+      old.exec(`PRAGMA user_version = ${v + 1}`);
+    }
+    const T = "2026-09-30T12:00:00.000Z";
+    old.exec(`INSERT INTO delivery_claims (occurrence_id, user_id, discord_id, status, message_id, channel_id, error, claimed_at, settled_at, reported_at)
+              VALUES ('o1', 'u1', '111111111111111111', 'claimed', NULL, NULL, NULL, '${T}', NULL, NULL),
+                     ('o2', 'u1', '111111111111111111', 'unconfirmed', NULL, NULL, 'socket hang up', '${T}', '${T}', NULL),
+                     ('o3', 'u1', '111111111111111111', 'unconfirmed', NULL, NULL, 'reset', '${T}', '${T}', '${T}')`);
+    old.close();
+
+    const delivery = makeFakeDelivery();
+    const warnings: string[] = [];
+    const host = { name: "tracker", dataDir, log: { info() {}, warn: (m: string) => void warnings.push(m), error() {} }, ...delivery };
+    const plugin = createPlugin(makeFakeHost(host), { clock: clockAt(START) });
+    await plugin.activate!();
+    const claims = warnings.filter((w) => w.startsWith("delivery of "));
+    expect(claims).toEqual([
+      `delivery of o1 to u1 claimed ${T} is unconfirmed; it will not be resent`,
+      `delivery of o2 to u1 claimed ${T} is unconfirmed (socket hang up); it will not be resent`,
+    ]);
+    await plugin.ticks![0]!.run();
+    expect(delivery.calls.dm).toHaveLength(0);
+    await plugin.dispose!();
+    const reopened = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
+    expect((await reopened.listDeliveries()).map((d) => [d.occurrenceId, d.status, d.retryAt])).toEqual([
+      ["o1", "unconfirmed", null],
+      ["o2", "unconfirmed", null],
+      ["o3", "unconfirmed", null],
+    ]);
+
+    // A second start logs none of them again.
+    warnings.length = 0;
+    const again = createPlugin(makeFakeHost(host), { clock: clockAt(START) });
+    await again.activate!();
+    expect(warnings.filter((w) => w.startsWith("delivery of "))).toEqual([]);
+    await again.dispose!();
   });
 
   it("a run a crash left running before it fired goes back unstarted and runs once", async () => {

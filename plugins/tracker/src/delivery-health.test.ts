@@ -166,6 +166,46 @@ describe("the notifier's error for docket", () => {
   });
 });
 
+describe("the notifier counting toward the pause", () => {
+  const failingWith = (s: Awaited<ReturnType<typeof setup>>, err: Error, health: DeliveryHealth, errors: unknown[] = []) =>
+    createDmNotifier({
+      store: s.store,
+      dm: async () => {
+        throw err;
+      },
+      clock: s.clock,
+      log: { info() {}, warn() {}, error: (_m: string, e?: unknown) => void errors.push(e) },
+      health,
+    });
+
+  it("an unknown user (10013) counts like a closed DM (50007); a refused message does not", async () => {
+    const s = await setup();
+    const gone = failingWith(s, Object.assign(new Error("Unknown User"), { code: 10013 }), s.health);
+    await expect(gone.sendDm(s.owner.id, { text: "hi" })).rejects.toMatchObject({ unreachable: true });
+    expect(s.health.get(s.owner.id)?.failures).toBe(1);
+    const closed = failingWith(s, new Error(HOST_CANNOT_MESSAGE), s.health);
+    await expect(closed.sendDm(s.owner.id, { text: "hi" })).rejects.toMatchObject({ unreachable: true });
+    expect(s.health.get(s.owner.id)?.failures).toBe(2);
+    const refused = failingWith(s, new Error("content is empty"), s.health);
+    await expect(refused.sendDm(s.owner.id, { text: "hi" })).rejects.toMatchObject({ unreachable: false });
+    expect(s.health.get(s.owner.id)?.failures).toBe(2);
+  });
+
+  it("a count that fails is logged, and the send's own error is still what docket gets", async () => {
+    const s = await setup();
+    const broken = new Error("database is locked");
+    const health = Object.assign(Object.create(s.health) as DeliveryHealth, {
+      recordFailure: async () => {
+        throw broken;
+      },
+    });
+    const errors: unknown[] = [];
+    const notifier = failingWith(s, new Error(HOST_CANNOT_MESSAGE), health, errors);
+    await expect(notifier.sendDm(s.owner.id, { text: "hi" })).rejects.toMatchObject({ message: HOST_CANNOT_MESSAGE, unreachable: true });
+    expect(errors).toEqual([broken]);
+  });
+});
+
 describe("a recipient's failures (plan 5.5: the task pauses and the owner is told)", () => {
   async function failingFriend() {
     const s = await setup();
