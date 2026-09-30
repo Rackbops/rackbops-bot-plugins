@@ -64,7 +64,7 @@ describe("SqliteStore beyond the contract", () => {
     expect(admissions.isRegistered(old.id)).toBe(true);
   });
 
-  it("vacuums an existing database once, so rows deleted before secure_delete leave no bytes; schema stays 3", () => {
+  it("vacuums an existing database once, so rows deleted before secure_delete leave no bytes; the VACUUM bumps no schema", () => {
     const dir = mkdtempSync(join(tmpdir(), "tracker-vacuum-"));
     try {
       const path = join(dir, "tracker.sqlite");
@@ -86,16 +86,17 @@ describe("SqliteStore beyond the contract", () => {
       db.close();
       expect(bytes()).not.toContain(MARK);
 
-      // 0.5.0 still opens it after a downgrade: its migrate() refused only a user_version above its
-      // three migrations, and it never reads tracker_meta.
+      // The VACUUM is kept outside the versioned schema (tracker_meta): the version is the migrations'
+      // alone. Migration 4 (0.7.0's API tokens) is what blocks a rollback to 0.6.0, whose migrate()
+      // refuses a user_version above its three migrations.
       const again = new Database(path);
       const version = (again.query("PRAGMA user_version").get() as { user_version: number }).user_version;
-      expect(version).toBe(3);
-      const known050 = 3;
+      expect(version).toBe(MIGRATIONS.length);
+      expect(MIGRATIONS).toHaveLength(4);
+      const known060 = 3;
       expect(() => {
-        if (version > known050) throw new Error(`tracker database is at schema ${version}, newer than this plugin knows (${known050})`);
-      }).not.toThrow();
-      expect(MIGRATIONS).toHaveLength(known050);
+        if (version > known060) throw new Error(`tracker database is at schema ${version}, newer than this plugin knows (${known060})`);
+      }).toThrow("newer than this plugin knows");
       again.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

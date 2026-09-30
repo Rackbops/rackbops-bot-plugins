@@ -193,6 +193,24 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX web_sessions_user ON web_sessions (user_id);
   CREATE INDEX web_sessions_expiry ON web_sessions (expires_at);
   `,
+  // 4 (rackbops-bot-plugins#80, slice 4): personal API tokens for the task API (plan 5.10, E10). A
+  // token is stored only as its SHA-256, like a session id; `seq` is its public id (`k<n>`). Null
+  // `expires_at` never expires. `member_checked_at` is carried from the session that made it and
+  // refreshed with the person's sessions. A database at 4 is refused by 0.6.0 and older (their
+  // `migrate` throws on a newer schema), so this blocks a rollback.
+  `
+  CREATE TABLE api_tokens (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT,
+    last_used_at TEXT,
+    member_checked_at TEXT
+  );
+  CREATE INDEX api_tokens_user ON api_tokens (user_id);
+  `,
 ];
 
 /** How long a statement waits on another connection's lock before SQLITE_BUSY. */
@@ -231,7 +249,7 @@ export function openDatabase(path: string): Database {
 
 /**
  * Housekeeping state kept outside the versioned schema: a key/value table made IF NOT EXISTS, never
- * by a migration, so `PRAGMA user_version` stays what the tables are (3) and an older plugin (0.5.0),
+ * by a migration, so `PRAGMA user_version` stays what the tables are and an older plugin (0.5.0),
  * which checks only `user_version` and never reads this table, still opens the database after a
  * downgrade. Not a person's data: forget-me has nothing to erase here.
  */

@@ -12,6 +12,8 @@ const NEW_PATH = /^\/new\/([a-z]+)$/;
 const PERSON_PATH = /^\/admin\/people\/([^/]+)$/;
 const PERSON_ACTION = /^\/admin\/people\/([^/]+)\/(grant|revoke|resume-delivery|forget)$/;
 const BLOCK_LIFT = /^\/admin\/blocks\/([^/]+)\/lift$/;
+const TOKEN_REVOKE = /^\/tokens\/([^/]+)\/revoke$/;
+const ADMIN_TOKEN_REVOKE = /^\/admin\/tokens\/([^/]+)\/revoke$/;
 
 /** What an admin does to a person from their page (admin.ts). */
 export type PersonAction = "grant" | "revoke" | "resume-delivery" | "forget";
@@ -23,6 +25,9 @@ export type Route =
   | { kind: "act"; id: string; action: TaskAction }
   | { kind: "new"; type: EditorType }
   | { kind: "forget" }
+  | { kind: "tokens" }
+  | { kind: "token-revoke"; id: string }
+  | { kind: "admin-token-revoke"; id: string }
   | { kind: "admin" | "admin-tasks" | "admin-allow" }
   | { kind: "admin-person"; id: string }
   | { kind: "admin-act"; id: string; action: PersonAction }
@@ -48,6 +53,11 @@ export function route(path: string): Route | null {
   if (path === "/settings") return { kind: "settings" };
   if (path === "/logout") return { kind: "logout" };
   if (path === "/forget") return { kind: "forget" };
+  if (path === "/tokens") return { kind: "tokens" };
+  const revoke = TOKEN_REVOKE.exec(path);
+  if (revoke) return { kind: "token-revoke", id: segment(revoke[1]) };
+  const adminRevoke = ADMIN_TOKEN_REVOKE.exec(path);
+  if (adminRevoke) return { kind: "admin-token-revoke", id: segment(adminRevoke[1]) };
   if (path === "/admin") return { kind: "admin" };
   if (path === "/admin/tasks") return { kind: "admin-tasks" };
   if (path === "/admin/allow") return { kind: "admin-allow" };
@@ -73,7 +83,17 @@ export function route(path: string): Route | null {
 
 /** Which methods a route takes: forms answer GET, acts are POST only, pages GET only. */
 export function methodsOf(r: Route): "GET" | "POST" | "GET, POST" {
-  if (r.kind === "logout" || r.kind === "act" || r.kind === "admin-allow" || r.kind === "admin-act" || r.kind === "admin-lift") return "POST";
-  if (r.kind === "settings" || r.kind === "edit" || r.kind === "new" || r.kind === "forget") return "GET, POST";
+  if (
+    r.kind === "logout" ||
+    r.kind === "act" ||
+    r.kind === "admin-allow" ||
+    r.kind === "admin-act" ||
+    r.kind === "admin-lift" ||
+    r.kind === "token-revoke" ||
+    r.kind === "admin-token-revoke"
+  ) {
+    return "POST";
+  }
+  if (r.kind === "settings" || r.kind === "edit" || r.kind === "new" || r.kind === "forget" || r.kind === "tokens") return "GET, POST";
   return "GET";
 }

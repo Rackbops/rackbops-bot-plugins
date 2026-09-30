@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-30T01:20:45.999Z",
+  "generatedAt": "2026-09-30T02:51:53.816Z",
   "plugins": [
     {
       "name": "mcp",
@@ -164,8 +164,8 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.6.0",
-      "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks, an admin view, and forget-me",
+      "version": "0.7.0",
+      "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks, an admin view, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
       "commands": [
@@ -203,6 +203,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "0.7.0",
+          "publishedAt": "2026-09-30T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.7.0",
+          "notes": "### Added\n\n- The JSON task API (rackbops-bot-plugins#80, slice 4; plan 5.10, E5): \"the tracker's task API that\n  a later intake agent (E10, deferred) would use\", under `/tracker/api/v1/` when `TRACKER_WEB_URL` is\n  set. `GET /me`, `GET /types` (each type's create and edit fields -- the tracker's editor fields,\n  not docket-core's `IntakeSpec`), `GET /tasks`, `POST /tasks`, `GET /tasks/<id>` (with its\n  history), `PATCH /tasks/<id>`, `POST /tasks/<id>/pause` and `/resume`, and `DELETE /tasks/<id>`,\n  over the token owner's own\n  reminders, renewals and price trackers. Every write runs through the web editor's own calls, fed\n  the same fields read the same way (`src/web/form-input.ts`), in the same write queue: the same\n  defaults, limits, caps (200 live tasks, 20 price trackers, counted wherever made) and messages.\n  JSON bodies only (`415` otherwise), at most 16 KiB, one object, only the type's fields; errors are\n  `{\"error\": {\"code\", \"message\"}}`. Anyone else's task -- one shared with the owner, or any task to\n  an admin's token -- answers exactly as an unknown id (`404`). No CORS header ever, and a request\n  carrying an `Origin` header is refused (`403`): the API is for programs, not browser pages. The\n  README documents every endpoint, the errors and examples.\n- Personal API tokens, the API's only authentication (`Authorization: Bearer trk_...`); the session\n  cookie is never read by the API, since every plugin shares one browser origin. Made and revoked on\n  the web area's new `/tokens` page (linked from Settings): named, expiring in 30, 90 (the default)\n  or 365 days (always), stored only as a SHA-256, with made, last-used (written at most once a\n  minute) and expiry times; at most 10 live per person, and at most 10 made per person per rolling\n  hour, revoked ones counted (in memory), so making and revoking cannot flood anyone's DMs.\n  The secret is sent once by Discord DM and\n  never appears in a web response, so another plugin's script on the shared origin cannot read one\n  off the page; a token whose DM fails is deleted at once and the page says so. An admin sees a\n  person's tokens on their admin page and revokes any of them. A token acts as its owner, on the\n  owner's own tasks only; every request re-reads the owner\n  (gone or no longer registered: `401`, and their tokens are deleted) and, with `TRACKER_GUILD_ID`,\n  re-checks membership on the web's schedule. A per-token rate limit: 60 at once, then one a second\n  (`429` with `Retry-After`); requests with a token that does not look up share one global bucket of\n  30, then one every two seconds. The log names a token by its id (`k1`), never its secret.\n\n### Changed\n\n- **Schema 4** (migration 4 adds the `api_tokens` table). **This blocks a rollback to 0.6.0 or\n  older**: their `migrate` refuses a database at a schema newer than they know, so the plugin would\n  not activate. To roll back, stop the bot first, then restore a backup taken before 0.7.0 --\n  `tracker.sqlite` together with its `tracker.sqlite-wal` and `tracker.sqlite-shm` from the same\n  backup (a main file with another moment's write-ahead log is corrupt or silently wrong). Or,\n  knowing that it drops every API token, with the bot stopped delete the `api_tokens` table and set\n  `PRAGMA user_version = 3`.\n- Forget-me also erases the person's API tokens (the schema-coverage test includes the new table).\n- One who has left the `TRACKER_GUILD_ID` server loses every API token as well as every session,\n  whether the web or the API found it; a membership lookup that keeps failing ends the web session\n  after 24 hours as before, but only refuses the API (`503`) and keeps the tokens.\n- One new price tracker's page read in flight per person is now shared by the web editor and the API.\n- Internal: the editor's form readers moved to `src/web/form-input.ts`, and its writes\n  (`makeTask`, `saveEdit`, `actOn`) are exported for the API; behaviour unchanged."
+        },
         {
           "version": "0.6.0",
           "publishedAt": "2026-09-30T00:00:00.000Z",

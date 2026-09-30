@@ -27,6 +27,7 @@ import { MAX_LIVE_TASKS, MAX_WHEN } from "./limits.js";
 import { admit, PeopleError, setPreferences } from "./people.js";
 import { heldRuns, restoreHeldRun } from "./retime.js";
 import type { Roster } from "./roster.js";
+import type { ApiTokens } from "./web/api-tokens.js";
 import type { Sessions } from "./web/sessions.js";
 import type { LoginLinks } from "./web/signin-link.js";
 
@@ -51,6 +52,8 @@ export interface TrackerDeps {
   /** The web area's one-time sign-in links and its sessions (web/). */
   logins: LoginLinks;
   sessions: Sessions;
+  /** The task API's personal bearer tokens (web/api-tokens.ts). */
+  apiTokens: ApiTokens;
   /** The Discord ids `TRACKER_ADMIN_DISCORD_IDS` names: made admin at every start, so not revocable from the web. */
   configuredAdmins: ReadonlySet<string>;
   /** Whether a notify or poll tick is running, and a bounded wait for none to be (index.ts). */

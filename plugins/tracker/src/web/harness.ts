@@ -38,7 +38,7 @@ export const GUILD = "999999999999999999";
 
 export type WebLookup = (discordId: string) => Promise<Membership | null>;
 
-export async function world(opts: { webUrl?: string | null; guild?: boolean; webMembership?: WebLookup; fetch?: Fetch } = {}) {
+export async function world(opts: { webUrl?: string | null; guild?: boolean; webMembership?: WebLookup; fetch?: Fetch; logs?: string[] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "tracker-web-"));
   dirs.push(dir);
   const dbPath = join(dir, "tracker.sqlite");
@@ -54,7 +54,13 @@ export async function world(opts: { webUrl?: string | null; guild?: boolean; web
     makeFakeHost({
       name: "tracker",
       env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, ...(webUrl ? { TRACKER_WEB_URL: webUrl } : {}), ...(opts.guild ? { TRACKER_GUILD_ID: GUILD } : {}) },
-      log: { info() {}, warn() {}, error() {} },
+      log: opts.logs
+        ? {
+            info: (m: string) => void opts.logs?.push(m),
+            warn: (m: string) => void opts.logs?.push(m),
+            error: (m: string, e?: unknown) => void opts.logs?.push(`${m} ${String(e ?? "")}`),
+          }
+        : { info() {}, warn() {}, error() {} },
       dm: async (userId: string, message: unknown) => {
         if (delivery.hold) {
           delivery.held++;
@@ -236,4 +242,43 @@ export async function replyText(plugin: Plugin, occurrenceId: string, userId: st
   };
   await plugin.interactions!(interaction as unknown as ModalSubmitInteraction);
   return edits[0]?.content ?? "";
+}
+
+/**
+ * Makes an API token on the web as the person signed in to `jar`; answers the token, read off the
+ * DM that carries it (the page never shows it).
+ */
+export async function makeToken(w: { plugin: Plugin; sent: { userId: string; message: unknown }[] }, jar: Jar, name = "agent", expiry = "90"): Promise<string> {
+  const csrf = await csrfOf(w.plugin, jar);
+  const before = w.sent.length;
+  const res = await call(w.plugin, "POST", "/tokens", { jar, form: { csrf, name, expiry }, origin: ORIGIN });
+  const page = await res.text();
+  const dm = w.sent.slice(before).map((s) => String((s.message as { content?: unknown }).content ?? "")).find((c) => c.includes("API token"));
+  const m = dm ? /`(trk_[A-Za-z0-9_-]{43})`/.exec(dm) : null;
+  if (res.status !== 200 || !m?.[1]) throw new Error(`no token made (${res.status})`);
+  if (page.includes(m[1])) throw new Error("the page showed the token");
+  return m[1];
+}
+
+export interface ApiCall {
+  token?: string;
+  /** A JSON body, sent as `application/json` unless `headers` says otherwise. */
+  body?: unknown;
+  /** A raw body, as is. */
+  raw?: string;
+  headers?: Record<string, string>;
+  jar?: Jar;
+}
+
+/** One request to the task API, `path` under `/api/v1`. */
+export async function api(plugin: Plugin, method: string, path: string, c: ApiCall = {}): Promise<Response> {
+  const headers = new Headers();
+  if (c.token !== undefined) headers.set("authorization", `Bearer ${c.token}`);
+  if (c.body !== undefined) headers.set("content-type", "application/json");
+  if (c.jar && c.jar.size > 0) headers.set("cookie", [...c.jar].map(([k, v]) => `${k}=${v}`).join("; "));
+  for (const [k, v] of Object.entries(c.headers ?? {})) headers.set(k, v);
+  const body = c.raw ?? (c.body !== undefined ? JSON.stringify(c.body) : undefined);
+  const full = `/api/v1${path}`;
+  const request = new Request(`https://evil.example.net/tracker${full}`, { method, headers, ...(body !== undefined ? { body } : {}) });
+  return plugin.http!(request, { path: full.split("?")[0] ?? full, clientIp: "unknown" });
 }

@@ -1,0 +1,198 @@
+import { describeSchedule, type Task, type User } from "@rackbops/docket-core";
+import type { PriceConfig } from "@rackbops/docket-types";
+import { NO_LONGER_LISTED, NO_SUCH_TASK, ownTask, type TrackerDeps } from "../actions.js";
+import { loadHistory } from "../history.js";
+import { FINISHED } from "../manage.js";
+import { actOn, editableTask, makeTask, READING, saveEdit, type TaskAction, type Writer, type Written } from "./editor.js";
+import { EDITOR_TYPES, type EditorType, type Field, fieldsFor } from "./editor-pages.js";
+import { editValues } from "./form-input.js";
+
+/**
+ * The task API's task routes (rackbops-bot-plugins#80, slice 4; plan 5.10, E10): list, read, make,
+ * edit, pause, resume and delete the token owner's own tasks, through the very calls the web
+ * editor makes (editor.ts's `makeTask`, `saveEdit`, `actOn`), fed the same fields: a JSON body is
+ * checked against the editor's field list (`fieldsFor`), turned into those fields, and read by
+ * form-input.ts exactly as a form post is -- one set of defaults, limits, caps and messages. api.ts
+ * has already authenticated the token, re-read its owner and checked the method and the body.
+ *
+ * Owner only: a task that is not the owner's answers the same 404 as an unknown id, whoever holds
+ * the token -- an admin's token included (an admin's wider reads stay on the signed-in web pages).
+ */
+
+export type ApiAnswer = { status: number; body: unknown; headers?: Record<string, string> };
+
+export function problem(status: number, code: string, message: string, headers?: Record<string, string>): ApiAnswer {
+  return { status, body: { error: { code, message } }, ...(headers ? { headers } : {}) };
+}
+
+export const NOT_FOUND_MESSAGE = "No such task.";
+const notFound = (): ApiAnswer => problem(404, "not_found", NOT_FOUND_MESSAGE);
+
+/** A JSON value's type as the API takes each editor field: a whole number, a number, or text. */
+function jsonKind(f: Field): "integer" | "number" | "string" {
+  if (f.kind === "number") return "integer";
+  return f.decimal ? "number" : "string";
+}
+
+/**
+ * `GET /types`: what each type's create and edit take -- the editor's own field list, as the
+ * readable description of what the API takes, so an agent (E10) can ask one question per field.
+ * It is the tracker's editor fields, not docket-core's `TaskType.intake` (`IntakeSpec`), which
+ * names the type's own config and not what these endpoints accept.
+ */
+export function typesAnswer(): ApiAnswer {
+  const describe = (fields: readonly Field[], mode: "new" | "edit") =>
+    fields.map((f) => ({
+      name: f.name,
+      type: jsonKind(f),
+      // An edit keeps whatever it is not sent: no field of an edit is required.
+      required: mode === "new" && f.required === true,
+      description: f.help ? `${f.label}. ${f.help}` : f.label,
+      ...(f.maxlength !== undefined ? { maxLength: f.maxlength } : {}),
+      ...(f.min !== undefined ? { minimum: f.min } : {}),
+      ...(f.max !== undefined ? { maximum: f.max } : {}),
+      ...(f.options ? { enum: f.options.map(([value]) => value) } : {}),
+    }));
+  return {
+    status: 200,
+    body: { types: EDITOR_TYPES.map((type) => ({ type, create: describe(fieldsFor(type, "new"), "new"), edit: describe(fieldsFor(type, "edit"), "edit") })) },
+  };
+}
+
+/**
+ * A JSON body as the editor's fields: only `type`'s fields (plus `type` itself on a create), each of
+ * its JSON type; anything else is refused by name. Numbers go through as the text a form would
+ * carry, so the same reading (and the same refusal of a fraction where a whole number goes) applies.
+ */
+export function asFields(body: Record<string, unknown>, type: EditorType, mode: "new" | "edit"): URLSearchParams | ApiAnswer {
+  const fields = new Map(fieldsFor(type, mode).map((f) => [f.name, f]));
+  const form = new URLSearchParams();
+  for (const [key, value] of Object.entries(body)) {
+    if (mode === "new" && key === "type") continue;
+    const f = fields.get(key);
+    if (!f) return problem(400, "unknown_field", `\`${key.slice(0, 40)}\` is not a field of a ${type}${mode === "edit" ? " edit" : ""}. GET types lists them.`);
+    const kind = jsonKind(f);
+    if (kind === "string") {
+      if (typeof value !== "string") return problem(400, "invalid", `\`${key}\` must be a string.`);
+      form.set(key, value);
+    } else {
+      if (typeof value !== "number" || !Number.isFinite(value)) return problem(400, "invalid", `\`${key}\` must be a number.`);
+      // A form carries digits: `String` of a finite number is what the form readers parse.
+      form.set(key, String(value));
+    }
+  }
+  return form;
+}
+
+/** What a shared rule's refusal is, over the API: its words, and a status and code that say what kind. */
+export function refusal(error: string): ApiAnswer {
+  if (error === NO_SUCH_TASK) return notFound();
+  if (error === NO_LONGER_LISTED) return problem(401, "invalid_token", "The token's owner is no longer on this tracker's list.");
+  if (error === READING) return problem(409, "busy", error);
+  if (error === FINISHED || /^That task is [a-z]+, not [a-z]+\.$/.test(error)) return problem(409, "conflict", error);
+  if (/^You already (have|track) [0-9]+ /.test(error)) return problem(409, "limit_reached", error);
+  if (/ (is|are) not available on this bot\.$/.test(error)) return problem(503, "unavailable", error);
+  return problem(400, "invalid", error);
+}
+
+/** The next queued run's instant, or null (nothing queued, or paused). */
+async function nextAt(d: TrackerDeps, task: Task): Promise<string | null> {
+  if (task.status !== "active") return null;
+  const queued = await d.store.listOccurrences({ taskId: task.id, status: "queued" });
+  return queued[0]?.dueAt ?? null;
+}
+
+/**
+ * A task as the API shows it: what it is, its schedule in the owner's words, its next run, and its
+ * settings -- the values its edit would keep, typed as the edit takes them -- and, for a price, its
+ * page as a top-level `url`, which no edit changes.
+ */
+export async function taskJson(d: TrackerDeps, user: User, task: Task) {
+  const type = (EDITOR_TYPES as readonly string[]).includes(task.type) ? (task.type as EditorType) : null;
+  const values = editValues(d, user, task);
+  const settings: Record<string, string | number> = {};
+  if (type) {
+    for (const f of fieldsFor(type, "edit")) {
+      if (f.name === "when") continue; // an edit's "keep the time"; `nextAt` says when
+      const raw = values[f.name];
+      if (raw === undefined) continue;
+      settings[f.name] = jsonKind(f) === "string" ? raw : Number(raw);
+    }
+  }
+  return {
+    id: task.id,
+    type: task.type,
+    title: task.title,
+    status: task.status === "archived" ? "deleted" : task.status,
+    cadence: task.schedule ? describeSchedule(task.schedule, user, user.timeZone, d.clock.now()) : "no schedule",
+    nextAt: await nextAt(d, task),
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+    settings,
+    // A price's page: read-only, since another page is another tracker (no edit takes it).
+    ...(task.type === "price" ? { url: String((task.config as PriceConfig).url) } : {}),
+  };
+}
+
+/** `GET /tasks`: the owner's tasks that are not deleted -- active, paused and done -- oldest first. */
+export async function listAnswer(d: TrackerDeps, user: User): Promise<ApiAnswer> {
+  const tasks = (await d.store.listTasks({ ownerId: user.id })).filter((t) => t.status !== "archived");
+  const out = [];
+  for (const t of tasks) out.push(await taskJson(d, user, t));
+  return { status: 200, body: { tasks: out } };
+}
+
+/** `GET /tasks/<id>`: one of the owner's tasks (a deleted one too, as its web page stays), with its history. */
+export async function getAnswer(d: TrackerDeps, user: User, id: string): Promise<ApiAnswer> {
+  const task = await ownTask(d, user, id);
+  if (!task) return notFound();
+  const view = await loadHistory(d, user, task.id);
+  if (!view) return notFound();
+  return {
+    status: 200,
+    body: {
+      task: await taskJson(d, user, view.task),
+      history: { next: view.next, runs: view.runs, earlierRuns: view.earlierRuns, changes: view.changes, earlierChanges: view.earlierChanges },
+    },
+  };
+}
+
+async function written(w: Writer, user: User, result: Written, status: number, base: string): Promise<ApiAnswer> {
+  if (!result.ok) return refusal(result.error);
+  const task = (await w.d.store.getTask(result.task.id)) ?? result.task;
+  return {
+    status,
+    body: { task: await taskJson(w.d, user, task), message: result.text },
+    ...(status === 201 ? { headers: { Location: `${base}/tasks/${encodeURIComponent(task.id)}` } } : {}),
+  };
+}
+
+/** `POST /tasks`: `type` names the kind; the rest are that kind's create fields. */
+export async function createAnswer(w: Writer, user: User, body: Record<string, unknown>, base: string): Promise<ApiAnswer> {
+  const type = body.type;
+  if (typeof type !== "string" || !(EDITOR_TYPES as readonly string[]).includes(type)) {
+    return problem(400, "invalid", `\`type\` is one of ${EDITOR_TYPES.join(", ")}.`);
+  }
+  const form = asFields(body, type as EditorType, "new");
+  if (!(form instanceof URLSearchParams)) return form;
+  return written(w, user, await makeTask(w, type as EditorType, form), 201, base);
+}
+
+/** `PATCH /tasks/<id>`: the fields to change; one left out keeps what the task has. */
+export async function editAnswer(w: Writer, user: User, id: string, body: Record<string, unknown>, base: string): Promise<ApiAnswer> {
+  const task = await editableTask(w.d, user, id);
+  if (!task) return notFound();
+  const form = asFields(body, task.type as EditorType, "edit");
+  if (!(form instanceof URLSearchParams)) return form;
+  return written(w, user, await saveEdit(w, task, form), 200, base);
+}
+
+/** `POST /tasks/<id>/pause`, `/resume`, and `DELETE /tasks/<id>`. */
+export async function actAnswer(w: Writer, user: User, id: string, action: TaskAction): Promise<ApiAnswer> {
+  const task = await ownTask(w.d, user, id);
+  if (!task || task.status === "archived") return notFound();
+  const done = await actOn(w, task.id, action);
+  if (!done.ok) return refusal(done.error);
+  const after = (await w.d.store.getTask(task.id)) ?? task;
+  return { status: 200, body: { task: await taskJson(w.d, user, after), message: done.text } };
+}

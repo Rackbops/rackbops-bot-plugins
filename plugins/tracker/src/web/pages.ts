@@ -194,6 +194,10 @@ ${form.error ? html`<div class="rb-alert rb-alert--danger" role="alert"><p class
 </form>
 </section>
 <section>
+<h2>API tokens</h2>
+<p>For a program that uses the tracker's task API as you. <a class="rb-link" href="${v.base}/tokens">API tokens</a></p>
+</section>
+<section>
 <h2>Forget me</h2>
 <p>Delete everything the tracker holds about you, for good. <a class="rb-link" href="${v.base}/forget">Forget me</a></p>
 </section>`,

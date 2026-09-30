@@ -22,6 +22,7 @@ import { Roster } from "./roster.js";
 import { SqliteStore } from "./store.js";
 import { createWebHandler } from "./web/app.js";
 import { parseWebUrl } from "./web/config.js";
+import { ApiTokens } from "./web/api-tokens.js";
 import { Sessions } from "./web/sessions.js";
 import { LoginLinks } from "./web/signin-link.js";
 
@@ -33,8 +34,8 @@ import { LoginLinks } from "./web/signin-link.js";
  * membership gates, consent, the buttons and the Reply modal, and pausing delivery after repeated
  * failures (#79), the web area's first slice -- sign-in by one-time link, my tasks, history,
  * settings (#80) -- renewals and the price tracker, with the fenced page reads on a tick of
- * their own (#81) -- the web task editor (#80, slice 2) -- and the admin view and forget-me (#80,
- * slice 3).
+ * their own (#81) -- the web task editor (#80, slice 2) -- the admin view and forget-me (#80,
+ * slice 3) -- and the JSON task API with personal tokens (#80, slice 4).
  *
  * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID` and
  * `TRACKER_WEB_URL` and nothing else. The database is opened in `activate()` and closed in `dispose()`.
@@ -246,6 +247,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         notifier: dm ? createDmNotifier({ store: openedStore, claims: openedClaims, dm, clock, log: host.log, health: delivery }) : NO_DM,
         logins: new LoginLinks(opened),
         sessions: new Sessions(opened),
+        apiTokens: new ApiTokens(opened),
         roster: new Roster(opened),
         configuredAdmins: new Set(adminIds),
         lanes,

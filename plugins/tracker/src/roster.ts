@@ -72,6 +72,7 @@ export const ERASED_TABLES = [
   "delivery_health",
   "web_sessions",
   "web_login_tokens",
+  "api_tokens",
   "users",
 ] as const;
 
@@ -231,7 +232,7 @@ export class Roster {
    * replies (anyone's), history, series, recipients, delivery claims and pauses; on everyone
    * else's tasks, their recipient rows, their replies, the history rows they made or that name
    * them, the run events and claims of DMs to them, and their pauses; every decline block they
-   * are either side of; their admission, delivery health, web sessions and sign-in links; and
+   * are either side of; their admission, delivery health, web sessions, sign-in links and API tokens; and
    * their person row. Where another person's row keeps an audit column that named them (who
    * admitted someone, who lifted a block), it is set to `FORGOTTEN`; where another person's run
    * error (or its error event) carries their id in a phrase the notifier writes, the id is redacted.
@@ -328,6 +329,7 @@ export class Roster {
       del("delivery_health", "user_id = ?", userId);
       del("web_sessions", "user_id = ?", userId);
       del("web_login_tokens", "user_id = ?", userId);
+      del("api_tokens", "user_id = ?", userId);
       del("users", "seq = ?", Number(seq));
 
       const held = this.db.query("SELECT 1 FROM delivery_pauses WHERE task_id = ? LIMIT 1");

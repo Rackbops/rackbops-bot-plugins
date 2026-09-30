@@ -73,7 +73,8 @@ async function onePerson(a: AdminWeb, id: string, result: Result = null): Promis
   const p = a.d.roster.people().find((x) => x.id === id);
   if (!p) return htmlResponse(notFoundPage(a.v.base, a.v), 404);
   const tasks = await a.d.store.listTasks({ ownerId: p.id });
-  return htmlResponse(personPage(a.v, p, tasks, a.d.clock.now(), result, isConfiguredAdmin(a.d, p)), result && !result.ok ? 400 : 200);
+  const tokens = a.d.apiTokens.listFor(p.id, a.d.clock.now());
+  return htmlResponse(personPage(a.v, p, tasks, a.d.clock.now(), result, isConfiguredAdmin(a.d, p), tokens), result && !result.ok ? 400 : 200);
 }
 
 /** The admin view's pages (GET): people, all tasks, one person. */
@@ -89,7 +90,7 @@ export async function adminGet(a: AdminWeb, r: Route): Promise<Response> {
   return htmlResponse(adminTasksPage(a.v, rows));
 }
 
-/** The admin view's acts (POST): allow, the admin flag, resuming delivery, lifting a block, removing a person. */
+/** The admin view's acts (POST): allow, the admin flag, resuming delivery, lifting a block, revoking an API token, removing a person. */
 export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): Promise<Response> {
   const base = a.v.base;
   if (r.kind === "admin-allow") {
@@ -107,6 +108,18 @@ export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): P
     const done = await fresh(a, true, (me) => liftDeclineBlock(a.d, me, r.id));
     if (done === null) return unknownPage(base);
     return peoplePage(a, said(done), done.ok ? 200 : 400);
+  }
+  if (r.kind === "admin-token-revoke") {
+    // Any person's token (plan 5.10: an admin manages everything); the owner is told nothing, as
+    // with a revoked admin flag. Re-checked as an admin in the queue, like every admin act.
+    const owner = await fresh(a, true, async (me) => {
+      const whose = a.d.apiTokens.revokeAny(r.id);
+      if (whose !== null) a.d.log.info(`${me.id} revoked API token ${r.id} of ${whose}`);
+      return { whose };
+    });
+    if (owner === null) return unknownPage(base);
+    if (owner.whose === null) return htmlResponse(notFoundPage(base, a.v), 404);
+    return onePerson(a, owner.whose, { ok: true, text: "Revoked: that token no longer works." });
   }
   if (r.kind !== "admin-act") return unknownPage(base);
   if (r.action === "forget") {
