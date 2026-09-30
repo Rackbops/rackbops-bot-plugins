@@ -36,14 +36,17 @@ function jsonKind(f: Field): "integer" | "number" | "string" {
 
 /**
  * `GET /types`: what each type's create and edit take -- the editor's own field list, as the
- * readable intake spec plan item 31 asks for, so an agent (E10) can ask one question per field.
+ * readable description of what the API takes, so an agent (E10) can ask one question per field.
+ * It is the tracker's editor fields, not docket-core's `TaskType.intake` (`IntakeSpec`), which
+ * names the type's own config and not what these endpoints accept.
  */
 export function typesAnswer(): ApiAnswer {
-  const describe = (fields: readonly Field[]) =>
+  const describe = (fields: readonly Field[], mode: "new" | "edit") =>
     fields.map((f) => ({
       name: f.name,
       type: jsonKind(f),
-      required: f.required === true,
+      // An edit keeps whatever it is not sent: no field of an edit is required.
+      required: mode === "new" && f.required === true,
       description: f.help ? `${f.label}. ${f.help}` : f.label,
       ...(f.maxlength !== undefined ? { maxLength: f.maxlength } : {}),
       ...(f.min !== undefined ? { minimum: f.min } : {}),
@@ -52,7 +55,7 @@ export function typesAnswer(): ApiAnswer {
     }));
   return {
     status: 200,
-    body: { types: EDITOR_TYPES.map((type) => ({ type, create: describe(fieldsFor(type, "new")), edit: describe(fieldsFor(type, "edit")) })) },
+    body: { types: EDITOR_TYPES.map((type) => ({ type, create: describe(fieldsFor(type, "new"), "new"), edit: describe(fieldsFor(type, "edit"), "edit") })) },
   };
 }
 
@@ -101,8 +104,8 @@ async function nextAt(d: TrackerDeps, task: Task): Promise<string | null> {
 
 /**
  * A task as the API shows it: what it is, its schedule in the owner's words, its next run, and its
- * settings -- the values its edit would keep, typed as the edit takes them (a price also names its
- * page, which no edit changes).
+ * settings -- the values its edit would keep, typed as the edit takes them -- and, for a price, its
+ * page as a top-level `url`, which no edit changes.
  */
 export async function taskJson(d: TrackerDeps, user: User, task: Task) {
   const type = (EDITOR_TYPES as readonly string[]).includes(task.type) ? (task.type as EditorType) : null;
@@ -116,7 +119,6 @@ export async function taskJson(d: TrackerDeps, user: User, task: Task) {
       settings[f.name] = jsonKind(f) === "string" ? raw : Number(raw);
     }
   }
-  if (task.type === "price") settings.url = String((task.config as PriceConfig).url);
   return {
     id: task.id,
     type: task.type,
@@ -127,6 +129,8 @@ export async function taskJson(d: TrackerDeps, user: User, task: Task) {
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
     settings,
+    // A price's page: read-only, since another page is another tracker (no edit takes it).
+    ...(task.type === "price" ? { url: String((task.config as PriceConfig).url) } : {}),
   };
 }
 

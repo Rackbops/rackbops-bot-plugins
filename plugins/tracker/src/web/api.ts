@@ -32,6 +32,8 @@ import { readBody } from "./html.js";
  * - A token acts as its owner with the owner's rights only, and only on the owner's own tasks.
  * - Each token has its own rate limit (a bucket of `RATE_BURST` requests, refilled at
  *   `RATE_PER_SECOND`), taken before the owner is looked up, so a busy token costs no Discord calls.
+ *   Requests whose token does not look up share one global bucket (`FAILED_BURST`, refilled at
+ *   `FAILED_PER_SECOND`): past it they get 429 instead of 401, and a valid token is unaffected.
  * - A body is JSON (`Content-Type: application/json`), an object, at most `MAX_API_BYTES`, read no
  *   further than that. Errors are `{"error": {"code", "message"}}`.
  */
@@ -40,6 +42,10 @@ export const API_PREFIX = "/api/v1";
 export const MAX_API_BYTES = 16 * 1024;
 export const RATE_BURST = 60;
 export const RATE_PER_SECOND = 1;
+/** One bucket shared by every request whose token fails to look up (unknown, revoked, expired, malformed). */
+export const FAILED_BURST = 30;
+export const FAILED_PER_SECOND = 0.5;
+const FAILED_KEY = "failed";
 
 /** What the owner re-check found (app.ts): let them on, they have left the server, or it could not tell for too long. */
 export type Recheck = "ok" | "not-member" | "unknown";
@@ -51,6 +57,8 @@ export interface ApiWiring {
   /** The plugin's path prefix, `/tracker`. */
   base: string;
   limiter: RateLimiter;
+  /** The one bucket for failed token lookups, keyed by `FAILED_KEY` only, so its memory is one entry. */
+  failed: RateLimiter;
   /** The web's membership re-check, for a token's owner (app.ts). */
   recheck(user: User, checkedAt: string | null): Promise<Recheck>;
 }
@@ -169,18 +177,26 @@ async function authenticate(w: ApiWiring, request: Request): Promise<Auth> {
   const sent = bearer(header);
   const now = d.clock.now();
   const token = sent === null ? null : d.apiTokens.find(sent, now);
-  if (!token) return no(invalid);
+  if (!token) {
+    const waitFailed = w.failed.take(FAILED_KEY, now.getTime());
+    if (waitFailed > 0) return no(problem(429, "rate_limited", `Too many requests with bad tokens; try again in ${waitFailed} s.`, { "Retry-After": String(waitFailed) }));
+    return no(invalid);
+  }
   const wait = w.limiter.take(token.id, now.getTime());
   if (wait > 0) return no(problem(429, "rate_limited", `Too many requests with this token; try again in ${wait} s.`, { "Retry-After": String(wait) }));
   const user = await d.store.getUser(token.userId);
-  if (!user || !d.admissions.isRegistered(user.id)) return no(invalid);
+  if (!user || !d.admissions.isRegistered(user.id)) {
+    // As the web drops a session of someone no longer registered: their tokens go too.
+    d.apiTokens.deleteForUser(token.userId);
+    return no(invalid);
+  }
   const found = await w.recheck(user, token.memberCheckedAt);
   if (found === "not-member") return no(problem(403, "not_member", "The token's owner is no longer a member of this tracker's server; their tokens are revoked."));
   if (found === "unknown") return no(problem(503, "membership_unknown", "I could not check that the token's owner is still a member of this tracker's server; try again later.", { "Retry-After": "60" }));
   // The re-check may have waited: act only on the token as it stands now.
   const current = d.apiTokens.find(sent as string, d.clock.now());
   if (!current) return no(invalid);
-  d.apiTokens.touch(current.id, d.clock.now().toISOString());
+  d.apiTokens.touch(current, d.clock.now());
   return { ok: true, token: current, user };
 }
 

@@ -4,11 +4,12 @@ import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import type { Membership } from "../access.js";
 import { MAX_PRICE_TASKS } from "../price.js";
-import { MAX_API_BYTES, RATE_BURST } from "./api.js";
+import { FAILED_BURST, MAX_API_BYTES, RATE_BURST } from "./api.js";
 import { MAX_TOKENS_PER_PERSON } from "./api-tokens.js";
 import { NOT_FOUND_MESSAGE } from "./api-tasks.js";
 import { MEMBER_GRACE_MS, MEMBER_RECHECK_MS } from "./app.js";
 import { sha256 } from "./secrets.js";
+import { TOKEN_NOT_SENT } from "./tokens.js";
 import {
   ADMIN,
   api,
@@ -57,7 +58,7 @@ async function setup(opts: Parameters<typeof world>[0] = {}) {
   const w = await world({ fetch: store.fetch, ...opts });
   await people(w.plugin);
   const larry = await signIn(w.plugin, LARRY);
-  const token = await makeToken(w.plugin, larry);
+  const token = await makeToken(w, larry);
   return { ...w, larry, token, shop: store.s };
 }
 
@@ -87,6 +88,19 @@ function shape(dbPath: string, seq: number) {
     e.kind === "schedule_changed" || e.kind === "created" ? e.kind : `${e.kind}: ${e.detail}`,
   );
   return { row, runs, events };
+}
+
+/** The refusal a web form page shows, as text: its alert's message, tags dropped, entities read. */
+function alertText(page: string): string {
+  const m = /role="alert"><p class="rb-alert__title">[^<]*<\/p><p>([\s\S]*?)<\/p><\/div>/.exec(page);
+  if (!m?.[1]) throw new Error("no alert on the page");
+  return m[1]
+    .replace(/<[^>]+>/g, "")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
 }
 
 async function body(res: Response): Promise<Record<string, any>> {
@@ -135,10 +149,34 @@ describe("authentication", () => {
     expect(page).not.toContain(w.token);
   });
 
+  it("a new token's secret goes by DM, never in the page; a failed DM deletes it and says so", async () => {
+    const w = await setup();
+    const csrf = await csrfOf(w.plugin, w.larry);
+    const before = w.sent.length;
+    const res = await form(w.plugin, w.larry, csrf, "/tokens", { name: "script", expiry: "30" });
+    expect(res.status).toBe(200);
+    const page = await res.text();
+    expect(page).toContain("Your new token is in your Discord DMs");
+    expect(page).not.toMatch(/trk_[A-Za-z0-9_-]{43}/);
+    const dms = w.sent.slice(before);
+    expect(dms.map((m) => m.userId)).toEqual([LARRY]);
+    const secret = /`(trk_[A-Za-z0-9_-]{43})`/.exec(String((dms[0]?.message as { content: string }).content))?.[1] as string;
+    expect((await api(w.plugin, "GET", "/me", { token: secret })).status).toBe(200);
+    // DMs closed: nothing is kept, nothing is shown, and the page says why.
+    w.delivery.unreachable.add(LARRY);
+    const count = query(w.dbPath, "SELECT seq FROM api_tokens").length;
+    const failed = await form(w.plugin, w.larry, csrf, "/tokens", { name: "closed", expiry: "30" });
+    expect(failed.status).toBe(400);
+    const failedPage = await failed.text();
+    expect(failedPage).toContain(TOKEN_NOT_SENT.replaceAll("'", "&#39;"));
+    expect(failedPage).not.toMatch(/trk_[A-Za-z0-9_-]{43}/);
+    expect(query(w.dbPath, "SELECT seq FROM api_tokens")).toHaveLength(count);
+  });
+
   it("a revoked token is refused at once; revoking someone else's token is the unknown one's 404", async () => {
     const w = await setup();
     const curly = await signIn(w.plugin, CURLY);
-    const curlyToken = await makeToken(w.plugin, curly, "curly-agent");
+    const curlyToken = await makeToken(w, curly, "curly-agent");
     const csrf = await csrfOf(w.plugin, w.larry);
     // Larry cannot revoke Curly's (k2); the answer is the unknown id's.
     const other = await form(w.plugin, w.larry, csrf, "/tokens/k2/revoke");
@@ -156,10 +194,10 @@ describe("authentication", () => {
     expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(401);
   });
 
-  it("an expired token is refused; one that never expires is not", async () => {
+  it("an expired token is refused; every token expires, a year at most", async () => {
     const w = await setup(); // 90 days
-    const forever = await makeToken(w.plugin, w.larry, "forever", "never");
-    const month = await makeToken(w.plugin, w.larry, "month", "30");
+    const year = await makeToken(w, w.larry, "year", "365");
+    const month = await makeToken(w, w.larry, "month", "30");
     w.clock.advance(30 * 24 * 60 * 60 * 1000 - 1000);
     expect((await api(w.plugin, "GET", "/me", { token: month })).status).toBe(200);
     w.clock.advance(1000);
@@ -167,7 +205,24 @@ describe("authentication", () => {
     expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(200);
     w.clock.advance(60 * 24 * 60 * 60 * 1000);
     expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(401);
-    expect((await api(w.plugin, "GET", "/me", { token: forever })).status).toBe(200);
+    expect((await api(w.plugin, "GET", "/me", { token: year })).status).toBe(200);
+    w.clock.advance(275 * 24 * 60 * 60 * 1000);
+    expect((await api(w.plugin, "GET", "/me", { token: year })).status).toBe(401);
+    expect(query(w.dbPath, "SELECT seq FROM api_tokens WHERE expires_at IS NULL")).toEqual([]);
+  });
+
+  it("last used is recorded at most once a minute", async () => {
+    const w = await setup();
+    const lastUsed = () => query<{ last_used_at: string | null }>(w.dbPath, "SELECT last_used_at FROM api_tokens WHERE seq = 1")[0]?.last_used_at;
+    expect(lastUsed()).toBeNull();
+    await api(w.plugin, "GET", "/me", { token: w.token });
+    expect(lastUsed()).toBe("2026-10-01T12:00:00.000Z");
+    w.clock.advance(59_000);
+    await api(w.plugin, "GET", "/me", { token: w.token });
+    expect(lastUsed()).toBe("2026-10-01T12:00:00.000Z");
+    w.clock.advance(1000);
+    await api(w.plugin, "GET", "/me", { token: w.token });
+    expect(lastUsed()).toBe("2026-10-01T12:01:00.000Z");
   });
 
   it("/me says whose token it is; a token of an owner no longer registered is refused", async () => {
@@ -181,6 +236,8 @@ describe("authentication", () => {
     db.query("UPDATE admissions SET registered_at = NULL WHERE user_id = 'u2'").run();
     db.close();
     expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(401);
+    // Their tokens go, as their sessions do on the web.
+    expect(query(w.dbPath, "SELECT seq FROM api_tokens")).toEqual([]);
   });
 
   it("a request carrying Origin -- any browser's -- is refused, same origin or not; no answer carries a CORS header", async () => {
@@ -227,7 +284,7 @@ describe("authentication", () => {
 
   it("rate limit: a burst per token, then 429 with Retry-After until it refills; another token is unaffected", async () => {
     const w = await setup();
-    const second = await makeToken(w.plugin, w.larry, "second");
+    const second = await makeToken(w, w.larry, "second");
     for (let i = 0; i < RATE_BURST; i++) expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(200);
     const limited = await api(w.plugin, "GET", "/me", { token: w.token });
     expect(limited.status).toBe(429);
@@ -240,6 +297,21 @@ describe("authentication", () => {
     w.clock.advance(1000);
     expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(200);
     expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(429);
+  });
+});
+
+describe("failed lookups", () => {
+  it("share one small global bucket: past it, 429; a valid token is unaffected", async () => {
+    const w = await setup();
+    const bad = (i: number) => `trk_${String(i).padStart(43, "A")}`;
+    for (let i = 0; i < FAILED_BURST; i++) expect((await api(w.plugin, "GET", "/me", { token: bad(i) })).status).toBe(401);
+    const limited = await api(w.plugin, "GET", "/me", { token: bad(99) });
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("2");
+    expect((await api(w.plugin, "GET", "/me", { headers: { authorization: "Bearer junk" } })).status).toBe(429);
+    expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(200);
+    w.clock.advance(2000);
+    expect((await api(w.plugin, "GET", "/me", { token: bad(100) })).status).toBe(401);
   });
 });
 
@@ -273,6 +345,17 @@ describe("membership (TRACKER_GUILD_ID set)", () => {
     expect(query(w.dbPath, "SELECT id_hash FROM web_sessions")).toEqual([]);
   });
 
+  it("the web finding someone gone deletes their API tokens too", async () => {
+    const { l, fn } = lookup();
+    const w = await setup({ guild: true, webMembership: fn });
+    w.clock.advance(MEMBER_RECHECK_MS);
+    l.answer = "not-member";
+    expect((await call(w.plugin, "GET", "/", { jar: w.larry })).status).toBe(403);
+    expect(query(w.dbPath, "SELECT seq FROM api_tokens")).toEqual([]);
+    l.answer = "member";
+    expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(401);
+  });
+
   it("a lookup that keeps failing is let on for 24 hours from the last confirmation, then 503; the token is kept", async () => {
     const { l, fn } = lookup();
     const w = await setup({ guild: true, webMembership: fn });
@@ -301,13 +384,14 @@ describe("tokens on the web", () => {
     await refused({ name: "  ", expiry: "90" }, "Give the token a name");
     await refused({ name: "x".repeat(51), expiry: "90" }, "longer than 50");
     await refused({ name: "ok", expiry: "7" }, "Choose when the token expires");
+    await refused({ name: "ok", expiry: "never" }, "Choose when the token expires");
     expect((await form(w.plugin, w.larry, "stale", "/tokens", { name: "x", expiry: "90" })).status).toBe(403);
-    for (let i = 1; i < MAX_TOKENS_PER_PERSON; i++) await makeToken(w.plugin, w.larry, `t${i}`);
+    for (let i = 1; i < MAX_TOKENS_PER_PERSON; i++) await makeToken(w, w.larry, `t${i}`);
     await refused({ name: "eleventh", expiry: "90" }, `You already have ${MAX_TOKENS_PER_PERSON} API tokens`);
     expect(query(w.dbPath, "SELECT seq FROM api_tokens")).toHaveLength(MAX_TOKENS_PER_PERSON);
     // Expired ones do not count.
     w.clock.advance(91 * 24 * 60 * 60 * 1000);
-    await makeToken(w.plugin, await signIn(w.plugin, LARRY), "after");
+    await makeToken(w, await signIn(w.plugin, LARRY), "after");
   });
 
   it("an admin sees a person's tokens and revokes one; a non-admin cannot", async () => {
@@ -356,7 +440,9 @@ describe("tasks", () => {
     const price = { url: SHOP, name: "Widget", hours: 6, drop: 15, baseline: "peak" };
     const made = await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "price", ...price } });
     expect(made.status).toBe(201);
-    expect((await body(made)).task.settings).toEqual({ name: "Widget", hours: 6, drop: 15, baseline: "peak", url: SHOP });
+    const madeTask = (await body(made)).task;
+    expect(madeTask.settings).toEqual({ name: "Widget", hours: 6, drop: 15, baseline: "peak" });
+    expect(madeTask.url).toBe(SHOP);
     expect((await form(w.plugin, w.larry, csrf, "/new/price", Object.fromEntries(Object.entries(price).map(([k, v]) => [k, String(v)])))).status).toBe(303);
     const a = shape(w.dbPath, 3);
     const b = shape(w.dbPath, 4);
@@ -369,9 +455,9 @@ describe("tasks", () => {
     const csrf = await csrfOf(w.plugin, w.larry);
     const cases: [Record<string, unknown>, string][] = [
       [{ type: "reminder", text: "", when: "9am" }, "Say what to remind you of."],
-      [{ type: "reminder", text: "x" }, "Say when"],
-      [{ type: "renewal", name: "Domain", amount: 5, currency: "US", renews: "2026-12-01" }, "three-letter code"],
-      [{ type: "renewal", name: "Domain", amount: 5, currency: "USD", renews: "2026-12-01", every: 1.5 }, "`every` is a whole number"],
+      [{ type: "reminder", text: "x" }, 'Say when: for example "in 20 minutes", "tomorrow 9am" or "friday at 17:30".'],
+      [{ type: "renewal", name: "Domain", amount: 5, currency: "US", renews: "2026-12-01" }, "The currency is a three-letter code, such as USD or EUR."],
+      [{ type: "renewal", name: "Domain", amount: 5, currency: "USD", renews: "2026-12-01", every: 1.5 }, "`every` is a whole number from 1 to 100."],
       [{ type: "price", url: SHOP, hours: 500 }, "`hours` is a whole number from 1 to 168."],
     ];
     for (const [input, reason] of cases) {
@@ -379,11 +465,11 @@ describe("tasks", () => {
       expect(res.status).toBe(400);
       const e = (await body(res)).error;
       expect(e.code).toBe("invalid");
-      expect(e.message).toContain(reason);
+      expect(e.message).toBe(reason);
       const { type, ...fields } = input;
       const web = await form(w.plugin, w.larry, csrf, `/new/${String(type)}`, Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, String(v)])));
       expect(web.status).toBe(400);
-      expect(await web.text()).toContain(reason.replaceAll("`", "").split(" ")[0] as string);
+      expect(alertText(await web.text())).toBe(reason.replaceAll("`", ""));
     }
     w.shop.price = null;
     const noPrice = await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "price", url: SHOP } });
@@ -400,6 +486,7 @@ describe("tasks", () => {
       [{ type: "reminder", text: "x", when: "9am", colour: "red" }, "unknown_field", "`colour` is not a field of a reminder."],
       [{ type: "reminder", text: 5, when: "9am" }, "invalid", "`text` must be a string."],
       [{ type: "price", url: SHOP, hours: "12" }, "invalid", "`hours` must be a number."],
+      [{ type: "reminder", text: "x", when: null }, "invalid", "`when` must be a string."],
       // A body shaped like an answer is still just a body.
       [{ status: 201, body: { task: {} } }, "invalid", "`type` is one of"],
     ];
@@ -458,7 +545,7 @@ describe("tasks", () => {
     const w = await setup();
     await slash(w.plugin, "remind", CURLY, { strings: { text: "curly-one", when: "9am", repeat: "day" } }); // t1
     await slash(w.plugin, "task", CURLY, { sub: "share", strings: { task: "t1" }, users: { user: LARRY } });
-    const admin = await makeToken(w.plugin, await signIn(w.plugin, ADMIN), "admin-agent");
+    const admin = await makeToken(w, await signIn(w.plugin, ADMIN), "admin-agent");
     const before = snapshot(w.dbPath);
     const tries: [string, string, unknown?][] = [
       ["GET", "/tasks/t1"],
@@ -559,5 +646,8 @@ describe("tasks", () => {
     expect(price.edit.map((f: { name: string }) => f.name)).not.toContain("url");
     expect(price.create.find((f: { name: string }) => f.name === "hours")).toMatchObject({ type: "integer", minimum: 1, maximum: 168 });
     expect(price.create.find((f: { name: string }) => f.name === "baseline")).toMatchObject({ type: "string", enum: ["last", "first", "peak"] });
+    // An edit keeps whatever it is not sent: none of its fields is required, though a create's are.
+    for (const t of types.types) expect(t.edit.filter((f: { required: boolean }) => f.required)).toEqual([]);
+    expect(types.types[1].create.filter((f: { required: boolean }) => f.required).map((f: { name: string }) => f.name)).toEqual(["name", "amount", "currency", "renews"]);
   });
 });

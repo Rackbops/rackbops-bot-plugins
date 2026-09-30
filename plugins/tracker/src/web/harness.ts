@@ -244,13 +244,19 @@ export async function replyText(plugin: Plugin, occurrenceId: string, userId: st
   return edits[0]?.content ?? "";
 }
 
-/** Makes an API token on the web as the person signed in to `jar`; answers the token, read off the page that shows it once. */
-export async function makeToken(plugin: Plugin, jar: Jar, name = "agent", expiry = "90"): Promise<string> {
-  const csrf = await csrfOf(plugin, jar);
-  const res = await call(plugin, "POST", "/tokens", { jar, form: { csrf, name, expiry }, origin: ORIGIN });
-  const body = await res.text();
-  const m = /<code>(trk_[A-Za-z0-9_-]{43})<\/code>/.exec(body);
+/**
+ * Makes an API token on the web as the person signed in to `jar`; answers the token, read off the
+ * DM that carries it (the page never shows it).
+ */
+export async function makeToken(w: { plugin: Plugin; sent: { userId: string; message: unknown }[] }, jar: Jar, name = "agent", expiry = "90"): Promise<string> {
+  const csrf = await csrfOf(w.plugin, jar);
+  const before = w.sent.length;
+  const res = await call(w.plugin, "POST", "/tokens", { jar, form: { csrf, name, expiry }, origin: ORIGIN });
+  const page = await res.text();
+  const dm = w.sent.slice(before).map((s) => String((s.message as { content?: unknown }).content ?? "")).find((c) => c.includes("API token"));
+  const m = dm ? /`(trk_[A-Za-z0-9_-]{43})`/.exec(dm) : null;
   if (res.status !== 200 || !m?.[1]) throw new Error(`no token made (${res.status})`);
+  if (page.includes(m[1])) throw new Error("the page showed the token");
   return m[1];
 }
 

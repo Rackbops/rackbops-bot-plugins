@@ -5,7 +5,7 @@ import { loadTaskList, saveSettings, type TrackerDeps } from "../actions.js";
 import type { Queue } from "../discord-common.js";
 import { MAX_ZONE } from "../limits.js";
 import { adminGet, adminPost, type AdminWeb, forgetRoute, unknownPage } from "./admin.js";
-import { handleApi, json, RATE_BURST, RATE_PER_SECOND, RateLimiter, type Recheck } from "./api.js";
+import { FAILED_BURST, FAILED_PER_SECOND, handleApi, json, RATE_BURST, RATE_PER_SECOND, RateLimiter, type Recheck } from "./api.js";
 import { problem } from "./api-tasks.js";
 import { tokensGet, tokensPost, tokenRevokePost } from "./tokens.js";
 import { actionPost, editGet, editPost, type Editor, newGet, newPost, taskPage } from "./editor.js";
@@ -118,6 +118,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   const reading = new Set<string>();
   // The task API's per-token rate limit (api.ts).
   const limiter = new RateLimiter(RATE_BURST, RATE_PER_SECOND);
+  const failed = new RateLimiter(FAILED_BURST, FAILED_PER_SECOND);
 
   async function authenticate(d: TrackerDeps, request: Request): Promise<Auth> {
     const id = readCookie(request, SESSION_COOKIE);
@@ -258,7 +259,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       if (w.origin === null) return plain(404, "Not found");
       const d = w.deps();
       if (!d) return json(problem(503, "starting", "The tracker is starting up; try again in a minute.", { "Retry-After": "60" }));
-      return handleApi({ d, queue: w.queue, reading, base, limiter, recheck: (user, at) => recheck(d, user, at) }, request, info.path);
+      return handleApi({ d, queue: w.queue, reading, base, limiter, failed, recheck: (user, at) => recheck(d, user, at) }, request, info.path);
     }
     const method = request.method;
     if (method !== "GET" && method !== "POST") return plain(405, "Method not allowed", { Allow: "GET, POST" });

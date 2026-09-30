@@ -362,7 +362,7 @@ describe("forget-me", () => {
     await tick(w.plugin);
     w.delivery.unreachable.clear();
     await slash(w.plugin, "web", LARRY); // an unused sign-in link
-    const token = await makeToken(w.plugin, w.larry, "larry-agent"); // an API token
+    const token = await makeToken(w, w.larry, "larry-agent"); // an API token
     expect((await api(w.plugin, "GET", "/me", { token })).status).toBe(200);
     const where = new Set(traces(w.dbPath, "u2", [LARRY, "Larry", "larry-"]).map((t) => t.split(".")[0]));
     // Everywhere a person can be, but a price's series and a pause (their own tests' business).

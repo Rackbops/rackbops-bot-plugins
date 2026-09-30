@@ -5,10 +5,9 @@ import { framed, type Viewer } from "./pages.js";
 
 /**
  * The API tokens pages (rackbops-bot-plugins#80, slice 4), pure: a person's own tokens with the
- * form to make one and a Revoke each, the one page that shows a new token (once), and the list an
- * admin sees on a person's page. Every value is escaped by `html`; every form posts back with the
- * session's CSRF token. A token itself appears only on the page answering the post that made it,
- * which is never cached (every page is `no-store`) and never redirected to (it would be in a URL).
+ * form to make one and a Revoke each, and the list an admin sees on a person's page. Every value is
+ * escaped by `html`; every form posts back with the session's CSRF token. A token's secret never
+ * appears on any page: it is sent by Discord DM (tokens.ts).
  */
 
 export function tokenHref(v: Viewer, id: string): string {
@@ -41,8 +40,6 @@ export function tokenTable(v: Viewer, tokens: readonly ApiToken[], now: Date, hr
 }
 
 export interface TokensForm {
-  /** The token just made: shown once, here. */
-  made?: { token: string; name: string };
   error?: string;
   /** What was typed, shown again with a refusal. */
   name?: string;
@@ -50,26 +47,17 @@ export interface TokensForm {
   result?: string;
 }
 
-/** `/tokens`: the person's tokens, the one just made (once), and the form to make another. */
+/** `/tokens`: the person's tokens and the form to make another. A token's secret is never on it: it goes by DM (tokens.ts). */
 export function tokensPage(v: Viewer, tokens: readonly ApiToken[], now: Date, f: TokensForm = {}): string {
   const expiry = f.expiry ?? String(DEFAULT_EXPIRY_DAYS);
-  const choices: readonly (readonly [string, string])[] = [...TOKEN_EXPIRY_DAYS.map((d) => [String(d), `in ${d} days`] as const), ["never", "never"]];
+  const choices: readonly (readonly [string, string])[] = TOKEN_EXPIRY_DAYS.map((d) => [String(d), `in ${d} days`] as const);
   return framed(
     v,
     "API tokens",
     html`<section>
 <p><a class="rb-link" href="${v.base}/settings">Settings</a></p>
 <h1>API tokens</h1>
-<p>A token lets a program use the tracker's task API as you: list, read, make, edit, pause, resume and delete your own tasks, nothing more. Send it as <code>Authorization: Bearer &lt;token&gt;</code> to <code>${v.base}/api/v1/</code>. Anyone holding it can act as you, so keep it secret, and revoke it when the program no longer needs it. At most ${MAX_TOKENS_PER_PERSON}.</p>
-${
-  f.made
-    ? html`<div class="rb-alert rb-alert--success" role="status">
-<p class="rb-alert__title">Your new token "${f.made.name}"</p>
-<p>Copy it now: it is not shown again, and the tracker keeps only a hash of it.</p>
-<p><code>${f.made.token}</code></p>
-</div>`
-    : null
-}
+<p>A token lets a program use the tracker's task API as you: list, read, make, edit, pause, resume and delete your own tasks, nothing more. Send it as <code>Authorization: Bearer &lt;token&gt;</code> to <code>${v.base}/api/v1/</code>. Anyone holding it can act as you, so keep it secret, and revoke it when the program no longer needs it. A new token is sent to you by Discord DM, once, and never shown here. At most ${MAX_TOKENS_PER_PERSON}, each for a year at most.</p>
 ${f.result ? html`<div class="rb-alert rb-alert--success" role="status"><p>${f.result}</p></div>` : null}
 ${f.error ? html`<div class="rb-alert rb-alert--danger" role="alert"><p class="rb-alert__title">Not made</p><p>${f.error}</p></div>` : null}
 ${tokenTable(v, tokens, now, (id) => tokenHref(v, id))}

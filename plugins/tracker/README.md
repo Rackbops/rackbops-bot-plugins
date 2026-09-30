@@ -67,7 +67,7 @@ served at a hashed path, cached for a year).
 | `/tasks/<id>/edit` | The owner's edit form (GET) and saving it (POST). |
 | `/tasks/<id>/pause`, `/resume`, `/delete` | POST only. Delete answers a confirmation first; only a second post carrying `confirm=yes` deletes. |
 | `/settings` | Preferred hour and time zone, checked as `/register` checks them. Links to API tokens and Forget me. |
-| `/tokens` | Your API tokens (below): each one's name, when it was made, last used and expires, with Revoke; and the form to make one (POST), which shows the new token once. |
+| `/tokens` | Your API tokens (below): each one's name, when it was made, last used and expires, with Revoke; and the form to make one (POST), which sends the new token to you by Discord DM -- never on the page. |
 | `/tokens/<id>/revoke` | POST only: revokes one of your own tokens. Anyone else's answers the same 404 as an unknown id. |
 | `/forget` | Forget me (below): what it deletes (GET); a POST asks for the confirmation; a POST with `confirm=yes` and the word `forget` erases. Linked from Settings. |
 | `/admin` | Admins only: everyone on the list, the decline blocks in force (each with Lift), and a form to allow a person by Discord id. |
@@ -239,19 +239,21 @@ It is served under `/tracker/api/v1/` on the same origin as the web area, and on
 slash commands -- the same fields, defaults, limits, caps and messages -- in the same write queue.
 
 **Tokens.** Make one on the web area's `/tokens` page (linked from Settings): a name, and an expiry
-of 30, 90 (the default) or 365 days, or never. The page shows the token once -- `trk_` and 43
-characters -- and the tracker keeps only its SHA-256, so neither a copy of the database nor the
-page later shows it again. At most 10 live tokens per person. Each lists when it was made, last used
-and expires, and can be revoked there at once; an admin sees and revokes anyone's from the admin
-view's page for that person. Forget-me erases a person's tokens with the rest. The log names a
-token by its id (`k1`), never by its secret.
+of 30, 90 (the default) or 365 days -- every token expires. The token -- `trk_` and 43 characters --
+is sent to you once, by Discord DM from the bot; it never appears in any web page or response, and
+the tracker keeps only its SHA-256. If that DM cannot be delivered (DMs closed), the token is
+deleted at once and the page says so: open your DMs and try again. At most 10 live tokens per
+person. Each lists when it was made, last used (recorded at most once a minute) and expires, and
+can be revoked there at once; an admin sees and revokes anyone's from the admin view's page for
+that person. Forget-me erases a person's tokens with the rest. The log names a token by its id
+(`k1`), never by its secret.
 
 **Authentication.** `Authorization: Bearer <token>` on every request. The web area's session
 cookie is never read here: every plugin shares one browser origin, so a cookie-authenticated JSON
 API could be called by any script on it. A token acts as its owner with the owner's rights only,
 and only on the owner's own tasks -- an admin's token included; an admin's wider reads stay on the
 signed-in web pages. Every request re-reads the owner, as the web does a session: a person no
-longer on the tracker, or no longer registered, is refused; with `TRACKER_GUILD_ID` set, membership
+longer on the tracker, or no longer registered, is refused and their tokens deleted; with `TRACKER_GUILD_ID` set, membership
 is re-checked on the web's schedule (after 15 minutes, one lookup, shared with the web), and one who
 has left the server loses every token and every session; a lookup that keeps failing lets them on
 for 24 hours from the last confirmation, then answers 503 until one succeeds (the token is kept).
@@ -261,12 +263,18 @@ cannot steer.
 **Browsers.** No answer carries a CORS header, and a request with an `Origin` header -- which a
 browser adds to every cross-origin request and to any same-origin one that is not a GET -- is
 refused with 403: the API is for programs, not pages. A browser page cannot send a cross-origin
-`Authorization` header without a CORS preflight, which is refused. What this cannot stop: a script
-of another plugin on the same origin can already use the web area as a signed-in person, making a
-token included; put nothing on that origin you do not trust (as for the cookies, above).
+`Authorization` header without a CORS preflight, which is refused. A script of another plugin on
+the same origin (or an XSS there) can ride a signed-in person's cookie and use the web area as
+them for as long as the session lasts -- that is the shared origin's cost, as for the cookies above
+-- but it cannot get a token's secret: the page that makes one never shows it, the secret goes
+only to the person's Discord DMs (a token made that way is one they are told about and can
+revoke), and every token expires within a year. Put nothing on that origin you do not trust.
 
 **Limits.** Each token may make 60 requests at once, refilled at one per second; over that, `429`
-with `Retry-After`. A limited request is refused before its owner is looked up. A body is at most
+with `Retry-After`. A limited request is refused before its owner is looked up. Requests whose
+token does not look up (unknown, revoked, expired, malformed) share one global bucket of 30,
+refilled at one every two seconds; past it they get `429` instead of `401`, and valid tokens are
+unaffected. A body is at most
 16 KiB, read no further. One new price tracker's page read in flight per person, shared with the
 web editor (`409 busy`).
 
@@ -275,12 +283,17 @@ web editor (`409 busy`).
 its JSON type: text as a string, a whole number or a number as a JSON number. A field left out of a
 create gets the command's default; a field left out of an edit keeps what the task has, and an empty
 string does the same, except that an empty `note` clears a renewal's note and an empty `name` gives
-a price back the page's address -- exactly as the web editor's empty fields do.
+a price back the page's address -- exactly as the web editor's empty fields do. `null` is never a
+value: it is refused as the wrong JSON type (send `""` to clear a note).
+
+Which types: `GET /tasks`, `GET /tasks/<id>`, pause, resume and `DELETE` work on any task you own,
+whatever its type; `POST /tasks` and `PATCH` take the three editor types (reminder, renewal,
+price), and a `PATCH` of a task of another type answers `404`, as the web editor does.
 
 | Method and path | What |
 |---|---|
 | `GET /api/v1/me` | The token's owner (id, name, zone, preferred hour) and the token (id, name, made, expires). |
-| `GET /api/v1/types` | Each type's create and edit fields: name, JSON type, required, description, and limits (`maxLength`, `minimum`, `maximum`, `enum`) -- the web editor's own field list, as a readable intake spec (plan item 31). |
+| `GET /api/v1/types` | Each type's create and edit fields: name, JSON type, required (never, for an edit), description, and limits (`maxLength`, `minimum`, `maximum`, `enum`). This describes the tracker's own editor fields -- what these endpoints take -- and is **not** docket-core's `TaskType.intake` (`IntakeSpec`), which describes a type's config. |
 | `GET /api/v1/tasks` | Your tasks that are not deleted -- active, paused and done -- oldest first. Not the ones shared with you. |
 | `POST /api/v1/tasks` | Makes one: `type` is `reminder`, `renewal` or `price`, and the rest are that type's create fields. `201`, with `Location`. A price's page is read first, and nothing is made unless a price is found in it. |
 | `GET /api/v1/tasks/<id>` | One of your tasks (a deleted one too), with its history: the newest runs and changes, as `/task history` shows them. |
@@ -289,9 +302,11 @@ a price back the page's address -- exactly as the web editor's empty fields do.
 | `DELETE /api/v1/tasks/<id>` | Deletes it as the web does: archived, nothing more sent, history kept. No confirmation step. |
 
 A task is `{"id", "type", "title", "status", "cadence", "nextAt", "createdAt", "updatedAt",
-"settings"}`: `status` is `active`, `paused`, `done` or `deleted`; `cadence` is the schedule in
-words, in your zone; `nextAt` the next run's instant (UTC), null when paused or nothing is due;
-`settings` the values an edit would keep (a price also names its `url`). A write answers
+"settings"}`, and a price also has a top-level `url`: `status` is `active`, `paused`, `done` or
+`deleted`; `cadence` is the schedule in words, in your zone; `nextAt` the next run's instant (UTC),
+null when paused or nothing is due; `settings` exactly the fields a `PATCH` takes, as the task has
+them. A price's `url` is read-only -- another page is another tracker -- so it is not in `settings`
+and a `PATCH` naming it is refused (`unknown_field`). A write answers
 `{"task", "message"}`, `message` being the words the web and the command say.
 
 **Errors** are `{"error": {"code": "...", "message": "..."}}`:
@@ -302,7 +317,7 @@ words, in your zone; `nextAt` the next run's instant (UTC), null when paused or 
 | 400 | `unknown_field` | A field that type does not take (on a pause or resume, any field). |
 | 400 | `invalid_json` | The body is not JSON, or not one object. |
 | 401 | `unauthorized` | No `Authorization` header. With `WWW-Authenticate: Bearer realm="tracker"`. |
-| 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered: one answer for all. |
+| 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered (their tokens are then deleted): one answer for all. |
 | 403 | `origin_refused` | The request carried an `Origin` header. |
 | 403 | `not_member` | The owner has left the `TRACKER_GUILD_ID` server; their tokens are revoked. |
 | 404 | `not_found` | No such endpoint, or no such task of yours. Anyone else's task -- one shared with you, or any task to an admin's token -- answers exactly as an unknown id. |
@@ -312,7 +327,7 @@ words, in your zone; `nextAt` the next run's instant (UTC), null when paused or 
 | 409 | `busy` | Your last new price tracker's page is still being read. |
 | 413 | `too_large` | Body over 16 KiB. |
 | 415 | `unsupported_media_type` | Not `application/json`. |
-| 429 | `rate_limited` | With `Retry-After`. |
+| 429 | `rate_limited` | With `Retry-After`: this token's bucket, or the shared one for bad tokens. |
 | 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours; the type is not available on this bot. |
 
 **Example.**
