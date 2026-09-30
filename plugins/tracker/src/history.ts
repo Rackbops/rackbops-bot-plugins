@@ -12,6 +12,7 @@ import {
   type User,
 } from "@rackbops/docket-core";
 import { clip, NO_SUCH_TASK, type TrackerDeps } from "./actions.js";
+import { PERSON_REF } from "./delivery-health.js";
 
 /**
  * `/task history` (plan 1.3 "History", 5.10): every run of a task -- when it was due, how it went,
@@ -61,12 +62,9 @@ export function runView(o: Occurrence, replies: readonly Reply[], people: Readon
   };
 }
 
-export function changeView(e: TaskEvent, viewer: User, now: Date): ChangeView {
-  return {
-    at: formatInstant(e.at, viewer.timeZone, now),
-    kind: e.kind.replaceAll("_", " "),
-    detail: e.kind === "paused" || e.kind === "resumed" ? e.detail : null,
-  };
+export function changeView(e: TaskEvent, viewer: User, now: Date, names: ReadonlyMap<string, string> = new Map()): ChangeView {
+  const detail = e.kind === "paused" || e.kind === "resumed" ? e.detail.replace(PERSON_REF, (_, id: string) => names.get(id) ?? "someone no longer on the tracker") : null;
+  return { at: formatInstant(e.at, viewer.timeZone, now), kind: e.kind.replaceAll("_", " "), detail };
 }
 
 function runLine(v: RunView): string {
@@ -84,8 +82,8 @@ export function formatRun(o: Occurrence, replies: readonly Reply[], people: Read
   return runLine(runView(o, replies, people, viewer, now));
 }
 
-export function formatChange(e: TaskEvent, viewer: User, now: Date): string {
-  return changeLine(changeView(e, viewer, now));
+export function formatChange(e: TaskEvent, viewer: User, now: Date, names: ReadonlyMap<string, string> = new Map()): string {
+  return changeLine(changeView(e, viewer, now, names));
 }
 
 /** A task's history as the viewer may see it: the newest `HISTORY_RUNS` runs and `HISTORY_CHANGES` changes. */
@@ -123,6 +121,15 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
       if (u) people.set(u.id, u);
     }
   }
+  // The people a pause names by id, as they are called now (delivery-health.ts `recipientPauseDetail`).
+  const names = new Map<string, string>();
+  for (const e of changes) {
+    for (const [, id] of e.detail.matchAll(PERSON_REF)) {
+      if (id === undefined || names.has(id)) continue;
+      const u = await d.store.getUser(id);
+      if (u) names.set(id, u.displayName ?? id);
+    }
+  }
   const owner = task.ownerId === user.id ? user : await d.store.getUser(task.ownerId);
   return {
     task,
@@ -130,7 +137,7 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
     next: next ? formatInstant(next.dueAt, user.timeZone, now) : null,
     runs: runs.slice(-HISTORY_RUNS).map((o) => runView(o, replies, people, user, now)),
     earlierRuns: Math.max(0, runs.length - HISTORY_RUNS),
-    changes: changes.slice(-HISTORY_CHANGES).map((e) => changeView(e, user, now)),
+    changes: changes.slice(-HISTORY_CHANGES).map((e) => changeView(e, user, now, names)),
     earlierChanges: Math.max(0, changes.length - HISTORY_CHANGES),
   };
 }

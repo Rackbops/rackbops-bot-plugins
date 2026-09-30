@@ -9,7 +9,7 @@ import {
   type PriceConfig,
 } from "@rackbops/docket-types";
 import { MAX_NEAR, MAX_TITLE, MAX_URL } from "./limits.js";
-import { clip, liveTaskCap, type Plan, said, type TaskResult, type TrackerDeps } from "./actions.js";
+import { clip, liveTaskCap, NO_LONGER_LISTED, type Plan, said, type TaskResult, type TrackerDeps } from "./actions.js";
 import type { Step } from "./discord.js";
 import { FetchRefusedError, urlProblem } from "./fetch.js";
 
@@ -157,7 +157,11 @@ export async function trackPrice(d: TrackerDeps, user: User, input: PriceInput):
   };
 }
 
-export async function finishPrice(d: TrackerDeps, user: User, v: PendingPrice, seen: PreviewResult): Promise<TaskResult> {
+export async function finishPrice(d: TrackerDeps, asked: User, v: PendingPrice, seen: PreviewResult): Promise<TaskResult> {
+  // The page was read outside the queue: the person may have been forgotten since, and nothing
+  // may be made for an id that names no one. Everything below uses them as the store has them now.
+  const user = await d.store.getUser(asked.id);
+  if (!user || !d.admissions.isRegistered(user.id)) return { ok: false, error: NO_LONGER_LISTED };
   if (!seen.ok) return seen;
   const type = d.types.price;
   if (!type) return { ok: false, error: "Price tracking is not available on this bot." };

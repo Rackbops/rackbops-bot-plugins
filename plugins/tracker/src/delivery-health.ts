@@ -28,6 +28,18 @@ export const PAUSE_AFTER = 3;
 
 export const PAUSE_DETAIL = `delivery paused: ${PAUSE_AFTER} DMs in a row could not be delivered (DMs closed, or the bot is blocked)`;
 
+/**
+ * A pause for a recipient names them by tracker id in braces (`{u5}`), never by name: history
+ * renders the name when it is read (history.ts), so a later name change shows, and forget-me finds
+ * the row by id (roster.ts). Rows written before 0.6.0 carry the display name of the time instead.
+ */
+export function recipientPauseDetail(userId: string): string {
+  return `delivery to {${userId}} paused: ${PAUSE_AFTER} DMs in a row could not be delivered`;
+}
+
+/** A person named in a history row's detail by `recipientPauseDetail`'s braces. */
+export const PERSON_REF = /\{(u[1-9][0-9]*)\}/g;
+
 /** Whether this failure is the one that pauses: pure, so the threshold is tested on its own. */
 export function decidePause(failures: number, alreadyPaused: boolean): boolean {
   return !alreadyPaused && failures >= PAUSE_AFTER;
@@ -95,6 +107,14 @@ export class DeliveryHealth {
     return next;
   }
 
+  /**
+   * Runs `fn` on the same lock as a pause and a resume, so it never interleaves with one: what
+   * forget-me's erasure uses (admin.ts), then `release`s the tasks it freed from inside `fn`.
+   */
+  exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    return this.locked(fn);
+  }
+
   get(userId: string): HealthRow | null {
     const r = this.db.query("SELECT * FROM delivery_health WHERE user_id = ?").get(userId) as Row | null;
     if (!r) return null;
@@ -121,6 +141,9 @@ export class DeliveryHealth {
   async recordFailure(userId: string, error: string, at: string): Promise<FailureResult> {
     const notices: Notice[] = [];
     const result = await this.locked(async (): Promise<FailureResult> => {
+      // Forgotten while the DM was out (an invitation's DM runs outside every lock): nothing may
+      // name them again. The erasure runs on this same lock, so the check cannot race it.
+      if (!(await this.store.getUser(userId))) return { failures: 0, paused: false };
       this.db
         .query(
           `INSERT INTO delivery_health (user_id, failures, last_error, last_failed_at) VALUES (?, 1, ?, ?)
@@ -162,7 +185,7 @@ export class DeliveryHealth {
       const { changes } = this.db.query("INSERT INTO delivery_pauses (task_id, user_id, at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING").run(task.id, userId, at);
       if (changes === 0 || task.status !== "active") continue;
       await this.store.updateTask(task.id, { status: "paused", at });
-      const detail = asRecipient ? `delivery to ${name(recipient, userId)} paused: ${PAUSE_AFTER} DMs in a row could not be delivered` : PAUSE_DETAIL;
+      const detail = asRecipient ? recipientPauseDetail(userId) : PAUSE_DETAIL;
       await this.store.addTaskEvent({ taskId: task.id, actorId: null, kind: "paused", detail, at });
       if (asRecipient) {
         const owner = await this.store.getUser(task.ownerId);
@@ -180,8 +203,11 @@ export class DeliveryHealth {
     }
   }
 
-  /** Sets a task active again once nothing holds it paused, and gives it its next run. */
-  private async release(taskId: string, actorId: string, detail: string, now: Date): Promise<boolean> {
+  /**
+   * Sets a task active again once nothing holds it paused, and gives it its next run. Only from
+   * inside the lock: `resume`, `resumeTask`, or `exclusive`.
+   */
+  async release(taskId: string, actorId: string | null, detail: string, now: Date): Promise<boolean> {
     if (this.pausesFor(taskId).length > 0) return false;
     const task = await this.store.getTask(taskId);
     if (!task || task.status !== "paused") return false;

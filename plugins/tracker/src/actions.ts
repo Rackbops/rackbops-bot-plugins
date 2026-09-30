@@ -26,6 +26,7 @@ import { type DeliveryHealth, PAUSE_AFTER, resumedNotice } from "./delivery-heal
 import { MAX_LIVE_TASKS, MAX_WHEN } from "./limits.js";
 import { admit, PeopleError, setPreferences } from "./people.js";
 import { heldRuns, restoreHeldRun } from "./retime.js";
+import type { Roster } from "./roster.js";
 import type { Sessions } from "./web/sessions.js";
 import type { LoginLinks } from "./web/signin-link.js";
 
@@ -50,12 +51,27 @@ export interface TrackerDeps {
   /** The web area's one-time sign-in links and its sessions (web/). */
   logins: LoginLinks;
   sessions: Sessions;
+  /** The Discord ids `TRACKER_ADMIN_DISCORD_IDS` names: made admin at every start, so not revocable from the web. */
+  configuredAdmins: ReadonlySet<string>;
+  /** Whether a notify or poll tick is running, and a bounded wait for none to be (index.ts). */
+  lanes: TickGate;
+  /** People, blocks and forget-me's erasure: the SQL docket's Store has no method for (roster.ts). */
+  roster: Roster;
   /** Whether the web area (and its task editor) is set up: `TRACKER_WEB_URL`. Answers mention it only then. */
   webEditor: boolean;
 }
 
+/** The ticks as forget-me sees them: whether one runs now, and a wait of at most `ms` for none to (false when it timed out). */
+export interface TickGate {
+  busy(): boolean;
+  idle(ms: number): Promise<boolean>;
+}
+
 /** Discord's cap on a message; every answer is cut to it. */
 export const MAX_ANSWER = 2000;
+
+/** A two-turn action's second turn, when the person was forgotten (or removed) in between. */
+export const NO_LONGER_LISTED = "You are no longer on this tracker's list.";
 
 /** Never echoes the id a person typed: a typed id is theirs to see, not the bot's to repeat. */
 export const NO_SUCH_TASK = "You have no task with that id. `/tasks` lists yours.";

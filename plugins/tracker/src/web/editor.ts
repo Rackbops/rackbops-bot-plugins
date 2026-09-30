@@ -1,6 +1,6 @@
 import { describeSchedule, type Task, type User } from "@rackbops/docket-core";
 import type { BaselineRule, PriceConfig, RenewalConfig } from "@rackbops/docket-types";
-import { NO_SUCH_TASK, type TaskResult, type TrackerDeps } from "../actions.js";
+import { NO_LONGER_LISTED, NO_SUCH_TASK, type TaskResult, type TrackerDeps } from "../actions.js";
 import type { Queue } from "../discord-common.js";
 import { editPrice, editReminder, editRenewal, renewalDate } from "../edit.js";
 import { loadHistory } from "../history.js";
@@ -32,7 +32,7 @@ export interface Editor {
 
 export const READING = "I am still reading the page of your last new price tracker; try again when it is done.";
 
-const GONE = "You are no longer on this tracker's list.";
+const GONE = NO_LONGER_LISTED;
 
 /** Runs `fn` in the queue with the viewer as the store has them now. */
 function asViewer<T extends { ok: boolean }>(e: Editor, fn: (user: User) => Promise<T>): Promise<T | { ok: false; error: string }> {
@@ -180,8 +180,10 @@ export async function newPost(e: Editor, type: EditorType, form: URLSearchParams
 export async function taskPage(e: Editor, id: string, done: string | null, error?: string): Promise<Response> {
   const view = await loadHistory(e.d, e.v.user, id);
   if (!view) return htmlResponse(notFoundPage(e.v.base, e.v), 404);
-  const controls = view.task.ownerId === e.v.user.id ? ownerControls(e.v, view.task) : null;
-  return htmlResponse(historyPage(e.v, view, { controls, flash: notice(done, error) }), error ? 400 : 200);
+  const own = view.task.ownerId === e.v.user.id;
+  const controls = own ? ownerControls(e.v, view.task) : null;
+  const owner = own ? null : ((await e.d.store.getUser(view.task.ownerId))?.displayName ?? view.task.ownerId);
+  return htmlResponse(historyPage(e.v, view, { controls, flash: notice(done, error), owner }), error ? 400 : 200);
 }
 
 /** The edit form's values as the task stands: what each field would say to keep it as it is. */
