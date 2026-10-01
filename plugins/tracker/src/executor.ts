@@ -311,8 +311,8 @@ export interface RemoteJob {
   /** The prompt city-hall holds for the job, when it says (a 200 to a POST is checked against it). */
   prompt: string | null;
   /**
-   * How the job's latest claim ended, when one has: city-hall's `job.lastOutcome` (city-hall#18
-   * at 2ba40d3), else the outcome of the last entry of `runs`; null before any claim ended.
+   * How the job's latest claim ended, when one has: city-hall's `job.lastOutcome` (city-hall#18,
+   * merged as 90a06ec), else the outcome of the last entry of `runs`; null before any claim ended.
    */
   lastOutcome: string | null;
   /** Claims so far, when city-hall says. */

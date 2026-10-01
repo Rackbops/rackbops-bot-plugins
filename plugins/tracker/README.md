@@ -103,8 +103,9 @@ the first sight (a judgement, not a measured figure): past it the Job answers "p
 docket gives the run up, and the admins are told once. It logs "the model runner is paused" naming
 the outcome once an hour per Job, and tells the admins once per Job and outcome. docket's own
 usage-limit pause (which waits for the reset the CLI named) applies only to a `usage_limit` result
-that reaches the tracker: city-hall#18 as merged sends one back only when it stores that result,
-as when a job that was requeued later fails at its maximum of expired leases.
+that reaches the tracker: under city-hall#18 as merged, that happens only when the job ends failed
+with that result still stored, as when a job that was requeued later fails at its maximum of
+expired leases.
 The plugin never calls a model, holds no Claude credential and no `ANTHROPIC_*` variable; model
 output is data, cleaned by docket before it reaches a DM or a finding, and every research DM goes
 out with no allowed mentions: the host sends every `dm` with `allowedMentions: { parse: [] }`
