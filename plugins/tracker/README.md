@@ -69,7 +69,7 @@ At start the plugin runs docket's `recover()`: a run left running is requeued, a
 by a stop mid-send is settled unconfirmed and logged.
 
 **Research and the execute lane** (docket 0.5.0, #82). A research request is two model Jobs, run
-one after the other through city-hall's execute lane (Lepid-Labs/city-hall#18) by the runner that
+one after the other through city-hall's execute lane ([Lepid-Labs/city-hall#18](https://github.com/Lepid-Labs/city-hall/pull/18)) by the runner that
 carries `TRACKER_CITY_HALL_CAPABILITY` -- only docket-runner, on roshne's subscription (plan items
 70, 71). The tracker submits each Job with `POST /api/execute/jobs` under a prefixed key,
 `rackbops-tracker:<database id>:<docket's Job key>` -- the database id is random, made once and kept
@@ -103,15 +103,18 @@ the first sight (a judgement, not a measured figure): past it the Job answers "p
 docket gives the run up, and the admins are told once. It logs "the model runner is paused" naming
 the outcome once an hour per Job, and tells the admins once per Job and outcome. docket's own
 usage-limit pause (which waits for the reset the CLI named) applies only to a `usage_limit` result
-that reaches the tracker: city-hall#18 as proposed sends one back only when it stores that result,
-as when a job that was requeued later fails at its maximum of expired leases.
+that reaches the tracker: under city-hall#18 as merged, that happens only when the job ends failed
+with that result still stored, as when a job that was requeued later fails at its maximum of
+expired leases.
 The plugin never calls a model, holds no Claude credential and no `ANTHROPIC_*` variable; model
 output is data, cleaned by docket before it reaches a DM or a finding, and every research DM goes
 out with no allowed mentions: the host sends every `dm` with `allowedMentions: { parse: [] }`
-(CONTEXT.md). **The wire is city-hall#18's
-proposal, not yet agreed by Nazu**: the source pair is a stand-in for the source and responder
-contracts (its decision 0002), so it may change, and this adapter with it -- the requeue reading
-above and `lastOutcome` (city-hall#18 at 2ba40d3) included.
+(CONTEXT.md). **The wire is city-hall#18's**
+([Lepid-Labs/city-hall#18](https://github.com/Lepid-Labs/city-hall/pull/18), merged as 90a06ec),
+but its decision record 0002 is still "proposed" pending Nazu's review
+([Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17)): the source pair is
+a stand-in for the source and responder contracts, so it may change, and this adapter with it --
+the requeue reading above and `lastOutcome` (present in the merged 90a06ec) included.
 
 **Research while the lane is off.** If an instance that had city-hall configured loses that
 configuration, its research requests stay queued: nothing runs them until research is available
@@ -513,8 +516,11 @@ key>`, so two databases never collide.
   (E10, deferred). Discord OAuth2 as a second sign-in
   method, if chosen (plan item 41).
 - The rest of #82: per-type grants beyond tier 0 (research needs only `notify`), the transcripts
-  policy, and live verification against a real city-hall and docket-runner (city-hall#18 is not
-  merged). The scout and the want-list (E9).
+  policy, and live verification against a real city-hall and docket-runner
+  ([Lepid-Labs/city-hall#18](https://github.com/Lepid-Labs/city-hall/pull/18) is merged as
+  90a06ec, its decision record still "proposed" pending
+  [Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17); the research lane
+  still needs a deployed city-hall with a runner). The scout and the want-list (E9).
 - Editing in Discord (the editor is on the web only), and changing a price tracker's page or `near` after it is made (make a new one); a free-form pattern for `price` (`near` is the safe subset: a user's regular expression run on a large page could hang the bot).
 - An optional Discord-role gate (plan 5.5), and showing unconfirmed deliveries to admins anywhere but the log, or a run's deliveries in its history.
 
