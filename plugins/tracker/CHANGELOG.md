@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.12.0] - 2026-10-01
+
+### Added
+
+- A research request from the web editor and the JSON task API (#82). `/new/research` takes
+  `/research`'s options -- the question, an optional context, deadline and start, in `/research`'s
+  words -- and makes the request through the same function, so the same limits, the cap of 5
+  waiting per person (counted across Discord, the web and the API) and the daily budget apply. My
+  tasks links to it only while research is available; without the city-hall Executor the page says
+  research is not available instead of showing a form, and a post makes nothing. `POST
+  /api/v1/tasks` takes `type: "research"` with `question`, `context`, `deadline` and `at`, and
+  answers `503 unavailable` in `/research`'s words while research is not available. A research
+  request is never edited, as in Discord: its page has Pause, Resume and Delete but no Edit, and a
+  `PATCH` of one answers `409 conflict`. Making one only queues its run; nothing reaches city-hall
+  until the execute tick.
+- `GET /api/v1/types` lists `research` while it is available, and gives every type an `editable`
+  flag (false for research, whose `edit` is empty). A research request read over the API carries
+  what was asked in `settings` (`question`, and `context` and `deadline` when given), to its owner
+  only.
+
+### Changed
+
+- The task API answers `409 busy`, not `400 invalid`, for a task the execute tick holds ("That task
+  is with the model runner right now"), as it does for a price page still being read.
+
 ## [0.11.0] - 2026-10-01
 
 ### Added

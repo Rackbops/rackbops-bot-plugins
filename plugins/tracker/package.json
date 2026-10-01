@@ -1,7 +1,7 @@
 {
   "name": "@rackbops/plugin-tracker",
-  "version": "0.11.0",
-  "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops and one-off research (through city-hall, with its findings) by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks, an admin view (with the DMs that did not arrive), forget-me, and a JSON task API with personal API tokens",
+  "version": "0.12.0",
+  "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops and one-off research (through city-hall, with its findings) by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed), an admin view (with the DMs that did not arrive), forget-me, and a JSON task API with personal API tokens",
   "type": "module",
   "main": "dist/plugin.js",
   "files": ["dist"],

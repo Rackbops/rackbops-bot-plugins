@@ -151,8 +151,8 @@ served at a hashed path, cached for a year).
 | Path | What |
 |---|---|
 | `/` | My tasks: the same list as `/tasks` (active tasks owned and received, next run in your zone; paused ones and why), each linking to its history, and links to make a new one. |
-| `/tasks/<id>` | A task's history: the same as `/task history`, for the owner, an accepted recipient or an admin. Anyone else gets the same 404 as an unknown id. The owner also sees Edit, Pause or Resume, and Delete. |
-| `/new/reminder`, `/new/renewal`, `/new/price` | The editor's new-task forms (GET), and making one (POST). |
+| `/tasks/<id>` | A task's history: the same as `/task history`, for the owner, an accepted recipient or an admin. Anyone else gets the same 404 as an unknown id. The owner also sees Edit (not for a research request), Pause or Resume, and Delete. |
+| `/new/reminder`, `/new/renewal`, `/new/price`, `/new/research` | The editor's new-task forms (GET), and making one (POST). `/new/research` is linked from My tasks only while research is available; without it the page says research is not available instead of showing a form. |
 | `/tasks/<id>/edit` | The owner's edit form (GET) and saving it (POST). |
 | `/tasks/<id>/pause`, `/resume`, `/delete` | POST only. Delete answers a confirmation first; only a second post carrying `confirm=yes` deletes. |
 | `/settings` | Preferred hour and time zone, checked as `/register` checks them. Links to API tokens and Forget me. |
@@ -187,8 +187,8 @@ than `TRACKER_WEB_URL`'s is refused. The sign-in post has no session yet, so it 
 double-submit token from a `SameSite=Strict` cookie the link's page sets: another site cannot sign
 you in as someone else. Sign out is a POST too.
 
-**The task editor** (slice 2). The forms take the options of `/remind`, `/renewal` and `/price`,
-and the same functions check and make them: the same defaults, limits and messages, the page read
+**The task editor** (slice 2). The forms take the options of `/remind`, `/renewal`, `/price` and
+`/research` (#82), and the same functions check and make them: the same defaults, limits and messages, the page read
 once before a price tracker is made, at most 20 price trackers per person wherever they were made,
 and `near` turned into the same bounded pattern; a person has one new price tracker's page read in
 flight at a time. Every person may have at most 200 active or paused tasks of all types together,
@@ -211,7 +211,11 @@ are dropped and nothing more is sent, but its history is kept (an admin can see 
 its page stays for the owner. Every editor post passes the session, CSRF and `Origin` checks; the
 task is loaded by the id in the path and must be the viewer's own, checked again in the write
 queue, and anyone else's -- even one an admin can see -- answers the same 404 as an unknown id. A
-refused form comes back with what was typed and why. Form bodies are capped at 32 KiB, read no
+refused form comes back with what was typed and why. A research request made on the web is
+`/research`'s exactly -- the question, the optional context, deadline and start in `/research`'s
+words, the cap of 5 waiting, the daily budget -- and, as in Discord, it is never edited: its page
+has Pause, Resume and Delete but no Edit. Making one only queues its run; nothing reaches city-hall
+until the execute tick. Form bodies are capped at 32 KiB, read no
 further than that.
 
 **Headers.** `Content-Security-Policy: default-src 'none'; style-src 'self'; img-src 'none';
@@ -396,15 +400,18 @@ a price back the page's address -- exactly as the web editor's empty fields do. 
 value: it is refused as the wrong JSON type (send `""` to clear a note).
 
 Which types: `GET /tasks`, `GET /tasks/<id>`, pause, resume and `DELETE` work on any task you own,
-whatever its type; `POST /tasks` and `PATCH` take the three editor types (reminder, renewal,
-price), and a `PATCH` of a task of another type answers `404`, as the web editor does.
+whatever its type. `POST /tasks` takes the three editor types (reminder, renewal, price) and,
+while research is available on this bot, `research` (#82), by `/research`'s rules; while it is not,
+a `research` create answers `503 unavailable`. `PATCH` takes the three editor types only: a
+research request cannot be edited, here or in Discord, and a `PATCH` of one answers
+`409 conflict`.
 
 | Method and path | What |
 |---|---|
 | `GET /api/v1/me` | The token's owner (id, name, zone, preferred hour) and the token (id, name, made, expires). |
-| `GET /api/v1/types` | Each type's create and edit fields: name, JSON type, required (never, for an edit), description, and limits (`maxLength`, `minimum`, `maximum`, `enum`). This describes the tracker's own editor fields -- what these endpoints take -- and is **not** docket-core's `TaskType.intake` (`IntakeSpec`), which describes a type's config. |
+| `GET /api/v1/types` | Each type this bot makes now (research only while it is available), whether a `PATCH` takes it (`editable`; false for research, whose `edit` is empty), and its create and edit fields: name, JSON type, required (never, for an edit), description, and limits (`maxLength`, `minimum`, `maximum`, `enum`). This describes the tracker's own editor fields -- what these endpoints take -- and is **not** docket-core's `TaskType.intake` (`IntakeSpec`), which describes a type's config. |
 | `GET /api/v1/tasks` | Your tasks that are not deleted -- active, paused and done -- oldest first. Not the ones shared with you. |
-| `POST /api/v1/tasks` | Makes one: `type` is `reminder`, `renewal` or `price`, and the rest are that type's create fields. `201`, with `Location`. A price's page is read first, and nothing is made unless a price is found in it. |
+| `POST /api/v1/tasks` | Makes one: `type` is `reminder`, `renewal`, `price` or `research`, and the rest are that type's create fields. `201`, with `Location`. A price's page is read first, and nothing is made unless a price is found in it. A research request's fields are `question` (required), `context`, `deadline` and `at`, all text. |
 | `GET /api/v1/tasks/<id>` | One of your tasks (a deleted one too), with its history: the newest runs and changes, as `/task history` shows them. |
 | `PATCH /api/v1/tasks/<id>` | Edits it: the fields to change. A price's page is not editable. |
 | `POST /api/v1/tasks/<id>/pause`, `/resume` | Body `{}`. As the web's Pause and Resume, and `/task resume`. |
@@ -414,7 +421,8 @@ A task is `{"id", "type", "title", "status", "cadence", "nextAt", "createdAt", "
 "settings"}`, and a price also has a top-level `url`: `status` is `active`, `paused`, `done` or
 `deleted`; `cadence` is the schedule in words, in your zone; `nextAt` the next run's instant (UTC),
 null when paused or nothing is due; `settings` exactly the fields a `PATCH` takes, as the task has
-them. A price's `url` is read-only -- another page is another tracker -- so it is not in `settings`
+them. A research request's `settings` are what was asked -- `question`, and `context` and
+`deadline` (an instant) when given -- shown to you alone and changed by no `PATCH`. A price's `url` is read-only -- another page is another tracker -- so it is not in `settings`
 and a `PATCH` naming it is refused (`unknown_field`). A write answers
 `{"task", "message"}`, `message` being the words the web and the command say.
 
@@ -431,9 +439,9 @@ and a `PATCH` naming it is refused (`unknown_field`). A write answers
 | 403 | `not_member` | The owner has left every `TRACKER_GUILD_ID` server; their tokens are revoked. |
 | 404 | `not_found` | No such endpoint, or no such task of yours. Anyone else's task -- one shared with you, or any task to an admin's token -- answers exactly as an unknown id. |
 | 405 | `method_not_allowed` | With `Allow`. |
-| 409 | `conflict` | A finished task edited, or a pause of a task not active (a resume of one not paused). |
-| 409 | `limit_reached` | 200 active or paused tasks, or 20 price trackers, as the commands count them. |
-| 409 | `busy` | Your last new price tracker's page is still being read. |
+| 409 | `conflict` | A finished task edited, a research request edited, or a pause of a task not active (a resume of one not paused). |
+| 409 | `limit_reached` | 200 active or paused tasks, 20 price trackers, or 5 research requests waiting, as the commands count them. |
+| 409 | `busy` | Your last new price tracker's page is still being read, or the task is with the model runner right now (try again in a minute). |
 | 413 | `too_large` | Body over 16 KiB. |
 | 415 | `unsupported_media_type` | Not `application/json`. |
 | 429 | `rate_limited` | With `Retry-After`: this token's bucket, or the shared one for bad tokens. |
@@ -510,9 +518,8 @@ key>`, so two databases never collide.
 ## Not yet
 
 - The rest of the web area (E5): sharing a task from the web, and the admin view's grants, budgets
-  (raising a person's ceiling) and retry. Research is made in Discord only (the web editor and
-  the task API cover reminders, renewals and prices). The task API covers reminders, renewals and prices only --
-  not `/task done`, `snooze`, `decide`, `share` or the settings -- and no intake agent uses it yet
+  (raising a person's ceiling) and retry. The task API makes reminders, renewals, prices and
+  research requests -- not `/task done`, `snooze`, `decide`, `share` or the settings -- and no intake agent uses it yet
   (E10, deferred). Discord OAuth2 as a second sign-in
   method, if chosen (plan item 41).
 - The rest of #82: per-type grants beyond tier 0 (research needs only `notify`), the transcripts

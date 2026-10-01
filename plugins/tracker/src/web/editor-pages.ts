@@ -1,6 +1,7 @@
 import type { Task } from "@rackbops/docket-core";
 import { CURRENCY_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
 import { MAX_POLL_HOURS } from "../price.js";
+import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
 import { MAX_EVERY, MAX_LEAD_DAYS } from "../tracked.js";
 import { html, type Html } from "./html.js";
 import { framed, type Viewer } from "./pages.js";
@@ -15,12 +16,20 @@ import { framed, type Viewer } from "./pages.js";
 export type EditorType = "reminder" | "renewal" | "price";
 export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "price"];
 
+/**
+ * What the web and the API can make: the editor's types, and a research request
+ * (rackbops-bot-plugins#82), which is made and then paused, resumed or deleted but never edited --
+ * `/research` has no edit either. It is offered only while research is available (`d.research`).
+ */
+export type NewType = EditorType | "research";
+export const NEW_TYPES: readonly NewType[] = [...EDITOR_TYPES, "research"];
+
 export type Values = Readonly<Record<string, string>>;
 
 export interface Field {
   name: string;
   label: string;
-  kind: "text" | "number" | "date" | "url" | "select";
+  kind: "text" | "textarea" | "number" | "date" | "url" | "select";
   help?: string;
   required?: boolean;
   maxlength?: number;
@@ -41,9 +50,19 @@ const PRICE_SETTINGS: readonly Field[] = [
   { name: "baseline", label: "Measure the drop from", kind: "select", options: BASELINE_OPTIONS },
 ];
 
-/** The fields each form shows, in order. An edit of a price leaves out the page itself. */
-export function fieldsFor(type: EditorType, mode: "new" | "edit"): readonly Field[] {
+/** `/research`'s options, as research.ts reads them: `at` and `deadline` in `parseWhen`'s words. */
+const RESEARCH_FIELDS: readonly Field[] = [
+  { name: "question", label: "What to look into", kind: "textarea", required: true, maxlength: MAX_QUESTION_CHARS },
+  { name: "context", label: "Context", kind: "textarea", maxlength: MAX_CONTEXT_CHARS, help: "Anything that narrows it down. Only you see it here; it goes to the model with the question." },
+  { name: "deadline", label: "Deadline", kind: "text", maxlength: MAX_WHEN, help: 'For example "fri 17:00". Past it nothing more is run.' },
+  { name: "at", label: "Start", kind: "text", maxlength: MAX_WHEN, help: "Leave it empty to start now." },
+];
+
+/** The fields each form shows, in order. An edit of a price leaves out the page itself; a research request has no edit. */
+export function fieldsFor(type: NewType, mode: "new" | "edit"): readonly Field[] {
   switch (type) {
+  case "research":
+    return mode === "new" ? RESEARCH_FIELDS : [];
   case "reminder":
     return [
       { name: "text", label: "Remind me to", kind: "text", required: true, maxlength: MAX_REMINDER_TEXT },
@@ -98,6 +117,13 @@ function field(f: Field, values: Values): Html {
 ${help}
 </div>`;
   }
+  if (f.kind === "textarea") {
+    return html`<div class="rb-field">
+<label class="rb-label" for="${f.name}">${f.label}</label>
+<textarea class="rb-textarea" id="${f.name}" name="${f.name}" rows="4"${f.maxlength ? html` maxlength="${f.maxlength}"` : null}${f.required ? html` required` : null}>${value}</textarea>
+${help}
+</div>`;
+  }
   const type = f.kind === "number" ? "number" : f.kind === "date" ? "date" : f.kind === "url" ? "url" : "text";
   return html`<div class="rb-field">
 <label class="rb-label" for="${f.name}">${f.label}</label>
@@ -116,11 +142,29 @@ export function taskHref(v: Viewer, id: string, action = ""): string {
   return `${v.base}/tasks/${encodeURIComponent(id)}${action ? `/${action}` : ""}`;
 }
 
-const NOUN: Record<EditorType, string> = { reminder: "reminder", renewal: "renewal", price: "price tracker" };
+const NOUN: Record<NewType, string> = { reminder: "reminder", renewal: "renewal", price: "price tracker", research: "research request" };
 
-/** A new task of `type`: the empty form, or the one just refused with what was typed. */
-export function newTaskPage(v: Viewer, type: EditorType, values: Values, error?: string): string {
-  const intro = type === "price" ? html`<p class="rb-muted">I read the page once now; nothing is made unless I find a price in it.</p>` : null;
+const INTRO: Partial<Record<NewType, string>> = {
+  price: "I read the page once now; nothing is made unless I find a price in it.",
+  research:
+    "A research run looks it up on the web, then a second run checks the answer against its sources; only an answer that passes is DMed to you. It can take a while, and requests share a daily budget.",
+};
+
+/**
+ * A new task of `type`: the empty form, or the one just refused with what was typed. `off` is why
+ * the type cannot be made on this bot (research without the model runner): said instead of a form.
+ */
+export function newTaskPage(v: Viewer, type: NewType, values: Values, error?: string, off?: string): string {
+  const text = INTRO[type];
+  const intro = text ? html`<p class="rb-muted">${text}</p>` : null;
+  const form = off
+    ? html`<div class="rb-alert rb-alert--warning" role="status"><p>${prose(off)}</p></div>`
+    : html`${alert(error)}
+<form method="post" action="${v.base}/new/${type}" class="tr-stack">
+<input type="hidden" name="csrf" value="${v.csrf}">
+${fieldsFor(type, "new").map((f) => field(f, values))}
+<div><button class="rb-btn rb-btn--primary" type="submit">Create</button></div>
+</form>`;
   return framed(
     v,
     `New ${NOUN[type]}`,
@@ -128,12 +172,7 @@ export function newTaskPage(v: Viewer, type: EditorType, values: Values, error?:
 <p><a class="rb-link" href="${v.base}/">My tasks</a></p>
 <h1>New ${NOUN[type]}</h1>
 ${intro}
-${alert(error)}
-<form method="post" action="${v.base}/new/${type}" class="tr-stack">
-<input type="hidden" name="csrf" value="${v.csrf}">
-${fieldsFor(type, "new").map((f) => field(f, values))}
-<div><button class="rb-btn rb-btn--primary" type="submit">Create</button></div>
-</form>
+${form}
 </section>`,
   );
 }

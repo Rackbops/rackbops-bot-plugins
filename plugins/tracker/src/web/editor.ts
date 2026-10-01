@@ -7,9 +7,10 @@ import { loadHistory } from "../history.js";
 import { deleteTask, type Done, ownLiveTask, pauseTask, resumeTask } from "../manage.js";
 import { createReminder } from "../reminders.js";
 import { finishPrice, previewPrice, startPrice } from "../price.js";
+import { createResearch, RESEARCH_OFF } from "../research.js";
 import { createRenewal } from "../tracked.js";
-import { type EditorType, confirmDeletePage, editTaskPage, newTaskPage, notice, ownerControls, taskHref, type Values } from "./editor-pages.js";
-import { editValues, priceEdit, priceInput, reminderEdit, reminderInput, renewalEdit, renewalInput, typed } from "./form-input.js";
+import { type EditorType, confirmDeletePage, editTaskPage, type NewType, newTaskPage, notice, ownerControls, taskHref, type Values } from "./editor-pages.js";
+import { editValues, priceEdit, priceInput, reminderEdit, reminderInput, renewalEdit, renewalInput, researchInput, typed } from "./form-input.js";
 import { htmlResponse, redirect } from "./html.js";
 import { historyPage, notFoundPage, type Viewer } from "./pages.js";
 
@@ -19,7 +20,7 @@ import { historyPage, notFoundPage, type Viewer } from "./pages.js";
  * the `Origin` and the CSRF token; here every act loads the task by id and checks, in the queue,
  * that the viewer owns it -- an id in the path is never trusted for ownership -- and anything else
  * answers the same 404 as an unknown id. The rules are the commands' own (reminders.ts, tracked.ts,
- * edit.ts, manage.ts); this file only reads the form and renders. Every write takes its turn in the
+ * research.ts, edit.ts, manage.ts); this file only reads the form and renders. Every write takes its turn in the
  * surface's one queue, against the person as the store has them then.
  *
  * The writes themselves (`makeTask`, `saveEdit`, `actOn`) are shared with the JSON task API
@@ -59,10 +60,12 @@ function asUser<T extends { ok: boolean }>(w: Writer, fn: (user: User) => Promis
 
 export type Written = TaskResult | { ok: false; error: string };
 
-/** A new task of `type` from its fields: `/remind`'s, `/renewal`'s or `/price`'s rules, in the queue. */
-export async function makeTask(w: Writer, type: EditorType, form: URLSearchParams): Promise<Written> {
+/** A new task of `type` from its fields: `/remind`'s, `/renewal`'s, `/price`'s or `/research`'s rules, in the queue. */
+export async function makeTask(w: Writer, type: NewType, form: URLSearchParams): Promise<Written> {
   if (type === "reminder") return asUser(w, (u) => createReminder(w.d, u, reminderInput(form)));
   if (type === "renewal") return asUser(w, (u) => createRenewal(w.d, u, renewalInput(form)));
+  // Research only queues a Job: nothing reaches city-hall until the execute tick, so nothing slow runs here.
+  if (type === "research") return asUser(w, (u) => createResearch(w.d, u, researchInput(form)));
   const input = priceInput(form);
   // One page read per person at a time: the web has no Discord rate limit in front of it, and
   // each read is an outbound request of up to 15 s.
@@ -103,17 +106,20 @@ export function actOn(w: Writer, taskId: string, action: TaskAction): Promise<Do
 
 // --- new ------------------------------------------------------------------------------------------
 
-const DEFAULTS: Record<EditorType, Values> = {
+const DEFAULTS: Record<NewType, Values> = {
   reminder: { repeat: "none" },
   renewal: { unit: "year", every: "1", lead: "7" },
   price: { hours: "12", drop: "10", baseline: "last" },
+  research: {},
 };
 
-export function newGet(e: Editor, type: EditorType): Response {
+export function newGet(e: Editor, type: NewType): Response {
+  // Without the model runner the page says so instead of offering a form that can only be refused.
+  if (type === "research" && !e.d.research) return htmlResponse(newTaskPage(e.v, type, {}, undefined, RESEARCH_OFF));
   return htmlResponse(newTaskPage(e.v, type, type === "renewal" ? { ...DEFAULTS.renewal, currency: "USD" } : DEFAULTS[type]));
 }
 
-export async function newPost(e: Editor, type: EditorType, form: URLSearchParams): Promise<Response> {
+export async function newPost(e: Editor, type: NewType, form: URLSearchParams): Promise<Response> {
   const made = await makeTask(writer(e), type, form);
   if (!made.ok) return htmlResponse(newTaskPage(e.v, type, typed(type, "new", form), made.error), 400);
   return redirect(`${taskHref(e.v, made.task.id)}?done=created`);
