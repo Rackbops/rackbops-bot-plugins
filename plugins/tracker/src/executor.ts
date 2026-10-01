@@ -17,8 +17,10 @@ import { META_TABLE } from "./schema.js";
  * credential; what it holds is a source key toward city-hall (plan item 50: the tracker's
  * credential toward city-hall arrives with E8).
  *
- * The wire is Lepid-Labs/city-hall#18's (proposed, not agreed by Nazu; decision 0002 calls the
- * source pair a stand-in for the source and responder contracts, so it may change):
+ * The wire is Lepid-Labs/city-hall#18's (https://github.com/Lepid-Labs/city-hall/pull/18, merged
+ * as 90a06ec). Its decision record 0002 is still "proposed" pending Nazu's review
+ * (https://github.com/Lepid-Labs/city-hall/issues/17) and calls the source pair a stand-in for the
+ * source and responder contracts, so it may change:
  *
  * - `POST {url}/api/execute/jobs` with `{ key, capability, spec, responder }` and the source bearer
  *   key: `201 { job }` new, `200 { job }` for a key already used (the same job back);
@@ -332,8 +334,8 @@ export function readJob(body: unknown): RemoteJob | null {
   const j = body.job;
   if (typeof j.id !== "string" || j.id === "") return null;
   if (j.status !== "queued" && j.status !== "running" && j.status !== "done" && j.status !== "failed") return null;
-  // `lastOutcome` is preferred when city-hall sends the field at all (null included); the runs
-  // list is the fallback while #18 is unmerged and may change.
+  // `lastOutcome` is preferred when city-hall sends the field at all (null included; city-hall#18
+  // as merged in 90a06ec sends it); the runs list is the fallback for a city-hall without it.
   const lastOutcome = "lastOutcome" in j ? (typeof j.lastOutcome === "string" ? j.lastOutcome : null) : lastRunOutcome(body.runs);
   return {
     id: j.id,
