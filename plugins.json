@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-30T23:25:37.232Z",
+  "generatedAt": "2026-10-01T00:19:56.083Z",
   "plugins": [
     {
       "name": "mcp",
@@ -164,8 +164,8 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.9.0",
-      "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks, an admin view, forget-me, and a JSON task API with personal API tokens",
+      "version": "0.10.0",
+      "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks, an admin view (with the DMs that did not arrive), forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
       "commands": [
@@ -203,6 +203,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "0.10.0",
+          "publishedAt": "2026-10-01T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.10.0",
+          "notes": "### Added\n\n- The admin view's Deliveries page, `/admin/deliveries`, linked from every admin page: the DMs that\n  settled `failed`, `unconfirmed` or `deferred` in the last 30 days, newest first, at most 200 rows\n  (it says how many matched when the bound cuts the list). Each row shows the task (title linking\n  to its page, id and owner), the run's due time, the recipient (linking to their admin page), the\n  status, attempts and deferrals, the error text, and when it settled. Until now such a DM showed\n  only in the bot log. Admins only, through the same gate as the other admin pages: anyone else\n  gets the unknown page's 404. Read-only: no form, nothing changes on it. One SQL read over docket's\n  `deliveries` table with each row's run and task (`Roster.undelivered`), since the Store port's\n  `listDeliveries` takes neither a window nor a bound."
+        },
         {
           "version": "0.9.0",
           "publishedAt": "2026-09-30T00:00:00.000Z",

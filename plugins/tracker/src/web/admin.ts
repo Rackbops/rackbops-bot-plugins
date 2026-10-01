@@ -14,7 +14,7 @@ import {
 } from "../admin.js";
 import type { Queue } from "../discord-common.js";
 import type { Done } from "../manage.js";
-import { adminPage, adminTasksPage, CONFIRM_WORD, confirmForgetPage, forgetPage, nameOf, personHref, personPage, type Result } from "./admin-pages.js";
+import { adminDeliveriesPage, adminPage, adminTasksPage, CONFIRM_WORD, confirmForgetPage, forgetPage, nameOf, personHref, personPage, type Result } from "./admin-pages.js";
 import { htmlResponse, redirect } from "./html.js";
 import { notFoundPage, type Viewer } from "./pages.js";
 import type { Route } from "./routes.js";
@@ -77,11 +77,15 @@ async function onePerson(a: AdminWeb, id: string, result: Result = null): Promis
   return htmlResponse(personPage(a.v, p, tasks, a.d.clock.now(), result, isConfiguredAdmin(a.d, p), tokens), result && !result.ok ? 400 : 200);
 }
 
-/** The admin view's pages (GET): people, all tasks, one person. */
+/** The admin view's pages (GET): people, all tasks, the DMs that did not arrive, one person. */
 export async function adminGet(a: AdminWeb, r: Route): Promise<Response> {
   if (r.kind === "admin") return peoplePage(a, null, 200);
   if (r.kind === "admin-person") return onePerson(a, r.id);
   const people = new Map(a.d.roster.people().map((p) => [p.id, nameOf(p)]));
+  if (r.kind === "admin-deliveries") {
+    const now = a.d.clock.now();
+    return htmlResponse(adminDeliveriesPage(a.v, { ...a.d.roster.undelivered(now), names: people, now }));
+  }
   const rows = [];
   for (const task of await a.d.store.listTasks()) {
     const receiving = (await a.d.store.listRecipients(task.id)).filter((x) => x.state === "accepted").length;

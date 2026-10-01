@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.0] - 2026-10-01
+
+### Added
+
+- The admin view's Deliveries page, `/admin/deliveries`, linked from every admin page: the DMs that
+  settled `failed`, `unconfirmed` or `deferred` in the last 30 days, newest first, at most 200 rows
+  (it says how many matched when the bound cuts the list). Each row shows the task (title linking
+  to its page, id and owner), the run's due time, the recipient (linking to their admin page), the
+  status, attempts and deferrals, the error text, and when it settled. Until now such a DM showed
+  only in the bot log. Admins only, through the same gate as the other admin pages: anyone else
+  gets the unknown page's 404. Read-only: no form, nothing changes on it. One SQL read over docket's
+  `deliveries` table with each row's run and task (`Roster.undelivered`), since the Store port's
+  `listDeliveries` takes neither a window nor a bound.
+
 ## [0.9.0] - 2026-09-30
 
 ### Changed

@@ -57,6 +57,31 @@ export interface Erased {
 
 type Count = { n: number };
 
+/** The delivery statuses the admin's Deliveries page lists: a DM that did not arrive, or not yet. */
+export const UNDELIVERED = ["failed", "unconfirmed", "deferred"] as const;
+
+/** How far back, and how many rows at most, the Deliveries page reads. */
+export const UNDELIVERED_DAYS = 30;
+export const UNDELIVERED_LIMIT = 200;
+
+/** One recipient's copy of a run that did not arrive, as the admin's Deliveries page lists it. */
+export interface UndeliveredRow {
+  occurrenceId: string;
+  /** Null when the run or its task is gone (a row from before an erasure, say). */
+  taskId: string | null;
+  title: string | null;
+  ownerId: string | null;
+  dueAt: string | null;
+  userId: string;
+  status: (typeof UNDELIVERED)[number];
+  attempts: number;
+  deferrals: number;
+  error: string | null;
+  /** When it was last settled; null only for a row that never was (not one this page lists in practice). */
+  settledAt: string | null;
+  createdAt: string;
+}
+
 /** The tables the erasure touches, in the order it deletes from them. Every table in the schema is here. */
 export const ERASED_TABLES = [
   "events",
@@ -214,6 +239,50 @@ export class Roster {
   /** How many admins there are. */
   admins(): number {
     return (this.db.query("SELECT COUNT(*) AS n FROM users WHERE admin = 1").get() as Count).n;
+  }
+
+  /**
+   * The deliveries that did not arrive (`UNDELIVERED`), settled (or, never settled, made) within
+   * `days` before `now`, newest first, at most `limit` of them; and how many match in all. One read
+   * over the `deliveries` table docket's Store keeps, with each row's run and task beside it: the
+   * port's `listDeliveries` takes one status at a time, oldest first, with neither a window nor a
+   * bound, so this is plain SQL like the rest of this file.
+   */
+  undelivered(now: Date, days = UNDELIVERED_DAYS, limit = UNDELIVERED_LIMIT): { rows: UndeliveredRow[]; total: number } {
+    const since = new Date(now.getTime() - days * 86_400_000).toISOString();
+    const statuses = UNDELIVERED.map(() => "?").join(", ");
+    const where = `d.status IN (${statuses}) AND COALESCE(d.settled_at, d.created_at) >= ?`;
+    const total = (this.db.query(`SELECT COUNT(*) AS n FROM deliveries d WHERE ${where}`).get(...UNDELIVERED, since) as Count).n;
+    const rows = this.db
+      .query(
+        `SELECT d.occurrence_id, d.user_id, d.status, d.attempts, d.deferrals, d.error, d.settled_at, d.created_at,
+                o.due_at, t.seq AS task_seq, t.title, t.owner_id
+         FROM deliveries d
+         LEFT JOIN occurrences o ON d.occurrence_id = 'o' || o.seq
+         LEFT JOIN tasks t ON o.task_id = 't' || t.seq
+         WHERE ${where}
+         ORDER BY COALESCE(d.settled_at, d.created_at) DESC, d.seq DESC
+         LIMIT ?`,
+      )
+      .all(...UNDELIVERED, since, limit) as Record<string, unknown>[];
+    const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
+    return {
+      total: Number(total),
+      rows: rows.map((r) => ({
+        occurrenceId: String(r.occurrence_id),
+        taskId: r.task_seq === null || r.task_seq === undefined ? null : `t${Number(r.task_seq)}`,
+        title: str(r.title),
+        ownerId: str(r.owner_id),
+        dueAt: str(r.due_at),
+        userId: String(r.user_id),
+        status: String(r.status) as UndeliveredRow["status"],
+        attempts: Number(r.attempts),
+        deferrals: Number(r.deferrals),
+        error: str(r.error),
+        settledAt: str(r.settled_at),
+        createdAt: String(r.created_at),
+      })),
+    };
   }
 
   /** Every decline block in force at `now`, newest first. */
