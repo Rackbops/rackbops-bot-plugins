@@ -41,13 +41,18 @@ export function reminderInput(form: URLSearchParams): ReminderInput {
   return { text: str(form, "text"), ...(when !== undefined ? { when } : {}), repeat: (str(form, "repeat") || "none") as Repeat };
 }
 
+/** A textarea sends a line break as CRLF; keep it one character, as the browser's maxlength counted it. */
+function lines(v: string | undefined): string | undefined {
+  return v?.replace(/\r\n?/g, "\n");
+}
+
 /** `/research`'s options: an empty `context`, `deadline` or `at` is left out, as an unset option is. */
 export function researchInput(form: URLSearchParams): ResearchInput {
-  const context = opt(form, "context");
+  const context = lines(opt(form, "context"));
   const deadline = opt(form, "deadline");
   const at = opt(form, "at");
   return {
-    question: str(form, "question"),
+    question: lines(str(form, "question")) ?? "",
     ...(context !== undefined ? { context } : {}),
     ...(deadline !== undefined ? { deadline } : {}),
     ...(at !== undefined ? { at } : {}),

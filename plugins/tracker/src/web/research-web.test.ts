@@ -4,6 +4,7 @@ import type { Plugin } from "../../../../packages/api/contract.js";
 import { TASK_BUSY } from "../locks.js";
 import { MAX_CONTEXT_CHARS, MAX_LIVE_RESEARCH, MAX_QUESTION_CHARS, RESEARCH_OFF } from "../research.js";
 import { NOT_EDITABLE, NOT_FOUND_MESSAGE, refusal } from "./api-tasks.js";
+import { researchInput } from "./form-input.js";
 import { api, call, cleanup, csrfOf, CURLY, hidden, type Jar, LARRY, makeToken, ORIGIN, people, signIn, slash, world } from "./harness.js";
 
 /**
@@ -255,5 +256,12 @@ describe("research from the task API", () => {
 
   it("a task the execute tick holds answers 409 busy, not 400", () => {
     expect(refusal(TASK_BUSY)).toEqual({ status: 409, body: { error: { code: "busy", message: TASK_BUSY } } });
+  });
+});
+
+describe("researchInput", () => {
+  it("keeps a typed line break one character, as the browser's maxlength counted it", () => {
+    const form = new URLSearchParams({ question: "one\r\ntwo\rthree", context: "a\r\nb" });
+    expect(researchInput(form)).toEqual({ question: "one\ntwo\nthree", context: "a\nb" });
   });
 });

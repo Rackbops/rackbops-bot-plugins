@@ -151,7 +151,7 @@ served at a hashed path, cached for a year).
 | Path | What |
 |---|---|
 | `/` | My tasks: the same list as `/tasks` (active tasks owned and received, next run in your zone; paused ones and why), each linking to its history, and links to make a new one. |
-| `/tasks/<id>` | A task's history: the same as `/task history`, for the owner, an accepted recipient or an admin. Anyone else gets the same 404 as an unknown id. The owner also sees Edit, Pause or Resume, and Delete. |
+| `/tasks/<id>` | A task's history: the same as `/task history`, for the owner, an accepted recipient or an admin. Anyone else gets the same 404 as an unknown id. The owner also sees Edit (not for a research request), Pause or Resume, and Delete. |
 | `/new/reminder`, `/new/renewal`, `/new/price`, `/new/research` | The editor's new-task forms (GET), and making one (POST). `/new/research` is linked from My tasks only while research is available; without it the page says research is not available instead of showing a form. |
 | `/tasks/<id>/edit` | The owner's edit form (GET) and saving it (POST). |
 | `/tasks/<id>/pause`, `/resume`, `/delete` | POST only. Delete answers a confirmation first; only a second post carrying `confirm=yes` deletes. |
