@@ -477,7 +477,13 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
   async function pausedOrAnswer(job: RemoteJob, jobKey: string): Promise<JobResult> {
     const outcome = requeuedBy(job);
     const at = o.now();
-    let pausedAt = o.records.pausedAt(jobKey);
+    let pausedAt: string | null;
+    try {
+      pausedAt = o.records.pausedAt(jobKey);
+    } catch {
+      // Like the write below: a store that cannot answer must not end or give up the Job.
+      throw new ExecutorUnavailableError(`the tracker could not read whether ${jobKey} was paused`);
+    }
     if (outcome !== null && pausedAt === null) {
       try {
         o.records.markPaused(jobKey, at.toISOString());

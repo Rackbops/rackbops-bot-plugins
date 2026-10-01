@@ -447,6 +447,15 @@ describe("a Job once paused stays held until it finishes, for at most 48 h (revi
     expect(await w.executor.run(null, "o7", "o7")).toEqual({ kind: "success", result: "r", durationMs: 1 });
   });
 
+  it("a store that cannot read the pause record answers unavailable, never ends the Job", async () => {
+    const w = setup(() => json(200, { job: job("running", { attempts: 1, lastOutcome: null }), runs: [] }));
+    w.records.put("o7", "o7", "j-1", NOW.toISOString());
+    w.records.pausedAt = () => {
+      throw new Error("SQLITE_BUSY");
+    };
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+  });
+
   it("a Job never seen paused is pending as before", async () => {
     const w = setup(() => json(200, { job: job("running", { attempts: 1, lastOutcome: null }), runs: [] }));
     w.records.put("o7", "o7", "j-1", NOW.toISOString());
