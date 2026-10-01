@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { NO_SUCH_TASK } from "./actions.js";
 import { KEY_PREFIX } from "./executor.js";
 import { MAX_LIVE_RESEARCH, RESEARCH_OFF } from "./research.js";
-import { ADMIN, api, call, cleanup, CURLY, LARRY, makeToken, people, press, signIn, slash, world } from "./web/harness.js";
+import { ADMIN, api, call, cleanup, csrfOf, CURLY, LARRY, makeToken, ORIGIN, people, press, signIn, slash, world } from "./web/harness.js";
 
 /**
  * The research request end to end (rackbops-bot-plugins#82): `/research`, the execute lane on its
@@ -276,6 +276,24 @@ describe("/research through city-hall", () => {
     w.clock.set("2026-10-02T05:00:00.000Z");
     await w.round();
     expect(w.city.jobs.size).toBe(2);
+  });
+
+  it("an admin's raise from the web lets a held run go the same day, through docket's own budget check (plan 5.7)", async () => {
+    const w = await setup();
+    await slash(w.plugin, "research", LARRY, { strings: { question: "What is X?" } });
+    await w.round();
+    const research = w.city.byKey("o1");
+    if (research) Object.assign(research, { status: "done", result: success(ANSWER, 2.5) });
+    await w.round();
+    await w.round();
+    expect(w.city.jobs.size).toBe(1); // held at the default 2 USD
+    const admin = await signIn(w.plugin, ADMIN);
+    const csrf = await csrfOf(w.plugin, admin);
+    const raised = await call(w.plugin, "POST", "/admin/people/u2/ceiling", { jar: admin, form: { csrf, usd: "5", calls: "40" }, origin: ORIGIN });
+    expect(raised.status).toBe(200);
+    await w.round();
+    expect(w.city.jobs.size).toBe(2); // the review went out the same day
+    expect(dmsTo(w.sent, LARRY).filter((c) => c.includes("You have reached today's limit"))).toHaveLength(1);
   });
 
   it("a runner paused past six hours is collected when it resumes: one Job, one charge, no second key (review of #110, round 2)", async () => {

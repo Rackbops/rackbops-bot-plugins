@@ -1,4 +1,4 @@
-import type { User } from "@rackbops/docket-core";
+import { DEFAULT_BUDGET, type User } from "@rackbops/docket-core";
 import type { Membership } from "../access.js";
 import { allowPerson, type TrackerDeps } from "../actions.js";
 import {
@@ -12,6 +12,7 @@ import {
   setAdminFlag,
   ticksSettled,
 } from "../admin.js";
+import { boundsOf, type CeilingInput, setCeiling, spentToday } from "../ceilings.js";
 import type { Queue } from "../discord-common.js";
 import type { Done } from "../manage.js";
 import { adminDeliveriesPage, adminPage, adminTasksPage, CONFIRM_WORD, confirmForgetPage, forgetPage, nameOf, personHref, personPage, type Result } from "./admin-pages.js";
@@ -70,11 +71,21 @@ async function peoplePage(a: AdminWeb, result: Result, status: number, allow?: s
 }
 
 async function onePerson(a: AdminWeb, id: string, result: Result = null): Promise<Response> {
-  const p = a.d.roster.people().find((x) => x.id === id);
+  const everyone = a.d.roster.people();
+  const p = everyone.find((x) => x.id === id);
   if (!p) return htmlResponse(notFoundPage(a.v.base, a.v), 404);
   const tasks = await a.d.store.listTasks({ ownerId: p.id });
-  const tokens = a.d.apiTokens.listFor(p.id, a.d.clock.now());
-  return htmlResponse(personPage(a.v, p, tasks, a.d.clock.now(), result, isConfiguredAdmin(a.d, p), tokens), result && !result.ok ? 400 : 200);
+  const now = a.d.clock.now();
+  const tokens = a.d.apiTokens.listFor(p.id, now);
+  const budget = {
+    latest: a.d.ceilings.latest(p.id),
+    history: a.d.ceilings.history(p.id),
+    today: await spentToday(a.d.store, p.id, now),
+    defaults: DEFAULT_BUDGET.person,
+    bounds: boundsOf(),
+    names: new Map(everyone.map((x) => [x.id, nameOf(x)])),
+  };
+  return htmlResponse(personPage(a.v, p, tasks, now, result, isConfiguredAdmin(a.d, p), tokens, budget), result && !result.ok ? 400 : 200);
 }
 
 /** The admin view's pages (GET): people, all tasks, the DMs that did not arrive, one person. */
@@ -94,7 +105,7 @@ export async function adminGet(a: AdminWeb, r: Route): Promise<Response> {
   return htmlResponse(adminTasksPage(a.v, rows));
 }
 
-/** The admin view's acts (POST): allow, the admin flag, resuming delivery, lifting a block, revoking an API token, removing a person. */
+/** The admin view's acts (POST): allow, the admin flag, resuming delivery, a person's ceiling, lifting a block, revoking an API token, removing a person. */
 export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): Promise<Response> {
   const base = a.v.base;
   if (r.kind === "admin-allow") {
@@ -124,6 +135,14 @@ export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): P
     if (owner === null) return unknownPage(base);
     if (owner.whose === null) return htmlResponse(notFoundPage(base, a.v), 404);
     return onePerson(a, owner.whose, { ok: true, text: "Revoked: that token no longer works." });
+  }
+  if (r.kind === "admin-ceiling") {
+    // A raise or a reset (plan 5.7: "The admin raises a person's ceiling from the web area").
+    const input: CeilingInput = form.get("reset") === "yes" ? { reset: true } : { reset: false, usd: form.get("usd") ?? "", calls: form.get("calls") ?? "" };
+    const done = await fresh(a, true, (me) => setCeiling(a.d, me, r.id, input));
+    if (done === null) return unknownPage(base);
+    if (!done.ok && done.error === NO_SUCH_PERSON) return htmlResponse(notFoundPage(base, a.v), 404);
+    return onePerson(a, r.id, said(done));
   }
   if (r.kind !== "admin-act") return unknownPage(base);
   if (r.action === "forget") {

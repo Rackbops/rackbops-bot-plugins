@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.13.0] - 2026-10-01
+
+### Added
+
+- An admin raises a person's daily model ceiling from the web area (#82; plan 5.7, "The admin
+  raises a person's ceiling from the web area (5.10)"). A person's admin page gains a Daily model
+  budget section: what they spent today, their ceiling now, a form for both numbers (dollars to the
+  cent, whole model calls; at least the default 2 USD / 20 calls, at most the global 10 USD / 100),
+  **Back to the default**, and every change made, newest first. **A raise stands until an admin
+  changes it** -- the default proposed on #82, roshne's to confirm, and reversible (a today-only
+  raise is a change to `limitsOf` in `ceilings.ts`). The execute lane's budget is now docket's
+  defaults plus `personFor`, which reads the person's newest change before every run, so a held
+  request runs on the next tick after a raise; the global ceiling is still checked first. Every
+  change is an append-only row and a log line. `POST /admin/people/<id>/ceiling` is admin only,
+  behind the session, `Origin` and CSRF checks of every admin act; a non-admin gets the unknown
+  page's 404.
+- Forget-me deletes the person's ceiling changes, and a change they made to someone else's ceiling
+  keeps its row with `set_by` = `forgotten`.
+
+### Schema
+
+- **Migration 7, purely additive**: one new table, `ceiling_changes` (`user_id`, `usd`, `calls`,
+  `set_by`, `at`; both values null = back to the default, a `CHECK` keeps them together), and its
+  index `ceiling_changes_user`. No existing table, column or row changes. A database at 7 is
+  refused by 0.12.0 and older (their `migrate` throws on a newer schema), so a rollback past 0.13.0
+  needs the database from before the upgrade.
+
 ## [0.12.0] - 2026-10-01
 
 ### Added

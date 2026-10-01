@@ -24,6 +24,7 @@ import {
 import type { HostApi, PluginLog } from "../../../packages/api/contract.js";
 import { decideAccess, type Membership, type Need } from "./access.js";
 import type { Admissions } from "./admissions.js";
+import type { Ceilings } from "./ceilings.js";
 import { type DeliveryHealth, PAUSE_AFTER, resumedNotice } from "./delivery-health.js";
 import { MAX_LIVE_TASKS, MAX_WHEN } from "./limits.js";
 import { TASK_BUSY, type TaskLocks } from "./locks.js";
@@ -65,6 +66,8 @@ export interface TrackerDeps {
   lanes: TickGate;
   /** People, blocks and forget-me's erasure: the SQL docket's Store has no method for (roster.ts). */
   roster: Roster;
+  /** People's own daily ceilings, raised by an admin (ceilings.ts; plan 5.7). */
+  ceilings: Ceilings;
   /** Whether the web area (and its task editor) is set up: `TRACKER_WEB_URL`. Answers mention it only then. */
   webEditor: boolean;
   /** Whether the execute lane runs (the city-hall Executor is configured): `/research` makes a task only then. */

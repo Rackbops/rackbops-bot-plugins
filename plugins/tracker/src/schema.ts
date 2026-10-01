@@ -334,6 +334,24 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX executor_jobs_occurrence ON executor_jobs (occurrence_id);
   `,
+  // 7 (0.13.0; an admin raises a person's ceiling, plan 5.7, rackbops-bot-plugins#82): purely
+  // additive, one new table and its index; no existing table or row is touched.
+  // - `ceiling_changes`: every change an admin makes to a person's daily ceiling, append-only
+  //   (ceilings.ts). The newest row per person is their ceiling; both values null is "back to the
+  //   default", so the two are set together or not at all. `set_by` is the admin's id, `forgotten`
+  //   once that admin is erased (roster.ts). A database at 7 is refused by 0.12.0 and older.
+  `
+  CREATE TABLE ceiling_changes (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    usd REAL,
+    calls INTEGER,
+    set_by TEXT NOT NULL,
+    at TEXT NOT NULL,
+    CHECK ((usd IS NULL) = (calls IS NULL))
+  );
+  CREATE INDEX ceiling_changes_user ON ceiling_changes (user_id, seq);
+  `,
 ];
 
 /** How long a statement waits on another connection's lock before SQLITE_BUSY. */

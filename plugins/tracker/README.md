@@ -12,7 +12,8 @@ your own tasks from the web, under the commands' own rules -- the admin view and
 slice 3) -- the JSON task API with personal API tokens (#80, slice 4), for a program acting as
 you, such as a later intake agent (plan E10) -- and the one-off research request (#82, plan E8,
 category 5): a question looked into on the web by a model run, checked by a second run against its
-sources, and DMed once, with its claims kept as findings. The model runs never happen here: they go
+sources, and DMed once, with its claims kept as findings -- and an admin raising one person's
+daily model ceiling from the web (#82, plan 5.7). The model runs never happen here: they go
 through city-hall to Rackbops/docket-runner on roshne's own host (plan 5.12), and the whole execute
 lane stays off until the city-hall Executor is configured (Configuration below).
 
@@ -124,8 +125,9 @@ says research is not available; it does not list the waiting ones (`/tasks` does
 
 **Budgets** (plan 5.7, docket's defaults): 2 USD and 20 model calls a person a day, 10 USD and 100
 calls in all. At a ceiling the person's research waits until midnight Eastern; the person gets one
-DM and the admins one each. Reminders, renewals and prices never count. There is no web control to
-raise a person's ceiling yet.
+DM and the admins one each. Reminders, renewals and prices never count. An admin can raise one
+person's ceiling from their admin page (0.13.0, below); the global ceiling still applies to everyone
+together.
 
 **Findings.** A passed research answer's claims are stored with their first source (docket's
 `findings`), shown on the task's page to its owner, accepted recipients and admins (docket's
@@ -262,6 +264,19 @@ the function the command path runs:
 - **Lift** a decline block in force: docket's `liftBlock`, recorded as that admin's lift.
 - **Revoke an API token** of anyone's, from their page, which lists their tokens (never the
   secret). It stops working at once; the owner is not told. Logged by token id.
+- **Raise a person's daily ceiling** (0.13.0, plan 5.7: "The admin raises a person's ceiling from
+  the web area"). Their page shows what they spent today (the budget day ends at midnight Eastern),
+  their ceiling now, a form with both numbers -- dollars to the cent and whole model calls -- and
+  every change an admin made, newest first. Each number must be at least the default (2 USD, 20
+  calls) and at most the global ceiling (10 USD, 100 calls), which docket checks first anyway.
+  **A raise stands until an admin changes it** -- raises it again or presses **Back to the
+  default**. That default is proposed on #82 and is roshne's to confirm; a today-only raise
+  would be a one-function change (`limitsOf` in `ceilings.ts`). Enforcement stays docket's: the
+  execute lane hands docket's `budgetHold` a policy whose `personFor` reads the person's newest
+  change, before every run, so a raise lets a held request run on the next tick. docket's
+  once-a-day notice is already used for that day, so reaching the raised ceiling the same day sends
+  no second DM. Every change is an append-only `ceiling_changes` row (who, for whom, the values,
+  when) and a log line (`u1 set u2's daily ceiling to 4 USD / 40 calls (c1)`).
 - **Remove from the tracker**: forget-me for that person (below), with the same confirmation.
 
 **Deliveries** (0.10.0). `/admin/deliveries`, linked from every admin page, lists the DMs that
@@ -273,8 +288,9 @@ have gone out and is never resent; `deferred` is still owed (a recipient whose d
 say). Before 0.10.0 these showed only in the bot log, where the warnings still go. The page is
 read-only, and like every admin page answers anyone who is not an admin with the unknown page's 404.
 
-Not here yet, though plan 5.10 lists them: grants, budgets and retry (they belong to the execute
-lane, which is not built) and an admin pause of someone else's task.
+Not here yet, though plan 5.10 lists them: grants and retry, and an admin pause of someone else's
+task. Of budgets, raising one person's ceiling is here; the global ceiling and the defaults are
+docket's constants.
 
 **Forget me** (plan 5.8). A signed-in person erases themselves from `/forget` (web only: the plan
 asks for no Discord command, so without `TRACKER_WEB_URL` the only path is an admin with the web
@@ -286,14 +302,15 @@ in one SQLite transaction in the write queue, **deleted, not archived**:
 - on everyone else's tasks: their recipient rows, their replies and answers, the history rows they
   made or that name them (an invitation of them, a pause for them), the run events and deliveries
   of DMs to them (docket's `deleteDeliveries`), charges made for them, and their pause rows;
-- the budget notices kept for them (`budget:person:<id>:...`);
+- the budget notices kept for them (`budget:person:<id>:...`) and the changes to their ceiling;
 - every decline block they are either side of;
 - their admission, delivery health, web sessions, unused sign-in links and API tokens, and their
   person row.
 
 What stays, and why: another person's task that they received stays that owner's; one paused only
 because DMs to them failed goes back on. Another person's row keeps its own audit fact but not their
-id -- `admitted_by` of someone they admitted, and `lifted_by` of a block they lifted, become
+id -- `admitted_by` of someone they admitted, `lifted_by` of a block they lifted, and `set_by` of a
+change they made to someone's ceiling become
 `forgotten` ("an admin since forgotten"; null already means "the configuration"). Text is matched
 only in the forms the code writes a person's id into -- docket's consent rows (`u5`, `u5 24h`), the
 tracker's `u5: ...` removals and `delivery to {u5} paused` pauses, docket's `u5 <message>` delivery
@@ -517,8 +534,8 @@ key>`, so two databases never collide.
 
 ## Not yet
 
-- The rest of the web area (E5): sharing a task from the web, and the admin view's grants, budgets
-  (raising a person's ceiling) and retry. The task API makes reminders, renewals, prices and
+- The rest of the web area (E5): sharing a task from the web, and the admin view's grants and
+  retry. The task API makes reminders, renewals, prices and
   research requests -- not `/task done`, `snooze`, `decide`, `share` or the settings -- and no intake agent uses it yet
   (E10, deferred). Discord OAuth2 as a second sign-in
   method, if chosen (plan item 41).

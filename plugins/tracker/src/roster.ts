@@ -103,6 +103,7 @@ export const ERASED_TABLES = [
   "api_tokens",
   "usage",
   "notices",
+  "ceiling_changes",
   "users",
 ] as const;
 
@@ -313,8 +314,8 @@ export class Roster {
    * `deleteDeliveries`, by the very statement `SqliteStore.deleteDeliveries` runs: the port's
    * `await` cannot sit inside this synchronous transaction), and their pauses; every decline block
    * they are either side of; their admission, delivery health, web sessions, sign-in links, API
-   * tokens, charges and budget notices; and their person row. Where another person's row keeps an audit column that named them (who
-   * admitted someone, who lifted a block), it is set to `FORGOTTEN`; where another person's run
+   * tokens, charges, budget notices and ceiling changes; and their person row. Where another person's row keeps an audit column that named them (who
+   * admitted someone, who lifted a block, who changed someone's ceiling), it is set to `FORGOTTEN`; where another person's run
    * error (or its error event) carries their id in a phrase the notifier writes, the id is redacted.
    * Text is matched only in the forms the code writes ids into (`historyNames`, `eventNames`,
    * `errorNames`), never as any id-like word. Nothing is archived. Returns the
@@ -418,6 +419,9 @@ export class Roster {
       del("api_tokens", "user_id = ?", userId);
       // docket's once-only budget notices name a person in their key (`budget:person:<id>:<day>`).
       del("notices", "key LIKE 'budget:person:' || ? || ':%'", userId);
+      // Their ceiling changes go; a change they made to someone else's keeps its row, not their id.
+      del("ceiling_changes", "user_id = ?", userId);
+      this.db.query("UPDATE ceiling_changes SET set_by = ? WHERE set_by = ?").run(FORGOTTEN, userId);
       del("users", "seq = ?", Number(seq));
 
       const held = this.db.query("SELECT 1 FROM delivery_pauses WHERE task_id = ? LIMIT 1");
