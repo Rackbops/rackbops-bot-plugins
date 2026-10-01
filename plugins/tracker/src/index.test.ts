@@ -45,10 +45,19 @@ describe("createPlugin", () => {
   it("declares exactly the commands it registers, an interactions handler, and the env keys it reads", () => {
     const plugin = createPlugin(makeFakeHost({ name: "tracker" }));
     expect(plugin.commands?.map((c) => c.name)).toEqual(pkg.botPlugin.commands);
-    expect(pkg.botPlugin.commands).toEqual(["allow", "register", "remind", "renewal", "price", "tasks", "task", "settings", "web"]);
+    expect(pkg.botPlugin.commands).toEqual(["allow", "register", "remind", "renewal", "price", "research", "tasks", "task", "settings", "web"]);
     expect(typeof plugin.interactions).toBe("function");
     expect(pkg.botPlugin.intents).toEqual([]);
-    expect(pkg.botPlugin.env.map((e) => e.key)).toEqual(["TRACKER_ADMIN_DISCORD_IDS", "TRACKER_GUILD_ID", "TRACKER_WEB_URL"]);
+    expect(pkg.botPlugin.env.map((e) => e.key)).toEqual([
+      "TRACKER_ADMIN_DISCORD_IDS",
+      "TRACKER_GUILD_ID",
+      "TRACKER_WEB_URL",
+      "TRACKER_CITY_HALL_URL",
+      "TRACKER_CITY_HALL_KEY",
+      "TRACKER_CITY_HALL_CAPABILITY",
+      "TRACKER_CITY_HALL_ACCESS_CLIENT_ID",
+      "TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET",
+    ]);
   });
 
   it("refuses a malformed TRACKER_GUILD_ID, and accepts it unset", () => {
@@ -287,7 +296,7 @@ describe("the plugin end to end on a real data file", () => {
     expect((await store.findUserByDiscordId(ADMIN))?.admin).toBe(true);
   });
 
-  it("registers the notify-lane types whose ports are wired: reminder, renewal and price (#81), no execute-lane type", () => {
-    expect(Object.keys(TRACKER_TYPES).sort()).toEqual(["price", "reminder", "renewal"]);
+  it("registers reminder, renewal and price (#81) and research (#82), the one execute-lane type, which runs only with an Executor", () => {
+    expect(Object.keys(TRACKER_TYPES).sort()).toEqual(["price", "reminder", "renewal", "research"]);
   });
 });

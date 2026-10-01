@@ -142,7 +142,7 @@ export async function listAnswer(d: TrackerDeps, user: User): Promise<ApiAnswer>
   return { status: 200, body: { tasks: out } };
 }
 
-/** `GET /tasks/<id>`: one of the owner's tasks (a deleted one too, as its web page stays), with its history. */
+/** `GET /tasks/<id>`: one of the owner's tasks (a deleted one too, as its web page stays), with its history and findings. */
 export async function getAnswer(d: TrackerDeps, user: User, id: string): Promise<ApiAnswer> {
   const task = await ownTask(d, user, id);
   if (!task) return notFound();
@@ -153,6 +153,8 @@ export async function getAnswer(d: TrackerDeps, user: User, id: string): Promise
     body: {
       task: await taskJson(d, user, view.task),
       history: { next: view.next, runs: view.runs, earlierRuns: view.earlierRuns, changes: view.changes, earlierChanges: view.earlierChanges },
+      // docket 0.5.0 (#82): a research request's stored claims, oldest first; empty for other types.
+      findings: view.findings.map((f) => ({ claim: f.claim, source: f.source, at: f.atIso })),
     },
   };
 }

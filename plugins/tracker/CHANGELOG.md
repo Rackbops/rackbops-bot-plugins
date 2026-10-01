@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.11.0] - 2026-10-01
+
+### Added
+
+- `/research question [context] [deadline] [at]`: a one-off research request (docket's `research`
+  type, plan category 5). A research run looks it up on the web, a reviewer run checks the draft
+  against its sources, and only a passed answer is DMed to the owner and accepted recipients; its
+  claims are kept as findings. `at` becomes the `once` schedule (default now), `deadline` goes into
+  the request as an instant (a run past it makes no call and says so). At most 5 waiting per
+  person. Research DMs go out with no allowed mentions, as every host DM does.
+- The city-hall Executor (`src/executor.ts`): docket's Executor port as a city-hall source, on
+  Lepid-Labs/city-hall#18's proposed `POST /api/execute/jobs` and `GET /api/execute/jobs/:id`. Each
+  Job is submitted under docket's Job key with the configured capability tag, and city-hall's job
+  id is kept in the tracker's own `executor_jobs` table before the first answer, so a Job out is
+  found again by key. Queued or running is pending; done is the runner's result; failed is its
+  result or an `error` result; unreachable, a timeout, a 5xx, a 429, a redirect, a refused
+  credential (logged once an hour) or an answer that is not a job holds the run and asks again.
+  Never logs the key, the prompt or the result.
+- The execute lane (`src/execute-lane.ts`): a third host tick, `execute`, only when the Executor is
+  configured. It starts docket's `tickExecute` in the background (one at a time, at most once a
+  minute) over every task with a due execute-lane run, holding their locks in id order; the notify
+  tick leaves a task it holds for the next tick instead of waiting, so no reminder waits on
+  city-hall. Budgets are docket's defaults (2 USD and 20 calls a person a day, 10 USD and 100 in
+  all), with one DM to the person and the admins at a ceiling.
+- Settings `TRACKER_CITY_HALL_URL`, `TRACKER_CITY_HALL_KEY` (secret),
+  `TRACKER_CITY_HALL_CAPABILITY` and the optional Cloudflare Access pair
+  `TRACKER_CITY_HALL_ACCESS_CLIENT_ID` / `TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET` (secret). The
+  execute lane and `/research` stay off until the first three are all set; a partial set is
+  logged, a malformed value refuses to load. There is no default capability.
+- Findings on a task's page (owner, accepted recipients, admins, through docket's
+  `visibleFindings`): each claim with its source as a `rel="noopener noreferrer nofollow"` link and
+  its date, all escaped; in `/task history`; and in the task API's `GET /tasks/<id>` as a new
+  `findings` array (additive).
+
+### Changed
+
+- Adopts `@rackbops/docket-core` and `@rackbops/docket-types` 0.5.0 (their README's "Adopting
+  0.5.0"). Schema 6, all additive: a `findings` table (indexed by task and by owner, `key` unique
+  when set), a nullable `usage.key` unique when set (a charge keyed by its Job is stored once), and
+  `executor_jobs`. The store implements `addFinding`, `listFindings` and `deleteFindings` and the
+  keyed `addUsage`, and passes 0.5.0's `STORE_CONTRACT`. A database at 6 is refused by 0.10.0 and
+  older.
+- Forget-me also erases the findings of the person's tasks and the Executor's records of their
+  runs' Jobs.
+- A schedule edit is refused with a plain answer when docket would refuse it (a `once` task whose
+  run is with the runner), before anything is written; an edit that keeps a run in flight says
+  so. No editable type has an execute-lane run today, so this is a guard.
+
 ## [0.10.0] - 2026-10-01
 
 ### Added

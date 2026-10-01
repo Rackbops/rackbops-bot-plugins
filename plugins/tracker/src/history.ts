@@ -4,8 +4,10 @@ import {
   visibleHistory,
   visibleOccurrences,
   visibleReplies,
+  visibleFindings,
   visibleTask,
   type Occurrence,
+  type StoredFinding,
   type Reply,
   type Task,
   type TaskEvent,
@@ -86,6 +88,27 @@ export function formatChange(e: TaskEvent, viewer: User, now: Date, names: Reado
   return changeLine(changeView(e, viewer, now, names));
 }
 
+/** One stored finding (docket 0.5.0, a research request's checked claim), as the pages show it. */
+export interface FindingView {
+  claim: string;
+  /** The source, only an http(s) URL; null when there is none or it is anything else. */
+  source: string | null;
+  /** When it was stored, in the viewer's zone. */
+  at: string;
+  /** The same instant, ISO-8601 (the API's). */
+  atIso: string;
+}
+
+/** Findings shown on a task's page; the API returns them all. */
+export const FINDINGS_SHOWN = 50;
+
+const HTTP_URL = /^https?:\/\/[^\s<>"]+$/i;
+
+export function findingView(f: StoredFinding, viewer: User, now: Date): FindingView {
+  const source = f.source !== null && HTTP_URL.test(f.source) ? f.source : null;
+  return { claim: f.text, source, at: formatInstant(f.at, viewer.timeZone, now), atIso: f.at };
+}
+
 /** A task's history as the viewer may see it: the newest `HISTORY_RUNS` runs and `HISTORY_CHANGES` changes. */
 export interface HistoryView {
   task: Task;
@@ -97,6 +120,8 @@ export interface HistoryView {
   earlierRuns: number;
   changes: ChangeView[];
   earlierChanges: number;
+  /** The task's stored findings, oldest first, through docket's `visibleFindings`. */
+  findings: FindingView[];
 }
 
 /**
@@ -130,6 +155,7 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
       if (u) names.set(id, u.displayName ?? id);
     }
   }
+  const findings = (await visibleFindings(d.store, actor, task.id)) ?? [];
   const owner = task.ownerId === user.id ? user : await d.store.getUser(task.ownerId);
   return {
     task,
@@ -139,6 +165,7 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
     earlierRuns: Math.max(0, runs.length - HISTORY_RUNS),
     changes: changes.slice(-HISTORY_CHANGES).map((e) => changeView(e, user, now, names)),
     earlierChanges: Math.max(0, changes.length - HISTORY_CHANGES),
+    findings: findings.map((f) => findingView(f, user, now)),
   };
 }
 

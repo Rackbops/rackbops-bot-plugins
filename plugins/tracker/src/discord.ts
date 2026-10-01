@@ -16,6 +16,7 @@ import {
 import { resumeTask } from "./manage.js";
 import { CURRENCY_LENGTH, DATE_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
 import { remind, type Repeat } from "./reminders.js";
+import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./research.js";
 import {
   EPHEMERAL,
   FAILED,
@@ -257,6 +258,28 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             ...(drop !== null ? { drop } : {}),
             ...(baseline !== null ? { baseline: baseline as BaselineRule } : {}),
             ...(near !== null ? { near } : {}),
+          });
+        }),
+    },
+    {
+      name: "research",
+      build: (b: SlashCommandBuilder) =>
+        b
+          .setDescription("Ask me to look something up on the web and report back once, checked, by DM")
+          .addStringOption((o) => o.setName("question").setDescription("What to look into").setRequired(true).setMaxLength(MAX_QUESTION_CHARS))
+          .addStringOption((o) => o.setName("context").setDescription("Anything that helps: what you know already, what it is for").setMaxLength(MAX_CONTEXT_CHARS))
+          .addStringOption((o) => o.setName("deadline").setDescription('When you need it by, e.g. "friday 5pm"; past it nothing is run').setMaxLength(MAX_WHEN))
+          .addStringOption((o) => o.setName("at").setDescription('When to start, if not now, e.g. "tomorrow 9am"').setMaxLength(MAX_WHEN)),
+      handle: (interaction) =>
+        run(interaction, "registered", (d, user) => {
+          const context = interaction.options.getString("context");
+          const deadline = interaction.options.getString("deadline");
+          const at = interaction.options.getString("at");
+          return researchCommand(d, user, {
+            question: interaction.options.getString("question", true),
+            ...(context !== null ? { context } : {}),
+            ...(deadline !== null ? { deadline } : {}),
+            ...(at !== null ? { at } : {}),
           });
         }),
     },

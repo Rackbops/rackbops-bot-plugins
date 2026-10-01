@@ -47,7 +47,8 @@ export const CSP = "default-src 'none'; style-src 'self'; img-src 'none'; form-a
 /**
  * `same-origin`, not `no-referrer`: under `no-referrer` a browser sends a form post's `Origin` as the
  * literal `null`, which the Origin check has to refuse, so no form would work. `same-origin` keeps
- * the Referer (and a link's token in it) off every cross-site request; the pages link nowhere else.
+ * the Referer (and a link's token in it) off every cross-site request. The one link elsewhere is a
+ * research finding's source (pages.ts), which carries `rel="noopener noreferrer nofollow"` too.
  */
 export const REFERRER_POLICY = "same-origin";
 

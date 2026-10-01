@@ -293,6 +293,45 @@ export const MIGRATIONS: readonly string[] = [
   DROP INDEX users_usr_subject;
   ALTER TABLE users DROP COLUMN usr_subject;
   `,
+  // 6 (docket 0.5.0, Rackbops/docket#21; the research type, rackbops-bot-plugins#82): purely additive.
+  // - `findings`: a run's stored claims (plan 5.2, item 37), oldest first by `at` then `seq`;
+  //   `key` unique when set, so an outcome applied twice stores each finding once. Indexed by task
+  //   (the task page) and by owner (forget-me).
+  // - `usage.key`: a run's charge keyed by its Job key, unique when set, so a crash between the
+  //   charge and the run's record never charges one call twice. Older rows keep null.
+  // - `executor_jobs`: the city-hall Executor's own record (executor.ts), the Job key a run submitted
+  //   under and the job id city-hall gave it, written before the first ask returns, so a later ask
+  //   (docket passes no spec then) finds the Job again. `occurrence_id` is the run, for forget-me.
+  // docket asks for an index on `events(occurrence_id)`: migration 1's `events_occurrence` on
+  // (occurrence_id, seq) already serves it. A database at 6 is refused by 0.10.0 and older.
+  `
+  CREATE TABLE findings (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    occurrence_id TEXT,
+    key TEXT,
+    type TEXT NOT NULL,
+    text TEXT NOT NULL,
+    tags TEXT NOT NULL,
+    source TEXT,
+    at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX findings_key ON findings (key) WHERE key IS NOT NULL;
+  CREATE INDEX findings_task ON findings (task_id);
+  CREATE INDEX findings_owner ON findings (owner_id);
+
+  ALTER TABLE usage ADD COLUMN key TEXT;
+  CREATE UNIQUE INDEX usage_key ON usage (key) WHERE key IS NOT NULL;
+
+  CREATE TABLE executor_jobs (
+    job_key TEXT PRIMARY KEY,
+    occurrence_id TEXT NOT NULL,
+    remote_id TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX executor_jobs_occurrence ON executor_jobs (occurrence_id);
+  `,
 ];
 
 /** How long a statement waits on another connection's lock before SQLITE_BUSY. */

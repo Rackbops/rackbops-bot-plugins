@@ -9,8 +9,12 @@ command, delivered by DM, answered by button, with history -- the first slice of
 the price tracker (#81, plan E6): two more types on the notify side, no model, nothing sent to
 city-hall -- the web area's task editor (#80, slice 2): make, edit, pause, resume and delete
 your own tasks from the web, under the commands' own rules -- the admin view and forget-me (#80,
-slice 3) -- and the JSON task API with personal API tokens (#80, slice 4), for a program acting as
-you, such as a later intake agent (plan E10).
+slice 3) -- the JSON task API with personal API tokens (#80, slice 4), for a program acting as
+you, such as a later intake agent (plan E10) -- and the one-off research request (#82, plan E8,
+category 5): a question looked into on the web by a model run, checked by a second run against its
+sources, and DMed once, with its claims kept as findings. The model runs never happen here: they go
+through city-hall to Rackbops/docket-runner on roshne's own host (plan 5.12), and the whole execute
+lane stays off until the city-hall Executor is configured (Configuration below).
 
 ## Commands
 
@@ -24,6 +28,7 @@ as in a server (plan 5.5, item 39).
 | `/remind text [when] [repeat]` | a registered person | A reminder by DM. `when` is docket's `parseWhen` grammar (`in 20 minutes`, `tomorrow 9am`, `fri at 17:30`); `repeat` is once (the default), daily, weekly or monthly. A repeating one with no `when` starts today at the preferred hour. |
 | `/renewal name amount currency renews [unit] [every] [lead] [note]` | registered | A subscription, domain, warranty or membership (docket's `renewal`, a `period` schedule). `renews` is the next renewal or expiry date, `YYYY-MM-DD`, today or later; `unit` yearly (the default), monthly, weekly or daily, `every` how many of those; the ask comes `lead` days before (default 7) at the preferred hour, with Keep, Cancel, Renewed and Snooze. If that ask is already past but the date is not, the first ask comes within a minute (a zone or hour change before it fires drops it for the next period's). Keep and Renewed record what was paid; Cancel ends it. |
 | `/price url [name] [hours] [drop] [baseline] [near]` | registered | A price (docket's `price`, a `poll` schedule every `hours`, default 12, at most 168). The page is read once at once, and nothing is created unless a price is found in it; then the first check, within a minute, DMs the starting price, and a drop of `drop` percent or more (default 10) from the `baseline` -- the last (default), first or highest price seen -- DMs the owner once per crossing. `near` is the words just before the price, for a page with no structured price. At most 20 per person. |
+| `/research question [context] [deadline] [at]` | registered | A one-off research request (docket's `research`, a `once` schedule at `at`, default now). A research run looks it up on the web (read-and-web tools only, plan 5.6), a reviewer run checks the draft against its sources, and only a passed answer is DMed to you (and accepted recipients); its claims are kept as findings on the task's page. `deadline` (docket's `parseWhen`) goes into the request; a run that would start past it makes no call and tells you. At most 5 waiting per person; every run counts against the daily budget (below). Answers that research is not available while the city-hall Executor is not set up. |
 | `/tasks` | registered | Your active tasks and the ones you receive, each with its next run; then your paused ones. |
 | `/task done task` / `/task snooze task [until]` | the task's owner | Answers the task's latest reminder (snooze: an hour, or until `until`). |
 | `/task decide task choice [amount]` | the renewal's owner | Answers the renewal's latest ask -- keep, cancel or renewed -- with the amount actually paid when it changed (a button cannot carry one). Use it instead of the button, not after it: a run is answered once. |
@@ -62,6 +67,34 @@ logged. A run has fired once its record is written; the other recipients of a ru
 copies when one of them cannot be reached, and the run is `done`, not `failed`, whatever a DM did.
 At start the plugin runs docket's `recover()`: a run left running is requeued, and a claim left open
 by a stop mid-send is settled unconfirmed and logged.
+
+**Research and the execute lane** (docket 0.5.0, #82). A research request is two model Jobs, run
+one after the other through city-hall's execute lane (Lepid-Labs/city-hall#18) by the runner that
+carries `TRACKER_CITY_HALL_CAPABILITY` -- only docket-runner, on roshne's subscription (plan items
+70, 71). The tracker submits each Job under docket's Job key with `POST /api/execute/jobs`, stores
+city-hall's job id in its own `executor_jobs` table before going on, and asks `GET
+/api/execute/jobs/:id` each minute until it is done: one Job at a time across everyone (plan 5.3),
+on a tick of its own that runs in the background, so a slow city-hall never holds up a reminder.
+city-hall unreachable, a 5xx, or a refused credential (logged once an hour as such) holds the run
+and asks again; a Job still not back after six hours is given up (docket's `PENDING_LIMIT_MS`).
+The plugin never calls a model, holds no Claude credential and no `ANTHROPIC_*` variable; model
+output is data, cleaned by docket before it reaches a DM or a finding, and every research DM goes
+out with no allowed mentions: the host sends every `dm` with `allowedMentions: { parse: [] }`
+(CONTEXT.md). **The wire is city-hall#18's
+proposal, not yet agreed by Nazu**: the source pair is a stand-in for the source and responder
+contracts (its decision 0002), so it may change, and this adapter with it.
+
+**Budgets** (plan 5.7, docket's defaults): 2 USD and 20 model calls a person a day, 10 USD and 100
+calls in all. At a ceiling the person's research waits until midnight Eastern; the person gets one
+DM and the admins one each. Reminders, renewals and prices never count. There is no web control to
+raise a person's ceiling yet.
+
+**Findings.** A passed research answer's claims are stored with their first source (docket's
+`findings`), shown on the task's page to its owner, accepted recipients and admins (docket's
+`visibleFindings`), listed in `/task history`, and returned by the task API's `GET /tasks/<id>`.
+Each source is a link with `rel="noopener noreferrer nofollow"`; every value is escaped. A recipient
+sees a task without its `config` and `state` (docket 0.5.0): the request's context and draft are the
+owner's.
 
 **One task at a time.** A task's runs, the answers to them (buttons, `/task done`, Reply) and its
 edits (the editor, pause, resume, delete, a zone or hour change) take that task's lock
@@ -387,8 +420,9 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 
 | Piece | File | Notes |
 |---|---|---|
-| Store | `src/store.ts`, `src/schema.ts` | docket's `Store` port on `bun:sqlite`, in `<dataDir>/tracker/tracker.sqlite` (WAL). A Discord id belongs to at most one user. Schema versioned by `PRAGMA user_version`; a shipped migration is never edited. Schema 5 (0.9.0) is docket 0.4.0's: a run's `record`, a series point's `key`, `deliveries` (from `delivery_claims`), `usage` and `notices`. `store.test.ts` runs docket's `STORE_CONTRACT` against it. |
-| Notify lane | `src/notify-lane.ts` | docket's `Lanes.tickNotify` on two host ticks, every 60 s, one pass per task with work (a due run, a run in flight, a DM owed or claimed), each under that task's lock through a view of the store limited to that task: `notify` runs every type but the page readers, `poll` runs only them (`price`) with the Fetch port, so a slow page never holds up a reminder. Registers `reminder`, `renewal` and `price`. The execute lane is not ticked. |
+| Store | `src/store.ts`, `src/schema.ts` | docket's `Store` port on `bun:sqlite`, in `<dataDir>/tracker/tracker.sqlite` (WAL). A Discord id belongs to at most one user. Schema versioned by `PRAGMA user_version`; a shipped migration is never edited. Schema 5 (0.9.0) is docket 0.4.0's: a run's `record`, a series point's `key`, `deliveries` (from `delivery_claims`), `usage` and `notices`. Schema 6 (0.11.0) is docket 0.5.0's, all additive: `findings`, a charge's `usage.key`, and the Executor's `executor_jobs`. Forget-me erases a person's findings and their runs' Job records too. `store.test.ts` runs docket's `STORE_CONTRACT` against it. |
+| Notify lane | `src/notify-lane.ts` | docket's `Lanes.tickNotify` on two host ticks, every 60 s, one pass per task with work (a due run, a run in flight, a DM owed or claimed), each under that task's lock through a view of the store limited to that task: `notify` runs every type but the page readers, `poll` runs only them (`price`) with the Fetch port, so a slow page never holds up a reminder. A task the execute tick holds is left for the next notify tick, never waited on. Registers `reminder`, `renewal`, `price` and `research`. |
+| Execute lane | `src/execute-lane.ts`, `src/executor.ts`, `src/research.ts` | Only when the city-hall Executor is configured: a third host tick, `execute`, that starts docket's `Lanes.tickExecute` in the background (one at a time, at most once a minute) over every task with a due execute-lane run, holding those tasks' locks in id order. The Executor is city-hall#18's source pair (above), its I/O injected; `executor_jobs` keeps each Job key's city-hall id. `/research`'s rules. |
 | Page reads | `src/fetch.ts` | docket's `Fetch` port for `price`: http or https on the default port, no credentials, every resolved address public (no loopback, private, link-local, CGNAT, multicast or reserved range, IPv4 or IPv6), redirects followed by hand and re-checked (at most 5), 15 s including the name lookup, at most 3 MB kept. The body is then rebuilt in linear time (`src/page.ts`) to just what extraction reads -- JSON-LD, meta tags, and the page with every `<` blanked, so `near` still reads text, attributes and script data -- because docket's extraction patterns take quadratic time on a page of unclosed tags. A read the tick's abort cuts short requeues its run instead of counting a miss. A DNS answer that changes between the check and the read is not caught here. |
 | Renewals, prices | `src/tracked.ts`, `src/price.ts`, `src/series.ts`, `src/page.ts` | `/renewal`, `/price` and `/task decide`; the series lines of `/task history`. The series (docket's `series` table, schema 1) holds a renewal's paid amounts and a price's readings. |
 | Delivery | `src/notifier.ts`, `src/buttons.ts` | docket's `Notifier` over `host.dm`, with the buttons. docket claims each (run, person) in the store's `deliveries` before the DM and settles it after. The notifier maps the host's answers to docket's errors: cannot be messaged (50007) or an unknown user is `DeliveryFailedError(msg, true)` (failed for good; 50007 and 10013 count toward the pause); a message refused for its content is a plain `DeliveryFailedError` (retried); a paused person is `ExecutorUnavailableError` (deferred); anything else is rethrown, so docket settles it unconfirmed and never resends it. |
@@ -410,16 +444,34 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 | `TRACKER_GUILD_ID` | no | The Discord server whose members may use the tracker, or a comma-separated list of them (spaces around commas allowed; a repeated id counts once): a member of any listed server passes. Checked through the interaction's client with a single-member lookup per server (no privileged intent), all asked at once; a yes from any server is a member, a no from every server is not, and otherwise the answer is unknown (refused, never revoked). Inside a listed server, the person running a command needs no lookup. Unset = no membership gate, and a warning is logged each time the plugin activates; a malformed or empty entry anywhere in the list refuses to load, naming it. One store and one admission list serve every listed server; there are no per-server admins. |
 | `TRACKER_WEB_URL` | no | The https origin the bot's HTTP is reached at through its tunnel, e.g. `https://clerk.example.com` (no path). `/web` links and the allowed `Origin` come from it, never from a request's `Host`. Unset = no web area (`/web` says so, the pages answer 404); anything but a bare https origin refuses to load. |
 
+| `TRACKER_CITY_HALL_URL` | no | The https origin of the city-hall that queues the tracker's model Jobs (no path). |
+| `TRACKER_CITY_HALL_KEY` | yes | The source bearer key city-hall checks on `/api/execute/jobs` (its `CITY_HALL_API_KEY`, city-hall#18). Never logged. Kept in the instance's own env, never in a repo. |
+| `TRACKER_CITY_HALL_CAPABILITY` | no | The capability tag every Job names, one only docket-runner carries (plan item 71), e.g. `claude-cli:subscription`. No default: a guessed tag could send the tracker's Jobs to another agent. |
+| `TRACKER_CITY_HALL_ACCESS_CLIENT_ID`, `TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET` | yes | A Cloudflare Access service token for city-hall's edge (`CF-Access-Client-Id` / `-Secret`), when one is in front. Both or neither. |
+
+**The execute lane is off until all three of `TRACKER_CITY_HALL_URL`, `_KEY` and `_CAPABILITY` are
+set**: no `execute` tick, and `/research` answers that research is not available, so nobody can
+make a request that would wait forever. With some but not all set, the plugin logs which are
+missing at start; a malformed value (not an https origin, not a tag, one half of the Access pair)
+refuses to load, naming the variable and never echoing a secret. This is the tracker's credential
+toward city-hall that plan item 50 moved to E8; until Nazu settles how sources authenticate
+(city-hall#2, item 25), it is city-hall#18's interim shared source key. One city-hall source key
+should serve one tracker instance: Job keys are `rackbops-tracker:<docket Job key>`, and two
+instances on one city-hall would answer each other's keys.
+
 `/tracker/healthz` and the web area need the bot's `HTTP_PORT` set; without it there is no HTTP at all.
 
 ## Not yet
 
 - The rest of the web area (E5): sharing a task from the web, and the admin view's grants, budgets
-  and retry (with the execute lane). The task API covers reminders, renewals and prices only --
+  (raising a person's ceiling) and retry. Research is made in Discord only (the web editor and
+  the task API cover reminders, renewals and prices). The task API covers reminders, renewals and prices only --
   not `/task done`, `snooze`, `decide`, `share` or the settings -- and no intake agent uses it yet
   (E10, deferred). Discord OAuth2 as a second sign-in
   method, if chosen (plan item 41).
-- The city-hall Executor adapter (the execute lane).
+- The rest of #82: per-type grants beyond tier 0 (research needs only `notify`), the transcripts
+  policy, and live verification against a real city-hall and docket-runner (city-hall#18 is not
+  merged). The scout and the want-list (E9).
 - Editing in Discord (the editor is on the web only), and changing a price tracker's page or `near` after it is made (make a new one); a free-form pattern for `price` (`near` is the safe subset: a user's regular expression run on a large page could hang the bot).
 - An optional Discord-role gate (plan 5.5), and showing unconfirmed deliveries to admins anywhere but the log, or a run's deliveries in its history.
 

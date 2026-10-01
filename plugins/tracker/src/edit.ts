@@ -1,5 +1,6 @@
 import {
   describeSchedule,
+  ScheduleError,
   formatInstant,
   hasFired,
   nextDue,
@@ -16,7 +17,16 @@ import {
 } from "@rackbops/docket-core";
 import { DEFAULT_BASELINE, DEFAULT_DROP_PERCENT, type PriceConfig, type RenewalConfig } from "@rackbops/docket-types";
 import { MAX_TITLE } from "./limits.js";
-import { clip, NO_SUCH_TASK, rescheduleKeepingSnoozes, type TaskResult, type TrackerDeps } from "./actions.js";
+import {
+  clip,
+  JOB_OUT_NOTE,
+  NO_SUCH_TASK,
+  ONCE_JOB_OUT,
+  onceJobOutRefusal,
+  rescheduleKeepingSnoozes,
+  type TaskResult,
+  type TrackerDeps,
+} from "./actions.js";
 import { editable, FINISHED, ownLiveTask } from "./manage.js";
 import { reminderPlan, type Repeat, repeatOf } from "./reminders.js";
 import { type PriceSettings, priceSettingsPlan, titleFor } from "./price.js";
@@ -61,10 +71,24 @@ async function nextRun(d: TrackerDeps, task: Task): Promise<Occurrence | null> {
   return queued.find((o) => !hasFired(o)) ?? null;
 }
 
-function savedText(task: Task, user: User, next: Occurrence | null, now: Date, what: string): string {
+function savedText(task: Task, user: User, next: Occurrence | null, now: Date, what: string, jobOut = false): string {
   const cadence = task.schedule ? describeSchedule(task.schedule, user, user.timeZone, now) : "no schedule";
   const when = task.status === "paused" ? "paused" : next ? formatInstant(next.dueAt, user.timeZone, now) : "nothing scheduled";
-  return clip(`Saved \`${task.id}\` ${what}: ${cadence}. Next: ${when}.`);
+  return clip(`Saved \`${task.id}\` ${what}: ${cadence}. Next: ${when}.${jobOut ? ` ${JOB_OUT_NOTE}` : ""}`);
+}
+
+/**
+ * docket's `ScheduleError` from a reschedule (a `once` task whose run is with the runner, 0.5.0) as
+ * a plain refusal; `onceJobOutRefusal` asks first, so this is the backstop for a run sent out
+ * between the two.
+ */
+async function refusingScheduleError(edit: () => Promise<TaskResult>): Promise<TaskResult> {
+  try {
+    return await edit();
+  } catch (err) {
+    if (err instanceof ScheduleError) return { ok: false, error: ONCE_JOB_OUT };
+    throw err;
+  }
 }
 
 /** An edit: every field optional; one left out or empty keeps the task's own. */
@@ -77,7 +101,7 @@ export interface ReminderEdit {
 const blank = (v: string | undefined): v is undefined => v === undefined || v.trim() === "";
 
 export function editReminder(d: TrackerDeps, user: User, taskId: string, input: ReminderEdit): Promise<TaskResult> {
-  return d.locks.run(taskId.trim(), () => editReminderLocked(d, user, taskId, input));
+  return d.locks.run(taskId.trim(), () => refusingScheduleError(() => editReminderLocked(d, user, taskId, input)));
 }
 
 async function editReminderLocked(d: TrackerDeps, user: User, taskId: string, input: ReminderEdit): Promise<TaskResult> {
@@ -88,9 +112,14 @@ async function editReminderLocked(d: TrackerDeps, user: User, taskId: string, in
   const repeat = input.repeat ?? repeatOf(task.schedule);
   const plan = reminderPlan(d, user, { text, repeat, ...(input.when !== undefined ? { when: input.when } : {}) }, task.schedule);
   if (!plan.ok) return plan;
+  const moves = !same(plan.schedule, task.schedule);
+  // Asked before anything is written, so a refused edit changes nothing.
+  const refused = moves ? await onceJobOutRefusal(d, task, plan.schedule) : null;
+  if (refused) return { ok: false, error: refused };
   let updated = config.text === plan.text ? task : await applyEdit(d, task, user, { title: clip(plan.text, MAX_TITLE), config: { ...config, text: plan.text } });
-  if (!same(plan.schedule, task.schedule)) updated = await rescheduleKeepingSnoozes(d, updated, user, plan.schedule, user.id);
-  return { ok: true, task: updated, text: savedText(updated, user, await nextRun(d, updated), d.clock.now(), "(reminder)") };
+  let jobOut = false;
+  if (moves) ({ task: updated, jobOut } = await rescheduleKeepingSnoozes(d, updated, user, plan.schedule, user.id));
+  return { ok: true, task: updated, text: savedText(updated, user, await nextRun(d, updated), d.clock.now(), "(reminder)", jobOut) };
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -158,7 +187,7 @@ export interface RenewalEdit {
  * `/renewal`'s first-ask rule (`firstAskIfDue`), but a date already asked about is not asked again.
  */
 export function editRenewal(d: TrackerDeps, user: User, taskId: string, input: RenewalEdit): Promise<TaskResult> {
-  return d.locks.run(taskId.trim(), () => editRenewalLocked(d, user, taskId, input));
+  return d.locks.run(taskId.trim(), () => refusingScheduleError(() => editRenewalLocked(d, user, taskId, input)));
 }
 
 async function editRenewalLocked(d: TrackerDeps, user: User, taskId: string, input: RenewalEdit): Promise<TaskResult> {
@@ -195,19 +224,20 @@ async function editRenewalLocked(d: TrackerDeps, user: User, taskId: string, inp
   if (newAmount && carried !== null) patch.state = { ...state, amount: plan.amount };
   let updated = await applyEdit(d, task, user, patch);
   let next = await nextRun(d, updated);
+  let jobOut = false;
   if (!same(schedule, old)) {
     const asked = await askedAbout(d, task, user, schedule.anchor);
-    updated = await rescheduleKeepingSnoozes(d, updated, user, schedule, user.id);
+    ({ task: updated, jobOut } = await rescheduleKeepingSnoozes(d, updated, user, schedule, user.id));
     next = (asked ? null : await firstAskIfDue(d, updated, user, schedule)) ?? (await nextRun(d, updated));
   }
   const ask = updated.status === "paused" ? "paused" : askText(next, plan.days, user, now);
   const cadence = describeSchedule(schedule, user, user.timeZone, now);
-  return { ok: true, task: updated, text: clip(`Saved \`${updated.id}\` (renewal): ${cadence}. Next ask: ${ask}.`) };
+  return { ok: true, task: updated, text: clip(`Saved \`${updated.id}\` (renewal): ${cadence}. Next ask: ${ask}.${jobOut ? ` ${JOB_OUT_NOTE}` : ""}`) };
 }
 
 /** A price's name, interval, drop and baseline; the page stays the one it was made for. Left out keeps; an empty name is the page's address. */
 export function editPrice(d: TrackerDeps, user: User, taskId: string, input: PriceSettings): Promise<TaskResult> {
-  return d.locks.run(taskId.trim(), () => editPriceLocked(d, user, taskId, input));
+  return d.locks.run(taskId.trim(), () => refusingScheduleError(() => editPriceLocked(d, user, taskId, input)));
 }
 
 async function editPriceLocked(d: TrackerDeps, user: User, taskId: string, input: PriceSettings): Promise<TaskResult> {
@@ -228,10 +258,11 @@ async function editPriceLocked(d: TrackerDeps, user: User, taskId: string, input
   const nextConfig: PriceConfig = { ...config, dropPercent: plan.drop, baseline: plan.baseline };
   if (!same(nextConfig, config)) patch.config = nextConfig;
   let updated = await applyEdit(d, task, user, patch);
+  let jobOut = false;
   if (schedule?.kind === "poll" && (schedule.every !== plan.hours || schedule.unit !== "hour")) {
     // The grid keeps its start, so the checks stay where they were, only further apart or closer.
     const next: Schedule = { ...schedule, every: plan.hours, unit: "hour" };
-    updated = await rescheduleKeepingSnoozes(d, updated, user, next, user.id);
+    ({ task: updated, jobOut } = await rescheduleKeepingSnoozes(d, updated, user, next, user.id));
   }
-  return { ok: true, task: updated, text: savedText(updated, user, await nextRun(d, updated), d.clock.now(), "(price)") };
+  return { ok: true, task: updated, text: savedText(updated, user, await nextRun(d, updated), d.clock.now(), "(price)", jobOut) };
 }
