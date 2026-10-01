@@ -85,19 +85,26 @@ action on one of them answers "That task is with the model runner right now; try
 minute." at once, so no one else's command waits behind it. city-hall unreachable, a 5xx, or a
 refused credential or edge redirect (logged once an hour as such, and the admins told once per Job)
 holds the run and asks again; a Job still not back after six hours is given up (docket's
-`PENDING_LIMIT_MS`). A record in `executor_jobs` goes once its run is gone or finished over 30 days
-ago.
+`PENDING_LIMIT_MS`). A record in `executor_jobs` goes once its run is gone, or once it was
+submitted over 30 days ago and its run is no longer queued or running.
 
 **A runner that stops: city-hall requeues, the tracker waits.** city-hall puts a job back in its
 queue when the runner's claim ends in `usage_limit` or `auth_failed`, or its lease expires (it
-fails the job after three expired leases), so docket never sees that result and the job reads
-`queued` again. The tracker reads how the last claim ended -- city-hall's `job.lastOutcome`, or the
+fails the job once its leases have expired its configured maximum number of times, three by
+default, `CITY_HALL_MAX_EXPIRED_LEASES`), so docket does not see that result then and the job
+reads `queued` again. The tracker reads how the last claim ended -- city-hall's `job.lastOutcome`, or the
 last entry of `runs` where the field is absent -- and treats a queued job whose last claim ended
 that way as "unavailable", not "pending": the run is held and asked again, never given up after
-six hours while the runner is paused, and nothing new is submitted meanwhile. It logs "the model
-runner is paused" naming the outcome once an hour per Job, and tells the admins once per Job and
-outcome. docket's own usage-limit pause (which waits for the reset the CLI named) applies only to a
-`usage_limit` result that reaches the tracker, which city-hall#18 as proposed never sends back.
+six hours while the runner is paused, and nothing new is submitted meanwhile. docket counts its
+six hours from the submission, so once a Job has been seen paused (`executor_jobs.paused_at`) every
+unfinished answer for it -- queued or running -- stays "unavailable": a runner that resumes after
+six hours is collected, not given up and run a second time. That hold is capped at 48 hours from
+the first sight (a judgement, not a measured figure): past it the Job answers "pending" again, so
+docket gives the run up, and the admins are told once. It logs "the model runner is paused" naming
+the outcome once an hour per Job, and tells the admins once per Job and outcome. docket's own
+usage-limit pause (which waits for the reset the CLI named) applies only to a `usage_limit` result
+that reaches the tracker: city-hall#18 as proposed sends one back only when it stores that result,
+as when a job that was requeued later fails at its maximum of expired leases.
 The plugin never calls a model, holds no Claude credential and no `ANTHROPIC_*` variable; model
 output is data, cleaned by docket before it reaches a DM or a finding, and every research DM goes
 out with no allowed mentions: the host sends every `dm` with `allowedMentions: { parse: [] }`

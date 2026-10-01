@@ -28,7 +28,7 @@ export interface ResearchInput {
   deadline?: string;
 }
 
-/** `/research question [context] [at] [deadline]`: one request, answered once by DM after a reviewer checks it. */
+/** `/research question [context] [deadline] [at]`: one request, answered once by DM after a reviewer checks it. */
 export async function createResearch(d: TrackerDeps, user: User, input: ResearchInput): Promise<TaskResult> {
   const type = d.types.research;
   if (!type || !d.research) return { ok: false, error: RESEARCH_OFF };

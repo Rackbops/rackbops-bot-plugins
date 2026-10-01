@@ -278,6 +278,36 @@ describe("/research through city-hall", () => {
     expect(w.city.jobs.size).toBe(2);
   });
 
+  it("a runner paused past six hours is collected when it resumes: one Job, one charge, no second key (review of #110, round 2)", async () => {
+    const w = await setup();
+    await slash(w.plugin, "research", LARRY, { strings: { question: "What is X?" } });
+    await w.round();
+    const research = w.city.byKey("o1");
+    expect(research).toBeDefined();
+    // The runner hits its usage limit: city-hall requeues the job, hour after hour, for seven hours.
+    if (research) Object.assign(research, { status: "queued", attempts: 1, lastOutcome: "usage_limit" });
+    for (let h = 0; h < 7; h++) {
+      await w.round();
+      w.clock.advance(60 * 60 * 1000);
+    }
+    // It resumes: running, then done.
+    if (research) Object.assign(research, { status: "running", attempts: 2 });
+    await w.round();
+    expect(w.city.jobs.size).toBe(1);
+    expect(query(w.dbPath, "SELECT status FROM occurrences WHERE seq = 1")).toEqual([{ status: "queued" }]);
+    if (research) Object.assign(research, { status: "done", result: success(ANSWER) });
+    await w.round();
+    expect(query(w.dbPath, "SELECT status FROM occurrences WHERE seq = 1")).toEqual([{ status: "done" }]);
+    expect(query(w.dbPath, "SELECT calls FROM usage WHERE occurrence_id = 'o1'")).toEqual([{ calls: 1 }]);
+    const events = query<{ text: string }>(w.dbPath, "SELECT text FROM events WHERE occurrence_id = 'o1'").map((e) => e.text);
+    expect(events.some((t) => t.includes("gave up"))).toBe(false);
+    // The only other Job is the reviewer's follow-up, never a second research key.
+    const keys = [...w.city.jobs.values()].map((j) => j.key);
+    expect(keys.filter((k) => /:o1(:|$)/.test(k))).toEqual([research?.key ?? "missing"]);
+    expect(w.logs.filter((l) => l.includes("runner is paused"))).toHaveLength(7);
+    expect(dmsTo(w.sent, ADMIN).filter((c) => c.includes("runner is paused"))).toHaveLength(1);
+  });
+
   it("refuses a deadline before the start, a sixth waiting request, and a question too long", async () => {
     const w = await setup();
     expect(await slash(w.plugin, "research", LARRY, { strings: { question: "Q", at: "tomorrow 9am", deadline: "in 2 hours" } })).toBe(

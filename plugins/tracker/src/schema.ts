@@ -301,7 +301,8 @@ export const MIGRATIONS: readonly string[] = [
   //   charge and the run's record never charges one call twice. Older rows keep null.
   // - `executor_jobs`: the city-hall Executor's own record (executor.ts), the Job key a run submitted
   //   under and the job id city-hall gave it, written before the first ask returns, so a later ask
-  //   (docket passes no spec then) finds the Job again. `occurrence_id` is the run, for forget-me.
+  //   (docket passes no spec then) finds the Job again. `occurrence_id` is the run, for forget-me;
+  //   `paused_at` is when the Job was first seen requeued by a stopped runner (executor.ts).
   // docket asks for an index on `events(occurrence_id)`: migration 1's `events_occurrence` on
   // (occurrence_id, seq) already serves it. A database at 6 is refused by 0.10.0 and older.
   `
@@ -328,7 +329,8 @@ export const MIGRATIONS: readonly string[] = [
     job_key TEXT PRIMARY KEY,
     occurrence_id TEXT NOT NULL,
     remote_id TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    paused_at TEXT
   );
   CREATE INDEX executor_jobs_occurrence ON executor_jobs (occurrence_id);
   `,

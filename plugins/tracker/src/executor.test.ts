@@ -5,6 +5,7 @@ import {
   DATABASE_ID_KEY,
   databaseId,
   EXECUTOR_JOBS_KEPT_MS,
+  PAUSED_CAP_MS,
   JobRecords,
   KEY_PREFIX,
   parseCityHallConfig,
@@ -217,7 +218,7 @@ describe("the city-hall Executor (docket's Executor port, city-hall#18's source 
     }
   });
 
-  it("a refused credential is unavailable, not the Job's fault, logged once an hour, never with the key", async () => {
+  it("a refused credential is unavailable, not the Job's fault, logged once an hour, never with the source key", async () => {
     const w = setup(() => json(401, { error: "unauthorized" }));
     expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
     expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
@@ -245,7 +246,7 @@ describe("the city-hall Executor (docket's Executor port, city-hall#18's source 
     expect((unknown as Error).message).toContain("HTTP 404 to GET /api/execute/jobs/:id");
   });
 
-  it("logs a submission by its key and city-hall's id only: never the prompt, the key or the result", async () => {
+  it("logs a submission by its Job key and city-hall's id only: never the prompt, the source key or the result", async () => {
     const w = setup(() => json(201, { job: job("done", { result: { kind: "success", result: "SECRET RESULT", durationMs: 1 } }) }));
     await w.executor.run(SPEC, "o7", "o7");
     expect(w.logs).toEqual(["info execute: o7 submitted to city-hall as j-1 (done)"]);
@@ -422,5 +423,49 @@ describe("JobRecords.prune (review of #110)", () => {
     expect(records.get("b")).toBe("j-b");
     expect(records.get("c")).toBe("j-c");
     expect(records.get("d")).toBeNull();
+  });
+});
+
+describe("a Job once paused stays held until it finishes, for at most 48 h (review of #110, round 2)", () => {
+  const paused = { job: job("queued", { attempts: 1, lastOutcome: "usage_limit" }), runs: [] };
+
+  it("a paused Job that is running again is still unavailable, not pending; its result is collected when done", async () => {
+    let body: unknown = paused;
+    const w = setup(() => json(200, body));
+    w.records.put("o7", "o7", "j-1", NOW.toISOString());
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    expect(w.records.pausedAt("o7")).toBe(NOW.toISOString());
+    w.later(7 * 60 * 60 * 1000);
+    body = { job: job("running", { attempts: 2, lastOutcome: "usage_limit" }), runs: [] };
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    // Queued again with no requeue outcome (claimed, lease lost and not yet ended): still held.
+    body = { job: job("queued", { attempts: 2, lastOutcome: null }), runs: [] };
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    // The first sight is kept.
+    expect(w.records.pausedAt("o7")).toBe(NOW.toISOString());
+    body = { job: job("done", { result: { kind: "success", result: "r", durationMs: 1 } }), runs: [] };
+    expect(await w.executor.run(null, "o7", "o7")).toEqual({ kind: "success", result: "r", durationMs: 1 });
+  });
+
+  it("a Job never seen paused is pending as before", async () => {
+    const w = setup(() => json(200, { job: job("running", { attempts: 1, lastOutcome: null }), runs: [] }));
+    w.records.put("o7", "o7", "j-1", NOW.toISOString());
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(JobPendingError);
+    expect(w.records.pausedAt("o7")).toBeNull();
+  });
+
+  it("past 48 h from the first sight it answers pending, so docket's give-up applies, and the admins are told once", async () => {
+    let body: unknown = paused;
+    const w = setup(() => json(200, body));
+    w.records.put("o7", "o7", "j-1", NOW.toISOString());
+    await thrown(w.executor.run(null, "o7", "o7"));
+    w.later(PAUSED_CAP_MS - 60_000);
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    w.later(2 * 60_000);
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(JobPendingError);
+    body = { job: job("running", { attempts: 3, lastOutcome: "usage_limit" }), runs: [] };
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(JobPendingError);
+    expect(w.notices.filter((n) => n.key.startsWith("city-hall:paused-cap:"))).toHaveLength(1);
+    expect(w.notices.find((n) => n.key.startsWith("city-hall:paused-cap:"))?.text).toContain("48 h");
   });
 });

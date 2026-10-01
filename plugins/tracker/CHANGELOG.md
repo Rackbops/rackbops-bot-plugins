@@ -25,8 +25,12 @@
   again. A queued job whose last claim ended in `usage_limit`, `auth_failed` or an expired lease
   (city-hall requeues those; read from `job.lastOutcome`, city-hall#18 at 2ba40d3, else the last of
   `runs`) holds the run too, never given up after six hours while the runner is paused: logged once
-  an hour per Job, naming the outcome, and the admins told once per Job and outcome. A record in
-  `executor_jobs` goes once its run is gone or finished over 30 days ago. Never logs the source
+  an hour per Job, naming the outcome, and the admins told once per Job and outcome. Once a Job has
+  been seen paused (`executor_jobs.paused_at`), every unfinished answer for it stays held, so a
+  runner resuming after six hours is collected rather than given up and run again; the hold is
+  capped at 48 hours from the first sight (a judgement), after which docket's give-up applies and
+  the admins are told once. A record in `executor_jobs` goes once its run is gone, or once it was
+  submitted over 30 days ago and its run is no longer queued or running. Never logs the source
   key, the prompt or the result.
 - The execute lane (`src/execute-lane.ts`): a third host tick, `execute`, only when the Executor is
   configured. It starts docket's `tickExecute` in the background (one at a time, at most once a
@@ -53,7 +57,7 @@
 - Adopts `@rackbops/docket-core` and `@rackbops/docket-types` 0.5.0 (their README's "Adopting
   0.5.0"). Schema 6, all additive: a `findings` table (indexed by task and by owner, `key` unique
   when set), a nullable `usage.key` unique when set (a charge keyed by its Job is stored once), and
-  `executor_jobs`. The store implements `addFinding`, `listFindings` and `deleteFindings` and the
+  `executor_jobs` (with `paused_at`). The store implements `addFinding`, `listFindings` and `deleteFindings` and the
   keyed `addUsage`, and passes 0.5.0's `STORE_CONTRACT`. A database at 6 is refused by 0.10.0 and
   older.
 - Forget-me also erases the findings of the person's tasks and the Executor's records of their

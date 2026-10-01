@@ -34,10 +34,14 @@ import { META_TABLE } from "./schema.js";
  * - `queued` or `running`: `JobPendingError`; `done`: the result, read as a docket JobResult;
  *   `failed`: its result when it reads as one, else an `error` result carrying city-hall's error;
  * - `queued` after a claim that ended in `usage_limit`, `auth_failed` or an expired lease (city-hall
- *   requeues those, so docket never sees that result): `ExecutorUnavailableError`, not pending, so
- *   a paused runner never runs out docket's six hours; logged once an hour per Job, and the admins
- *   told once per Job and outcome (`requeuedBy`). How the claim ended is `job.lastOutcome`, else the
- *   last of `runs`;
+ *   requeues those, so docket never sees that result): `ExecutorUnavailableError`, not pending,
+ *   and so is every unfinished answer (`queued` or `running`) for that Job from then on, since
+ *   docket counts its six hours from the submission: a runner that resumes after six hours is
+ *   collected, not given up and run again. The first sight is kept in `executor_jobs.paused_at`;
+ *   after `PAUSED_CAP_MS` (48 h) from it the Job answers pending again, so docket's give-up
+ *   applies, and the admins are told once. A pause is logged once an hour per Job and told to the
+ *   admins once per Job and outcome (`requeuedBy`). How the claim ended is `job.lastOutcome`, else
+ *   the last of `runs`;
  * - the key is `rackbops-tracker:<database id>:<docket's Job key>` (`jobKeyFor`), and a `200` to a
  *   submit (a key city-hall knew) must hold this Job's prompt, or it is refused with a plain Error;
  * - city-hall unreachable, a timeout, a 5xx, a 429, or an answer that is not city-hall's (a
@@ -100,6 +104,14 @@ export const REQUEUED_OUTCOMES: ReadonlySet<string> = new Set(["usage_limit", "a
 
 /** A paused runner is logged at most this often per Job (the admins are told once per Job and outcome). */
 export const PAUSED_LOG_EVERY_MS = 60 * 60 * 1000;
+
+/**
+ * How long a Job first seen paused is held as "unavailable" before it answers pending again and
+ * docket's six-hour give-up applies: 48 hours from that first sight. A judgement, not a measured
+ * figure: long enough for a five-hour usage window or a weekend's dead credential, short enough
+ * that a runner gone for good does not hold the execute lane for ever.
+ */
+export const PAUSED_CAP_MS = 48 * 60 * 60 * 1000;
 
 /**
  * What the tracker asks city-hall to do with the result (plan item 70: the caller says what is done
@@ -197,8 +209,9 @@ export class JobRecords {
   }
 
   /**
-   * Drops the record of a Job whose run is gone (deleted, or erased by forget-me) or finished
-   * more than `EXECUTOR_JOBS_KEPT_MS` ago: docket never asks about a finished run's Job again.
+   * Drops the record of a Job whose run is gone (deleted, or erased by forget-me), or that was
+   * submitted more than `EXECUTOR_JOBS_KEPT_MS` ago and whose run is no longer queued or running:
+   * docket never asks about a finished run's Job again.
    * Returns how many rows went.
    */
   prune(now: Date): number {
@@ -210,6 +223,17 @@ export class JobRecords {
            WHERE o.seq IS NULL OR (o.status NOT IN ('queued', 'running') AND j.created_at < ?))`,
       )
       .run(before).changes;
+  }
+
+  /** When the Job was first seen paused (`requeuedBy`), or null. */
+  pausedAt(jobKey: string): string | null {
+    const r = this.db.query("SELECT paused_at FROM executor_jobs WHERE job_key = ?").get(jobKey) as { paused_at: string | null } | null;
+    return r?.paused_at ?? null;
+  }
+
+  /** Records the first sight of the Job paused; a later call keeps the first. */
+  markPaused(jobKey: string, at: string): void {
+    this.db.query("UPDATE executor_jobs SET paused_at = ? WHERE job_key = ? AND paused_at IS NULL").run(at, jobKey);
   }
 
   /** Stores (or, for a key city-hall answered again, refreshes) the id. */
@@ -442,21 +466,45 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
 
   /**
    * A job city-hall put back after its runner stopped (`requeuedBy`): unavailable, so docket asks
-   * again and never counts the wait against the Job's six hours. Logged once an hour per Job and
-   * told to the admins once per Job and outcome, naming the outcome.
+   * again. docket measures its six-hour give-up from the submission, so a Job that was paused stays
+   * unavailable while it is unfinished -- queued or running, whatever its last claim -- from the
+   * first time it is seen paused (`executor_jobs.paused_at`): otherwise a runner resuming after six
+   * hours would see its run given up and the request submitted again beside it. Bounded by
+   * `PAUSED_CAP_MS` from that first sight: past it the Job answers pending, so docket's give-up
+   * applies, and the admins are told once. A pause is logged once an hour per Job and told to the
+   * admins once per Job and outcome, naming the outcome.
    */
   async function pausedOrAnswer(job: RemoteJob, jobKey: string): Promise<JobResult> {
     const outcome = requeuedBy(job);
-    if (outcome === null) return answerFor(job);
-    const at = o.now().getTime();
-    const last = lastLogged.get(`paused:${jobKey}`);
-    if (last === undefined || at - last >= PAUSED_LOG_EVERY_MS) {
-      lastLogged.set(`paused:${jobKey}`, at);
-      const text = `the model runner is paused: city-hall put job ${job.id} (${jobKey}) back in its queue after ${outcome}; research runs wait until a runner takes it again`;
-      o.log.warn(text);
-      await tellAdmins(`city-hall:paused:${jobKey}:${outcome}`, text);
+    const at = o.now();
+    let pausedAt = o.records.pausedAt(jobKey);
+    if (outcome !== null && pausedAt === null) {
+      try {
+        o.records.markPaused(jobKey, at.toISOString());
+      } catch {
+        throw new ExecutorUnavailableError(`the tracker could not record that ${jobKey} is paused`);
+      }
+      pausedAt = at.toISOString();
     }
-    throw new ExecutorUnavailableError(`city-hall requeued the job after ${outcome}`);
+    if (pausedAt === null || (job.status !== "queued" && job.status !== "running")) return answerFor(job);
+    if (at.getTime() - Date.parse(pausedAt) > PAUSED_CAP_MS) {
+      await tellAdmins(
+        `city-hall:paused-cap:${jobKey}`,
+        `a model Job (${jobKey}, city-hall job ${job.id}) has waited on a paused runner for over ${PAUSED_CAP_MS / 3_600_000} h; the tracker stops holding it, so its run is given up`,
+      );
+      throw new JobPendingError(`city-hall job is ${job.status}, past the paused-runner cap`);
+    }
+    if (outcome !== null) {
+      const last = lastLogged.get(`paused:${jobKey}`);
+      if (last === undefined || at.getTime() - last >= PAUSED_LOG_EVERY_MS) {
+        lastLogged.set(`paused:${jobKey}`, at.getTime());
+        const text = `the model runner is paused: city-hall put job ${job.id} (${jobKey}) back in its queue after ${outcome}; research runs wait until a runner takes it again`;
+        o.log.warn(text);
+        await tellAdmins(`city-hall:paused:${jobKey}:${outcome}`, text);
+      }
+      throw new ExecutorUnavailableError(`city-hall requeued the job after ${outcome}`);
+    }
+    throw new ExecutorUnavailableError(`city-hall job is ${job.status} after a paused runner`);
   }
 
   return {
