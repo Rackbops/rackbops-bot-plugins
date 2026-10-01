@@ -5,6 +5,7 @@ import { html, type Html } from "./html.js";
 import { framed, type Viewer } from "./pages.js";
 import type { ApiToken } from "./api-tokens.js";
 import { adminTokenHref, tokenTable } from "./token-pages.js";
+import { ceilingSection, type CeilingView } from "./ceiling-pages.js";
 
 /**
  * The admin view and forget-me's pages (rackbops-bot-plugins#80, slice 3; plan 5.10), pure: data
@@ -228,6 +229,7 @@ export function personPage(
   result: Result = null,
   configured = false,
   tokens: readonly ApiToken[] = [],
+  budget?: CeilingView,
 ): string {
   return framed(
     v,
@@ -250,6 +252,7 @@ ${p.deliveryPausedAt ? post(v, p, "resume-delivery", "Resume delivery", "rb-btn-
 ${configured && p.id !== v.user.id ? null : post(v, p, "forget", "Remove from the tracker", "rb-btn--danger")}
 </div>
 </section>
+${budget ? ceilingSection(v, p.id, budget, now) : null}
 <section>
 <h2>Their tasks</h2>
 ${

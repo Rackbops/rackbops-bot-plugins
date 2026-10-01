@@ -109,6 +109,8 @@ const ADMIN_ROUTES: readonly [string, string, Record<string, string>?][] = [
   ["POST", "/admin/people/u3/grant"],
   ["POST", "/admin/people/u1/revoke"],
   ["POST", "/admin/people/u3/resume-delivery"],
+  ["POST", "/admin/people/u3/ceiling", { usd: "4", calls: "40" }],
+  ["POST", "/admin/people/u3/ceiling", { reset: "yes" }],
   ["POST", "/admin/people/u3/forget", { confirm: "yes", word: CONFIRM_WORD }],
   ["POST", "/admin/blocks/b1/lift"],
   ["POST", "/admin/tokens/k1/revoke"],
@@ -364,6 +366,12 @@ describe("forget-me", () => {
     w.delivery.unreachable.clear();
     await slash(w.plugin, "web", LARRY); // an unused sign-in link
     const token = await makeToken(w, w.larry, "larry-agent"); // an API token
+    // A raised ceiling for him (ceilings.ts); and one he, made an admin for the moment, set for Curly,
+    // which stays Curly's with "forgotten" as who set it.
+    expect((await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u2/ceiling", { usd: "4", calls: "40" })).status).toBe(200);
+    expect((await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u2/grant")).status).toBe(200);
+    expect((await post(w.plugin, w.larry, w.larryCsrf, "/admin/people/u3/ceiling", { usd: "3", calls: "30" })).status).toBe(200);
+    expect((await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u2/revoke")).status).toBe(200);
     expect((await api(w.plugin, "GET", "/me", { token })).status).toBe(200);
     const where = new Set(traces(w.dbPath, "u2", [LARRY, "Larry", "larry-"]).map((t) => t.split(".")[0]));
     // Everywhere a person can be, but a price's series and a pause (their own tests' business), and
@@ -412,6 +420,8 @@ describe("forget-me", () => {
     // Nothing anywhere names him: his id as a word, his Discord id, his name, his tasks' words.
     expect(traces(w.dbPath, "u2", [LARRY, "Larry", "larry-"])).toEqual([]);
     expect(query(w.dbPath, "SELECT seq FROM users WHERE seq = 2")).toEqual([]);
+    // His ceiling went with him; the one he set for Curly stays Curly's, set by "forgotten".
+    expect(query(w.dbPath, "SELECT user_id, usd, calls, set_by FROM ceiling_changes")).toEqual([{ user_id: "u3", usd: 3, calls: 30, set_by: FORGOTTEN }]);
     // Curly's own tasks and their runs are all still there, and so is Curly.
     expect(curlyRows(w.dbPath)).toEqual(curlyBefore);
     expect((await call(w.plugin, "GET", "/", { jar: curly })).status).toBe(200);

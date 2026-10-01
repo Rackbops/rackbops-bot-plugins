@@ -7,6 +7,7 @@ import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds } from "./access.js";
 import type { TickGate, TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
+import { budgetPolicy, Ceilings } from "./ceilings.js";
 import { DeliveryHealth } from "./delivery-health.js";
 import { createPageFetch } from "./fetch.js";
 import { EXECUTE_EVERY_MS, ExecuteLane } from "./execute-lane.js";
@@ -314,7 +315,9 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         });
       }
       // One docket Lanes for the execute lane while active: it keeps the usage-limit pause (execute-lane.ts).
-      executeLane = executor ? new ExecuteLane({ store: openedStore, clock, types, notifier, executor, locks }) : null;
+      // Its budget is docket's defaults with each person's raised ceiling read before every run (ceilings.ts).
+      const ceilings = new Ceilings(opened);
+      executeLane = executor ? new ExecuteLane({ store: openedStore, clock, types, notifier, executor, locks, budget: budgetPolicy(ceilings) }) : null;
       if (cityHallConfig) host.log.info(`execute lane on: city-hall ${cityHallConfig.url}, capability ${cityHallConfig.capability}`);
       else if ("missing" in cityHall && cityHall.missing.length > 0) host.log.warn(`execute lane is off, so /research is unavailable: ${cityHall.missing.join(", ")} not set`);
       deps = {
@@ -332,6 +335,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         sessions: new Sessions(opened),
         apiTokens: new ApiTokens(opened),
         roster: new Roster(opened),
+        ceilings,
         configuredAdmins: new Set(adminIds),
         lanes,
         webEditor: webOrigin !== null,

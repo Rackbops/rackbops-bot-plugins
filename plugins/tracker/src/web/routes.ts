@@ -11,6 +11,7 @@ const TASK_ACTION = /^\/tasks\/([^/]+)\/(edit|pause|resume|delete)$/;
 const NEW_PATH = /^\/new\/([a-z]+)$/;
 const PERSON_PATH = /^\/admin\/people\/([^/]+)$/;
 const PERSON_ACTION = /^\/admin\/people\/([^/]+)\/(grant|revoke|resume-delivery|forget)$/;
+const PERSON_CEILING = /^\/admin\/people\/([^/]+)\/ceiling$/;
 const BLOCK_LIFT = /^\/admin\/blocks\/([^/]+)\/lift$/;
 const TOKEN_REVOKE = /^\/tokens\/([^/]+)\/revoke$/;
 const ADMIN_TOKEN_REVOKE = /^\/admin\/tokens\/([^/]+)\/revoke$/;
@@ -31,6 +32,7 @@ export type Route =
   | { kind: "admin" | "admin-tasks" | "admin-deliveries" | "admin-allow" }
   | { kind: "admin-person"; id: string }
   | { kind: "admin-act"; id: string; action: PersonAction }
+  | { kind: "admin-ceiling"; id: string }
   | { kind: "admin-lift"; id: string };
 
 /** The admin view's routes: each answers a signed-in person who is not an admin with the unknown page's 404. */
@@ -62,6 +64,8 @@ export function route(path: string): Route | null {
   if (path === "/admin/tasks") return { kind: "admin-tasks" };
   if (path === "/admin/deliveries") return { kind: "admin-deliveries" };
   if (path === "/admin/allow") return { kind: "admin-allow" };
+  const ceiling = PERSON_CEILING.exec(path);
+  if (ceiling) return { kind: "admin-ceiling", id: segment(ceiling[1]) };
   const personAct = PERSON_ACTION.exec(path);
   if (personAct) return { kind: "admin-act", id: segment(personAct[1]), action: personAct[2] as PersonAction };
   const onePerson = PERSON_PATH.exec(path);
@@ -89,6 +93,7 @@ export function methodsOf(r: Route): "GET" | "POST" | "GET, POST" {
     r.kind === "act" ||
     r.kind === "admin-allow" ||
     r.kind === "admin-act" ||
+    r.kind === "admin-ceiling" ||
     r.kind === "admin-lift" ||
     r.kind === "token-revoke" ||
     r.kind === "admin-token-revoke"

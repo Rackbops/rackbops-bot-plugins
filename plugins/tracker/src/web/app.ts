@@ -332,6 +332,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
         return tokenRevokePost(d, v, r.id);
       case "admin-allow":
       case "admin-act":
+      case "admin-ceiling":
       case "admin-lift":
       case "admin-token-revoke":
         return adminPost(a, r, form);
