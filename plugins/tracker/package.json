@@ -1,7 +1,7 @@
 {
   "name": "@rackbops/plugin-tracker",
-  "version": "0.10.0",
-  "description": "The task tracker for Rackbops Clerk: reminders, renewals and price drops by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks, an admin view (with the DMs that did not arrive), forget-me, and a JSON task API with personal API tokens",
+  "version": "0.11.0",
+  "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops and one-off research (through city-hall, with its findings) by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks, an admin view (with the DMs that did not arrive), forget-me, and a JSON task API with personal API tokens",
   "type": "module",
   "main": "dist/plugin.js",
   "files": ["dist"],
@@ -11,8 +11,8 @@
     "directory": "plugins/tracker"
   },
   "devDependencies": {
-    "@rackbops/docket-core": "^0.4.0",
-    "@rackbops/docket-types": "^0.4.0",
+    "@rackbops/docket-core": "^0.5.0",
+    "@rackbops/docket-types": "^0.5.0",
     "@rackbops/styles": "^0.2.42"
   },
   "peerDependencies": {
@@ -21,7 +21,7 @@
   "botPlugin": {
     "hostApiVersion": 1,
     "intents": [],
-    "commands": ["allow", "register", "remind", "renewal", "price", "tasks", "task", "settings", "web"],
+    "commands": ["allow", "register", "remind", "renewal", "price", "research", "tasks", "task", "settings", "web"],
     "env": [
       {
         "key": "TRACKER_ADMIN_DISCORD_IDS",
@@ -43,6 +43,41 @@
         "required": false,
         "secret": false,
         "description": "The https origin the bot's HTTP is reached at through its tunnel, e.g. https://clerk.example.com (no path). /web links to <this>/tracker/login, and a form post from any other origin is refused. Unset = no web area: /web says so and its pages answer 404."
+      },
+      {
+        "key": "TRACKER_CITY_HALL_URL",
+        "format": "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$",
+        "required": false,
+        "secret": false,
+        "description": "The https origin of the city-hall that queues the tracker's model Jobs for docket-runner (no path). With TRACKER_CITY_HALL_KEY and TRACKER_CITY_HALL_CAPABILITY it turns the execute lane and /research on; any of the three unset = off: /research says research is not available."
+      },
+      {
+        "key": "TRACKER_CITY_HALL_KEY",
+        "format": "^\\S+$",
+        "required": false,
+        "secret": true,
+        "description": "The source bearer key the tracker submits and reads its Jobs with (city-hall's CITY_HALL_API_KEY, Lepid-Labs/city-hall#18). Never logged."
+      },
+      {
+        "key": "TRACKER_CITY_HALL_CAPABILITY",
+        "format": "^[a-z0-9]+([-:][a-z0-9]+)*$",
+        "required": false,
+        "secret": false,
+        "description": "The capability tag every tracker Job names, one only docket-runner carries (plan item 71), e.g. claude-cli:subscription. No default: the execute lane stays off without it."
+      },
+      {
+        "key": "TRACKER_CITY_HALL_ACCESS_CLIENT_ID",
+        "format": "^\\S+$",
+        "required": false,
+        "secret": true,
+        "description": "Cloudflare Access service token id for city-hall's edge, sent as CF-Access-Client-Id. Set with TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET or not at all."
+      },
+      {
+        "key": "TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET",
+        "format": "^\\S+$",
+        "required": false,
+        "secret": true,
+        "description": "Cloudflare Access service token secret for city-hall's edge, sent as CF-Access-Client-Secret. Set with TRACKER_CITY_HALL_ACCESS_CLIENT_ID or not at all."
       }
     ]
   }

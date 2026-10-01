@@ -1,4 +1,4 @@
-import { formatInstant, visibleOccurrences, visibleSeries, visibleTask, type SeriesPoint, type User } from "@rackbops/docket-core";
+import { formatInstant, visibleFindings, visibleOccurrences, visibleSeries, visibleTask, type SeriesPoint, type User } from "@rackbops/docket-core";
 import { money } from "@rackbops/docket-types";
 import { clip, MAX_ANSWER, type TrackerDeps } from "./actions.js";
 import { taskHistory } from "./history.js";
@@ -21,6 +21,7 @@ function pointLine(p: SeriesPoint, viewer: User, now: Date): string {
 export async function seriesLines(d: Pick<TrackerDeps, "store" | "clock">, user: User, taskId: string): Promise<string[]> {
   const actor = { userId: user.id, admin: user.admin };
   const task = await visibleTask(d.store, actor, taskId.trim());
+  if (task?.type === "research") return findingLines(d, user, task.id);
   if (!task || (task.type !== "renewal" && task.type !== "price")) return [];
   const points = (await visibleSeries(d.store, actor, task.id)) ?? [];
   const now = d.clock.now();
@@ -45,6 +46,16 @@ export async function seriesLines(d: Pick<TrackerDeps, "store" | "clock">, user:
   const values = points.map((p) => p.value);
   lines.push(`Prices: ${points.length} read, low ${money(Math.min(...values), unit)}, high ${money(Math.max(...values), unit)}`);
   for (const p of points.slice(-SERIES_SHOWN)) lines.push(pointLine(p, user, now));
+  return lines;
+}
+
+/** A research request's findings (docket 0.5.0), through `visibleFindings`: its checked claims and their sources. */
+async function findingLines(d: Pick<TrackerDeps, "store" | "clock">, user: User, taskId: string): Promise<string[]> {
+  const findings = (await visibleFindings(d.store, { userId: user.id, admin: user.admin }, taskId)) ?? [];
+  if (findings.length === 0) return ["Findings: none yet"];
+  const lines = [`Findings: ${findings.length}`];
+  // The source in <...>, so Discord shows the link without an embed, as the research DM does.
+  for (const f of findings.slice(-SERIES_SHOWN)) lines.push(`- ${clip(f.text, 200)}${f.source ? ` <${f.source}>` : ""}`);
   return lines;
 }
 

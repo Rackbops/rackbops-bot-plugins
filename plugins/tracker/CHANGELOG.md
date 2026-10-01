@@ -1,5 +1,74 @@
 # Changelog
 
+## [0.11.0] - 2026-10-01
+
+### Added
+
+- `/research question [context] [deadline] [at]`: a one-off research request (docket's `research`
+  type, plan category 5). A research run looks it up on the web, a reviewer run checks the draft
+  against its sources, and only a passed answer is DMed to the owner and accepted recipients; its
+  claims are kept as findings. `at` becomes the `once` schedule (default now), `deadline` goes into
+  the request as an instant (a run past it makes no call and says so). At most 5 waiting per
+  person. Research DMs go out with no allowed mentions, as every host DM does.
+- The city-hall Executor (`src/executor.ts`): docket's Executor port as a city-hall source, on
+  Lepid-Labs/city-hall#18's proposed `POST /api/execute/jobs` and `GET /api/execute/jobs/:id` (not
+  agreed by Nazu; it may change). Each Job is submitted with the configured capability tag under a
+  prefixed key, `rackbops-tracker:<database id>:<docket's Job key>`: the database id is random,
+  made once and kept in `tracker_meta`, so two tracker databases never collide at city-hall. A
+  `200` for a key city-hall already knew must hold this Job's prompt, or the run is refused (a
+  plain error) and the mismatch logged. city-hall's job id is kept in the tracker's own
+  `executor_jobs` table before the first answer, so a Job out is found again by key; if that write
+  fails the run is held and asked again under the same key, and city-hall hands back the same job.
+  Queued or running is pending; done is the runner's result; failed is its result or an `error`
+  result; unreachable, a timeout, a 5xx, a 429, a redirect, a refused credential (logged once an
+  hour, and the admins told once per Job) or an answer that is not a job holds the run and asks
+  again. A queued job whose last claim ended in `usage_limit`, `auth_failed` or an expired lease
+  (city-hall requeues those; read from `job.lastOutcome`, city-hall#18 at 2ba40d3, else the last of
+  `runs`) holds the run too, never given up after six hours while the runner is paused: logged once
+  an hour per Job, naming the outcome, and the admins told once per Job and outcome. Once a Job has
+  been seen paused (`executor_jobs.paused_at`), every unfinished answer for it stays held, so a
+  runner resuming after six hours is collected rather than given up and run again; the hold is
+  capped at 48 hours from the first sight (a judgement), after which docket's give-up applies and
+  the admins are told once. A record in `executor_jobs` goes once its run is gone, or once it was
+  submitted over 30 days ago and its run is no longer queued or running. Never logs the source
+  key, the prompt or the result.
+- The execute lane (`src/execute-lane.ts`): a third host tick, `execute`, only when the Executor is
+  configured. It starts docket's `tickExecute` in the background (one at a time, at most once a
+  minute) over every task with a due execute-lane run, through one docket `Lanes` kept while the
+  plugin is active (so docket's usage-limit pause holds across ticks), reserving those tasks and
+  holding their locks in id order. The notify tick leaves a task it holds for the next tick, and a
+  command, button or web action on one answers "That task is with the model runner right now; try
+  again in a minute." at once, so neither a reminder nor anyone's command waits on city-hall. No
+  execute tick starts while forget-me runs. Budgets are docket's defaults (2 USD and 20 calls a person a day, 10 USD and 100 in
+  all), with one DM to the person and the admins at a ceiling.
+- Settings `TRACKER_CITY_HALL_URL`, `TRACKER_CITY_HALL_KEY` (secret),
+  `TRACKER_CITY_HALL_CAPABILITY` and the optional Cloudflare Access pair
+  `TRACKER_CITY_HALL_ACCESS_CLIENT_ID` (secret) / `TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET`
+  (secret). The execute lane and `/research` stay off until the first three are all set; a partial
+  set is logged, a malformed value refuses to load. There is no default capability. Research
+  requests made while it was on stay queued (and count toward the 5 waiting) if it is turned off.
+- Findings on a task's page (owner, accepted recipients, admins, through docket's
+  `visibleFindings`): each claim with its source as a `rel="noopener noreferrer nofollow"` link and
+  its date, all escaped; in `/task history`; and in the task API's `GET /tasks/<id>` as a new
+  `findings` array (additive).
+
+### Changed
+
+- Adopts `@rackbops/docket-core` and `@rackbops/docket-types` 0.5.0 (their README's "Adopting
+  0.5.0"). Schema 6, all additive: a `findings` table (indexed by task and by owner, `key` unique
+  when set), a nullable `usage.key` unique when set (a charge keyed by its Job is stored once), and
+  `executor_jobs` (with `paused_at`). The store implements `addFinding`, `listFindings` and `deleteFindings` and the
+  keyed `addUsage`, and passes 0.5.0's `STORE_CONTRACT`. A database at 6 is refused by 0.10.0 and
+  older.
+- Forget-me also erases the findings of the person's tasks and the Executor's records of their
+  runs' Jobs (no tombstone kept); city-hall's own copy of a Job (its spec and result) is under
+  city-hall's retention and is not reached.
+- A config error for `TRACKER_WEB_URL` or `TRACKER_CITY_HALL_URL` no longer echoes the value; one
+  with credentials in it says "must not contain credentials".
+- A schedule edit is refused with a plain answer when docket would refuse it (a `once` task whose
+  run is with the runner), before anything is written; an edit that keeps a run in flight says
+  so. No editable type has an execute-lane run today, so this is a guard.
+
 ## [0.10.0] - 2026-10-01
 
 ### Added

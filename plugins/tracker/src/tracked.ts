@@ -16,6 +16,7 @@ import {
 } from "@rackbops/docket-core";
 import { money, type RenewalConfig, type RenewalDecision } from "@rackbops/docket-types";
 import { CURRENCY_LENGTH, DATE_LENGTH, MAX_NOTE, MAX_TITLE } from "./limits.js";
+import { TASK_BUSY } from "./locks.js";
 import { clip, latestRun, liveTaskCap, NO_SUCH_TASK, type Plan, replyLanes, said, type TaskResult, type TrackerDeps } from "./actions.js";
 
 /**
@@ -159,7 +160,7 @@ export async function decideRenewal(
   if (input.amount !== undefined && (!Number.isFinite(input.amount) || input.amount < 0)) return "The amount has to be zero or more.";
   const payload = input.amount === undefined ? input.choice : { choice: input.choice, amount: input.amount };
   // Picked and answered under the task's lock, so a run of the renewal never lands in between.
-  const refused = await d.locks.run(task.id, async (): Promise<string | null> => {
+  const refused = await d.locks.turn(task.id, async (): Promise<string | null> => {
     const latest = await latestRun(d, task.id);
     if (!latest) return "That renewal has no ask waiting for an answer yet.";
     try {
@@ -169,7 +170,7 @@ export async function decideRenewal(
       if (err instanceof ReplyRefusedError) return err.message;
       throw err;
     }
-  });
+  }, () => TASK_BUSY);
   if (refused !== null) return refused;
   if (input.choice === "cancel") return `Cancelled: \`${task.id}\` ${task.title} will not ask again.`;
   const currency = (task.config as Partial<RenewalConfig>).currency ?? "";

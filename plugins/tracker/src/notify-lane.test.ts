@@ -55,6 +55,22 @@ async function setup(schedule: Schedule = { kind: "once", at: DUE }, text = "wat
 }
 
 describe("runNotifyTick", () => {
+  it("passes by a task the execute tick holds, and delivers its run on the next tick once released (review of #110)", async () => {
+    const s = await setup();
+    const { dm, calls } = fakeDm();
+    const { log } = silentLog();
+    const locks = new TaskLocks();
+    const deps = { store: s.store, clock: s.clock, types: TASK_TYPES, dm, log, locks, skip: (taskId: string) => locks.reserved(taskId) };
+    s.clock.set(DUE);
+    locks.reserve([s.task.id]);
+    expect(await runNotifyTick(deps)).toEqual({ kind: "ran", result: { ran: 0, failed: 0, skipped: 1 } });
+    expect(calls).toHaveLength(0);
+    expect((await s.store.getOccurrence(s.occurrence.id))?.status).toBe("queued");
+    locks.unreserve([s.task.id]);
+    expect(await runNotifyTick(deps)).toEqual({ kind: "ran", result: { ran: 1, failed: 0, skipped: 0 } });
+    expect(calls.map((c) => c.message.content)).toEqual(["water the plants"]);
+  });
+
   const deliveries = async (s: Awaited<ReturnType<typeof setup>>, occurrenceId = s.occurrence.id) =>
     (await s.store.listDeliveries({ occurrenceId })).map((d) => ({ userId: d.userId, status: d.status, attempts: d.attempts, deferrals: d.deferrals, retryAt: d.retryAt, messageId: d.messageId, error: d.error }));
 

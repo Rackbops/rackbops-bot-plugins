@@ -62,6 +62,22 @@ describe("TRACKER_WEB_URL", () => {
     expect(() => createPlugin(makeFakeHost({ name: "tracker", env: { TRACKER_WEB_URL: "http://clerk.example.com" } }))).toThrow("TRACKER_WEB_URL");
   });
 
+  it("never echoes the value it refuses; one with credentials says so (review of #110)", () => {
+    for (const bad of ["https://user:hunter2@clerk.example.com", "https://hunter2@clerk.example.com"]) {
+      expect(() => parseWebUrl(bad)).toThrow("TRACKER_WEB_URL must not contain credentials");
+      try {
+        parseWebUrl(bad);
+      } catch (err) {
+        expect((err as Error).message).not.toContain("hunter2");
+      }
+    }
+    try {
+      parseWebUrl("http://plain-host.example.com/path");
+    } catch (err) {
+      expect((err as Error).message).not.toContain("plain-host");
+    }
+  });
+
   it("unset: /web says the web area is not set up, and every page is 404", async () => {
     const { plugin } = await world({ webUrl: null });
     await people(plugin);

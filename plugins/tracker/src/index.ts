@@ -1,14 +1,16 @@
 import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { DeliveryFailedError, Lanes, type Clock, type Fetch, type Notifier, type TaskType } from "@rackbops/docket-core";
-import { price, reminder, renewal } from "@rackbops/docket-types";
+import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
+import { price, reminder, renewal, research } from "@rackbops/docket-types";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds } from "./access.js";
 import type { TickGate, TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
 import { DeliveryHealth } from "./delivery-health.js";
 import { createPageFetch } from "./fetch.js";
+import { EXECUTE_EVERY_MS, ExecuteLane } from "./execute-lane.js";
+import { type CityHallConfig, createCityHallExecutor, databaseId, JobRecords, parseCityHallConfig } from "./executor.js";
 import type { Membership } from "./access.js";
 import { type Interactionish, lookupMembership, serial } from "./discord-common.js";
 import { createSurface, type SurfaceWiring } from "./discord.js";
@@ -35,10 +37,11 @@ import { LoginLinks } from "./web/signin-link.js";
  * failures (#79), the web area's first slice -- sign-in by one-time link, my tasks, history,
  * settings (#80) -- renewals and the price tracker, with the fenced page reads on a tick of
  * their own (#81) -- the web task editor (#80, slice 2) -- the admin view and forget-me (#80,
- * slice 3) -- and the JSON task API with personal tokens (#80, slice 4).
+ * slice 3) -- the JSON task API with personal tokens (#80, slice 4) -- and the one-off research
+ * request through city-hall, with its findings, on the execute lane (#82).
  *
- * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID` and
- * `TRACKER_WEB_URL` and nothing else. The database is opened in `activate()` and closed in `dispose()`.
+ * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID`,
+ * `TRACKER_WEB_URL` and the `TRACKER_CITY_HALL_*` settings (executor.ts) and nothing else. The database is opened in `activate()` and closed in `dispose()`.
  */
 
 /** The tracker's database: `<dataDir>/tracker/tracker.sqlite`, a directory of its own (mcp's convention). */
@@ -46,15 +49,16 @@ export const DB_DIR = "tracker";
 export const DB_FILE = "tracker.sqlite";
 
 /**
- * The task types this host runs: the notify-lane types whose ports are all wired -- `price` reads
- * pages through the fenced Fetch port (fetch.ts, #81). The execute-lane types need an Executor (the
- * city-hall adapter), which does not exist yet, so a task of those types is never run here -- docket
- * fails such a run with "no task type".
+ * The task types this host runs: the notify-lane types -- `price` reads pages through the fenced
+ * Fetch port (fetch.ts, #81) -- and `research` (#82), the execute-lane type, which runs only while
+ * the city-hall Executor is configured (executor.ts): without it the execute lane is not ticked and
+ * `/research` makes nothing. The scout and the want-list wait for their epic (docket#13).
  */
 export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object.freeze({
   reminder: reminder as TaskType<unknown>,
   renewal: renewal as TaskType<unknown>,
   price: price as TaskType<unknown>,
+  research: research as TaskType<unknown>,
 });
 
 export interface TrackerOptions {
@@ -69,6 +73,12 @@ export interface TrackerOptions {
   /** Test seam for the web area's member re-check; null = no Discord client yet. Defaults to the
    *  client captured from the interactions (below). */
   webMembership?: (discordId: string) => Promise<Membership | null>;
+  /** Test seam for the city-hall Executor's HTTP (executor.ts). */
+  cityHallFetch?: typeof fetch;
+  /** Test seam: an Executor in place of the city-hall one, as if configured. */
+  executor?: Executor;
+  /** Test seam: each execute tick's background work as it starts, so a test can await it. */
+  executeStarted?: (work: Promise<void>) => void;
 }
 
 /** A Notifier for a host without `dm`: every send is refused, and nothing went out. */
@@ -82,6 +92,10 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const adminIds = parseAdminIds(host.env.TRACKER_ADMIN_DISCORD_IDS);
   const guildIds = parseGuildIds(host.env.TRACKER_GUILD_ID);
   const webOrigin = parseWebUrl(host.env.TRACKER_WEB_URL);
+  const cityHall = parseCityHallConfig(host.env);
+  const cityHallConfig: CityHallConfig | null = cityHall.config;
+  // The execute lane runs only when fully set up (or a test hands an Executor in).
+  const executeOn = cityHallConfig !== null || options.executor !== undefined;
   const clock: Clock = options.clock ?? { now: () => new Date() };
   const types = options.types ?? TRACKER_TYPES;
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
@@ -91,6 +105,12 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   let delivery: DeliveryHealth | null = null;
   let deps: TrackerDeps | null = null;
   let warnedNoDm = false;
+  let executeLane: ExecuteLane | null = null;
+  let jobRecords: JobRecords | null = null;
+  let executeRun: Promise<void> | null = null;
+  let lastExecute = Number.NEGATIVE_INFINITY;
+  // While forget-me runs (from its wait for the ticks to its erasure), no execute tick starts.
+  let forgetting = 0;
   const dm = host.dm?.bind(host);
   // One queue for every store write, from Discord and from the web area alike, and one lock per task
   // that the ticks and the queue's replies and edits of that task share (locks.ts).
@@ -116,6 +136,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         dm,
         log: host.log,
         kind,
+        // The execute tick's tasks wait a minute rather than wait on city-hall (execute-lane.ts).
+        skip: (taskId) => locks.reserved(taskId),
         ...(kind === "poll" ? { fetch: pageFetch(signal) } : {}),
         ...(delivery ? { health: delivery } : {}),
       },
@@ -144,6 +166,14 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   };
   const lanes: TickGate = {
     busy: () => running.size > 0,
+    async excludeExecute(fn) {
+      forgetting++;
+      try {
+        return await fn();
+      } finally {
+        forgetting--;
+      }
+    },
     async idle(ms) {
       const until = Date.now() + ms;
       while (running.size > 0) {
@@ -156,6 +186,35 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       return true;
     },
   };
+
+  /**
+   * The execute lane (execute-lane.ts), started in the background so it never holds up a host tick:
+   * one at a time, at most once per `EXECUTE_EVERY_MS`, tracked like the other ticks so forget-me
+   * waits for it.
+   */
+  function startExecute(): void {
+    if (!store || !executeLane || executeRun || forgetting > 0) return;
+    const at = clock.now().getTime();
+    if (at - lastExecute < EXECUTE_EVERY_MS) return;
+    lastExecute = at;
+    const lane = executeLane;
+    const records = jobRecords;
+    const work = (async () => {
+      try {
+        const r = await lane.tick();
+        if (r.failed > 0) host.log.warn(`execute lane: ${r.ran} ran, ${r.failed} failed`);
+        // The record of a Job whose run is gone, or finished a month ago, goes (executor.ts).
+        if (records && store) records.prune(clock.now());
+      } catch (err) {
+        // A closed store after dispose, or a Store error: logged; the next tick tries again.
+        if (store) host.log.error("execute lane tick failed", err);
+      }
+    })();
+    executeRun = tracked(work).finally(() => {
+      executeRun = null;
+    });
+    options.executeStarted?.(executeRun);
+  }
 
   // The web area's member re-check needs Discord, and the host API has no member lookup: it asks
   // through the discord.js Client of the last interaction the plugin handled (`interaction.client`
@@ -239,6 +298,25 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
             }
           : {}),
       });
+      const notifier = dm ? createDmNotifier({ store: openedStore, dm, clock, log: host.log, health: delivery }) : NO_DM;
+      let executor: Executor | null = null;
+      if (options.executor) executor = options.executor;
+      else if (cityHallConfig) {
+        jobRecords = new JobRecords(opened);
+        executor = createCityHallExecutor({
+          config: cityHallConfig,
+          records: jobRecords,
+          databaseId: databaseId(opened),
+          log: host.log,
+          now: () => clock.now(),
+          notice: async (key, text) => void (await noticeOnce(openedStore, notifier, key, clock.now(), { text })),
+          ...(options.cityHallFetch ? { fetchImpl: options.cityHallFetch } : {}),
+        });
+      }
+      // One docket Lanes for the execute lane while active: it keeps the usage-limit pause (execute-lane.ts).
+      executeLane = executor ? new ExecuteLane({ store: openedStore, clock, types, notifier, executor, locks }) : null;
+      if (cityHallConfig) host.log.info(`execute lane on: city-hall ${cityHallConfig.url}, capability ${cityHallConfig.capability}`);
+      else if ("missing" in cityHall && cityHall.missing.length > 0) host.log.warn(`execute lane is off, so /research is unavailable: ${cityHall.missing.join(", ")} not set`);
       deps = {
         store: openedStore,
         admissions: new Admissions(opened),
@@ -248,7 +326,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         fetch: pageFetch(),
         dm,
         log: host.log,
-        notifier: dm ? createDmNotifier({ store: openedStore, dm, clock, log: host.log, health: delivery }) : NO_DM,
+        notifier,
         locks,
         logins: new LoginLinks(opened),
         sessions: new Sessions(opened),
@@ -257,6 +335,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         configuredAdmins: new Set(adminIds),
         lanes,
         webEditor: webOrigin !== null,
+        research: executeOn,
       };
       if (guildIds === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
       health.blocked = typeof host.dm === "function" ? null : "this bot has no host.dm (it predates rackbops-discord-bot#736)";
@@ -269,9 +348,19 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       health.activatedAt = null;
       deps = null;
       delivery = null;
+      executeLane = null;
+      jobRecords = null;
       store = null;
       const closing = db;
       db = null;
+      // An execute tick in flight finishes its city-hall call (each is bounded) before the database
+      // closes, so a result collected is recorded; past 5 s it is asked again after the restart.
+      const inFlight = executeRun;
+      if (inFlight) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([inFlight, new Promise((r) => (timer = setTimeout(r, 5_000)))]);
+        clearTimeout(timer);
+      }
       closing?.close();
     },
 
@@ -287,6 +376,16 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         name: "poll",
         run: (signal) => tracked(tick("poll", signal)),
       },
+      // The execute lane (#82), only when the city-hall Executor is set up: started in the
+      // background, so the host's wait on it is none and no reminder waits on a model.
+      ...(executeOn
+        ? [
+            {
+              name: "execute",
+              run: async () => startExecute(),
+            },
+          ]
+        : []),
     ],
 
     async http(request, info) {

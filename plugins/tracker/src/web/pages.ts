@@ -1,6 +1,6 @@
 import { ADMIN_DISCLOSURE, describeSchedule, formatInstant, type TaskListEntry, type User } from "@rackbops/docket-core";
 import type { PausedTask } from "../actions.js";
-import type { HistoryView } from "../history.js";
+import { FINDINGS_SHOWN, type FindingView, type HistoryView } from "../history.js";
 import { MAX_ZONE } from "../limits.js";
 import { html, type Html, page } from "./html.js";
 
@@ -121,6 +121,27 @@ ${paused}
   );
 }
 
+/**
+ * A finding's row: the claim, its source as a link (only an http(s) URL; rel keeps the page from
+ * reaching back, and tells search engines it is not ours), and when it was stored. Every value is
+ * escaped: the claim is model text, cleaned by docket but never trusted as markup.
+ */
+function findingRow(f: FindingView): Html {
+  const source = f.source ? html`<a class="rb-link" href="${f.source}" rel="noopener noreferrer nofollow">${f.source}</a>` : html`<span class="rb-muted">no source</span>`;
+  return html`<li>${f.claim}<br><span class="rb-muted">${source} -- ${f.at}</span></li>`;
+}
+
+function findingsSection(h: HistoryView): Html | null {
+  if (h.findings.length === 0 && h.task.type !== "research") return null;
+  const shown = h.findings.slice(-FINDINGS_SHOWN);
+  const earlier = h.findings.length - shown.length;
+  return html`<section>
+<h2>Findings</h2>
+${earlier > 0 ? html`<p class="rb-muted">${earlier} earlier finding(s) not shown.</p>` : null}
+${shown.length === 0 ? html`<p class="rb-muted">None yet: a research request's checked claims are kept here once it is answered.</p>` : html`<ul>${shown.map(findingRow)}</ul>`}
+</section>`;
+}
+
 /** A task's page; `controls` are the owner's (editor-pages.ts), `flash` what the last action did. */
 export function historyPage(v: Viewer, h: HistoryView, extra: { controls?: Html | null; flash?: Html | null; owner?: string | null } = {}): string {
   const runs =
@@ -147,6 +168,7 @@ ${extra.owner ? html`<p class="rb-muted">Owned by ${extra.owner}; you can see it
 <p>${h.task.type}, ${h.task.status === "archived" ? "deleted" : h.task.status}, ${h.cadence}. Next: ${h.task.status === "active" ? (h.next ?? "nothing scheduled") : "nothing, while it is not active"}.</p>
 ${extra.controls ?? null}
 </section>
+${findingsSection(h)}
 <section>
 <h2>Runs</h2>
 ${h.earlierRuns > 0 ? html`<p class="rb-muted">${h.earlierRuns} earlier run(s) not shown.</p>` : null}

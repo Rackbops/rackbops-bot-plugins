@@ -4,10 +4,12 @@ import type {
   Delivery,
   DeliveryFilter,
   DeliverySettle,
+  FindingFilter,
   InviteBlock,
   Lane,
   NewBlock,
   NewEvent,
+  NewFinding,
   NewOccurrence,
   NewReply,
   NewSeriesPoint,
@@ -25,6 +27,7 @@ import type {
   SeriesFilter,
   SeriesPoint,
   Store,
+  StoredFinding,
   Task,
   TaskEvent,
   TaskFilter,
@@ -51,7 +54,7 @@ import type {
  * The guarded writes docket 0.4.0 relies on are single statements, so they hold even across
  * connections: `updateOccurrenceIf` is one `UPDATE ... WHERE seq = ? AND status = ?`, `claimDelivery`
  * one `UPDATE ... WHERE retry_at IS NOT NULL`, `deleteOccurrence` one `DELETE ... AND status =
- * 'queued'`, and `planDelivery`, `addSeriesPoint` (keyed) and `claimNotice` an `INSERT ... ON
+ * 'queued'`, and `planDelivery`, `addSeriesPoint`, `addFinding` and `addUsage` (keyed) and `claimNotice` an `INSERT ... ON
  * CONFLICT DO NOTHING`.
  *
  * Stricter than MemoryStore in one way: a Discord id belongs to at most one user (a partial UNIQUE
@@ -196,8 +199,25 @@ function toUsage(r: Row): Usage {
     taskId: str(r.task_id),
     occurrenceId: str(r.occurrence_id),
     source: String(r.source) as Usage["source"],
+    key: str(r.key),
     calls: Number(r.calls),
     costUsd: Number(r.cost_usd),
+    at: String(r.at),
+  };
+}
+
+function toFinding(r: Row): StoredFinding {
+  const tags = parse(r.tags);
+  return {
+    id: idOf("f", r.seq),
+    taskId: String(r.task_id),
+    ownerId: String(r.owner_id),
+    occurrenceId: str(r.occurrence_id),
+    key: str(r.key),
+    type: String(r.type),
+    text: String(r.text),
+    tags: Array.isArray(tags) ? tags.map(String) : [],
+    source: str(r.source),
     at: String(r.at),
   };
 }
@@ -225,6 +245,16 @@ function toDelivery(r: Row): Delivery {
  */
 export function deleteDeliveriesOf(db: Database, userId: string): number {
   return db.query("DELETE FROM deliveries WHERE user_id = ?").run(userId).changes;
+}
+
+/**
+ * Forget-me's delete of the findings of one person's tasks, as one statement: `SqliteStore.deleteFindings`
+ * runs it, and so does roster.ts's erasure inside its own transaction, as for `deleteDeliveriesOf`.
+ * A finding names its task's owner when stored; the task clause also catches one stored under an
+ * owner the task no longer has (no path changes an owner today).
+ */
+export function deleteFindingsOf(db: Database, ownerId: string): number {
+  return db.query("DELETE FROM findings WHERE owner_id = ? OR task_id IN (SELECT 't' || seq FROM tasks WHERE owner_id = ?)").run(ownerId, ownerId).changes;
 }
 
 export class SqliteStore implements Store {
@@ -595,19 +625,66 @@ export class SqliteStore implements Store {
     return kept.map(toPoint);
   }
 
+  // --- findings (docket 0.5.0: a run's stored claims, plan 5.2) -----------------------------------
+
+  async addFinding(f: NewFinding): Promise<StoredFinding> {
+    const key = f.key ?? null;
+    const { changes, lastInsertRowid } = this.run(
+      `INSERT INTO findings (task_id, owner_id, occurrence_id, key, type, text, tags, source, at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (key) WHERE key IS NOT NULL DO NOTHING`,
+      f.taskId,
+      f.ownerId,
+      f.occurrenceId,
+      key,
+      f.type,
+      f.text,
+      json(f.tags ?? []),
+      f.source ?? null,
+      f.at,
+    );
+    if (changes === 0) {
+      const known = this.one("SELECT * FROM findings WHERE key = ?", key);
+      if (!known) throw new Error(`finding ${key} was neither added nor found`);
+      return toFinding(known);
+    }
+    return toFinding(this.mustGet("findings", "f", idOf("f", lastInsertRowid), "finding"));
+  }
+
+  async listFindings(filter: FindingFilter = {}): Promise<StoredFinding[]> {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter.taskId !== undefined) (where.push("task_id = ?"), params.push(filter.taskId));
+    if (filter.ownerId !== undefined) (where.push("owner_id = ?"), params.push(filter.ownerId));
+    if (filter.since !== undefined) (where.push("at >= ?"), params.push(filter.since));
+    const clause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+    return this.all(`SELECT * FROM findings ${clause} ORDER BY at, seq`, ...params).map(toFinding);
+  }
+
+  async deleteFindings(ownerId: string): Promise<number> {
+    return deleteFindingsOf(this.db, ownerId);
+  }
+
   // --- usage and notices (docket's budget.ts; written only by an execute lane) ----------------
 
   async addUsage(u: NewUsage): Promise<Usage> {
-    const { lastInsertRowid } = this.run(
-      "INSERT INTO usage (user_id, task_id, occurrence_id, source, calls, cost_usd, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    const key = u.key ?? null;
+    const { changes, lastInsertRowid } = this.run(
+      "INSERT INTO usage (user_id, task_id, occurrence_id, source, key, calls, cost_usd, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (key) WHERE key IS NOT NULL DO NOTHING",
       u.userId,
       u.taskId,
       u.occurrenceId,
       u.source,
+      key,
       u.calls,
       u.costUsd,
       u.at,
     );
+    if (changes === 0) {
+      // The key is stored: the charge a run already made, unchanged (docket 0.5.0).
+      const known = this.one("SELECT * FROM usage WHERE key = ?", key);
+      if (!known) throw new Error(`usage ${key} was neither added nor found`);
+      return toUsage(known);
+    }
     return toUsage(this.mustGet("usage", "c", idOf("c", lastInsertRowid), "usage"));
   }
 

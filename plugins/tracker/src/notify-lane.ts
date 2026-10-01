@@ -8,8 +8,10 @@ import { createDmNotifier } from "./notifier.js";
  * The notify lane on the host's tick (plan 5.3): due notify-lane runs, fired runs left part way,
  * and the sends still owed, through docket's `Lanes.tickNotify` with the tracker's Store, the clock,
  * and a Notifier over `host.dm`. It never touches city-hall and never waits on a model. The execute
- * lane is not ticked here: it has no Executor until the city-hall adapter exists, so its items stay
- * queued (docket skips a lane whose runtime is missing).
+ * lane has its own tick (execute-lane.ts), off unless the city-hall Executor is configured; what a
+ * research run owes its recipients still goes out here, on the notify tick, as docket asks. A task
+ * the execute tick holds right now (`skip`) is left for the next notify tick rather than waited on,
+ * so a slow city-hall never holds up a reminder.
  *
  * One task at a time (docket 0.4.0: a task's runs, replies and edits are serialized): the tick finds
  * the tasks with work -- a due or part-way run, a run left `running`, a send owed or a claim left
@@ -69,6 +71,8 @@ export interface NotifyLaneDeps {
   kind?: NotifyTickKind;
   /** The Fetch port, for the `poll` tick. */
   fetch?: Fetch | null;
+  /** Tasks to leave for the next tick: those the execute tick holds (execute-lane.ts), never waited on. */
+  skip?: (taskId: string) => boolean;
 }
 
 /**
@@ -101,15 +105,24 @@ export async function tasksWithWork(store: Store, now: Date, keep: (task: Task |
  * claims, its owed sends -- touches that task alone. Everything else passes through unchanged.
  */
 export function taskStore(store: Store, taskId: string): Store {
+  return tasksStore(store, new Set([taskId]));
+}
+
+/** `taskStore` for a set of tasks: the execute tick's view (execute-lane.ts). */
+export function tasksStore(store: Store, taskIds: ReadonlySet<string>): Store {
   const view = Object.create(store) as Store;
-  view.listOccurrences = (filter = {}) => store.listOccurrences(filter.taskId === undefined ? { ...filter, taskId } : filter);
+  view.listOccurrences = async (filter = {}) => {
+    if (filter.taskId !== undefined) return store.listOccurrences(filter);
+    if (taskIds.size === 1) return store.listOccurrences({ ...filter, taskId: [...taskIds][0] as string });
+    return (await store.listOccurrences(filter)).filter((o) => taskIds.has(o.taskId));
+  };
   view.listDeliveries = async (filter = {}) => {
     const rows = await store.listDeliveries(filter);
     if (filter.occurrenceId !== undefined) return rows;
     const ours = new Map<string, boolean>();
     const kept = [];
     for (const row of rows) {
-      if (!ours.has(row.occurrenceId)) ours.set(row.occurrenceId, (await store.getOccurrence(row.occurrenceId))?.taskId === taskId);
+      if (!ours.has(row.occurrenceId)) ours.set(row.occurrenceId, taskIds.has((await store.getOccurrence(row.occurrenceId))?.taskId ?? ""));
       if (ours.get(row.occurrenceId)) kept.push(row);
     }
     return kept;
@@ -136,6 +149,10 @@ export async function runNotifyTick(d: NotifyLaneDeps, signal?: AbortSignal): Pr
   const result: TickResult = { ran: 0, failed: 0, skipped: 0 };
   for (const taskId of await tasksWithWork(d.store, d.clock.now(), (task) => (task ? takesType(kind, task.type) : kind === "notify"))) {
     if (signal?.aborted) break;
+    if (d.skip?.(taskId)) {
+      result.skipped++;
+      continue;
+    }
     const pass = async () => {
       const lanes = new Lanes({
         store: taskStore(d.store, taskId),

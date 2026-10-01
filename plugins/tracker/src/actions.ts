@@ -2,6 +2,7 @@ import {
   formatInstant,
   formatTaskList,
   hasFired,
+  hasJobOut,
   Lanes,
   parseWhen,
   registrationText,
@@ -25,7 +26,7 @@ import { decideAccess, type Membership, type Need } from "./access.js";
 import type { Admissions } from "./admissions.js";
 import { type DeliveryHealth, PAUSE_AFTER, resumedNotice } from "./delivery-health.js";
 import { MAX_LIVE_TASKS, MAX_WHEN } from "./limits.js";
-import type { TaskLocks } from "./locks.js";
+import { TASK_BUSY, type TaskLocks } from "./locks.js";
 import { admit, PeopleError, setPreferences } from "./people.js";
 import { heldRuns, restoreHeldRun } from "./retime.js";
 import type { Roster } from "./roster.js";
@@ -66,12 +67,16 @@ export interface TrackerDeps {
   roster: Roster;
   /** Whether the web area (and its task editor) is set up: `TRACKER_WEB_URL`. Answers mention it only then. */
   webEditor: boolean;
+  /** Whether the execute lane runs (the city-hall Executor is configured): `/research` makes a task only then. */
+  research?: boolean;
 }
 
 /** The ticks as forget-me sees them: whether one runs now, and a wait of at most `ms` for none to (false when it timed out). */
 export interface TickGate {
   busy(): boolean;
   idle(ms: number): Promise<boolean>;
+  /** Runs `fn` with no execute tick starting until it ends (forget-me, admin.ts). */
+  excludeExecute<T>(fn: () => Promise<T>): Promise<T>;
 }
 
 /** Discord's cap on a message; every answer is cut to it. */
@@ -201,12 +206,14 @@ async function rescheduleOwned(d: TrackerDeps, owner: User, zoneChanged: boolean
     const s = task.schedule;
     if (!s || (s.kind !== "calendar" && s.kind !== "period")) continue;
     if (!zoneChanged && s.hour !== undefined) continue;
+    // `run`, not `turn`: a zone change must reach every such task. Only execute-lane tasks are ever
+    // reserved by the execute tick, and the one execute-lane type (research) is `once`, never here.
     await d.locks.run(task.id, async () => {
       // Re-read under the lock: a run may have finished it since the list above.
       const current = await d.store.getTask(task.id);
       if (!current || (current.status !== "active" && current.status !== "paused")) return;
       const held = current.status === "paused" ? await heldRuns(d.store, current) : [];
-      const updated = await rescheduleKeepingSnoozes(d, current, owner, s, owner.id);
+      const { task: updated } = await rescheduleKeepingSnoozes(d, current, owner, s, owner.id);
       if (held.length > 0) await restoreHeldRun(d.store, updated, held, before, owner, d.clock.now());
     });
     moved++;
@@ -217,14 +224,41 @@ async function rescheduleOwned(d: TrackerDeps, owner: User, zoneChanged: boolean
 /**
  * docket's `reschedule` -- cancel the queued scheduled runs, record the change, materialize the next
  * run. Since docket 0.4.0 it keeps a snooze's run (an instant the person asked for, not one the
- * schedule computed) and any run that has fired, which the tracker used to put back itself. The one
+ * schedule computed) and any run that has fired, which the tracker used to put back itself; since
+ * 0.5.0 it keeps a run whose Job is out at the runner too, answers `jobOut` (the owner is told,
+ * `JOB_OUT_NOTE`), and refuses a `once` schedule, old or new, while that Job is out
+ * (`ScheduleError`: the edit would run the task twice; `onceJobOutRefusal` asks first). The one
  * path for a schedule change: a zone or hour move, and an edit on the web. The caller holds the
  * task's lock (locks.ts), as docket asks: a run firing mid-edit would materialize from the old
  * schedule beside the new one.
  */
-export async function rescheduleKeepingSnoozes(d: TrackerDeps, task: Task, owner: User, schedule: Schedule, actorId: string): Promise<Task> {
-  const { task: updated } = await reschedule(d.store, task, owner, schedule, actorId, d.clock.now());
-  return updated;
+export async function rescheduleKeepingSnoozes(
+  d: TrackerDeps,
+  task: Task,
+  owner: User,
+  schedule: Schedule,
+  actorId: string,
+): Promise<{ task: Task; jobOut: boolean }> {
+  const { task: updated, jobOut } = await reschedule(d.store, task, owner, schedule, actorId, d.clock.now());
+  return { task: updated, jobOut };
+}
+
+/** What an edit adds when a run of the task was already with the runner (docket's `jobOut`). */
+export const JOB_OUT_NOTE = "A run of this task is already with the model runner: it still counts, and the new schedule follows it.";
+
+/** The refusal for a schedule edit docket would refuse with `ScheduleError` (a `once` task whose run is out). */
+export const ONCE_JOB_OUT = "That task's run is with the model runner now; change when it runs once that run is back.";
+
+/**
+ * docket's 0.5.0 rule, asked before anything is written: a `once` schedule (old or new) cannot change
+ * while a queued run of the task has a Job out. Null when the edit may go ahead.
+ */
+export async function onceJobOutRefusal(d: Pick<TrackerDeps, "store">, task: Task, schedule: Schedule | null): Promise<string | null> {
+  if (task.schedule?.kind !== "once" && schedule?.kind !== "once") return null;
+  for (const o of await d.store.listOccurrences({ taskId: task.id, status: "queued" })) {
+    if (await hasJobOut(d.store, o)) return ONCE_JOB_OUT;
+  }
+  return null;
 }
 
 export type Plan<T> = ({ ok: true } & T) | { ok: false; error: string };
@@ -321,7 +355,7 @@ export async function answerLatest(
   if (input.until !== undefined && input.until.trim().length > MAX_WHEN) return `\`until\` is longer than ${MAX_WHEN} characters.`;
   const task = await ownTask(d, user, input.taskId);
   if (!task) return NO_SUCH_TASK;
-  return d.locks.run(task.id, () => answerLatestLocked(d, user, task, input));
+  return d.locks.turn(task.id, () => answerLatestLocked(d, user, task, input), () => TASK_BUSY);
 }
 
 async function answerLatestLocked(d: TrackerDeps, user: User, task: Task, input: { kind: "done" | "snooze"; until?: string }): Promise<string> {

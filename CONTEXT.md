@@ -137,6 +137,26 @@ pin only needs to change in one place.
   rackbops-discord-bot `src/plugins/host.ts`, 2026-09-30, for `plugins/tracker` #80 slice 4): the
   buffered `Request` is rebuilt with `method: request.method`, so `PATCH`, `DELETE` and `OPTIONS`
   reach the plugin, which answers its own `405`s. The tracker's JSON task API relies on it.
+- **Every `host.dm` already goes out with no allowed mentions, and the Host API has no per-message
+  switch for it** (read in rackbops-discord-bot `src/plugins/hostMessage.ts:43,310` and
+  `src/client.ts:10` at `12832f0`, 2026-10-01, for `plugins/tracker` #82): `HostMessage` is
+  `content`/`card`/`links`/`buttons` only, and the host builds every `dm`/`post`/`edit` payload with
+  `allowedMentions: { parse: [] }`, over a Client whose default is the same. So docket 0.5.0's
+  "send research DMs with `allowed_mentions: { parse: [] }`" holds for the tracker with no change to
+  the contract. Read in the source only; not verified against live Discord.
+- **docket 0.5.0's execute lane runs Jobs one at a time across every task** (read in its
+  `dist/dispatch.js` `tickExecute`/`dueExecute`, 2026-10-01, for `plugins/tracker` #82): each tick
+  first asks about every run whose Job is out and submits nothing new while one is. So the tracker's
+  execute tick is one `tickExecute` over every task with a due execute-lane run, holding all their
+  locks (`execute-lane.ts`), not one pass per task like the notify lane -- a per-task view would hide
+  another task's Job out. `tickExecute` takes no abort signal. **`Lanes` keeps the usage-limit
+  pause in memory (`executeAfter`)**, so the host must keep one `Lanes` for the execute lane
+  across ticks: one made per tick forgets the pause and submits a fresh Job under a new key every
+  minute through a spent window (review of #110; `execute-lane.ts` `ExecuteLane`).
+- **SQLite's AUTOINCREMENT spends a number on an `INSERT ... ON CONFLICT DO NOTHING` that inserts
+  nothing** (seen 2026-10-01 in `plugins/tracker`'s store tests under Bun's SQLite): a refused keyed
+  finding or a follow-up's refused dedupe leaves a gap, so ids are unique and increasing but not
+  contiguous. Never compute an id by counting rows.
 - **CI job names (`checks`, `test`) intentionally split lint/typecheck-shaped work from tests**,
   matching `/audit`'s "at least two jobs" requirement -- `rackbops-discord-bot`'s own `ci.yml`
   uses a single `checks` job and doesn't split this way; don't use that file as a reference for

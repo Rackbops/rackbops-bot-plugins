@@ -137,8 +137,10 @@ export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): P
     if (step === "ask") return htmlResponse(page());
     if (step === "wrong") return htmlResponse(page(WRONG_WORD), 400);
     // The wait for a running tick is here, before the queue turn: nothing slow runs in the queue.
-    if (!(await ticksSettled(a.d))) return htmlResponse(page(BUSY), 503);
-    const done = await fresh(a, true, (me) => forgetPerson(a.d, me, target.id));
+    // From the wait to the erasure no execute tick starts, so none can keep forget-me BUSY.
+    const done = await a.d.lanes.excludeExecute(async () =>
+      (await ticksSettled(a.d)) ? fresh(a, true, (me) => forgetPerson(a.d, me, target.id)) : ({ ok: false, error: BUSY } as const),
+    );
     if (done === null) return unknownPage(base);
     if (!done.ok) return htmlResponse(page(done.error), done.error === NO_SUCH_PERSON ? 404 : done.error === BUSY ? 503 : 400);
     if (self) return redirect(`${base}/signin?forgotten=1`, [a.signOutCookie]);
@@ -169,8 +171,9 @@ export async function forgetRoute(a: AdminWeb, method: string, form: URLSearchPa
   const step = confirmed(form);
   if (step === "ask") return htmlResponse(page());
   if (step === "wrong") return htmlResponse(page(WRONG_WORD), 400);
-  if (!(await ticksSettled(a.d))) return htmlResponse(page(BUSY), 503);
-  const done = await fresh(a, false, (me) => forgetPerson(a.d, me, me.id));
+  const done = await a.d.lanes.excludeExecute(async () =>
+    (await ticksSettled(a.d)) ? fresh(a, false, (me) => forgetPerson(a.d, me, me.id)) : ({ ok: false, error: BUSY } as const),
+  );
   if (done === null) return redirect(`${base}/signin`, [a.signOutCookie]);
   if (!done.ok) return htmlResponse(page(done.error), done.error === BUSY ? 503 : 400);
   return redirect(`${base}/signin?forgotten=1`, [a.signOutCookie]);

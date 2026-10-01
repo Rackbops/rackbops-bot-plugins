@@ -103,7 +103,7 @@ describe("SqliteStore beyond the contract", () => {
     expect(migrate(db)).toBe(4);
     // `db.query` caches a statement by its text, columns and all; read afresh after the ALTERs.
     const all = (sql: string) => db.prepare(sql).all();
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(5);
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
     // Every row survives with its values; the new columns are null on the old rows.
     const cols = (t: string) => (all(`PRAGMA table_info(${t})`) as { name: string }[]).map((c) => c.name);
     expect(cols("users")).not.toContain("usr_subject");
@@ -146,6 +146,44 @@ describe("SqliteStore beyond the contract", () => {
     expect((await store.claimDelivery(o?.id ?? "", "u1", LATER))?.status).toBe("claimed");
   });
 
+  it("migrates a 0.10.0 database to docket 0.5.0's store: charges survive unkeyed, findings and Job records start empty", async () => {
+    const db = new Database(":memory:");
+    db.transaction(() => {
+      for (const m of MIGRATIONS.slice(0, 5)) db.exec(m);
+      db.exec("PRAGMA user_version = 5");
+    })();
+    db.query("INSERT INTO usage (user_id, task_id, occurrence_id, source, calls, cost_usd, at) VALUES ('u1', 't1', 'o1', 'run', 1, 0.25, '2026-10-01T12:00:00.000Z')").run();
+    expect(migrate(db)).toBe(5);
+    const store = new SqliteStore(db);
+    expect((await store.listUsage()).map((u) => [u.id, u.key, u.costUsd])).toEqual([["c1", null, 0.25]]);
+    expect(await store.listFindings()).toEqual([]);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM executor_jobs").get()).toEqual({ n: 0 });
+    // Two unkeyed charges are two rows; a keyed one is stored once.
+    const at = "2026-10-01T13:00:00.000Z";
+    await store.addUsage({ userId: "u1", taskId: "t1", occurrenceId: "o2", source: "run", calls: 1, costUsd: 0.1, at });
+    const keyed = await store.addUsage({ userId: "u1", taskId: "t1", occurrenceId: "o3", source: "run", key: "o3", calls: 1, costUsd: 0.5, at });
+    const again = await store.addUsage({ userId: "u1", taskId: "t1", occurrenceId: "o3", source: "run", key: "o3", calls: 1, costUsd: 0.9, at });
+    expect(again).toEqual(keyed);
+    expect((await store.listUsage()).map((u) => u.key)).toEqual([null, null, "o3"]);
+  });
+
+  it("findings: keyed once, listed oldest first by time then insertion, filtered by task, owner and since; deleted per owner", async () => {
+    const store = new SqliteStore(openDatabase(":memory:"));
+    const f = (taskId: string, ownerId: string, key: string | null, at: string, text = key ?? "plain") =>
+      store.addFinding({ taskId, ownerId, occurrenceId: "o1", key, type: "research", text, tags: ["a"], source: "https://example.com/x", at });
+    const first = await f("t1", "u1", "o1:0", "2026-10-01T12:00:00.000Z");
+    expect(first).toMatchObject({ id: "f1", taskId: "t1", ownerId: "u1", key: "o1:0", tags: ["a"], source: "https://example.com/x" });
+    expect(await f("t1", "u1", "o1:0", "2026-10-02T12:00:00.000Z", "changed")).toEqual(first);
+    await f("t1", "u1", null, "2026-10-01T11:00:00.000Z");
+    await f("t1", "u1", "o1:1", "2026-10-01T12:00:00.000Z");
+    await f("t2", "u2", "o9:0", "2026-10-01T12:00:00.000Z");
+    expect((await store.listFindings({ taskId: "t1" })).map((x) => x.id)).toEqual(["f3", "f1", "f4"]); // the refused insert used up f2
+    expect((await store.listFindings({ ownerId: "u2" })).map((x) => x.id)).toEqual(["f5"]);
+    expect((await store.listFindings({ taskId: "t1", since: "2026-10-01T12:00:00.000Z" })).map((x) => x.id)).toEqual(["f1", "f4"]);
+    expect(await store.deleteFindings("u1")).toBe(3);
+    expect((await store.listFindings()).map((x) => x.id)).toEqual(["f5"]);
+  });
+
   it("vacuums an existing database once, so rows deleted before secure_delete leave no bytes; the VACUUM bumps no schema", () => {
     const dir = mkdtempSync(join(tmpdir(), "tracker-vacuum-"));
     try {
@@ -169,12 +207,13 @@ describe("SqliteStore beyond the contract", () => {
       expect(bytes()).not.toContain(MARK);
 
       // The VACUUM is kept outside the versioned schema (tracker_meta): the version is the migrations'
-      // alone. A later migration (4, 0.7.0's API tokens; 5, 0.9.0's docket 0.4.0 store) is what
+      // alone. A later migration (4, 0.7.0's API tokens; 5, 0.9.0's docket 0.4.0 store; 6, 0.11.0's
+      // findings and Job records) is what
       // blocks a rollback to 0.6.0, whose migrate() refuses a user_version above its three migrations.
       const again = new Database(path);
       const version = (again.query("PRAGMA user_version").get() as { user_version: number }).user_version;
       expect(version).toBe(MIGRATIONS.length);
-      expect(MIGRATIONS).toHaveLength(5);
+      expect(MIGRATIONS).toHaveLength(6);
       const known060 = 3;
       expect(() => {
         if (version > known060) throw new Error(`tracker database is at schema ${version}, newer than this plugin knows (${known060})`);

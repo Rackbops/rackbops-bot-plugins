@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { BUSY_TIMEOUT_MS } from "./schema.js";
-import { deleteDeliveriesOf } from "./store.js";
+import { deleteDeliveriesOf, deleteFindingsOf } from "./store.js";
 
 /**
  * The tracker-only reads and the one delete docket's Store port has no method for
@@ -89,6 +89,8 @@ export const ERASED_TABLES = [
   "replies",
   "task_events",
   "series",
+  "findings",
+  "executor_jobs",
   "task_recipients",
   "delivery_pauses",
   "occurrences",
@@ -305,7 +307,7 @@ export class Roster {
   /**
    * Erases the person `userId` from the tracker's store, in one transaction (plan 5.8, "Forget
    * me"): their tasks, whatever their status, and everything under them -- runs, run events,
-   * replies (anyone's), history, series, recipients, deliveries (anyone's copy), charges and
+   * replies (anyone's), history, series, findings, the Executor's Job records, recipients, deliveries (anyone's copy), charges and
    * pauses; on everyone else's tasks, their recipient rows, their replies, the history rows they
    * made or that name them, the run events and delivery rows of DMs to them (docket's
    * `deleteDeliveries`, by the very statement `SqliteStore.deleteDeliveries` runs: the port's
@@ -364,6 +366,10 @@ export class Roster {
       del("replies", `task_id IN (${THEIR_TASKS}) OR user_id = ?`, userId, userId);
       del("task_events", `task_id IN (${THEIR_TASKS}) OR actor_id = ?`, userId, userId);
       del("series", `task_id IN (${THEIR_TASKS})`, userId);
+      // docket 0.5.0: the findings of their tasks, by the very statement `SqliteStore.deleteFindings`
+      // runs, and the city-hall Executor's record of their runs' Jobs (before the runs go).
+      rows.findings = (rows.findings ?? 0) + deleteFindingsOf(this.db, userId);
+      del("executor_jobs", `occurrence_id IN (${THEIR_RUNS})`, userId);
       del("task_recipients", `task_id IN (${THEIR_TASKS}) OR user_id = ?`, userId, userId);
       del("delivery_pauses", `task_id IN (${THEIR_TASKS}) OR user_id = ?`, userId, userId);
       del("occurrences", `task_id IN (${THEIR_TASKS})`, userId);

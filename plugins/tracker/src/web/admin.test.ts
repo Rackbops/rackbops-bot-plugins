@@ -367,8 +367,9 @@ describe("forget-me", () => {
     expect((await api(w.plugin, "GET", "/me", { token })).status).toBe(200);
     const where = new Set(traces(w.dbPath, "u2", [LARRY, "Larry", "larry-"]).map((t) => t.split(".")[0]));
     // Everywhere a person can be, but a price's series and a pause (their own tests' business), and
-    // the execute lane's charges and budget notices, which no tick here writes (roster.test.ts).
-    const elsewhere = new Set(["series", "delivery_pauses", "usage", "notices"]);
+    // the execute lane's charges, budget notices, findings and Job records, which no tick here writes
+    // (roster.test.ts).
+    const elsewhere = new Set(["series", "delivery_pauses", "usage", "notices", "findings", "executor_jobs"]);
     expect([...where].sort()).toEqual([...ERASED_TABLES].filter((t) => !elsewhere.has(t)).sort());
     // His copies of runs are in docket's deliveries, and so are the copies of his runs to Curly.
     expect(query(w.dbPath, "SELECT DISTINCT user_id FROM deliveries ORDER BY user_id")).toEqual([{ user_id: "u2" }, { user_id: "u3" }]);
@@ -580,6 +581,39 @@ describe("review fixes (slice 3)", () => {
     release();
     await ticking;
     expect((await forgetting).status).toBe(303);
+  });
+
+  it("no execute tick starts while forget-me runs, so a model run every minute cannot keep it busy (review of #110)", async () => {
+    const started: Promise<void>[] = [];
+    const cityHall = (async () => Response.json({ job: { id: "j1", status: "queued", result: null, error: null, spec: { prompt: "p" } } }, { status: 201 })) as unknown as typeof fetch;
+    const w = await setup({
+      env: { TRACKER_CITY_HALL_URL: "https://city-hall.example.com", TRACKER_CITY_HALL_KEY: "k", TRACKER_CITY_HALL_CAPABILITY: "claude-cli:subscription" },
+      cityHallFetch: cityHall,
+      executeStarted: (p) => void started.push(p),
+    });
+    const execute = () => w.plugin.ticks!.find((t) => t.name === "execute")!.run(new AbortController().signal);
+    await slash(w.plugin, "research", CURLY, { strings: { question: "Q" } });
+    await slash(w.plugin, "remind", CURLY, { strings: { text: "curly-plants", when: "9am", repeat: "day" } });
+    let release = () => {};
+    w.delivery.hold = new Promise<void>((r) => (release = r));
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    const ticking = tick(w.plugin);
+    await until(() => w.delivery.held > 0);
+    // Forget-me now waits for the notify tick; the execute tick may not start meanwhile.
+    const forgetting = post(w.plugin, w.larry, w.larryCsrf, "/forget", { confirm: "yes", word: CONFIRM_WORD });
+    await sleep(20);
+    await execute();
+    expect(started).toHaveLength(0);
+    w.delivery.hold = null;
+    release();
+    await ticking;
+    expect((await forgetting).status).toBe(303);
+    expect(traces(w.dbPath, "u2", [LARRY, "Larry"])).toEqual([]);
+    // Forget-me done: the execute lane runs again.
+    w.clock.advance(61_000);
+    await execute();
+    expect(started).toHaveLength(1);
+    await Promise.all(started);
   });
 
   it("a pause for a recipient names them by id, shown by the name they have when read", async () => {
