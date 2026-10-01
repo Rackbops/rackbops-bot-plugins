@@ -11,6 +11,7 @@ import {
 import type { Membership } from "./access.js";
 import { answeredText, clip, NO_SUCH_TASK, replyLanes, type TrackerDeps } from "./actions.js";
 import { MAX_REPLY_TEXT } from "./buttons.js";
+import { TASK_BUSY } from "./locks.js";
 import { HOST_CANNOT_MESSAGE, isUnreachable } from "./notifier.js";
 
 /**
@@ -133,7 +134,7 @@ async function taskOfRef(d: TrackerDeps, ref: string): Promise<string | null> {
  */
 export async function press(d: TrackerDeps, user: User, ref: string): Promise<PressResult> {
   const taskId = await taskOfRef(d, ref);
-  return taskId === null ? pressLocked(d, user, ref) : d.locks.run(taskId, () => pressLocked(d, user, ref));
+  return taskId === null ? pressLocked(d, user, ref) : d.locks.turn(taskId, () => pressLocked(d, user, ref), () => ({ ok: false, error: TASK_BUSY }));
 }
 
 async function pressLocked(d: TrackerDeps, user: User, ref: string): Promise<PressResult> {
@@ -173,7 +174,7 @@ export async function replyRefusal(d: TrackerDeps, user: User, occurrenceId: str
 export async function submitReply(d: TrackerDeps, user: User, occurrenceId: string, text: string): Promise<string> {
   const taskId = (await d.store.getOccurrence(occurrenceId))?.taskId;
   const act = () => submitReplyLocked(d, user, occurrenceId, text);
-  return taskId === undefined ? act() : d.locks.run(taskId, act);
+  return taskId === undefined ? act() : d.locks.turn(taskId, act, () => TASK_BUSY);
 }
 
 async function submitReplyLocked(d: TrackerDeps, user: User, occurrenceId: string, text: string): Promise<string> {

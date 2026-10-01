@@ -26,7 +26,7 @@ import { decideAccess, type Membership, type Need } from "./access.js";
 import type { Admissions } from "./admissions.js";
 import { type DeliveryHealth, PAUSE_AFTER, resumedNotice } from "./delivery-health.js";
 import { MAX_LIVE_TASKS, MAX_WHEN } from "./limits.js";
-import type { TaskLocks } from "./locks.js";
+import { TASK_BUSY, type TaskLocks } from "./locks.js";
 import { admit, PeopleError, setPreferences } from "./people.js";
 import { heldRuns, restoreHeldRun } from "./retime.js";
 import type { Roster } from "./roster.js";
@@ -75,6 +75,8 @@ export interface TrackerDeps {
 export interface TickGate {
   busy(): boolean;
   idle(ms: number): Promise<boolean>;
+  /** Runs `fn` with no execute tick starting until it ends (forget-me, admin.ts). */
+  excludeExecute<T>(fn: () => Promise<T>): Promise<T>;
 }
 
 /** Discord's cap on a message; every answer is cut to it. */
@@ -204,6 +206,8 @@ async function rescheduleOwned(d: TrackerDeps, owner: User, zoneChanged: boolean
     const s = task.schedule;
     if (!s || (s.kind !== "calendar" && s.kind !== "period")) continue;
     if (!zoneChanged && s.hour !== undefined) continue;
+    // `run`, not `turn`: a zone change must reach every such task. Only execute-lane tasks are ever
+    // reserved by the execute tick, and the one execute-lane type (research) is `once`, never here.
     await d.locks.run(task.id, async () => {
       // Re-read under the lock: a run may have finished it since the list above.
       const current = await d.store.getTask(task.id);
@@ -351,7 +355,7 @@ export async function answerLatest(
   if (input.until !== undefined && input.until.trim().length > MAX_WHEN) return `\`until\` is longer than ${MAX_WHEN} characters.`;
   const task = await ownTask(d, user, input.taskId);
   if (!task) return NO_SUCH_TASK;
-  return d.locks.run(task.id, () => answerLatestLocked(d, user, task, input));
+  return d.locks.turn(task.id, () => answerLatestLocked(d, user, task, input), () => TASK_BUSY);
 }
 
 async function answerLatestLocked(d: TrackerDeps, user: User, task: Task, input: { kind: "done" | "snooze"; until?: string }): Promise<string> {

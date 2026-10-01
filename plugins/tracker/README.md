@@ -71,18 +71,46 @@ by a stop mid-send is settled unconfirmed and logged.
 **Research and the execute lane** (docket 0.5.0, #82). A research request is two model Jobs, run
 one after the other through city-hall's execute lane (Lepid-Labs/city-hall#18) by the runner that
 carries `TRACKER_CITY_HALL_CAPABILITY` -- only docket-runner, on roshne's subscription (plan items
-70, 71). The tracker submits each Job under docket's Job key with `POST /api/execute/jobs`, stores
-city-hall's job id in its own `executor_jobs` table before going on, and asks `GET
-/api/execute/jobs/:id` each minute until it is done: one Job at a time across everyone (plan 5.3),
-on a tick of its own that runs in the background, so a slow city-hall never holds up a reminder.
-city-hall unreachable, a 5xx, or a refused credential (logged once an hour as such) holds the run
-and asks again; a Job still not back after six hours is given up (docket's `PENDING_LIMIT_MS`).
+70, 71). The tracker submits each Job with `POST /api/execute/jobs` under a prefixed key,
+`rackbops-tracker:<database id>:<docket's Job key>` -- the database id is random, made once and kept
+in `tracker_meta`, so two tracker databases (two instances, or one whose database was replaced)
+never share a key at city-hall. A `200` (a key city-hall already knew) must carry this Job's own
+prompt, or the run is refused and the mismatch logged. The tracker stores city-hall's job id in its
+own `executor_jobs` table before going on -- if that write fails, the run is asked again and the
+same key hands back the same job -- and asks `GET /api/execute/jobs/:id` each minute until it is
+done: one Job at a time across everyone (plan 5.3), on a tick of its own that runs in the
+background, so a slow city-hall never holds up a reminder. While that tick waits on city-hall it
+holds its tasks: the notify tick sends their DMs a minute later, and a command, button or web
+action on one of them answers "That task is with the model runner right now; try again in a
+minute." at once, so no one else's command waits behind it. city-hall unreachable, a 5xx, or a
+refused credential or edge redirect (logged once an hour as such, and the admins told once per Job)
+holds the run and asks again; a Job still not back after six hours is given up (docket's
+`PENDING_LIMIT_MS`). A record in `executor_jobs` goes once its run is gone or finished over 30 days
+ago.
+
+**A runner that stops: city-hall requeues, the tracker waits.** city-hall puts a job back in its
+queue when the runner's claim ends in `usage_limit` or `auth_failed`, or its lease expires (it
+fails the job after three expired leases), so docket never sees that result and the job reads
+`queued` again. The tracker reads how the last claim ended -- city-hall's `job.lastOutcome`, or the
+last entry of `runs` where the field is absent -- and treats a queued job whose last claim ended
+that way as "unavailable", not "pending": the run is held and asked again, never given up after
+six hours while the runner is paused, and nothing new is submitted meanwhile. It logs "the model
+runner is paused" naming the outcome once an hour per Job, and tells the admins once per Job and
+outcome. docket's own usage-limit pause (which waits for the reset the CLI named) applies only to a
+`usage_limit` result that reaches the tracker, which city-hall#18 as proposed never sends back.
 The plugin never calls a model, holds no Claude credential and no `ANTHROPIC_*` variable; model
 output is data, cleaned by docket before it reaches a DM or a finding, and every research DM goes
 out with no allowed mentions: the host sends every `dm` with `allowedMentions: { parse: [] }`
 (CONTEXT.md). **The wire is city-hall#18's
 proposal, not yet agreed by Nazu**: the source pair is a stand-in for the source and responder
-contracts (its decision 0002), so it may change, and this adapter with it.
+contracts (its decision 0002), so it may change, and this adapter with it -- the requeue reading
+above and `lastOutcome` (city-hall#18 at 2ba40d3) included.
+
+**Research while the lane is off.** If an instance that had city-hall configured loses that
+configuration, its research requests stay queued: nothing runs them until research is available
+again, a request whose deadline passes meanwhile makes no call and tells its owner when it next
+runs, and those waiting requests still count toward the 5 a person may have waiting. `/research`
+says research is not available; it does not list the waiting ones (`/tasks` does).
 
 **Budgets** (plan 5.7, docket's defaults): 2 USD and 20 model calls a person a day, 10 USD and 100
 calls in all. At a ceiling the person's research waits until midnight Eastern; the person gets one
@@ -99,7 +127,9 @@ owner's.
 **One task at a time.** A task's runs, the answers to them (buttons, `/task done`, Reply) and its
 edits (the editor, pause, resume, delete, a zone or hour change) take that task's lock
 (`src/locks.ts`), so none of them overlap. The notify and poll ticks run one pass per task that has
-work; an answer that lands while its own task runs waits for that pass.
+work; an answer that lands while its own task runs waits for that pass. The execute tick is the
+exception: it can wait on city-hall, so an answer or edit about a task it holds does not wait but
+answers "That task is with the model runner right now; try again in a minute."
 
 ## Web area
 
@@ -263,7 +293,11 @@ and is deleted when it is on a task they were a recipient of, names their curren
 other recipient of that task has that name. A row written under an older name of theirs, or shared
 with a same-named recipient, is kept: the one known gap. A reply other people wrote on the erased
 person's own tasks is deleted with those tasks. Outside the store, nothing is touched: the DMs the
-bot sent stay in the person's Discord DMs, and the host's log may hold their tracker id.
+bot sent stay in the person's Discord DMs, and the host's log may hold their tracker id. **city-hall
+keeps its own copy of a research Job** -- the spec (the question and context are in its prompt) and
+the result -- under city-hall's retention, not the tracker's (Nazu, plan 5.8): forget-me deletes the
+tracker's `executor_jobs` rows for the erased runs (no tombstone is kept; the keys name only the
+database and a run id), but cannot reach city-hall's job.
 
 Bytes: the database runs with `secure_delete` on, so a deleted row is overwritten, and the first
 start of 0.6.0 on an existing database runs one `VACUUM`, so pages freed before that are rewritten
@@ -281,7 +315,9 @@ already in flight cannot be recorded after they are gone -- and no one else's co
 it. Inside the queue it only checks that no tick started meanwhile (else the same 503). A DM sent
 outside any tick -- an invitation's -- that fails after they are gone writes nothing: the failure
 count is not kept for a person no longer in the store, and the withdrawn invitation is not
-recorded. A `/price` whose page is read while its person is forgotten makes nothing. Their sessions
+recorded. A `/price` whose page is read while its person is forgotten makes nothing. No execute
+tick starts from forget-me's wait to its erasure, so a model run every minute cannot keep it busy;
+one already running is waited for like the others. Their sessions
 are among the rows, so they are signed out everywhere at once, and the browser's cookie is cleared. They can come back only as someone new: an admin
 `/allow`s them again, and the tracker never reuses an id.
 
@@ -422,7 +458,7 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 |---|---|---|
 | Store | `src/store.ts`, `src/schema.ts` | docket's `Store` port on `bun:sqlite`, in `<dataDir>/tracker/tracker.sqlite` (WAL). A Discord id belongs to at most one user. Schema versioned by `PRAGMA user_version`; a shipped migration is never edited. Schema 5 (0.9.0) is docket 0.4.0's: a run's `record`, a series point's `key`, `deliveries` (from `delivery_claims`), `usage` and `notices`. Schema 6 (0.11.0) is docket 0.5.0's, all additive: `findings`, a charge's `usage.key`, and the Executor's `executor_jobs`. Forget-me erases a person's findings and their runs' Job records too. `store.test.ts` runs docket's `STORE_CONTRACT` against it. |
 | Notify lane | `src/notify-lane.ts` | docket's `Lanes.tickNotify` on two host ticks, every 60 s, one pass per task with work (a due run, a run in flight, a DM owed or claimed), each under that task's lock through a view of the store limited to that task: `notify` runs every type but the page readers, `poll` runs only them (`price`) with the Fetch port, so a slow page never holds up a reminder. A task the execute tick holds is left for the next notify tick, never waited on. Registers `reminder`, `renewal`, `price` and `research`. |
-| Execute lane | `src/execute-lane.ts`, `src/executor.ts`, `src/research.ts` | Only when the city-hall Executor is configured: a third host tick, `execute`, that starts docket's `Lanes.tickExecute` in the background (one at a time, at most once a minute) over every task with a due execute-lane run, holding those tasks' locks in id order. The Executor is city-hall#18's source pair (above), its I/O injected; `executor_jobs` keeps each Job key's city-hall id. `/research`'s rules. |
+| Execute lane | `src/execute-lane.ts`, `src/executor.ts`, `src/research.ts` | Only when the city-hall Executor is configured: a third host tick, `execute`, that starts docket's `Lanes.tickExecute` in the background (one at a time, at most once a minute) over every task with a due execute-lane run, reserving those tasks and then holding their locks in id order, through one docket `Lanes` kept while the plugin is active (docket keeps its usage-limit pause on it). The Executor is city-hall#18's source pair (above), its I/O injected; `executor_jobs` keeps each Job key's city-hall id. `/research`'s rules. |
 | Page reads | `src/fetch.ts` | docket's `Fetch` port for `price`: http or https on the default port, no credentials, every resolved address public (no loopback, private, link-local, CGNAT, multicast or reserved range, IPv4 or IPv6), redirects followed by hand and re-checked (at most 5), 15 s including the name lookup, at most 3 MB kept. The body is then rebuilt in linear time (`src/page.ts`) to just what extraction reads -- JSON-LD, meta tags, and the page with every `<` blanked, so `near` still reads text, attributes and script data -- because docket's extraction patterns take quadratic time on a page of unclosed tags. A read the tick's abort cuts short requeues its run instead of counting a miss. A DNS answer that changes between the check and the read is not caught here. |
 | Renewals, prices | `src/tracked.ts`, `src/price.ts`, `src/series.ts`, `src/page.ts` | `/renewal`, `/price` and `/task decide`; the series lines of `/task history`. The series (docket's `series` table, schema 1) holds a renewal's paid amounts and a price's readings. |
 | Delivery | `src/notifier.ts`, `src/buttons.ts` | docket's `Notifier` over `host.dm`, with the buttons. docket claims each (run, person) in the store's `deliveries` before the DM and settles it after. The notifier maps the host's answers to docket's errors: cannot be messaged (50007) or an unknown user is `DeliveryFailedError(msg, true)` (failed for good; 50007 and 10013 count toward the pause); a message refused for its content is a plain `DeliveryFailedError` (retried); a paused person is `ExecutorUnavailableError` (deferred); anything else is rethrown, so docket settles it unconfirmed and never resends it. |
@@ -443,7 +479,6 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 | `TRACKER_ADMIN_DISCORD_IDS` | no | Comma-separated Discord user ids (spaces around commas allowed; an empty entry, as from a trailing comma, is refused and the plugin does not load) made admin at start. Unset = none. Removing an id does not revoke it. |
 | `TRACKER_GUILD_ID` | no | The Discord server whose members may use the tracker, or a comma-separated list of them (spaces around commas allowed; a repeated id counts once): a member of any listed server passes. Checked through the interaction's client with a single-member lookup per server (no privileged intent), all asked at once; a yes from any server is a member, a no from every server is not, and otherwise the answer is unknown (refused, never revoked). Inside a listed server, the person running a command needs no lookup. Unset = no membership gate, and a warning is logged each time the plugin activates; a malformed or empty entry anywhere in the list refuses to load, naming it. One store and one admission list serve every listed server; there are no per-server admins. |
 | `TRACKER_WEB_URL` | no | The https origin the bot's HTTP is reached at through its tunnel, e.g. `https://clerk.example.com` (no path). `/web` links and the allowed `Origin` come from it, never from a request's `Host`. Unset = no web area (`/web` says so, the pages answer 404); anything but a bare https origin refuses to load. |
-
 | `TRACKER_CITY_HALL_URL` | no | The https origin of the city-hall that queues the tracker's model Jobs (no path). |
 | `TRACKER_CITY_HALL_KEY` | yes | The source bearer key city-hall checks on `/api/execute/jobs` (its `CITY_HALL_API_KEY`, city-hall#18). Never logged. Kept in the instance's own env, never in a repo. |
 | `TRACKER_CITY_HALL_CAPABILITY` | no | The capability tag every Job names, one only docket-runner carries (plan item 71), e.g. `claude-cli:subscription`. No default: a guessed tag could send the tracker's Jobs to another agent. |
@@ -453,11 +488,12 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 set**: no `execute` tick, and `/research` answers that research is not available, so nobody can
 make a request that would wait forever. With some but not all set, the plugin logs which are
 missing at start; a malformed value (not an https origin, not a tag, one half of the Access pair)
-refuses to load, naming the variable and never echoing a secret. This is the tracker's credential
+refuses to load, naming the variable and never echoing a secret or a URL (one with credentials in it
+answers "must not contain credentials"). This is the tracker's credential
 toward city-hall that plan item 50 moved to E8; until Nazu settles how sources authenticate
 (city-hall#2, item 25), it is city-hall#18's interim shared source key. One city-hall source key
-should serve one tracker instance: Job keys are `rackbops-tracker:<docket Job key>`, and two
-instances on one city-hall would answer each other's keys.
+may serve more than one tracker instance: Job keys are `rackbops-tracker:<database id>:<docket Job
+key>`, so two databases never collide.
 
 `/tracker/healthz` and the web area need the bot's `HTTP_PORT` set; without it there is no HTTP at all.
 

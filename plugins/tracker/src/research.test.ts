@@ -34,12 +34,13 @@ interface FakeJob {
 /** city-hall's source pair in memory: `jobs` by id, `posts` and `gets` counted, `auth` the bearer it checks. */
 function fakeCityHall() {
   const jobs = new Map<string, FakeJob>();
+  let accepted = CITY_HALL.TRACKER_CITY_HALL_KEY;
   const calls: { method: string; path: string; auth: string | null }[] = [];
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
     const auth = ((init?.headers ?? {}) as Record<string, string>).Authorization ?? null;
     calls.push({ method: init?.method ?? "GET", path: url.pathname, auth });
-    if (auth !== `Bearer ${CITY_HALL.TRACKER_CITY_HALL_KEY}`) return Response.json({ error: "unauthorized" }, { status: 401 });
+    if (auth !== `Bearer ${accepted}`) return Response.json({ error: "unauthorized" }, { status: 401 });
     if (init?.method === "POST" && url.pathname === "/api/execute/jobs") {
       const b = JSON.parse(String(init.body)) as { key: string; capability: string; spec: FakeJob["spec"]; responder: unknown };
       const known = [...jobs.values()].find((j) => j.key === b.key);
@@ -53,10 +54,13 @@ function fakeCityHall() {
     if (!job) return Response.json({ error: "not found" }, { status: 404 });
     return Response.json({ job, runs: [] });
   }) as typeof fetch;
-  const byKey = (key: string) => [...jobs.values()].find((j) => j.key === `${KEY_PREFIX}${key}`);
+  // The tracker's key is `rackbops-tracker:<database id>:<docket's Job key>` (executor.ts `jobKeyFor`).
+  const byKey = (key: string) => [...jobs.values()].find((j) => new RegExp(`^${KEY_PREFIX}[0-9a-f]{32}:${key}$`).test(j.key));
   /** The job submitted last, and how many there are. */
   const latest = () => [...jobs.values()].at(-1);
-  return { jobs, calls, fetchImpl, byKey, latest };
+  /** The source key city-hall takes from now on (the operator fixing the credential on its side). */
+  const accept = (key: string) => (accepted = key);
+  return { jobs, calls, fetchImpl, byKey, latest, accept };
 }
 
 const ANSWER = {
@@ -154,7 +158,8 @@ describe("/research through city-hall", () => {
     const review = w.city.latest();
     // The follow-up is its own run, keyed by its own occurrence (`followup:o1` its dedupe key).
     const [followUp] = query<{ id: string }>(w.dbPath, "SELECT 'o' || seq AS id FROM occurrences WHERE dedupe_key = 'followup:o1'");
-    expect(review?.key).toBe(`${KEY_PREFIX}${followUp?.id}`);
+    const [dbId] = query<{ value: string }>(w.dbPath, "SELECT value FROM tracker_meta WHERE key = 'database_id'");
+    expect(review?.key).toBe(`${KEY_PREFIX}${dbId?.value}:${followUp?.id}`);
     expect(review?.spec.prompt).toContain("X was released in 2024.");
     if (review) Object.assign(review, { status: "done", result: success({ verdict: "approve", problems: [], answer: ANSWER }, 0.2) });
     await w.round();
@@ -220,6 +225,20 @@ describe("/research through city-hall", () => {
     await w.round();
     const review = w.city.latest();
     expect(review?.key).not.toBe(research?.key);
+    // Under review, the draft is the task's state: the owner's, never shown to a recipient.
+    const [held] = query<{ state: string }>(w.dbPath, "SELECT state FROM tasks WHERE seq = 1");
+    expect(JSON.parse(held?.state ?? "null")?.draft?.summary).toBe(ANSWER.summary);
+    const curlyEarly = await signIn(w.plugin, CURLY);
+    const seen = [
+      await (await call(w.plugin, "GET", "/tasks/t1", { jar: curlyEarly })).text(),
+      await (await call(w.plugin, "GET", "/", { jar: curlyEarly })).text(),
+      await slash(w.plugin, "task", CURLY, { sub: "history", strings: { task: "t1" } }),
+      await slash(w.plugin, "tasks", CURLY),
+    ];
+    for (const text of seen) {
+      expect(text).not.toContain(ANSWER.summary);
+      expect(text).not.toContain("X was released in 2024.");
+    }
     if (review) Object.assign(review, { status: "done", result: success({ verdict: "approve", problems: [], answer: ANSWER }) });
     await w.round();
     await w.round();
@@ -292,5 +311,20 @@ describe("/research through city-hall", () => {
     expect(query(w.dbPath, "SELECT status FROM occurrences")).toEqual([{ status: "queued" }]);
     expect(w.logs.filter((l) => l.includes("refused the tracker's credential"))).toHaveLength(1);
     expect(w.logs.join("\n")).not.toContain("wrong-key");
+    // The admins are told once for the Job, not every minute.
+    const told = () => dmsTo(w.sent, ADMIN).filter((c) => c.includes("refused the tracker's credential"));
+    expect(told()).toHaveLength(1);
+    expect(told()[0]).not.toContain("wrong-key");
+
+    // The key is right again: the same run is submitted, answered, and finishes.
+    w.city.accept("wrong-key");
+    await w.round();
+    expect(w.city.jobs.size).toBe(1);
+    expect(w.city.byKey("o1")).toBeDefined();
+    const research = w.city.byKey("o1");
+    if (research) Object.assign(research, { status: "done", result: success(ANSWER) });
+    await w.round();
+    expect(query<{ status: string }>(w.dbPath, "SELECT status FROM occurrences WHERE seq = 1")).toEqual([{ status: "done" }]);
+    expect(told()).toHaveLength(1);
   });
 });

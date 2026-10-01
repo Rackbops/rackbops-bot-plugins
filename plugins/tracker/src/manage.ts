@@ -1,5 +1,6 @@
 import { hasFired, materialize, type Task, type User } from "@rackbops/docket-core";
 import { NO_SUCH_TASK, ownTask, type TrackerDeps } from "./actions.js";
+import { TASK_BUSY } from "./locks.js";
 
 /**
  * Pausing, resuming and deleting a task (rackbops-bot-plugins#80, plan 5.10's task editor): the
@@ -35,7 +36,7 @@ export const FINISHED = "That task has finished, so it cannot be changed. Set a 
 
 /** `act` on the owner's task under the task's lock, the id as the person typed it. */
 function locked(d: TrackerDeps, taskId: string, act: () => Promise<Done>): Promise<Done> {
-  return d.locks.run(taskId.trim(), act);
+  return d.locks.turn(taskId.trim(), act, () => ({ ok: false, error: TASK_BUSY }));
 }
 
 export function pauseTask(d: TrackerDeps, user: User, taskId: string): Promise<Done> {

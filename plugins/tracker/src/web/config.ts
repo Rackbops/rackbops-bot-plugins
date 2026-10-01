@@ -12,17 +12,19 @@ export const WEB_URL_FORMAT = "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$";
 export function parseWebUrl(raw: string | undefined): string | null {
   if (raw === undefined || raw.trim() === "") return null;
   const value = raw.trim();
+  // The value is never echoed: one with credentials in it would put them in the log.
+  if (value.includes("@")) throw new Error("TRACKER_WEB_URL must not contain credentials: give the bare https origin");
   if (!new RegExp(WEB_URL_FORMAT).test(value)) {
-    throw new Error(`TRACKER_WEB_URL: "${value}" is not an https origin such as https://clerk.example.com (no path, query or credentials)`);
+    throw new Error("TRACKER_WEB_URL is not an https origin such as https://clerk.example.com (no path, query or credentials)");
   }
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new Error(`TRACKER_WEB_URL: "${value}" is not a URL`);
+    throw new Error("TRACKER_WEB_URL is not a URL");
   }
   if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.pathname !== "/" || url.search !== "" || url.hash !== "") {
-    throw new Error(`TRACKER_WEB_URL: "${value}" must be a bare https origin`);
+    throw new Error("TRACKER_WEB_URL must be a bare https origin");
   }
   return url.origin;
 }

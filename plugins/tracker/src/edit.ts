@@ -27,6 +27,7 @@ import {
   type TaskResult,
   type TrackerDeps,
 } from "./actions.js";
+import { TASK_BUSY } from "./locks.js";
 import { editable, FINISHED, ownLiveTask } from "./manage.js";
 import { reminderPlan, type Repeat, repeatOf } from "./reminders.js";
 import { type PriceSettings, priceSettingsPlan, titleFor } from "./price.js";
@@ -100,8 +101,11 @@ export interface ReminderEdit {
 
 const blank = (v: string | undefined): v is undefined => v === undefined || v.trim() === "";
 
+/** A queue turn's answer while the execute tick holds the task (locks.ts `turn`). */
+const busyTask = (): TaskResult => ({ ok: false, error: TASK_BUSY });
+
 export function editReminder(d: TrackerDeps, user: User, taskId: string, input: ReminderEdit): Promise<TaskResult> {
-  return d.locks.run(taskId.trim(), () => refusingScheduleError(() => editReminderLocked(d, user, taskId, input)));
+  return d.locks.turn(taskId.trim(), () => refusingScheduleError(() => editReminderLocked(d, user, taskId, input)), busyTask);
 }
 
 async function editReminderLocked(d: TrackerDeps, user: User, taskId: string, input: ReminderEdit): Promise<TaskResult> {
@@ -187,7 +191,7 @@ export interface RenewalEdit {
  * `/renewal`'s first-ask rule (`firstAskIfDue`), but a date already asked about is not asked again.
  */
 export function editRenewal(d: TrackerDeps, user: User, taskId: string, input: RenewalEdit): Promise<TaskResult> {
-  return d.locks.run(taskId.trim(), () => refusingScheduleError(() => editRenewalLocked(d, user, taskId, input)));
+  return d.locks.turn(taskId.trim(), () => refusingScheduleError(() => editRenewalLocked(d, user, taskId, input)), busyTask);
 }
 
 async function editRenewalLocked(d: TrackerDeps, user: User, taskId: string, input: RenewalEdit): Promise<TaskResult> {
@@ -237,7 +241,7 @@ async function editRenewalLocked(d: TrackerDeps, user: User, taskId: string, inp
 
 /** A price's name, interval, drop and baseline; the page stays the one it was made for. Left out keeps; an empty name is the page's address. */
 export function editPrice(d: TrackerDeps, user: User, taskId: string, input: PriceSettings): Promise<TaskResult> {
-  return d.locks.run(taskId.trim(), () => refusingScheduleError(() => editPriceLocked(d, user, taskId, input)));
+  return d.locks.turn(taskId.trim(), () => refusingScheduleError(() => editPriceLocked(d, user, taskId, input)), busyTask);
 }
 
 async function editPriceLocked(d: TrackerDeps, user: User, taskId: string, input: PriceSettings): Promise<TaskResult> {

@@ -13,15 +13,16 @@ import { tasksStore } from "./notify-lane.js";
  * that saw one task would not see another task's Job out. It holds each of those tasks' locks
  * (locks.ts) for the whole tick, taken in id order, over a Store view narrowed to them, so a run
  * of a task that was not locked (due a moment later) waits for the next tick, and no edit or reply
- * of a locked task lands mid-run. Deadlock-free: the notify passes and the surface's queue each
- * hold one task's lock at a time and never wait for a second while holding one, and this tick
- * takes its locks in one global order and never enters the queue.
+ * of a locked task lands mid-run. It is the one holder of several locks at once; deadlock-free
+ * because it takes them in one global order, never enters the queue, and every other holder takes
+ * one task's lock at a time.
  *
- * It never blocks the notify lane: index.ts starts it in the background and returns at once, at
- * most one at a time and at most once per `EXECUTE_EVERY_MS`, and the notify tick skips the tasks
- * it holds (`holding`) instead of waiting for their locks, so a slow city-hall (each call is
- * bounded, executor.ts) holds up no reminder. What a run owes its recipients goes out on the notify
- * tick, as docket asks: a task this tick holds sends a minute later.
+ * Its tasks are reserved (`TaskLocks.reserve`) for the tick: the notify tick skips them (they send a
+ * minute later) and a queue turn about one answers "busy, try again" (`TaskLocks.turn`), so a slow
+ * city-hall (each call is bounded, executor.ts) holds up neither a reminder nor another person's
+ * command. index.ts starts it in the background and returns at once, at most one at a time and at
+ * most once per `EXECUTE_EVERY_MS`. What a run owes its recipients goes out on the notify tick, as
+ * docket asks.
  */
 
 /** How often the execute lane is asked to run; each run asks city-hall about at most every Job out. */
@@ -35,11 +36,6 @@ export interface ExecuteLaneDeps {
   executor: Executor;
   locks: TaskLocks;
   budget?: BudgetPolicy;
-  /**
-   * The tasks this tick holds, for as long as it holds them: the notify tick skips them (they wait
-   * a minute) rather than wait on a city-hall call (index.ts `executeHolds`).
-   */
-  holding?: Set<string>;
 }
 
 /** Runs `fn` holding every lock in `ids`, taken in sorted order. */
@@ -56,23 +52,42 @@ export async function executeTasks(store: Store, now: Date): Promise<string[]> {
   return [...new Set([...due, ...running].map((o) => o.taskId))].sort();
 }
 
-export async function runExecuteTick(d: ExecuteLaneDeps): Promise<TickResult> {
-  const ids = await executeTasks(d.store, d.clock.now());
-  if (ids.length === 0) return { ran: 0, failed: 0, skipped: 0 };
-  for (const id of ids) d.holding?.add(id);
-  try {
-    return await withLocks(d.locks, ids, () => {
-      const lanes = new Lanes({
-        store: tasksStore(d.store, new Set(ids)),
-        clock: d.clock,
-        types: d.types,
-        notifier: d.notifier,
-        executor: d.executor,
-        ...(d.budget ? { budget: d.budget } : {}),
-      });
-      return lanes.tickExecute();
+/**
+ * The execute lane: one docket `Lanes` for as long as the plugin is active (index.ts makes one on
+ * activate), since docket keeps the usage-limit pause on the instance (`executeAfter`): a `Lanes`
+ * made each tick would forget it and submit a fresh Job every minute through a spent window. Each
+ * tick narrows the same Store view to the tasks it holds (`scope`).
+ */
+export class ExecuteLane {
+  private readonly scope = new Set<string>();
+  private readonly lanes: Lanes;
+
+  constructor(private readonly d: ExecuteLaneDeps) {
+    this.lanes = new Lanes({
+      store: tasksStore(d.store, this.scope),
+      clock: d.clock,
+      types: d.types,
+      notifier: d.notifier,
+      executor: d.executor,
+      ...(d.budget ? { budget: d.budget } : {}),
     });
-  } finally {
-    for (const id of ids) d.holding?.delete(id);
+  }
+
+  async tick(): Promise<TickResult> {
+    const ids = await executeTasks(this.d.store, this.d.clock.now());
+    if (ids.length === 0) return { ran: 0, failed: 0, skipped: 0 };
+    // Reserved before the locks are taken, so a queue turn about one of them answers "busy" at once
+    // instead of waiting behind a city-hall call (locks.ts), and the notify tick passes them by.
+    this.d.locks.reserve(ids);
+    try {
+      return await withLocks(this.d.locks, ids, () => {
+        this.scope.clear();
+        for (const id of ids) this.scope.add(id);
+        return this.lanes.tickExecute();
+      });
+    } finally {
+      this.scope.clear();
+      this.d.locks.unreserve(ids);
+    }
   }
 }

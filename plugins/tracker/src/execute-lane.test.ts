@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { createTask, DISPATCHER, SUBMITTED_EVENT } from "@rackbops/docket-core";
+import { createTask, DISPATCHER, type Executor, type JobResult, type Notifier, SUBMITTED_EVENT } from "@rackbops/docket-core";
 import { research } from "@rackbops/docket-types";
 import pkg from "../package.json" with { type: "json" };
 import { onceJobOutRefusal, ONCE_JOB_OUT } from "./actions.js";
-import { executeTasks, withLocks } from "./execute-lane.js";
+import { ExecuteLane, executeTasks, withLocks } from "./execute-lane.js";
 import { CAPABILITY_FORMAT, CITY_HALL_URL_FORMAT } from "./executor.js";
-import { TaskLocks } from "./locks.js";
+import { TASK_BUSY, TaskLocks } from "./locks.js";
 import { admit } from "./people.js";
 import { openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
-import { cleanup, LARRY, people, slash, world } from "./web/harness.js";
+import { cleanup, CURLY, LARRY, people, slash, world } from "./web/harness.js";
 
 afterEach(cleanup);
 
@@ -78,6 +78,61 @@ describe("the execute lane's tick (execute-lane.ts)", () => {
     expect(w.sent.some((s) => String((s.message as { content: string }).content).includes("water the plants"))).toBe(true);
     await new Promise((r) => setTimeout(r, 10));
     expect(calls).toBe(1);
+  });
+});
+
+describe("the execute lane keeps one docket Lanes (review of #110)", () => {
+  it("a usage limit pauses the lane until its reset: no fresh Job every minute (o4, o4:1, o4:2, ...)", async () => {
+    const store = new SqliteStore(openDatabase(":memory:"));
+    let now = new Date(AT);
+    const clock = { now: () => new Date(now) };
+    const owner = await admit(store, "111111111111111111", now);
+    await createTask(store, { userId: owner.id, admin: false }, owner, { type: research, title: "Q", config: { question: "Q" }, schedule: { kind: "once", at: AT } }, now);
+    const keys: string[] = [];
+    const resetsAt = new Date(now.getTime() + 3 * 60 * 60 * 1000).toISOString();
+    const executor: Executor = {
+      async run(_spec, _occurrenceId, jobKey): Promise<JobResult> {
+        keys.push(jobKey);
+        return keys.length === 1
+          ? { kind: "usage_limit", detail: "limit reached", resetsAt, durationMs: 1 }
+          : { kind: "error", detail: "after the reset", durationMs: 1 };
+      },
+    };
+    const notifier: Notifier = { sendDm: async () => ({ messageId: "m" }) };
+    const lane = new ExecuteLane({ store, clock, types: { research } as never, notifier, executor, locks: new TaskLocks() });
+    for (let i = 0; i < 4; i++) {
+      await lane.tick();
+      now = new Date(now.getTime() + 61_000);
+    }
+    expect(keys).toHaveLength(1);
+    now = new Date(Date.parse(resetsAt) + 1000);
+    await lane.tick();
+    expect(keys).toHaveLength(2);
+  });
+});
+
+describe("a slow city-hall never holds the queue (review of #110)", () => {
+  it("a queue turn about a task the execute tick holds answers busy at once; another person's command is not delayed", async () => {
+    const hanging = (async () => new Promise<Response>(() => {})) as unknown as typeof fetch;
+    const started: Promise<void>[] = [];
+    const w = await world({
+      env: { TRACKER_CITY_HALL_URL: "https://city-hall.example.com", TRACKER_CITY_HALL_KEY: "k", TRACKER_CITY_HALL_CAPABILITY: "claude-cli:subscription" },
+      cityHallFetch: hanging,
+      executeStarted: (p) => void started.push(p),
+    });
+    await people(w.plugin);
+    await slash(w.plugin, "research", LARRY, { strings: { question: "Q" } });
+    await w.plugin.ticks?.find((t) => t.name === "execute")?.run(new AbortController().signal);
+    expect(started).toHaveLength(1);
+    const begun = Date.now();
+    const stalled = new Promise<string>((r) => setTimeout(() => r("stalled"), 2000));
+    const [mine, theirs] = await Promise.all([
+      Promise.race([slash(w.plugin, "task", LARRY, { sub: "resume", strings: { task: "t1" } }), stalled]),
+      Promise.race([slash(w.plugin, "remind", CURLY, { strings: { text: "water the plants", when: "in 1 hour" } }), stalled]),
+    ]);
+    expect(mine).toBe(TASK_BUSY);
+    expect(theirs).toContain("water the plants");
+    expect(Date.now() - begun).toBeLessThan(1000);
   });
 });
 

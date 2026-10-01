@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, type TaskType } from "@rackbops/docket-core";
+import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
 import { price, reminder, renewal, research } from "@rackbops/docket-types";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds } from "./access.js";
@@ -9,8 +9,8 @@ import type { TickGate, TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
 import { DeliveryHealth } from "./delivery-health.js";
 import { createPageFetch } from "./fetch.js";
-import { EXECUTE_EVERY_MS, runExecuteTick } from "./execute-lane.js";
-import { type CityHallConfig, createCityHallExecutor, JobRecords, parseCityHallConfig } from "./executor.js";
+import { EXECUTE_EVERY_MS, ExecuteLane } from "./execute-lane.js";
+import { type CityHallConfig, createCityHallExecutor, databaseId, JobRecords, parseCityHallConfig } from "./executor.js";
 import type { Membership } from "./access.js";
 import { type Interactionish, lookupMembership, serial } from "./discord-common.js";
 import { createSurface, type SurfaceWiring } from "./discord.js";
@@ -105,12 +105,12 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   let delivery: DeliveryHealth | null = null;
   let deps: TrackerDeps | null = null;
   let warnedNoDm = false;
-  let executor: Executor | null = null;
-  let executeNotifier: Notifier = NO_DM;
+  let executeLane: ExecuteLane | null = null;
+  let jobRecords: JobRecords | null = null;
   let executeRun: Promise<void> | null = null;
   let lastExecute = Number.NEGATIVE_INFINITY;
-  // The tasks the execute tick holds right now: the notify tick passes them by (execute-lane.ts).
-  const executeHolds = new Set<string>();
+  // While forget-me runs (from its wait for the ticks to its erasure), no execute tick starts.
+  let forgetting = 0;
   const dm = host.dm?.bind(host);
   // One queue for every store write, from Discord and from the web area alike, and one lock per task
   // that the ticks and the queue's replies and edits of that task share (locks.ts).
@@ -136,7 +136,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         dm,
         log: host.log,
         kind,
-        skip: (taskId) => executeHolds.has(taskId),
+        // The execute tick's tasks wait a minute rather than wait on city-hall (execute-lane.ts).
+        skip: (taskId) => locks.reserved(taskId),
         ...(kind === "poll" ? { fetch: pageFetch(signal) } : {}),
         ...(delivery ? { health: delivery } : {}),
       },
@@ -165,6 +166,14 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   };
   const lanes: TickGate = {
     busy: () => running.size > 0,
+    async excludeExecute(fn) {
+      forgetting++;
+      try {
+        return await fn();
+      } finally {
+        forgetting--;
+      }
+    },
     async idle(ms) {
       const until = Date.now() + ms;
       while (running.size > 0) {
@@ -184,16 +193,18 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
    * waits for it.
    */
   function startExecute(): void {
-    if (!store || !executor || executeRun) return;
+    if (!store || !executeLane || executeRun || forgetting > 0) return;
     const at = clock.now().getTime();
     if (at - lastExecute < EXECUTE_EVERY_MS) return;
     lastExecute = at;
-    const runStore = store;
-    const runExecutor = executor;
+    const lane = executeLane;
+    const records = jobRecords;
     const work = (async () => {
       try {
-        const r = await runExecuteTick({ store: runStore, clock, types, notifier: executeNotifier, executor: runExecutor, locks, holding: executeHolds });
+        const r = await lane.tick();
         if (r.failed > 0) host.log.warn(`execute lane: ${r.ran} ran, ${r.failed} failed`);
+        // The record of a Job whose run is gone, or finished a month ago, goes (executor.ts).
+        if (records && store) records.prune(clock.now());
       } catch (err) {
         // A closed store after dispose, or a Store error: logged; the next tick tries again.
         if (store) host.log.error("execute lane tick failed", err);
@@ -288,17 +299,22 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           : {}),
       });
       const notifier = dm ? createDmNotifier({ store: openedStore, dm, clock, log: host.log, health: delivery }) : NO_DM;
-      executeNotifier = notifier;
+      let executor: Executor | null = null;
       if (options.executor) executor = options.executor;
       else if (cityHallConfig) {
+        jobRecords = new JobRecords(opened);
         executor = createCityHallExecutor({
           config: cityHallConfig,
-          records: new JobRecords(opened),
+          records: jobRecords,
+          databaseId: databaseId(opened),
           log: host.log,
           now: () => clock.now(),
+          notice: async (key, text) => void (await noticeOnce(openedStore, notifier, key, clock.now(), { text })),
           ...(options.cityHallFetch ? { fetchImpl: options.cityHallFetch } : {}),
         });
       }
+      // One docket Lanes for the execute lane while active: it keeps the usage-limit pause (execute-lane.ts).
+      executeLane = executor ? new ExecuteLane({ store: openedStore, clock, types, notifier, executor, locks }) : null;
       if (cityHallConfig) host.log.info(`execute lane on: city-hall ${cityHallConfig.url}, capability ${cityHallConfig.capability}`);
       else if ("missing" in cityHall && cityHall.missing.length > 0) host.log.warn(`execute lane is off, so /research is unavailable: ${cityHall.missing.join(", ")} not set`);
       deps = {
@@ -332,7 +348,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       health.activatedAt = null;
       deps = null;
       delivery = null;
-      executor = null;
+      executeLane = null;
+      jobRecords = null;
       store = null;
       const closing = db;
       db = null;

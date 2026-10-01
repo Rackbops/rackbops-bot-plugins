@@ -149,7 +149,10 @@ pin only needs to change in one place.
   first asks about every run whose Job is out and submits nothing new while one is. So the tracker's
   execute tick is one `tickExecute` over every task with a due execute-lane run, holding all their
   locks (`execute-lane.ts`), not one pass per task like the notify lane -- a per-task view would hide
-  another task's Job out. `tickExecute` takes no abort signal.
+  another task's Job out. `tickExecute` takes no abort signal. **`Lanes` keeps the usage-limit
+  pause in memory (`executeAfter`)**, so the host must keep one `Lanes` for the execute lane
+  across ticks: one made per tick forgets the pause and submits a fresh Job under a new key every
+  minute through a spent window (review of #110; `execute-lane.ts` `ExecuteLane`).
 - **SQLite's AUTOINCREMENT spends a number on an `INSERT ... ON CONFLICT DO NOTHING` that inserts
   nothing** (seen 2026-10-01 in `plugins/tracker`'s store tests under Bun's SQLite): a refused keyed
   finding or a follow-up's refused dedupe leaves a gap, so ids are unique and increasing but not

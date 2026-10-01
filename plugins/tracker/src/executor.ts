@@ -8,6 +8,7 @@ import {
   type JobSpec,
 } from "@rackbops/docket-core";
 import type { PluginLog } from "../../../packages/api/contract.js";
+import { META_TABLE } from "./schema.js";
 
 /**
  * docket's Executor port as a city-hall source (plan 5.12, E8; rackbops-bot-plugins#82): a model
@@ -32,14 +33,21 @@ import type { PluginLog } from "../../../packages/api/contract.js";
  *   throws a plain Error: docket holds the run like a pending one and gives up after six hours;
  * - `queued` or `running`: `JobPendingError`; `done`: the result, read as a docket JobResult;
  *   `failed`: its result when it reads as one, else an `error` result carrying city-hall's error;
+ * - `queued` after a claim that ended in `usage_limit`, `auth_failed` or an expired lease (city-hall
+ *   requeues those, so docket never sees that result): `ExecutorUnavailableError`, not pending, so
+ *   a paused runner never runs out docket's six hours; logged once an hour per Job, and the admins
+ *   told once per Job and outcome (`requeuedBy`). How the claim ended is `job.lastOutcome`, else the
+ *   last of `runs`;
+ * - the key is `rackbops-tracker:<database id>:<docket's Job key>` (`jobKeyFor`), and a `200` to a
+ *   submit (a key city-hall knew) must hold this Job's prompt, or it is refused with a plain Error;
  * - city-hall unreachable, a timeout, a 5xx, a 429, or an answer that is not city-hall's (a
  *   redirect or page from the edge): `ExecutorUnavailableError`, so the run is asked again and never
  *   given up while city-hall is away. A 401 or 403 is the same, logged as a credential problem: it
- *   is not the Job's fault. Any other 4xx is a plain Error (a refused submit is an uncharged
+ *   is not the Job's fault, and the admins are told once per Job. Any other 4xx is a plain Error (a refused submit is an uncharged
  *   `error` result for the type; on a Job already out docket treats it like pending).
  *
  * Model output is data (plan 5.6): the result is passed to the type as a value, never acted on
- * here, and never logged above debug -- nor is the prompt or the key.
+ * here, and never logged -- nor is the prompt or the source key.
  */
 
 /** Each request to city-hall gives up after this; a timeout is "unavailable", never the Job's failure. */
@@ -56,8 +64,42 @@ const MAX_CAPABILITY = 100;
 /** An https origin, as `TRACKER_WEB_URL` takes it. */
 export const CITY_HALL_URL_FORMAT = "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$";
 
-/** The key a Job is stored under at city-hall: the tracker's own prefix, then docket's Job key. */
+/**
+ * The key a Job is stored under at city-hall: the tracker's own prefix, this database's id, then
+ * docket's Job key (`jobKeyFor`). city-hall's keys are global, and docket's Job keys are built from
+ * occurrence ids that every tracker database counts from 1: without the database id, a second bot
+ * instance, or this one after its database is replaced, would be handed another database's job.
+ */
 export const KEY_PREFIX = "rackbops-tracker:";
+
+export function jobKeyFor(databaseId: string, jobKey: string): string {
+  return `${KEY_PREFIX}${databaseId}:${jobKey}`;
+}
+
+/** The `tracker_meta` key (schema.ts) of this database's random id. */
+export const DATABASE_ID_KEY = "database_id";
+
+/**
+ * This database's id: random, made the first time it is asked for and kept in `tracker_meta`, so
+ * it lasts as long as the database does and no two databases share one.
+ */
+export function databaseId(db: Database): string {
+  db.exec(`CREATE TABLE IF NOT EXISTS ${META_TABLE} (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+  db.query(`INSERT INTO ${META_TABLE} (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING`).run(DATABASE_ID_KEY, crypto.randomUUID().replaceAll("-", ""));
+  return (db.query(`SELECT value FROM ${META_TABLE} WHERE key = ?`).get(DATABASE_ID_KEY) as { value: string }).value;
+}
+
+/** How long the record of a finished run's Job is kept (`JobRecords.prune`). */
+export const EXECUTOR_JOBS_KEPT_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * How a claim ended that city-hall answers by putting the job back in the queue (city-hall#18's
+ * requeue kinds, plus an expired lease): the runner is paused or gone, not the Job wrong.
+ */
+export const REQUEUED_OUTCOMES: ReadonlySet<string> = new Set(["usage_limit", "auth_failed", "lease_expired"]);
+
+/** A paused runner is logged at most this often per Job (the admins are told once per Job and outcome). */
+export const PAUSED_LOG_EVERY_MS = 60 * 60 * 1000;
 
 /**
  * What the tracker asks city-hall to do with the result (plan item 70: the caller says what is done
@@ -116,8 +158,12 @@ export function parseCityHallConfig(env: Readonly<Record<string, string | undefi
     } catch {
       parsed = null;
     }
-    if (!new RegExp(CITY_HALL_URL_FORMAT).test(url) || !parsed || parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "") {
-      throw new Error(`${ENV.url}: "${url}" is not an https origin such as https://city-hall.example.com (no path, query or credentials)`);
+    // Never echoed: a URL with credentials in it would put them in the log.
+    if (url.includes("@") || (parsed && (parsed.username !== "" || parsed.password !== ""))) {
+      throw new Error(`${ENV.url} must not contain credentials: give the bare origin, and the key in ${ENV.key}`);
+    }
+    if (!new RegExp(CITY_HALL_URL_FORMAT).test(url) || !parsed || parsed.protocol !== "https:") {
+      throw new Error(`${ENV.url} is not an https origin such as https://city-hall.example.com (no path, query or credentials)`);
     }
     origin = parsed.origin;
   }
@@ -148,6 +194,22 @@ export class JobRecords {
   get(jobKey: string): string | null {
     const r = this.db.query("SELECT remote_id FROM executor_jobs WHERE job_key = ?").get(jobKey) as { remote_id: string } | null;
     return r ? r.remote_id : null;
+  }
+
+  /**
+   * Drops the record of a Job whose run is gone (deleted, or erased by forget-me) or finished
+   * more than `EXECUTOR_JOBS_KEPT_MS` ago: docket never asks about a finished run's Job again.
+   * Returns how many rows went.
+   */
+  prune(now: Date): number {
+    const before = new Date(now.getTime() - EXECUTOR_JOBS_KEPT_MS).toISOString();
+    return this.db
+      .query(
+        `DELETE FROM executor_jobs WHERE job_key IN (
+           SELECT j.job_key FROM executor_jobs j LEFT JOIN occurrences o ON 'o' || o.seq = j.occurrence_id
+           WHERE o.seq IS NULL OR (o.status NOT IN ('queued', 'running') AND j.created_at < ?))`,
+      )
+      .run(before).changes;
   }
 
   /** Stores (or, for a key city-hall answered again, refreshes) the id. */
@@ -215,19 +277,60 @@ export function readJobResult(v: unknown): JobResult | null {
 }
 
 /** A city-hall job as the source reads it back; only what the adapter uses. */
-interface RemoteJob {
+export interface RemoteJob {
   id: string;
   status: "queued" | "running" | "done" | "failed";
   result: unknown;
   error: string | null;
+  /** The prompt city-hall holds for the job, when it says (a 200 to a POST is checked against it). */
+  prompt: string | null;
+  /**
+   * How the job's latest claim ended, when one has: city-hall's `job.lastOutcome` (city-hall#18
+   * at 2ba40d3), else the outcome of the last entry of `runs`; null before any claim ended.
+   */
+  lastOutcome: string | null;
+  /** Claims so far, when city-hall says. */
+  attempts: number | null;
 }
 
-function readJob(body: unknown): RemoteJob | null {
+function lastRunOutcome(runs: unknown): string | null {
+  if (!Array.isArray(runs)) return null;
+  let last: Record<string, unknown> | null = null;
+  for (const r of runs) {
+    if (!isRecord(r)) continue;
+    if (last === null || (num(r.attempt) ?? 0) >= (num(last.attempt) ?? 0)) last = r;
+  }
+  return last && typeof last.outcome === "string" ? last.outcome : null;
+}
+
+export function readJob(body: unknown): RemoteJob | null {
   if (!isRecord(body) || !isRecord(body.job)) return null;
   const j = body.job;
   if (typeof j.id !== "string" || j.id === "") return null;
   if (j.status !== "queued" && j.status !== "running" && j.status !== "done" && j.status !== "failed") return null;
-  return { id: j.id, status: j.status, result: j.result ?? null, error: typeof j.error === "string" ? j.error : null };
+  // `lastOutcome` is preferred when city-hall sends the field at all (null included); the runs
+  // list is the fallback while #18 is unmerged and may change.
+  const lastOutcome = "lastOutcome" in j ? (typeof j.lastOutcome === "string" ? j.lastOutcome : null) : lastRunOutcome(body.runs);
+  return {
+    id: j.id,
+    status: j.status,
+    result: j.result ?? null,
+    error: typeof j.error === "string" ? j.error : null,
+    prompt: isRecord(j.spec) && typeof j.spec.prompt === "string" ? j.spec.prompt : null,
+    lastOutcome,
+    attempts: num(j.attempts) ?? null,
+  };
+}
+
+/**
+ * The outcome that put a queued job back, or null: city-hall requeues a job whose claim ended in
+ * `usage_limit` or `auth_failed`, or whose lease expired, and it then reads `queued` like a job no
+ * runner has claimed yet. Such a job waits on the runner, not on its turn.
+ */
+export function requeuedBy(job: RemoteJob): string | null {
+  if (job.status !== "queued" || job.lastOutcome === null || !REQUEUED_OUTCOMES.has(job.lastOutcome)) return null;
+  if (job.attempts !== null && job.attempts < 1) return null;
+  return job.lastOutcome;
 }
 
 /** What a finished (or not yet finished) job answers docket. */
@@ -246,6 +349,15 @@ export interface CityHallExecutorOptions {
   records: JobRecords;
   log: PluginLog;
   now: () => Date;
+  /**
+   * This database's id (`databaseId`), in every key the tracker submits under (`jobKeyFor`).
+   */
+  databaseId: string;
+  /**
+   * Tells the admins once for `key` (index.ts: docket's `noticeOnce`): a credential refused, or the
+   * runner paused. Best effort; never throws.
+   */
+  notice?: (key: string, text: string) => Promise<void>;
   /** Test seam; the global `fetch` otherwise. */
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -274,8 +386,8 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
     };
   }
 
-  /** One call; the job it answers, or the right docket error. Never logs a body, a prompt or the key. */
-  async function call(method: "GET" | "POST", path: string, body?: unknown): Promise<RemoteJob> {
+  /** One call; the job it answers and the HTTP status, or the right docket error. Never logs a body, a prompt or the source key. */
+  async function call(method: "GET" | "POST", path: string, jobKey: string, body?: unknown): Promise<{ job: RemoteJob; status: number }> {
     let res: Response;
     try {
       res = await fetchImpl(`${o.config.url}${path}`, {
@@ -291,11 +403,15 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
     }
     const status = res.status;
     if (status === 401 || status === 403) {
-      warnOnce("credential", `city-hall refused the tracker's credential (HTTP ${status}): check ${ENV.key} and the Access service token; research runs wait until it is fixed`);
+      const text = `city-hall refused the tracker's credential (HTTP ${status}): check ${ENV.key} and the Access service token; research runs wait until it is fixed`;
+      warnOnce("credential", text);
+      await tellAdmins(`city-hall:credential:${jobKey}`, text);
       throw new ExecutorUnavailableError(`city-hall refused the tracker's credential (HTTP ${status})`);
     }
     if (status >= 300 && status < 400) {
-      warnOnce("redirect", `city-hall answered with a redirect (HTTP ${status}), as an edge login does: check the Access service token (${ENV.accessId})`);
+      const text = `city-hall answered with a redirect (HTTP ${status}), as an edge login does: check the Access service token (${ENV.accessId}); research runs wait until it is fixed`;
+      warnOnce("redirect", text);
+      await tellAdmins(`city-hall:credential:${jobKey}`, text);
       throw new ExecutorUnavailableError(`city-hall answered with a redirect (HTTP ${status})`);
     }
     if (status >= 500 || status === 429 || status === 408) throw new ExecutorUnavailableError(`city-hall answered HTTP ${status}`);
@@ -311,21 +427,67 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
       warnOnce("shape", `city-hall answered ${method} with HTTP ${status} but no job the tracker could read: is ${ENV.url} city-hall?`);
       throw new ExecutorUnavailableError("city-hall's answer was not a job");
     }
-    return job;
+    return { job, status };
+  }
+
+  /** The admins' notice, once per key; a failed send costs nothing else. */
+  async function tellAdmins(key: string, text: string): Promise<void> {
+    if (!o.notice) return;
+    try {
+      await o.notice(key, text);
+    } catch {
+      // Best effort, as docket's own notices are.
+    }
+  }
+
+  /**
+   * A job city-hall put back after its runner stopped (`requeuedBy`): unavailable, so docket asks
+   * again and never counts the wait against the Job's six hours. Logged once an hour per Job and
+   * told to the admins once per Job and outcome, naming the outcome.
+   */
+  async function pausedOrAnswer(job: RemoteJob, jobKey: string): Promise<JobResult> {
+    const outcome = requeuedBy(job);
+    if (outcome === null) return answerFor(job);
+    const at = o.now().getTime();
+    const last = lastLogged.get(`paused:${jobKey}`);
+    if (last === undefined || at - last >= PAUSED_LOG_EVERY_MS) {
+      lastLogged.set(`paused:${jobKey}`, at);
+      const text = `the model runner is paused: city-hall put job ${job.id} (${jobKey}) back in its queue after ${outcome}; research runs wait until a runner takes it again`;
+      o.log.warn(text);
+      await tellAdmins(`city-hall:paused:${jobKey}:${outcome}`, text);
+    }
+    throw new ExecutorUnavailableError(`city-hall requeued the job after ${outcome}`);
   }
 
   return {
     async run(spec: JobSpec | null, occurrenceId: string, jobKey: string): Promise<JobResult> {
       if (spec !== null) {
-        const job = await call("POST", "/api/execute/jobs", { key: `${KEY_PREFIX}${jobKey}`, capability: o.config.capability, spec, responder: RESPONDER });
-        // Kept before answering: every later ask passes no spec and finds the Job only by this.
-        o.records.put(jobKey, occurrenceId, job.id, o.now().toISOString());
+        const { job, status } = await call("POST", "/api/execute/jobs", jobKey, {
+          key: jobKeyFor(o.databaseId, jobKey),
+          capability: o.config.capability,
+          spec,
+          responder: RESPONDER,
+        });
+        // A key city-hall already knew: it must be this Job, the same prompt, or it is someone else's.
+        if (status === 200 && job.prompt !== spec.prompt) {
+          o.log.error(`execute: city-hall answered ${jobKey} with an existing job ${job.id} whose prompt is not this one; refusing it`);
+          throw new Error(`city-hall's job for ${jobKey} is not this Job (another prompt under the same key)`);
+        }
+        // Kept before answering: every later ask passes no spec and finds the Job only by this. A
+        // failed write is "unavailable": docket asks again with the same spec and key, and
+        // city-hall's idempotency hands back the same job.
+        try {
+          o.records.put(jobKey, occurrenceId, job.id, o.now().toISOString());
+        } catch {
+          throw new ExecutorUnavailableError(`the tracker could not record city-hall's job for ${jobKey}`);
+        }
         o.log.info(`execute: ${jobKey} submitted to city-hall as ${job.id} (${job.status})`);
-        return answerFor(job);
+        return pausedOrAnswer(job, jobKey);
       }
       const id = o.records.get(jobKey);
       if (id === null) throw new Error(`no city-hall job is on record for ${jobKey}`);
-      return answerFor(await call("GET", `/api/execute/jobs/${encodeURIComponent(id)}`));
+      const { job } = await call("GET", `/api/execute/jobs/${encodeURIComponent(id)}`, jobKey);
+      return pausedOrAnswer(job, jobKey);
     },
   };
 }

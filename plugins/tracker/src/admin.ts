@@ -117,7 +117,9 @@ export async function liftDeclineBlock(d: TrackerDeps, admin: User, blockId: str
  * The last admin cannot be forgotten, by themselves or by anyone, for `setAdminFlag`'s reason, and
  * an admin named in `TRACKER_ADMIN_DISCORD_IDS` cannot be removed by someone else (the next start
  * would make them again); forgetting themselves is allowed, and the page says what the next start
- * does. The caller runs `ticksSettled` first, outside the queue.
+ * does. The caller runs `ticksSettled` first, outside the queue, and both inside
+ * `d.lanes.excludeExecute`, so no execute tick starts from the wait to the erasure (a model run
+ * that starts every minute could otherwise keep the answer BUSY).
  */
 export async function forgetPerson(d: TrackerDeps, actor: User, targetId: string): Promise<Done> {
   if (actor.id !== targetId && !actor.admin) return { ok: false, error: NOT_ADMIN };
