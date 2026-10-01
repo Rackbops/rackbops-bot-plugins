@@ -28,7 +28,7 @@ export type Route =
   | { kind: "tokens" }
   | { kind: "token-revoke"; id: string }
   | { kind: "admin-token-revoke"; id: string }
-  | { kind: "admin" | "admin-tasks" | "admin-allow" }
+  | { kind: "admin" | "admin-tasks" | "admin-deliveries" | "admin-allow" }
   | { kind: "admin-person"; id: string }
   | { kind: "admin-act"; id: string; action: PersonAction }
   | { kind: "admin-lift"; id: string };
@@ -60,6 +60,7 @@ export function route(path: string): Route | null {
   if (adminRevoke) return { kind: "admin-token-revoke", id: segment(adminRevoke[1]) };
   if (path === "/admin") return { kind: "admin" };
   if (path === "/admin/tasks") return { kind: "admin-tasks" };
+  if (path === "/admin/deliveries") return { kind: "admin-deliveries" };
   if (path === "/admin/allow") return { kind: "admin-allow" };
   const personAct = PERSON_ACTION.exec(path);
   if (personAct) return { kind: "admin-act", id: segment(personAct[1]), action: personAct[2] as PersonAction };

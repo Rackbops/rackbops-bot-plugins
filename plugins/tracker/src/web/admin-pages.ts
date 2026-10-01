@@ -1,5 +1,5 @@
 import { formatInstant, type Task, type User } from "@rackbops/docket-core";
-import { type BlockRow, FORGOTTEN, type PersonRow } from "../roster.js";
+import { type BlockRow, FORGOTTEN, type PersonRow, UNDELIVERED_DAYS, UNDELIVERED_LIMIT, type UndeliveredRow } from "../roster.js";
 import { prose, taskHref } from "./editor-pages.js";
 import { html, type Html } from "./html.js";
 import { framed, type Viewer } from "./pages.js";
@@ -45,7 +45,7 @@ function hidden(v: Viewer): Html {
 }
 
 function adminNav(v: Viewer): Html {
-  return html`<p class="tr-row"><a class="rb-link" href="${v.base}/admin">People</a> <a class="rb-link" href="${v.base}/admin/tasks">All tasks</a></p>`;
+  return html`<p class="tr-row"><a class="rb-link" href="${v.base}/admin">People</a> <a class="rb-link" href="${v.base}/admin/tasks">All tasks</a> <a class="rb-link" href="${v.base}/admin/deliveries">Deliveries</a></p>`;
 }
 
 export function personHref(v: Viewer, id: string, action = ""): string {
@@ -149,6 +149,65 @@ ${
     ? html`<p class="rb-muted">There are no tasks.</p>`
     : html`<div class="rb-table-scroll"><table class="rb-table">
 <thead><tr><th scope="col">Task</th><th scope="col">Type</th><th scope="col">Owner</th><th scope="col">Status</th><th scope="col">Recipients</th></tr></thead>
+<tbody>${rows}</tbody>
+</table></div>`
+}
+</section>`,
+  );
+}
+
+export interface DeliveriesData {
+  rows: readonly UndeliveredRow[];
+  /** How many match the window in all; more than `rows.length` when the bound cut the list. */
+  total: number;
+  names: ReadonlyMap<string, string>;
+  now: Date;
+}
+
+/** What each status means, in the page's words. */
+const STATUS_WORDS: Record<UndeliveredRow["status"], string> = {
+  failed: "failed",
+  unconfirmed: "unconfirmed (may have gone out; never resent)",
+  deferred: "deferred (still owed)",
+};
+
+/**
+ * `/admin/deliveries`: recent DMs that did not arrive -- failed, unconfirmed or deferred -- newest
+ * first, bounded to the last `UNDELIVERED_DAYS` days and `UNDELIVERED_LIMIT` rows. Every value,
+ * the error text above all, is escaped by `html`.
+ */
+export function adminDeliveriesPage(v: Viewer, data: DeliveriesData): string {
+  const tz = v.user.timeZone;
+  const when = (iso: string | null) => (iso ? formatInstant(iso, tz, data.now) : "--");
+  const who = (id: string | null) => (id === null ? "--" : (data.names.get(id) ?? id));
+  const rows = data.rows.map(
+    (d) => html`<tr>
+<td>${d.taskId ? html`<a class="rb-link" href="${taskHref(v, d.taskId)}">${d.title ?? d.taskId}</a>` : html`<span class="rb-muted">run ${d.occurrenceId} (task gone)</span>`}<br><span class="rb-muted">${d.taskId ? `${d.taskId}, owner ${who(d.ownerId)}` : null}</span></td>
+<td>${when(d.dueAt)}</td>
+<td><a class="rb-link" href="${personHref(v, d.userId)}">${who(d.userId)}</a></td>
+<td>${STATUS_WORDS[d.status] ?? d.status}</td>
+<td>${d.attempts}</td>
+<td>${d.deferrals}</td>
+<td>${d.error ?? "--"}</td>
+<td>${when(d.settledAt)}</td>
+</tr>`,
+  );
+  const shown =
+    data.total > data.rows.length
+      ? `Showing the newest ${data.rows.length} of ${data.total}.`
+      : `${data.total} in all.`;
+  return framed(
+    v,
+    "Deliveries",
+    html`<section>
+<h1>Deliveries that did not arrive</h1>
+${adminNav(v)}
+<p class="rb-muted">DMs settled failed, unconfirmed or deferred in the last ${UNDELIVERED_DAYS} days, newest first, at most ${UNDELIVERED_LIMIT}. ${data.rows.length === 0 ? null : shown}</p>
+${
+  data.rows.length === 0
+    ? html`<p class="rb-muted">None in that time.</p>`
+    : html`<div class="rb-table-scroll"><table class="rb-table">
+<thead><tr><th scope="col">Task</th><th scope="col">Run due</th><th scope="col">Recipient</th><th scope="col">Status</th><th scope="col">Attempts</th><th scope="col">Deferrals</th><th scope="col">Error</th><th scope="col">Settled</th></tr></thead>
 <tbody>${rows}</tbody>
 </table></div>`
 }

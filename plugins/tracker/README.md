@@ -88,6 +88,7 @@ served at a hashed path, cached for a year).
 | `/forget` | Forget me (below): what it deletes (GET); a POST asks for the confirmation; a POST with `confirm=yes` and the word `forget` erases. Linked from Settings. |
 | `/admin` | Admins only: everyone on the list, the decline blocks in force (each with Lift), and a form to allow a person by Discord id. |
 | `/admin/tasks` | Admins only: every task in the store, with its owner, status and how many receive it, each linking to its page. |
+| `/admin/deliveries` | Admins only: the DMs that did not arrive (below), newest first. |
 | `/admin/people/<id>` | Admins only: one person -- Discord id, registration, zone and hour, delivery, task counts, their tasks -- with Make admin or Revoke admin, Resume delivery (when paused), and Remove from the tracker. |
 | `/admin/allow`, `/admin/people/<id>/grant`, `/revoke`, `/resume-delivery`, `/forget`, `/admin/blocks/<id>/lift`, `/admin/tokens/<id>/revoke` | Admins only, POST only: the acts below. |
 | `/api/v1/...` | The JSON task API (below): bearer tokens only, never the cookie. |
@@ -185,6 +186,15 @@ the function the command path runs:
 - **Revoke an API token** of anyone's, from their page, which lists their tokens (never the
   secret). It stops working at once; the owner is not told. Logged by token id.
 - **Remove from the tracker**: forget-me for that person (below), with the same confirmation.
+
+**Deliveries** (0.10.0). `/admin/deliveries`, linked from every admin page, lists the DMs that
+settled `failed`, `unconfirmed` or `deferred` in the last 30 days, newest first, at most 200 rows
+(the page says how many matched when the bound cuts it). Each row: the task (its title, linking to
+its page, its id and owner), the run's due time, the recipient (linking to their admin page), the
+status, attempts and deferrals, the error text, and when it settled. `unconfirmed` means the DM may
+have gone out and is never resent; `deferred` is still owed (a recipient whose delivery is paused,
+say). Before 0.10.0 these showed only in the bot log, where the warnings still go. The page is
+read-only, and like every admin page answers anyone who is not an admin with the unknown page's 404.
 
 Not here yet, though plan 5.10 lists them: grants, budgets and retry (they belong to the execute
 lane, which is not built) and an admin pause of someone else's task.
