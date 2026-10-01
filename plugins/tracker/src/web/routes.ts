@@ -1,5 +1,5 @@
 import type { TaskAction } from "./editor.js";
-import { EDITOR_TYPES, type EditorType } from "./editor-pages.js";
+import { NEW_TYPES, type NewType } from "./editor-pages.js";
 
 /**
  * The web area's signed-in paths (rackbops-bot-plugins#80) and the methods each takes. A task id
@@ -23,7 +23,7 @@ export type Route =
   | { kind: "task"; id: string }
   | { kind: "edit"; id: string }
   | { kind: "act"; id: string; action: TaskAction }
-  | { kind: "new"; type: EditorType }
+  | { kind: "new"; type: NewType }
   | { kind: "forget" }
   | { kind: "tokens" }
   | { kind: "token-revoke"; id: string }
@@ -70,8 +70,8 @@ export function route(path: string): Route | null {
   if (lift) return { kind: "admin-lift", id: segment(lift[1]) };
   const created = NEW_PATH.exec(path);
   if (created) {
-    const type = created[1] as EditorType;
-    return EDITOR_TYPES.includes(type) ? { kind: "new", type } : null;
+    const type = created[1] as NewType;
+    return NEW_TYPES.includes(type) ? { kind: "new", type } : null;
   }
   const one = TASK_PATH.exec(path) ?? TASK_ACTION.exec(path);
   if (!one) return null;

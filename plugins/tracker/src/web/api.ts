@@ -228,7 +228,7 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
     }
   }
   if (method === "DELETE" && r.kind === "task") return json(await actAnswer(writer, user, r.id, "delete"));
-  if (r.kind === "types") return json(typesAnswer());
+  if (r.kind === "types") return json(typesAnswer(w.d));
   if (r.kind === "tasks") return json(await listAnswer(w.d, user));
   if (r.kind === "task") return json(await getAnswer(w.d, user, r.id));
   return json({

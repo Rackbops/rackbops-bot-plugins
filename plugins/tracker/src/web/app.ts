@@ -344,7 +344,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     const done = url.searchParams.get("done");
     switch (r.kind) {
     case "tasks":
-      return htmlResponse(tasksPage(v, await loadTaskList(d, auth.user), now, notice(done)));
+      return htmlResponse(tasksPage(v, await loadTaskList(d, auth.user), now, notice(done), d.research === true));
     case "task":
       return taskPage(e, r.id, done);
     case "edit":

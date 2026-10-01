@@ -65,12 +65,13 @@ function cadence(entry: TaskListEntry, viewer: User, now: Date): string {
   return describeSchedule(s, entry.from ?? viewer, viewer.timeZone, now);
 }
 
-/** The links to the editor's new-task forms. */
-function newLinks(v: Viewer): Html {
+/** The links to the editor's new-task forms; research only while it is available (#82). */
+function newLinks(v: Viewer, research: boolean): Html {
   return html`<p class="tr-row">
 <a class="rb-btn rb-btn--primary rb-btn--sm" href="${v.base}/new/reminder">New reminder</a>
 <a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/renewal">New renewal</a>
 <a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/price">New price tracker</a>
+${research ? html`<a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/research">New research request</a>` : null}
 </p>`;
 }
 
@@ -79,6 +80,7 @@ export function tasksPage(
   data: { entries: readonly TaskListEntry[]; paused: readonly PausedTask[] },
   now: Date,
   flash: Html | null = null,
+  research = false,
 ): string {
   const rows = data.entries.map(
     (e) => html`<tr>
@@ -113,7 +115,7 @@ export function tasksPage(
 <h1>My tasks</h1>
 ${flash}
 <p class="rb-muted">Times are in ${v.user.timeZone}.</p>
-${newLinks(v)}
+${newLinks(v, research)}
 ${active}
 </section>
 ${paused}

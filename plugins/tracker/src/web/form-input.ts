@@ -4,12 +4,13 @@ import type { TrackerDeps } from "../actions.js";
 import { renewalDate } from "../edit.js";
 import type { PriceInput } from "../price.js";
 import { type ReminderInput, type Repeat, repeatOf } from "../reminders.js";
+import type { ResearchInput } from "../research.js";
 import type { PeriodUnit, RenewalInput } from "../tracked.js";
-import { type EditorType, fieldsFor, type Values } from "./editor-pages.js";
+import { fieldsFor, type NewType, type Values } from "./editor-pages.js";
 
 /**
  * What a task editor's fields say, read into the inputs of the shared rules (reminders.ts,
- * tracked.ts, price.ts, edit.ts), for the web forms and the JSON task API alike
+ * tracked.ts, price.ts, research.ts, edit.ts), for the web forms and the JSON task API alike
  * (rackbops-bot-plugins#80, slices 2 and 4): api.ts turns a JSON body into the same fields, so one
  * reading -- and so one set of defaults and messages -- serves both. Text is taken as typed; a
  * number that is not one becomes NaN, which the rules refuse with their own words.
@@ -31,13 +32,26 @@ function decimal(form: URLSearchParams, name: string): number | undefined {
 }
 
 /** What was typed into `type`'s fields, and nothing else, to show again with a refusal. */
-export function typed(type: EditorType, mode: "new" | "edit", form: URLSearchParams): Values {
+export function typed(type: NewType, mode: "new" | "edit", form: URLSearchParams): Values {
   return Object.fromEntries(fieldsFor(type, mode).map((f) => [f.name, str(form, f.name)]));
 }
 
 export function reminderInput(form: URLSearchParams): ReminderInput {
   const when = opt(form, "when");
   return { text: str(form, "text"), ...(when !== undefined ? { when } : {}), repeat: (str(form, "repeat") || "none") as Repeat };
+}
+
+/** `/research`'s options: an empty `context`, `deadline` or `at` is left out, as an unset option is. */
+export function researchInput(form: URLSearchParams): ResearchInput {
+  const context = opt(form, "context");
+  const deadline = opt(form, "deadline");
+  const at = opt(form, "at");
+  return {
+    question: str(form, "question"),
+    ...(context !== undefined ? { context } : {}),
+    ...(deadline !== undefined ? { deadline } : {}),
+    ...(at !== undefined ? { at } : {}),
+  };
 }
 
 export function renewalInput(form: URLSearchParams): RenewalInput {
