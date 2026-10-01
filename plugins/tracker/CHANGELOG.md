@@ -7,15 +7,19 @@
 - An admin raises a person's daily model ceiling from the web area (#82; plan 5.7, "The admin
   raises a person's ceiling from the web area (5.10)"). A person's admin page gains a Daily model
   budget section: what they spent today, their ceiling now, a form for both numbers (dollars to the
-  cent, whole model calls; at least the default 2 USD / 20 calls, at most the global 10 USD / 100),
-  **Back to the default**, and every change made, newest first. **A raise stands until an admin
-  changes it** -- the default proposed on #82, roshne's to confirm, and reversible (a today-only
-  raise is a change to `limitsOf` in `ceilings.ts`). The execute lane's budget is now docket's
-  defaults plus `personFor`, which reads the person's newest change before every run, so a held
-  request runs on the next tick after a raise; the global ceiling is still checked first. Every
-  change is an append-only row and a log line. `POST /admin/people/<id>/ceiling` is admin only,
-  behind the session, `Origin` and CSRF checks of every admin act; a non-admin gets the unknown
-  page's 404.
+  cent, whole model calls), **Back to the default**, and the latest 20 changes, newest first (older
+  ones stay in the table). Proposed on #82 for roshne to confirm, not decided: **a raise stands
+  until an admin changes it** (reversible: a today-only raise is a small change -- `limitsOf` and
+  `isRaised` plus a clock in `Ceilings`, and the page's badge), and **the bounds**, at least the
+  default 2 USD / 20 calls and at most the global 10 USD / 100. Setting exactly the default is a
+  reset to it, not a raise. The execute lane's budget is now docket's defaults plus `personFor`,
+  which reads the person's newest change before every run, so a held request runs on the next tick
+  after a raise; the global ceiling is still checked first. Every change -- raise or reset -- also
+  deletes that person's `budget:person:<id>:<day>` notice key for the current budget day, in the
+  same transaction, so meeting the new ceiling the same day tells the person and the admins again
+  (plan 5.7: "nothing fails silently"). Every change is an append-only row and a log line.
+  `POST /admin/people/<id>/ceiling` is admin only, behind the session, `Origin` and CSRF checks of
+  every admin act; a non-admin gets the unknown page's 404.
 - Forget-me deletes the person's ceiling changes, and a change they made to someone else's ceiling
   keeps its row with `set_by` = `forgotten`.
 

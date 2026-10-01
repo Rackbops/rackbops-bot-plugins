@@ -13,15 +13,23 @@ import type { Done } from "./manage.js";
  * That is the default proposed on #82 for roshne to confirm, not a decision: 5.7 and item 18 call it
  * the person's ceiling, a setting beside the global one, and docket's `BudgetPolicy.personFor` says
  * "A person's own ceiling, when an admin raised it (plan 5.10); the host stores it". A today-only
- * raise would be one change here, in `limitsOf`.
+ * raise would be a small change: `limitsOf` and `isRaised` would compare the change's `at` (an ISO
+ * instant) with today's budget day, `Ceilings` would need a clock to do that, and the page's
+ * "raised" badge would follow `isRaised`.
  *
  * The enforcement stays docket's (`budgetHold`, docket#17): the execute lane asks `personFor` before
  * each run, and the global ceiling is checked first. Every change is an append-only row in
  * `ceiling_changes` -- who, for whom, the values, when -- and a host log line, the way 5.6 logs a
  * grant's use; the person's ceiling is their newest row. A row with neither value is "back to the
- * default". A raise lifts a hold at once (the next tick runs), but docket's once-a-day notice key
- * (`budget:person:<id>:<day>`) is already claimed, so reaching the raised ceiling the same day
- * sends no second DM.
+ * default". A raise lifts a hold at once (the next tick runs).
+ *
+ * **Every change re-arms that day's notice** (plan 5.7: at a ceiling "the person gets one DM and
+ * the admin is told; nothing fails silently"). docket sends both through `noticeOnce`, keyed
+ * `budget:person:<id>:<day>` with `<day>` the budget day in `BUDGET_ZONE`, so once the person met
+ * the default that day, meeting the raised ceiling the same day would tell nobody. `record` deletes
+ * that one key, for the budget day the change falls in, in the same transaction as the row, so the
+ * next hold that day notifies the person and the admins again. Only that person's key for that day
+ * goes; the global key and other days stay.
  */
 
 /** One change to a person's ceiling; `usd` and `calls` both null means back to the default. */
@@ -64,7 +72,8 @@ function money(n: number): string {
 
 /**
  * Checks an admin's form, pure: a reset, or two numbers -- dollars to the cent and a whole call
- * count -- each at least the default and at most the global ceiling. `limits` null means reset.
+ * count -- each at least the default and at most the global ceiling. `limits` null means reset,
+ * and so does exactly the default (both numbers equal to it): that is no raise.
  * A bound that is null (no ceiling of that kind) does not limit.
  */
 export function decideCeiling(input: CeilingInput, bounds: CeilingBounds = boundsOf()): Decided {
@@ -80,6 +89,8 @@ export function decideCeiling(input: CeilingInput, bounds: CeilingBounds = bound
   if (min.calls !== null && calls < min.calls) return { ok: false, error: `The model calls cannot go below the default, ${min.calls}.` };
   if (max.usd !== null && usd > max.usd) return { ok: false, error: `The dollars cannot go above the global ceiling, ${money(max.usd)} a day.` };
   if (max.calls !== null && calls > max.calls) return { ok: false, error: `The model calls cannot go above the global ceiling, ${max.calls} a day.` };
+  // Exactly the default is the default: a reset, not a raise.
+  if (usd === min.usd && calls === min.calls) return { ok: true, limits: null };
   return { ok: true, limits: { usd, calls } };
 }
 
@@ -94,6 +105,14 @@ export function describeLimits(l: BudgetLimits): string {
 export function isRaised(latest: CeilingChange | null): boolean {
   return latest !== null && latest.usd !== null && latest.calls !== null;
 }
+
+/** docket's once-a-day notice key for a person at a ceiling (dispatch.js `budgetCheck`): `budget:person:<id>:<day>`, the day in `BUDGET_ZONE`. */
+export function budgetNoticeKey(userId: string, at: Date): string {
+  return `budget:person:${userId}:${budgetDay(at).day}`;
+}
+
+/** How many of a person's changes their admin page lists, newest first; older rows stay in the table. */
+export const HISTORY_SHOWN = 20;
 
 type Row = { seq: number; user_id: string; usd: number | null; calls: number | null; set_by: string; at: string };
 
@@ -111,17 +130,24 @@ export class Ceilings {
     return r ? toChange(r) : null;
   }
 
-  /** The person's changes, newest first, at most `limit`. */
-  history(userId: string, limit = 20): CeilingChange[] {
+  /** The person's changes, newest first, at most `limit` (the page shows the latest `HISTORY_SHOWN`). */
+  history(userId: string, limit = HISTORY_SHOWN): CeilingChange[] {
     return (this.db.query("SELECT * FROM ceiling_changes WHERE user_id = ? ORDER BY seq DESC LIMIT ?").all(userId, limit) as Row[]).map(toChange);
   }
 
-  /** Appends one change; `limits` null puts the person back on the default. */
+  /**
+   * Appends one change, `limits` null putting the person back on the default, and in the same
+   * transaction deletes docket's notice key for that person and the budget day `at` falls in
+   * (`budgetNoticeKey`), so the next hold that day tells the person and the admins again.
+   */
   record(userId: string, limits: BudgetLimits | null, setBy: string, at: string): CeilingChange {
-    const r = this.db
-      .query("INSERT INTO ceiling_changes (user_id, usd, calls, set_by, at) VALUES (?, ?, ?, ?, ?) RETURNING *")
-      .get(userId, limits?.usd ?? null, limits?.calls ?? null, setBy, at) as Row;
-    return toChange(r);
+    return this.db.transaction(() => {
+      const r = this.db
+        .query("INSERT INTO ceiling_changes (user_id, usd, calls, set_by, at) VALUES (?, ?, ?, ?, ?) RETURNING *")
+        .get(userId, limits?.usd ?? null, limits?.calls ?? null, setBy, at) as Row;
+      this.db.query("DELETE FROM notices WHERE key = ?").run(budgetNoticeKey(userId, new Date(at)));
+      return toChange(r);
+    })();
   }
 
   /** docket's `personFor`: the person's raised ceiling, or null for the default. */

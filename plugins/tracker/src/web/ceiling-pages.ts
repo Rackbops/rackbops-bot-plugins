@@ -1,13 +1,13 @@
 import { type BudgetLimits, formatInstant, type Spent } from "@rackbops/docket-core";
-import { type CeilingBounds, type CeilingChange, describeLimits, isRaised, limitsOf } from "../ceilings.js";
+import { type CeilingBounds, type CeilingChange, describeLimits, HISTORY_SHOWN, isRaised, limitsOf } from "../ceilings.js";
 import { FORGOTTEN } from "../roster.js";
 import { html, type Html } from "./html.js";
 import type { Viewer } from "./pages.js";
 
 /**
  * The person page's daily-ceiling section (plan 5.7, 5.10; rackbops-bot-plugins#82), pure: what
- * they spent today, their ceiling now, the form that raises it or puts it back, and every change an
- * admin made, newest first. The form posts to `/admin/people/<id>/ceiling` with the session's CSRF
+ * they spent today, their ceiling now, the form that raises it or puts it back, and the latest
+ * `HISTORY_SHOWN` (20) changes an admin made, newest first (older rows stay in the table). The form posts to `/admin/people/<id>/ceiling` with the session's CSRF
  * token; nothing here changes anything on a GET.
  */
 
@@ -44,7 +44,7 @@ export function ceilingSection(v: Viewer, personId: string, view: CeilingView, n
   return html`<section>
 <h2>Daily model budget</h2>
 <p>Today: ${view.today.usd.toFixed(2)} USD and ${view.today.calls} model call(s). Ceiling: ${describeLimits(limits)}${raised ? html` <span class="rb-badge">raised</span>` : " (the default)"}.</p>
-<p class="rb-muted">A raise stands until an admin changes it. It may not go below the default (${describeLimits(view.defaults)}) or above the global ceiling (${describeLimits(max)}), which still applies to everyone together. A day ends at midnight Eastern.</p>
+<p class="rb-muted">A raise stands until an admin changes it. Setting exactly the default puts them back on it. It may not go below the default (${describeLimits(view.defaults)}) or above the global ceiling (${describeLimits(max)}), which still applies to everyone together. A day ends at midnight Eastern.</p>
 <form method="post" action="${action}" class="tr-stack">
 ${csrf}
 <div class="tr-row">
@@ -64,7 +64,7 @@ ${
 ${
   view.history.length === 0
     ? html`<p class="rb-muted">No admin has changed their ceiling.</p>`
-    : html`<h3>Changes</h3><ul>${view.history.map((c) => change(c, v, now, view.names))}</ul>`
+    : html`<h3>Changes</h3><p class="rb-muted">The latest ${HISTORY_SHOWN} at most, newest first.</p><ul>${view.history.map((c) => change(c, v, now, view.names))}</ul>`
 }
 </section>`;
 }

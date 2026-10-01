@@ -267,15 +267,20 @@ the function the command path runs:
 - **Raise a person's daily ceiling** (0.13.0, plan 5.7: "The admin raises a person's ceiling from
   the web area"). Their page shows what they spent today (the budget day ends at midnight Eastern),
   their ceiling now, a form with both numbers -- dollars to the cent and whole model calls -- and
-  every change an admin made, newest first. Each number must be at least the default (2 USD, 20
-  calls) and at most the global ceiling (10 USD, 100 calls), which docket checks first anyway.
+  the latest 20 changes an admin made, newest first (older ones stay in the table). Each number
+  must be at least the default (2 USD, 20 calls) and at most the global ceiling (10 USD, 100
+  calls), which docket checks first anyway; those bounds are proposed on #82, roshne's to confirm.
+  Setting exactly the default is a reset to it, not a raise.
   **A raise stands until an admin changes it** -- raises it again or presses **Back to the
   default**. That default is proposed on #82 and is roshne's to confirm; a today-only raise
-  would be a one-function change (`limitsOf` in `ceilings.ts`). Enforcement stays docket's: the
+  would be a small change (`limitsOf` and `isRaised` plus a clock in `Ceilings`, and the page's
+  badge). Enforcement stays docket's: the
   execute lane hands docket's `budgetHold` a policy whose `personFor` reads the person's newest
-  change, before every run, so a raise lets a held request run on the next tick. docket's
-  once-a-day notice is already used for that day, so reaching the raised ceiling the same day sends
-  no second DM. Every change is an append-only `ceiling_changes` row (who, for whom, the values,
+  change, before every run, so a raise lets a held request run on the next tick. docket
+  sends its ceiling notices once a day per person (`noticeOnce`, key `budget:person:<id>:<day>`),
+  so every change -- raise or reset -- deletes that person's key for the current budget day in the
+  same transaction: meeting the new ceiling the same day DMs the person and the admins again (plan
+  5.7: "nothing fails silently"). Every change is an append-only `ceiling_changes` row (who, for whom, the values,
   when) and a log line (`u1 set u2's daily ceiling to 4 USD / 40 calls (c1)`).
 - **Remove from the tracker**: forget-me for that person (below), with the same confirmation.
 

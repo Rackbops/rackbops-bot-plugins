@@ -68,6 +68,23 @@ describe("an admin raises a person's ceiling", () => {
     ]);
   });
 
+  it("the form sent with exactly the default is a reset: nothing written on the default, back to it from a raise", async () => {
+    const w = await setup();
+    const same = await post(w.plugin, w.admin, w.csrf, "/admin/people/u2/ceiling", { usd: "2.00", calls: "20" });
+    expect(same.status).toBe(200);
+    expect(await same.text()).toContain("Larry is already on the default ceiling.");
+    expect(rows(w.dbPath)).toEqual([]);
+    await post(w.plugin, w.admin, w.csrf, "/admin/people/u2/ceiling", { usd: "4", calls: "40" });
+    const back = await (await post(w.plugin, w.admin, w.csrf, "/admin/people/u2/ceiling", { usd: "2", calls: "20" })).text();
+    expect(back).toContain("Larry is back on the default ceiling: 2.00 USD and 20 model calls a day.");
+    expect(back).not.toContain('<span class="rb-badge">raised</span>');
+    expect(back).toContain("The latest 20 at most, newest first.");
+    expect(rows(w.dbPath)).toEqual([
+      { user_id: "u2", usd: 4, calls: 40, set_by: "u1" },
+      { user_id: "u2", usd: null, calls: null, set_by: "u1" },
+    ]);
+  });
+
   it("a value out of bounds is refused with the reason and writes nothing; an unknown person is the 404", async () => {
     const w = await setup();
     const res = await post(w.plugin, w.admin, w.csrf, "/admin/people/u2/ceiling", { usd: "50", calls: "40" });
