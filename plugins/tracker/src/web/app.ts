@@ -359,6 +359,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     case "admin":
     case "admin-tasks":
     case "admin-deliveries":
+    case "admin-usage":
     case "admin-person":
       return adminGet(a, r);
     default:

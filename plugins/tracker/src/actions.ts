@@ -68,6 +68,8 @@ export interface TrackerDeps {
   roster: Roster;
   /** People's own daily ceilings, raised by an admin (ceilings.ts; plan 5.7). */
   ceilings: Ceilings;
+  /** `TRACKER_BUDGET_UNLIMITED`: no daily ceiling holds a run (usage.ts); the admin's pages say so. */
+  budgetUnlimited?: boolean;
   /** Whether the web area (and its task editor) is set up: `TRACKER_WEB_URL`. Answers mention it only then. */
   webEditor: boolean;
   /** Whether the execute lane runs (the city-hall Executor is configured): `/research` makes a task only then. */

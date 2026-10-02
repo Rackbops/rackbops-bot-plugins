@@ -52,6 +52,7 @@ describe("createPlugin", () => {
       "TRACKER_ADMIN_DISCORD_IDS",
       "TRACKER_GUILD_ID",
       "TRACKER_WEB_URL",
+      "TRACKER_BUDGET_UNLIMITED",
       "TRACKER_CITY_HALL_URL",
       "TRACKER_CITY_HALL_KEY",
       "TRACKER_CITY_HALL_CAPABILITY",
