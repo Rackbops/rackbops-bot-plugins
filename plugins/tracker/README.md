@@ -128,9 +128,9 @@ says research is not available; it does not list the waiting ones (`/tasks` does
 calls in all. At a ceiling the person's research waits until midnight Eastern; the person gets one
 DM and the admins one each. Reminders, renewals and prices never count. An admin can raise one
 person's ceiling from their admin page (0.13.0, below); the global ceiling still applies to everyone
-together. **For the alpha the ceilings can be switched off** (0.14.0; roshne, 2026-10-02: "lets build
-in an unlimited budget "flag" during alpha, evaluate usage during alpha, then test budgets during
-beta"): with `TRACKER_BUDGET_UNLIMITED` on (Configuration, below) no daily ceiling holds a run,
+together. **For the alpha the ceilings can be switched off** (0.14.0; roshne, 2026-10-02, choosing option
+A: "A.  but lets build in an unlimited budget "flag" during alpha, evaluate usage during alpha, then
+test budgets during beta"): with `TRACKER_BUDGET_UNLIMITED` on (Configuration, below) no daily ceiling holds a run,
 while each Job's own caps (15 turns and 1 USD for a research run) still bound it and every run is
 still charged, so `/admin/usage` (below) shows what the defaults would have held.
 
@@ -537,7 +537,7 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 | `TRACKER_ADMIN_DISCORD_IDS` | no | Comma-separated Discord user ids (spaces around commas allowed; an empty entry, as from a trailing comma, is refused and the plugin does not load) made admin at start. Unset = none. Removing an id does not revoke it. |
 | `TRACKER_GUILD_ID` | no | The Discord server whose members may use the tracker, or a comma-separated list of them (spaces around commas allowed; a repeated id counts once): a member of any listed server passes. Checked through the interaction's client with a single-member lookup per server (no privileged intent), all asked at once; a yes from any server is a member, a no from every server is not, and otherwise the answer is unknown (refused, never revoked). Inside a listed server, the person running a command needs no lookup. Unset = no membership gate, and a warning is logged each time the plugin activates; a malformed or empty entry anywhere in the list refuses to load, naming it. One store and one admission list serve every listed server; there are no per-server admins. |
 | `TRACKER_WEB_URL` | no | The https origin the bot's HTTP is reached at through its tunnel, e.g. `https://clerk.example.com` (no path). `/web` links and the allowed `Origin` come from it, never from a request's `Host`. Unset = no web area (`/web` says so, the pages answer 404); anything but a bare https origin refuses to load. |
-| `TRACKER_BUDGET_UNLIMITED` | no | Budgets off for the alpha (0.14.0): `true` or `1` means no daily ceiling -- a person's or the global one -- holds a model run, bot-wide. Each Job's own caps still apply, usage is still recorded (see `/admin/usage`), the bot logs one line at start saying so, and the admin pages show a "Budgets off (alpha): unlimited" banner. Unset, empty, `false` or `0` = the ceilings apply (the default); anything else refuses to load. |
+| `TRACKER_BUDGET_UNLIMITED` | no | Budgets off for the alpha (0.14.0): `true` or `1` means no daily ceiling -- a person's or the global one -- holds a model run, bot-wide. Each Job's own caps still apply, usage is still recorded (see `/admin/usage`), the bot logs one line at start saying so (or, with the execute lane off, that no model work runs), the People and Usage admin pages show a "Budgets off (alpha): unlimited" banner, and the person page's ceiling section shows a "not enforced" note. Unset, empty, `false` or `0` = the ceilings apply (the default); anything else refuses to load. |
 | `TRACKER_CITY_HALL_URL` | no | The https origin of the city-hall that queues the tracker's model Jobs (no path). |
 | `TRACKER_CITY_HALL_KEY` | yes | The source bearer key city-hall checks on `/api/execute/jobs` (its `CITY_HALL_API_KEY`, city-hall#18). Never logged. Kept in the instance's own env, never in a repo. |
 | `TRACKER_CITY_HALL_CAPABILITY` | no | The capability tag every Job names, one only docket-runner carries (plan item 71), e.g. `claude-cli:subscription`. No default: a guessed tag could send the tracker's Jobs to another agent. |

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { NOT_ENFORCED } from "../ceilings.js";
-import { UNLIMITED_BANNER, UNLIMITED_LOG } from "../usage.js";
+import { UNLIMITED_BANNER, UNLIMITED_IDLE_LOG, UNLIMITED_LOG } from "../usage.js";
 import { ADMIN, call, cleanup, csrfOf, LARRY, ORIGIN, people, signIn, world } from "./harness.js";
 import { esc } from "./html.js";
 
@@ -75,13 +75,25 @@ describe("/admin/usage", () => {
 });
 
 describe("TRACKER_BUDGET_UNLIMITED on", () => {
-  it("logs one line at start, and the people, usage and person pages say budgets are off; the ceiling form still works", async () => {
-    const w = await setup({ TRACKER_BUDGET_UNLIMITED: "true" });
+  it("with the execute lane configured, logs the budgets-off line once at start", async () => {
+    const w = await setup({
+      TRACKER_BUDGET_UNLIMITED: "true",
+      TRACKER_CITY_HALL_URL: "https://city-hall.example.com",
+      TRACKER_CITY_HALL_KEY: "k",
+      TRACKER_CITY_HALL_CAPABILITY: "claude-cli:subscription",
+    });
     expect(w.logs.filter((l) => l === UNLIMITED_LOG)).toHaveLength(1);
+    expect(w.logs).not.toContain(UNLIMITED_IDLE_LOG);
+  });
+
+  it("with the execute lane off, logs one line that no model work runs (not the budgets-off line); the people, usage and person pages say budgets are off; the ceiling form still works", async () => {
+    const w = await setup({ TRACKER_BUDGET_UNLIMITED: "true" });
+    expect(w.logs.filter((l) => l === UNLIMITED_IDLE_LOG)).toHaveLength(1);
+    expect(w.logs).not.toContain(UNLIMITED_LOG);
     expect(await (await call(w.plugin, "GET", "/admin", { jar: w.admin })).text()).toContain(banner);
     const usage = await (await call(w.plugin, "GET", "/admin/usage", { jar: w.admin })).text();
     expect(usage).toContain(banner);
-    expect(usage).toContain("While budgets are off nothing was held.");
+    expect(usage).toContain("While budgets are off, nothing is held.");
     const person = await (await call(w.plugin, "GET", "/admin/people/u2", { jar: w.admin })).text();
     expect(person).toContain(esc(NOT_ENFORCED));
     expect(person).toContain("(the default) -- not enforced.");

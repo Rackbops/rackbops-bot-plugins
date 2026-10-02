@@ -28,7 +28,7 @@ import { parseWebUrl } from "./web/config.js";
 import { ApiTokens } from "./web/api-tokens.js";
 import { Sessions } from "./web/sessions.js";
 import { LoginLinks } from "./web/signin-link.js";
-import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_LOG } from "./usage.js";
+import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_IDLE_LOG, UNLIMITED_LOG } from "./usage.js";
 
 /**
  * The task tracker (rackbops-bot-plugins#78; plan of record Rackbops/Tooling
@@ -322,7 +322,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       // or none at all while TRACKER_BUDGET_UNLIMITED is on (usage.ts).
       const ceilings = new Ceilings(opened);
       executeLane = executor ? new ExecuteLane({ store: openedStore, clock, types, notifier, executor, locks, budget: executeBudget(ceilings, budgetUnlimited) }) : null;
-      if (budgetUnlimited) host.log.info(UNLIMITED_LOG);
+      // One line either way: the budgets-off line only when a model run can actually happen.
+      if (budgetUnlimited) host.log.info(executeLane ? UNLIMITED_LOG : UNLIMITED_IDLE_LOG);
       if (cityHallConfig) host.log.info(`execute lane on: city-hall ${cityHallConfig.url}, capability ${cityHallConfig.capability}`);
       else if ("missing" in cityHall && cityHall.missing.length > 0) host.log.warn(`execute lane is off, so /research is unavailable: ${cityHall.missing.join(", ")} not set`);
       deps = {

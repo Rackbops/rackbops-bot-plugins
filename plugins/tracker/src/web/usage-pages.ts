@@ -1,7 +1,7 @@
 import type { BudgetLimits } from "@rackbops/docket-core";
 import { describeLimits } from "../ceilings.js";
 import type { Measured, UsageReport } from "../usage.js";
-import { adminNav, budgetsOffBanner } from "./admin-pages.js";
+import { adminNav, budgetsOffBanner, personHref } from "./admin-pages.js";
 import { html, type Html } from "./html.js";
 import { framed, type Viewer } from "./pages.js";
 
@@ -44,7 +44,7 @@ export function adminUsagePage(v: Viewer, data: UsagePageData): string {
     }
     return [
       row(d.day, html`<strong>Everyone</strong>`, d.everyone, report.global),
-      ...d.people.map((p) => row(null, html`<a class="rb-link" href="${v.base}/admin/people/${encodeURIComponent(p.userId)}">${names.get(p.userId) ?? p.userId}</a>`, p, report.person)),
+      ...d.people.map((p) => row(null, html`<a class="rb-link" href="${personHref(v, p.userId)}">${names.get(p.userId) ?? p.userId}</a>`, p, report.person)),
     ];
   });
   const total = report.days.reduce((s, d) => ({ usd: s.usd + d.everyone.usd, calls: s.calls + d.everyone.calls }), { usd: 0, calls: 0 });
@@ -56,7 +56,7 @@ export function adminUsagePage(v: Viewer, data: UsagePageData): string {
 ${adminNav(v)}
 ${budgetsOffBanner(data.unlimited)}
 <p>The last ${report.days.length} days, newest first: ${total.usd.toFixed(2)} USD and ${total.calls} model call(s) in all. A day ends at midnight Eastern. Dollars are the CLI's list-price estimate, not a bill.</p>
-<p class="rb-muted">Each row is measured against the default ceilings -- ${describeLimits(report.person)} a person, ${describeLimits(report.global)} for everyone together -- not a person's raised one. "Would have hit" means that day's spend reached the ceiling; "calls after it" are the calls charged once it had, roughly what it would have held (the ceiling is checked before a run and the run charged at its end).${data.unlimited ? " While budgets are off nothing was held." : ""}</p>
+<p class="rb-muted">Each row is measured against the default ceilings -- ${describeLimits(report.person)} a person, ${describeLimits(report.global)} for everyone together -- not a person's raised one. "Would have hit" means that day's spend reached the ceiling; "calls after it" are the calls charged once it had, roughly what it would have held (the ceiling is checked before a run and the run charged at its end).${data.unlimited ? " While budgets are off, nothing is held." : ""}</p>
 <div class="rb-table-scroll"><table class="rb-table">
 <thead><tr><th scope="col">Day</th><th scope="col">Who</th><th scope="col">USD</th><th scope="col">Calls</th><th scope="col">Default ceiling</th></tr></thead>
 <tbody>${rows}</tbody>

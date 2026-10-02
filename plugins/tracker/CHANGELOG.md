@@ -4,15 +4,17 @@
 
 ### Added
 
-- **Budgets off for the alpha** (#82; plan 5.7). roshne, 2026-10-02: "lets build in an unlimited
-  budget "flag" during alpha, evaluate usage during alpha, then test budgets during beta." A new
-  operator setting, `TRACKER_BUDGET_UNLIMITED`: `true` or `1` turns it on, bot-wide; unset, empty,
+- **Budgets off for the alpha** (#82; plan 5.7). roshne, 2026-10-02, choosing option A: "A.  but
+  lets build in an unlimited budget "flag" during alpha, evaluate usage during alpha, then test
+  budgets during beta."
+  A new operator setting, `TRACKER_BUDGET_UNLIMITED`: `true` or `1` turns it on, bot-wide; unset, empty,
   `false` or `0` is off (the default, so nothing changes unless it is set); anything else refuses to
   load, naming it. On, the execute lane hands docket's `budgetHold` a policy with no ceiling of
   either kind (`BudgetLimits` null, docket-core 0.5.0), so neither a person's daily ceiling nor the
   global one holds a run, and no ceiling notice goes out. Each Job's own caps (research: 15 turns,
   1 USD) are unchanged, and every run is still charged to the `usage` table. The bot logs one line
-  at start saying budgets are off; the admin's People and Usage pages carry a "Budgets off (alpha):
+  at start saying budgets are off (or, when the execute lane is not configured, that the flag is
+  set but no model work runs); the admin's People and Usage pages carry a "Budgets off (alpha):
   unlimited" banner; the person page's ceiling section says the ceiling is not enforced, and its
   form still records a raise or a reset (its answer says the same). Proposed defaults, reversible:
   the switch is bot-wide, not per person, and an operator env var, not a web toggle.

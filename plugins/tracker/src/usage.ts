@@ -3,8 +3,8 @@ import { budgetPolicy, type Ceilings } from "./ceilings.js";
 
 /**
  * Budgets off for the alpha, and the usage view that evaluates them (rackbops-bot-plugins#82; plan
- * 5.7). roshne, 2026-10-02: "lets build in an unlimited budget "flag" during alpha, evaluate usage
- * during alpha, then test budgets during beta."
+ * 5.7). roshne, 2026-10-02, choosing option A: "A.  but lets build in an unlimited budget "flag"
+ * during alpha, evaluate usage during alpha, then test budgets during beta."
  *
  * `TRACKER_BUDGET_UNLIMITED` (true or 1; unset, empty, false or 0 is off) is bot-wide. On, the
  * execute lane hands docket's `budgetHold` a policy with no ceiling of either kind, person or
@@ -41,7 +41,10 @@ export function executeBudget(ceilings: Pick<Ceilings, "personFor">, unlimited: 
 /** The one line the bot logs at start while budgets are off. */
 export const UNLIMITED_LOG = `budgets off (alpha): ${BUDGET_UNLIMITED_KEY} is on, so no daily ceiling holds a model run; each Job's own caps still apply and usage is still recorded`;
 
-/** What the admin's pages say while budgets are off. */
+/** The one line logged instead while budgets are off but the execute lane is not configured, so no model work runs. */
+export const UNLIMITED_IDLE_LOG = `${BUDGET_UNLIMITED_KEY} is on, but the execute lane is off, so no model work runs for it to leave unbudgeted`;
+
+/** What the People and Usage admin pages say while budgets are off. */
 export const UNLIMITED_BANNER = "Budgets off (alpha): unlimited. No daily ceiling holds a model run while TRACKER_BUDGET_UNLIMITED is on; usage is still recorded.";
 
 /** How many budget days the usage page shows, today included. */

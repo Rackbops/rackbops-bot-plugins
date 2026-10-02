@@ -50,7 +50,10 @@ export function adminNav(v: Viewer): Html {
   return html`<p class="tr-row"><a class="rb-link" href="${v.base}/admin">People</a> <a class="rb-link" href="${v.base}/admin/tasks">All tasks</a> <a class="rb-link" href="${v.base}/admin/deliveries">Deliveries</a> <a class="rb-link" href="${v.base}/admin/usage">Usage</a></p>`;
 }
 
-/** The banner every budget-facing admin page shows while `TRACKER_BUDGET_UNLIMITED` is on (usage.ts). */
+/**
+ * The banner the People (`/admin`) and Usage (`/admin/usage`) pages show while `TRACKER_BUDGET_UNLIMITED`
+ * is on (usage.ts). The person page shows a "not enforced" note in its ceiling section instead (ceiling-pages.ts).
+ */
 export function budgetsOffBanner(unlimited: boolean): Html | null {
   return unlimited ? html`<div class="rb-alert rb-alert--warning" role="status"><p><strong>${UNLIMITED_BANNER}</strong></p></div>` : null;
 }
