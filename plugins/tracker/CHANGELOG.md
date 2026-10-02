@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.14.0] - 2026-10-02
+
+### Added
+
+- **Budgets off for the alpha** (#82; plan 5.7). roshne, 2026-10-02, choosing option A: "A.  but
+  lets build in an unlimited budget "flag" during alpha, evaluate usage during alpha, then test
+  budgets during beta."
+  A new operator setting, `TRACKER_BUDGET_UNLIMITED`: `true` or `1` turns it on, bot-wide; unset, empty,
+  `false` or `0` is off (the default, so nothing changes unless it is set); anything else refuses to
+  load, naming it. On, the execute lane hands docket's `budgetHold` a policy with no ceiling of
+  either kind (`BudgetLimits` null, docket-core 0.5.0), so neither a person's daily ceiling nor the
+  global one holds a run, and no ceiling notice goes out. Each Job's own caps (research: 15 turns,
+  1 USD) are unchanged, and every run is still charged to the `usage` table. The bot logs one line
+  at start saying budgets are off (or, when the execute lane is not configured, that the flag is
+  set but no model work runs); the admin's People and Usage pages carry a "Budgets off (alpha):
+  unlimited" banner; the person page's ceiling section says the ceiling is not enforced, and its
+  form still records a raise or a reset (its answer says the same). Proposed defaults, reversible:
+  the switch is bot-wide, not per person, and an operator env var, not a web toggle.
+- **`/admin/usage`**, an admin-only, read-only page linked from every admin page: model spend per
+  budget day for the last 14 days, newest first -- dollars and calls in all and per person -- each
+  measured against the default ceilings (2 USD / 20 calls a person, 10 USD / 100 calls in all, not
+  a person's raise): a "would have hit the ... limit" marker on a day that reached one, and how
+  many calls were charged after it had (roughly what the ceiling would have held). A non-admin gets
+  the unknown page's 404, as on every admin route.
+
+### Schema
+
+- No migration: the page reads the `usage` table docket already writes. Still at 7.
+
 ## [0.13.0] - 2026-10-01
 
 ### Added

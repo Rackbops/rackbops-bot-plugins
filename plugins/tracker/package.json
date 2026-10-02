@@ -1,7 +1,7 @@
 {
   "name": "@rackbops/plugin-tracker",
-  "version": "0.13.0",
-  "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops and one-off research (through city-hall, with its findings) by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed), an admin view (with the DMs that did not arrive, and raising a person's daily model ceiling), forget-me, and a JSON task API with personal API tokens",
+  "version": "0.14.0",
+  "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops and one-off research (through city-hall, with its findings) by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
   "type": "module",
   "main": "dist/plugin.js",
   "files": ["dist"],
@@ -43,6 +43,13 @@
         "required": false,
         "secret": false,
         "description": "The https origin the bot's HTTP is reached at through its tunnel, e.g. https://clerk.example.com (no path). /web links to <this>/tracker/login, and a form post from any other origin is refused. Unset = no web area: /web says so and its pages answer 404."
+      },
+      {
+        "key": "TRACKER_BUDGET_UNLIMITED",
+        "format": "^ *([Tt][Rr][Uu][Ee]|[Ff][Aa][Ll][Ss][Ee]|1|0)? *$",
+        "required": false,
+        "secret": false,
+        "description": "Budgets off for the alpha: true or 1 means no daily ceiling (per person or for everyone) holds a model run, bot-wide. Each Job's own caps still apply, usage is still recorded, the People and Usage admin pages show a budgets-off banner, and the person page shows a not-enforced note. Unset, empty, false or 0 = the daily ceilings apply (the default); anything else refuses to load."
       },
       {
         "key": "TRACKER_CITY_HALL_URL",

@@ -29,7 +29,7 @@ export type Route =
   | { kind: "tokens" }
   | { kind: "token-revoke"; id: string }
   | { kind: "admin-token-revoke"; id: string }
-  | { kind: "admin" | "admin-tasks" | "admin-deliveries" | "admin-allow" }
+  | { kind: "admin" | "admin-tasks" | "admin-deliveries" | "admin-usage" | "admin-allow" }
   | { kind: "admin-person"; id: string }
   | { kind: "admin-act"; id: string; action: PersonAction }
   | { kind: "admin-ceiling"; id: string }
@@ -63,6 +63,7 @@ export function route(path: string): Route | null {
   if (path === "/admin") return { kind: "admin" };
   if (path === "/admin/tasks") return { kind: "admin-tasks" };
   if (path === "/admin/deliveries") return { kind: "admin-deliveries" };
+  if (path === "/admin/usage") return { kind: "admin-usage" };
   if (path === "/admin/allow") return { kind: "admin-allow" };
   const ceiling = PERSON_CEILING.exec(path);
   if (ceiling) return { kind: "admin-ceiling", id: segment(ceiling[1]) };

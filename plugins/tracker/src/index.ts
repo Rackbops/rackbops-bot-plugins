@@ -7,7 +7,7 @@ import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds } from "./access.js";
 import type { TickGate, TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
-import { budgetPolicy, Ceilings } from "./ceilings.js";
+import { Ceilings } from "./ceilings.js";
 import { DeliveryHealth } from "./delivery-health.js";
 import { createPageFetch } from "./fetch.js";
 import { EXECUTE_EVERY_MS, ExecuteLane } from "./execute-lane.js";
@@ -28,6 +28,7 @@ import { parseWebUrl } from "./web/config.js";
 import { ApiTokens } from "./web/api-tokens.js";
 import { Sessions } from "./web/sessions.js";
 import { LoginLinks } from "./web/signin-link.js";
+import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_IDLE_LOG, UNLIMITED_LOG } from "./usage.js";
 
 /**
  * The task tracker (rackbops-bot-plugins#78; plan of record Rackbops/Tooling
@@ -42,7 +43,7 @@ import { LoginLinks } from "./web/signin-link.js";
  * request through city-hall, with its findings, on the execute lane (#82).
  *
  * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID`,
- * `TRACKER_WEB_URL` and the `TRACKER_CITY_HALL_*` settings (executor.ts) and nothing else. The database is opened in `activate()` and closed in `dispose()`.
+ * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts) and `TRACKER_BUDGET_UNLIMITED` (usage.ts) and nothing else. The database is opened in `activate()` and closed in `dispose()`.
  */
 
 /** The tracker's database: `<dataDir>/tracker/tracker.sqlite`, a directory of its own (mcp's convention). */
@@ -94,6 +95,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const guildIds = parseGuildIds(host.env.TRACKER_GUILD_ID);
   const webOrigin = parseWebUrl(host.env.TRACKER_WEB_URL);
   const cityHall = parseCityHallConfig(host.env);
+  // Budgets off for the alpha (roshne, 2026-10-02): no daily ceiling holds a run; usage is still recorded.
+  const budgetUnlimited = parseBudgetUnlimited(host.env[BUDGET_UNLIMITED_KEY]);
   const cityHallConfig: CityHallConfig | null = cityHall.config;
   // The execute lane runs only when fully set up (or a test hands an Executor in).
   const executeOn = cityHallConfig !== null || options.executor !== undefined;
@@ -315,9 +318,12 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         });
       }
       // One docket Lanes for the execute lane while active: it keeps the usage-limit pause (execute-lane.ts).
-      // Its budget is docket's defaults with each person's raised ceiling read before every run (ceilings.ts).
+      // Its budget is docket's defaults with each person's raised ceiling read before every run (ceilings.ts),
+      // or none at all while TRACKER_BUDGET_UNLIMITED is on (usage.ts).
       const ceilings = new Ceilings(opened);
-      executeLane = executor ? new ExecuteLane({ store: openedStore, clock, types, notifier, executor, locks, budget: budgetPolicy(ceilings) }) : null;
+      executeLane = executor ? new ExecuteLane({ store: openedStore, clock, types, notifier, executor, locks, budget: executeBudget(ceilings, budgetUnlimited) }) : null;
+      // One line either way: the budgets-off line only when a model run can actually happen.
+      if (budgetUnlimited) host.log.info(executeLane ? UNLIMITED_LOG : UNLIMITED_IDLE_LOG);
       if (cityHallConfig) host.log.info(`execute lane on: city-hall ${cityHallConfig.url}, capability ${cityHallConfig.capability}`);
       else if ("missing" in cityHall && cityHall.missing.length > 0) host.log.warn(`execute lane is off, so /research is unavailable: ${cityHall.missing.join(", ")} not set`);
       deps = {
@@ -336,6 +342,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         apiTokens: new ApiTokens(opened),
         roster: new Roster(opened),
         ceilings,
+        budgetUnlimited,
         configuredAdmins: new Set(adminIds),
         lanes,
         webEditor: webOrigin !== null,

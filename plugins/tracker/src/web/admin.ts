@@ -17,6 +17,8 @@ import type { Queue } from "../discord-common.js";
 import type { Done } from "../manage.js";
 import { adminDeliveriesPage, adminPage, adminTasksPage, CONFIRM_WORD, confirmForgetPage, forgetPage, nameOf, personHref, personPage, type Result } from "./admin-pages.js";
 import { htmlResponse, redirect } from "./html.js";
+import { loadUsage } from "../usage.js";
+import { adminUsagePage } from "./usage-pages.js";
 import { notFoundPage, type Viewer } from "./pages.js";
 import type { Route } from "./routes.js";
 
@@ -67,7 +69,7 @@ const WRONG_WORD = `Type ${CONFIRM_WORD} to confirm. Nothing was deleted.`;
 
 async function peoplePage(a: AdminWeb, result: Result, status: number, allow?: string): Promise<Response> {
   const data = { people: a.d.roster.people(), blocks: a.d.roster.activeBlocks(a.d.clock.now()), now: a.d.clock.now() };
-  return htmlResponse(adminPage(a.v, data, { result, ...(allow !== undefined ? { allow } : {}) }), status);
+  return htmlResponse(adminPage(a.v, data, { result, unlimited: a.d.budgetUnlimited === true, ...(allow !== undefined ? { allow } : {}) }), status);
 }
 
 async function onePerson(a: AdminWeb, id: string, result: Result = null): Promise<Response> {
@@ -84,14 +86,21 @@ async function onePerson(a: AdminWeb, id: string, result: Result = null): Promis
     defaults: DEFAULT_BUDGET.person,
     bounds: boundsOf(),
     names: new Map(everyone.map((x) => [x.id, nameOf(x)])),
+    unlimited: a.d.budgetUnlimited === true,
   };
   return htmlResponse(personPage(a.v, p, tasks, now, result, isConfiguredAdmin(a.d, p), tokens, budget), result && !result.ok ? 400 : 200);
 }
 
-/** The admin view's pages (GET): people, all tasks, the DMs that did not arrive, one person. */
+/** The admin view's pages (GET): people, all tasks, the DMs that did not arrive, model usage, one person. */
 export async function adminGet(a: AdminWeb, r: Route): Promise<Response> {
   if (r.kind === "admin") return peoplePage(a, null, 200);
   if (r.kind === "admin-person") return onePerson(a, r.id);
+  if (r.kind === "admin-usage") {
+    // Read-only (plan 5.7; roshne, 2026-10-02: "evaluate usage during alpha").
+    const now = a.d.clock.now();
+    const people = new Map(a.d.roster.people().map((p) => [p.id, nameOf(p)]));
+    return htmlResponse(adminUsagePage(a.v, { report: await loadUsage(a.d.store, now), names: people, unlimited: a.d.budgetUnlimited === true }));
+  }
   const people = new Map(a.d.roster.people().map((p) => [p.id, nameOf(p)]));
   if (r.kind === "admin-deliveries") {
     const now = a.d.clock.now();

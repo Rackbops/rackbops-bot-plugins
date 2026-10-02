@@ -6,6 +6,7 @@ import { framed, type Viewer } from "./pages.js";
 import type { ApiToken } from "./api-tokens.js";
 import { adminTokenHref, tokenTable } from "./token-pages.js";
 import { ceilingSection, type CeilingView } from "./ceiling-pages.js";
+import { UNLIMITED_BANNER } from "../usage.js";
 
 /**
  * The admin view and forget-me's pages (rackbops-bot-plugins#80, slice 3; plan 5.10), pure: data
@@ -45,8 +46,16 @@ function hidden(v: Viewer): Html {
   return html`<input type="hidden" name="csrf" value="${v.csrf}">`;
 }
 
-function adminNav(v: Viewer): Html {
-  return html`<p class="tr-row"><a class="rb-link" href="${v.base}/admin">People</a> <a class="rb-link" href="${v.base}/admin/tasks">All tasks</a> <a class="rb-link" href="${v.base}/admin/deliveries">Deliveries</a></p>`;
+export function adminNav(v: Viewer): Html {
+  return html`<p class="tr-row"><a class="rb-link" href="${v.base}/admin">People</a> <a class="rb-link" href="${v.base}/admin/tasks">All tasks</a> <a class="rb-link" href="${v.base}/admin/deliveries">Deliveries</a> <a class="rb-link" href="${v.base}/admin/usage">Usage</a></p>`;
+}
+
+/**
+ * The banner the People (`/admin`) and Usage (`/admin/usage`) pages show while `TRACKER_BUDGET_UNLIMITED`
+ * is on (usage.ts). The person page shows a "not enforced" note in its ceiling section instead (ceiling-pages.ts).
+ */
+export function budgetsOffBanner(unlimited: boolean): Html | null {
+  return unlimited ? html`<div class="rb-alert rb-alert--warning" role="status"><p><strong>${UNLIMITED_BANNER}</strong></p></div>` : null;
 }
 
 export function personHref(v: Viewer, id: string, action = ""): string {
@@ -76,7 +85,7 @@ export interface AdminData {
 }
 
 /** `/admin`: everyone on the list, the decline blocks in force, and the allow form. */
-export function adminPage(v: Viewer, data: AdminData, o: { result?: Result; allow?: string } = {}): string {
+export function adminPage(v: Viewer, data: AdminData, o: { result?: Result; allow?: string; unlimited?: boolean } = {}): string {
   const names = new Map(data.people.map((p) => [p.id, nameOf(p)]));
   const rows = data.people.map(
     (p) => html`<tr>
@@ -102,6 +111,7 @@ export function adminPage(v: Viewer, data: AdminData, o: { result?: Result; allo
     html`<section>
 <h1>People</h1>
 ${adminNav(v)}
+${budgetsOffBanner(o.unlimited === true)}
 ${flash(o.result ?? null)}
 <div class="rb-table-scroll"><table class="rb-table">
 <thead><tr><th scope="col">Person</th><th scope="col">Status</th><th scope="col">Zone, hour</th><th scope="col">Delivery</th><th scope="col">Tasks</th></tr></thead>

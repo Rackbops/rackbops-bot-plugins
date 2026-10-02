@@ -111,6 +111,9 @@ export function budgetNoticeKey(userId: string, at: Date): string {
   return `budget:person:${userId}:${budgetDay(at).day}`;
 }
 
+/** Added to a change's answer, and to the page, while `TRACKER_BUDGET_UNLIMITED` is on (usage.ts): recorded, not enforced. */
+export const NOT_ENFORCED = "Budgets are off (alpha): TRACKER_BUDGET_UNLIMITED is on, so no ceiling is enforced; this one applies once it is turned off.";
+
 /** How many of a person's changes their admin page lists, newest first; older rows stay in the table. */
 export const HISTORY_SHOWN = 20;
 
@@ -178,7 +181,7 @@ function who(u: User): string {
  * queue; the flag is checked again here. Logged twice: the `ceiling_changes` row and a host log line.
  */
 export async function setCeiling(
-  d: Pick<TrackerDeps, "store" | "clock" | "log" | "ceilings">,
+  d: Pick<TrackerDeps, "store" | "clock" | "log" | "ceilings" | "budgetUnlimited">,
   admin: User,
   targetId: string,
   input: CeilingInput,
@@ -192,8 +195,9 @@ export async function setCeiling(
   if (decided.limits === null && !isRaised(before)) return { ok: true, text: `${who(target)} is already on the default ceiling.` };
   const change = d.ceilings.record(target.id, decided.limits, admin.id, d.clock.now().toISOString());
   const now = limitsOf(change);
+  const note = d.budgetUnlimited ? ` ${NOT_ENFORCED}` : "";
   d.log.info(`${admin.id} set ${target.id}'s daily ceiling to ${decided.limits === null ? "the default" : `${now.usd} USD / ${now.calls} calls`} (${change.id})`);
   return decided.limits === null
-    ? { ok: true, text: `${who(target)} is back on the default ceiling: ${describeLimits(now)}.` }
-    : { ok: true, text: `${who(target)}'s ceiling is now ${describeLimits(now)}, until an admin changes it.` };
+    ? { ok: true, text: `${who(target)} is back on the default ceiling: ${describeLimits(now)}.${note}` }
+    : { ok: true, text: `${who(target)}'s ceiling is now ${describeLimits(now)}, until an admin changes it.${note}` };
 }

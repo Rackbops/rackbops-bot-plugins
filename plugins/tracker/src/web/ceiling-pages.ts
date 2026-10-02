@@ -1,5 +1,5 @@
 import { type BudgetLimits, formatInstant, type Spent } from "@rackbops/docket-core";
-import { type CeilingBounds, type CeilingChange, describeLimits, HISTORY_SHOWN, isRaised, limitsOf } from "../ceilings.js";
+import { type CeilingBounds, type CeilingChange, describeLimits, HISTORY_SHOWN, isRaised, limitsOf, NOT_ENFORCED } from "../ceilings.js";
 import { FORGOTTEN } from "../roster.js";
 import { html, type Html } from "./html.js";
 import type { Viewer } from "./pages.js";
@@ -19,6 +19,8 @@ export interface CeilingView {
   bounds: CeilingBounds;
   /** Admins' names by id, for "set by". */
   names: ReadonlyMap<string, string>;
+  /** `TRACKER_BUDGET_UNLIMITED` is on: the ceiling is shown and can be changed, but nothing enforces it. */
+  unlimited?: boolean;
 }
 
 function setBy(id: string, names: ReadonlyMap<string, string>): string {
@@ -43,7 +45,8 @@ export function ceilingSection(v: Viewer, personId: string, view: CeilingView, n
   const { min, max } = view.bounds;
   return html`<section>
 <h2>Daily model budget</h2>
-<p>Today: ${view.today.usd.toFixed(2)} USD and ${view.today.calls} model call(s). Ceiling: ${describeLimits(limits)}${raised ? html` <span class="rb-badge">raised</span>` : " (the default)"}.</p>
+${view.unlimited ? html`<div class="rb-alert rb-alert--warning" role="status"><p>${NOT_ENFORCED}</p></div>` : null}
+<p>Today: ${view.today.usd.toFixed(2)} USD and ${view.today.calls} model call(s). Ceiling: ${describeLimits(limits)}${raised ? html` <span class="rb-badge">raised</span>` : " (the default)"}${view.unlimited ? " -- not enforced" : null}.</p>
 <p class="rb-muted">A raise stands until an admin changes it. Setting exactly the default puts them back on it. It may not go below the default (${describeLimits(view.defaults)}) or above the global ceiling (${describeLimits(max)}), which still applies to everyone together. A day ends at midnight Eastern.</p>
 <form method="post" action="${action}" class="tr-stack">
 ${csrf}

@@ -102,6 +102,7 @@ const ADMIN_ROUTES: readonly [string, string, Record<string, string>?][] = [
   ["GET", "/admin"],
   ["GET", "/admin/tasks"],
   ["GET", "/admin/deliveries"],
+  ["GET", "/admin/usage"],
   ["GET", "/admin/people/u1"],
   ["GET", "/admin/people/u3"],
   ["GET", "/admin/people/u999"],
@@ -138,7 +139,7 @@ describe("who may use the admin view", () => {
 
   it("an admin sees each page; the wrong method is a 405 for them; nobody signed in is sent to sign in", async () => {
     const w = await setup();
-    for (const path of ["/admin", "/admin/tasks", "/admin/deliveries", "/admin/people/u2"]) expect((await call(w.plugin, "GET", path, { jar: w.admin })).status).toBe(200);
+    for (const path of ["/admin", "/admin/tasks", "/admin/deliveries", "/admin/usage", "/admin/people/u2"]) expect((await call(w.plugin, "GET", path, { jar: w.admin })).status).toBe(200);
     expect((await call(w.plugin, "GET", "/admin/people/u999", { jar: w.admin })).status).toBe(404);
     expect((await call(w.plugin, "GET", "/admin/allow", { jar: w.admin })).status).toBe(405);
     expect((await post(w.plugin, w.admin, w.adminCsrf, "/admin")).status).toBe(405);
