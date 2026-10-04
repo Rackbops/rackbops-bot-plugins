@@ -1,0 +1,30 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  // Lint only. Formatting stays by hand: turning the formatter on would reflow every plugin.
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    // plugins.json and contract.d.ts are generated or vendored (CLAUDE.md "Generated vs authored").
+    "includes": ["**", "!plugins.json", "!packages/api/contract.d.ts", "!**/dist"]
+  },
+  "formatter": { "enabled": false },
+  "assist": { "enabled": false },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": {
+        // The sanitizers in tracker/executor.ts, tracker/web/api-tokens.ts and
+        // warbandeer/characters.ts strip control characters on purpose.
+        "noControlCharactersInRegex": "off",
+        // Warn, not error, while existing plugin code still has them: the lint gate
+        // came after the code, and each plugin's owner cleans its own up.
+        "noAssignInExpressions": "warn",
+        "noImplicitAnyLet": "warn",
+        "useIterableCallbackReturn": "warn"
+      },
+      "correctness": {
+        "noUnsafeOptionalChaining": "warn"
+      }
+    }
+  }
+}

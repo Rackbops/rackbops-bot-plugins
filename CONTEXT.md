@@ -24,7 +24,7 @@ precisely to make that disagreement loud instead of silent.
 
 ## Environment
 
-No machine-specific paths. `bun@1.3.14` is pinned via `package.json`'s `packageManager` field;
+No machine-specific paths. `bun` is pinned (the exact version) via `package.json`'s `packageManager` field;
 `oven-sh/setup-bun@v2` in CI reads that same field (`bun-version-file: package.json`), so the
 pin only needs to change in one place.
 
@@ -39,7 +39,7 @@ pin only needs to change in one place.
   exist).
 - **`bun run check` means typecheck only, not lint+typecheck.** Matches
   `rackbops-discord-bot`'s own `package.json` convention (`"check": "bunx tsc --noEmit"|
-  exactly). This repo has no separate `lint` script.
+  exactly). Lint is separate: `just lint` (Biome).
 - **`scripts/check-contract.ts` needs network access.** It fetches
   `raw.githubusercontent.com/Rackbops/rackbops-discord-bot/main/src/plugins/contract.ts` live --
   a CI failure here can mean either real drift or a transient network/GitHub outage; check which
@@ -157,10 +157,12 @@ pin only needs to change in one place.
   nothing** (seen 2026-10-01 in `plugins/tracker`'s store tests under Bun's SQLite): a refused keyed
   finding or a follow-up's refused dedupe leaves a gap, so ids are unique and increasing but not
   contiguous. Never compute an id by counting rows.
-- **CI job names (`checks`, `test`) intentionally split lint/typecheck-shaped work from tests**,
-  matching `/audit`'s "at least two jobs" requirement -- `rackbops-discord-bot`'s own `ci.yml`
-  uses a single `checks` job and doesn't split this way; don't use that file as a reference for
-  job structure, only for its action-version pins (`actions/checkout@v7`, `oven-sh/setup-bun@v2`).
+- **CI job names (`lint`, `test`, `checks`) follow Project Operations 1.0.0 section 5**: `lint` runs
+  `just lint` then `just typecheck`, `test` runs `just test`, and `checks` (build, index freshness,
+  contract drift) is extra and not a required check. Jobs call Justfile recipes, never re-implement
+  them. `rackbops-discord-bot`'s own `ci.yml` uses a single `checks` job; don't use that file as a
+  reference for job structure, only for its action-version pins (`actions/checkout@v7`,
+  `oven-sh/setup-bun@v2`).
 - **`rackbops-discord-bot`'s own `ci.yml` triggers on `pull_request` only, not push to `main`.**
   This repo's `ci.yml` triggers on both, deliberately diverging from that file to match the
   documented `/audit` CI-workflow standard instead. If you're ever tempted to "match the bot
@@ -176,5 +178,6 @@ pin only needs to change in one place.
 - **npm scope for published packages (`@rackbops/plugin-<name>`)** -- RESOLVED 2026-09-04: the
   `rackbops` npm org exists (created 2026-09-04, account `rshelton`), so the scope is `@rackbops`.
   Authentication is OIDC trusted publishing (see the publishing gotcha above), not a scope token.
-- **When to turn on branch protection** -- probe: has `checks` been green on "a few" real merges
-  yet? See the twin of `rackbops-discord-bot#84` filed in this repo's issues.
+- **Moving from classic branch protection to the ruleset** -- classic protection on `main` requires
+  `checks` and `test`; the Project Operations ruleset (requiring `lint`, `test`, `pr-title`) and
+  removing the classic protection are roshne's clicks in the repo's settings.
