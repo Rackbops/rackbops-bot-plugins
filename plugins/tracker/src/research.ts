@@ -49,8 +49,8 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
   if (!type || !d.research) return { ok: false, error: RESEARCH_OFF };
   const question = input.question.trim();
   if (question.length === 0) return { ok: false, error: "Say what to look into." };
-  if (tooShort(question)) return { ok: false, error: SHORT_QUESTION };
   if (question.length > MAX_QUESTION_CHARS) return { ok: false, error: `That question is longer than ${MAX_QUESTION_CHARS} characters.` };
+  if (tooShort(question)) return { ok: false, error: SHORT_QUESTION };
   const context = input.context?.trim() ?? "";
   if (context.length > MAX_CONTEXT_CHARS) return { ok: false, error: `\`context\` is longer than ${MAX_CONTEXT_CHARS} characters.` };
   const now = d.clock.now();

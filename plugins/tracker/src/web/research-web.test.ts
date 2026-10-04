@@ -129,7 +129,7 @@ describe("research from the web editor", () => {
     const w = await setup();
     for (const [form, reason] of [
       [{ question: "  " }, "Say what to look into."],
-      [{ question: "0", context: "What is Q?" }, "it needs at least 3 characters"],
+      [{ question: "0", context: "What is Q?" }, "Put the whole question in <code>question</code>: it needs at least 3 characters"],
       [{ question: `<b>"hi"</b>`, deadline: "blorp" }, "<code>deadline</code>:"],
       [{ question: `<b>"hi"</b>`, at: "tomorrow 9am", deadline: "tomorrow 8am" }, "The deadline has to be after the research starts."],
       [{ question: "x".repeat(MAX_QUESTION_CHARS + 1) }, `longer than ${MAX_QUESTION_CHARS} characters`],
