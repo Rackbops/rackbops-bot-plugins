@@ -75,8 +75,8 @@ also its own recipe (`just --list`).
 real bot against a real Discord instance proves that -- see `rackbops-discord-bot`'s own
 verification discipline.
 
-**CI (`ci.yml`) runs three jobs -- `lint` (lint + typecheck), `test`, and `checks` (typecheck,
-build, index, contract) -- on every PR and on push to `main`, each through the Justfile recipes above;
+**CI (`ci.yml`) runs three jobs -- `lint` (lint + typecheck), `test`, and `checks` (build, index,
+contract) -- on every PR and on push to `main`, each through the Justfile recipes above;
 `pr-guidelines.yml`'s `pr-title` job checks every PR title is a Conventional Commit.** This
 follows [Project Operations 1.0.0](https://lepid-labs.github.io/spec/project-operations/v1.0.0/)
 (Lepid Labs, CC BY 4.0) sections 3, 5 and 6, with one known gap: section 5.12 wants a monorepo's
@@ -116,8 +116,10 @@ Follows personal's **Code style** baseline. This repo's individuality:
   `package.json` `botPlugin` block + `CHANGELOG.md`) and fails on a bad name, a missing
   `hostApiVersion`, a current version with no CHANGELOG section, or a duplicate command name across
   plugins. See `CONTEXT.md` for the extractor's shape and the OIDC publishing path.
-- **`main` has classic branch protection requiring `checks` and `test` (strict, admins
-  included).** That is why `checks` still typechecks. Project Operations section 4 replaces it
-  with a repository ruleset requiring `lint`, `test` and `pr-title` plus a code-owner review
-  (`.github/CODEOWNERS`) -- and section 4.1 says the classic protection is then removed, so there
-  is one source of truth. Both are GitHub settings, roshne's to change.
+- **`main` is governed by a repository ruleset** (Project Operations section 4, set 2026-10-04):
+  no deletion or force push; a PR with one approving code-owner review (`.github/CODEOWNERS`),
+  stale approvals dismissed, conversations resolved; squash only; `lint`, `test` and `pr-title`
+  required, branch up to date. Classic branch protection was removed, so the ruleset is the one
+  source of truth; `checks` is not required. Every Claude PR is opened as roshne's account, which
+  cannot approve its own PR, so merges go through the repository-admin bypass. The ruleset is a
+  GitHub setting, roshne's to change.

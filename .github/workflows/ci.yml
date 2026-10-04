@@ -49,9 +49,6 @@ jobs:
         with:
           bun-version-file: package.json
       - run: just install
-      # Typecheck here too while classic branch protection still requires `checks` (not `lint`);
-      # drop it once the Project Operations ruleset replaces that protection.
-      - run: just typecheck
       - run: just build
       - run: just index-check
       - run: just contract-check

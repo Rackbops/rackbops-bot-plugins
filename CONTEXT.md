@@ -178,6 +178,5 @@ pin only needs to change in one place.
 - **npm scope for published packages (`@rackbops/plugin-<name>`)** -- RESOLVED 2026-09-04: the
   `rackbops` npm org exists (created 2026-09-04, account `rshelton`), so the scope is `@rackbops`.
   Authentication is OIDC trusted publishing (see the publishing gotcha above), not a scope token.
-- **Moving from classic branch protection to the ruleset** -- classic protection on `main` requires
-  `checks` and `test`; the Project Operations ruleset (requiring `lint`, `test`, `pr-title`) and
-  removing the classic protection are roshne's clicks in the repo's settings.
+- **Branch protection** -- RESOLVED 2026-10-04: the Project Operations ruleset (requiring `lint`,
+  `test`, `pr-title` and a code-owner review) governs `main`, and the classic protection was removed.
