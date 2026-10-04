@@ -228,10 +228,9 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
     text: clip(
       [
         `Watching \`${task.id}\`: ${start.title}.${seen.text ? ` ${seen.text}` : ""}`,
-        `I look at ${where} every ${plural(start.hours, "hour")} and DM you each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before; the first look, within a minute, DMs what is there now. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`,
-        ...(start.judge
-          ? ["The model looks at each new listing first: whether it is the thing, and what its page shows about the seller. Those looks count against your daily model budget; `judge: false` makes a watch without them."]
-          : []),
+        start.judge
+          ? `I look at ${where} every ${plural(start.hours, "hour")}, and the model looks at each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before -- whether it is the thing, and what its page shows about the seller -- then I DM you the ones worth a look, with its notes; the first look starts within a minute. Those looks are model runs, charged like research; \`judge: false\` makes a watch without them. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`
+          : `I look at ${where} every ${plural(start.hours, "hour")} and DM you each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before; the first look, within a minute, DMs what is there now. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`,
       ].join("\n"),
     ),
   };
