@@ -5,6 +5,8 @@ import { renewalDate } from "../edit.js";
 import type { PriceInput } from "../price.js";
 import { type ReminderInput, type Repeat, repeatOf } from "../reminders.js";
 import type { ResearchInput } from "../research.js";
+import type { ScoutEdit, ScoutInput } from "../scout.js";
+import type { ScoutConfig } from "../scout-type.js";
 import type { PeriodUnit, RenewalInput } from "../tracked.js";
 import { fieldsFor, type NewType, type Values } from "./editor-pages.js";
 
@@ -56,6 +58,35 @@ export function researchInput(form: URLSearchParams): ResearchInput {
     ...(context !== undefined ? { context } : {}),
     ...(deadline !== undefined ? { deadline } : {}),
     ...(at !== undefined ? { at } : {}),
+  };
+}
+
+/** `/scout new`'s options: an empty lens, who, notes or every is left out, as an unset option is. */
+export function scoutInput(form: URLSearchParams): ScoutInput {
+  const lens = opt(form, "lens");
+  const who = opt(form, "for");
+  const notes = lines(opt(form, "notes"));
+  const every = int(form, "every");
+  return {
+    interests: lines(str(form, "interests")) ?? "",
+    ...(lens !== undefined ? { lens } : {}),
+    ...(who !== undefined ? { for: who } : {}),
+    ...(notes !== undefined ? { notes } : {}),
+    ...(every !== undefined ? { every } : {}),
+  };
+}
+
+/** A scout's edit: empty interests, lens or every keep the scout's; a sent empty `for` or `notes` clears it. */
+export function scoutEdit(form: URLSearchParams): ScoutEdit {
+  const interests = lines(opt(form, "interests"));
+  const lens = opt(form, "lens");
+  const every = int(form, "every");
+  return {
+    ...(interests !== undefined ? { interests } : {}),
+    ...(lens !== undefined ? { lens } : {}),
+    ...(form.has("for") ? { for: str(form, "for") } : {}),
+    ...(form.has("notes") ? { notes: lines(str(form, "notes")) ?? "" } : {}),
+    ...(every !== undefined ? { every } : {}),
   };
 }
 
@@ -148,6 +179,11 @@ export function editValues(d: Pick<TrackerDeps, "clock">, user: User, task: Task
       lead: String(s.leadDays ?? 0),
       note: c.note ?? "",
     };
+  }
+  if (task.type === "scout") {
+    const c = task.config as ScoutConfig;
+    const every = task.schedule?.kind === "calendar" ? task.schedule.every : 1;
+    return { interests: c.interests.join("\n"), lens: c.lens, for: c.for ?? "", notes: c.notes ?? "", every: String(every) };
   }
   if (task.type !== "price") return {};
   const c = task.config as PriceConfig;

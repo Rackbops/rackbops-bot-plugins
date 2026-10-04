@@ -45,7 +45,7 @@ describe("createPlugin", () => {
   it("declares exactly the commands it registers, an interactions handler, and the env keys it reads", () => {
     const plugin = createPlugin(makeFakeHost({ name: "tracker" }));
     expect(plugin.commands?.map((c) => c.name)).toEqual(pkg.botPlugin.commands);
-    expect(pkg.botPlugin.commands).toEqual(["allow", "register", "remind", "renewal", "price", "research", "tasks", "task", "settings", "web"]);
+    expect(pkg.botPlugin.commands).toEqual(["allow", "register", "remind", "renewal", "price", "research", "scout", "tasks", "task", "settings", "web"]);
     expect(typeof plugin.interactions).toBe("function");
     expect(pkg.botPlugin.intents).toEqual([]);
     expect(pkg.botPlugin.env.map((e) => e.key)).toEqual([
@@ -297,7 +297,7 @@ describe("the plugin end to end on a real data file", () => {
     expect((await store.findUserByDiscordId(ADMIN))?.admin).toBe(true);
   });
 
-  it("registers reminder, renewal and price (#81) and research (#82), the one execute-lane type, which runs only with an Executor", () => {
-    expect(Object.keys(TRACKER_TYPES).sort()).toEqual(["price", "reminder", "renewal", "research"]);
+  it("registers reminder, renewal and price (#81), and research (#82) and the scout (#83), the execute-lane types, which run only with an Executor", () => {
+    expect(Object.keys(TRACKER_TYPES).sort()).toEqual(["price", "reminder", "renewal", "research", "scout"]);
   });
 });

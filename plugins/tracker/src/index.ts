@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
 import { price, reminder, renewal, research } from "@rackbops/docket-types";
+import { scout } from "./scout-type.js";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds } from "./access.js";
 import type { TickGate, TrackerDeps } from "./actions.js";
@@ -54,13 +55,15 @@ export const DB_FILE = "tracker.sqlite";
  * The task types this host runs: the notify-lane types -- `price` reads pages through the fenced
  * Fetch port (fetch.ts, #81) -- and `research` (#82), the execute-lane type, which runs only while
  * the city-hall Executor is configured (executor.ts): without it the execute lane is not ticked and
- * `/research` makes nothing. The scout and the want-list wait for their epic (docket#13).
+ * `/research` makes nothing -- and `scout` (#83), the interest scout, the plugin's own execute-lane
+ * type (scout-type.ts), under the same switch. The want-list watcher is still to come (#83).
  */
 export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object.freeze({
   reminder: reminder as TaskType<unknown>,
   renewal: renewal as TaskType<unknown>,
   price: price as TaskType<unknown>,
   research: research as TaskType<unknown>,
+  scout: scout as TaskType<unknown>,
 });
 
 export interface TrackerOptions {

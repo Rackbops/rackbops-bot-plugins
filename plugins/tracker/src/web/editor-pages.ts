@@ -2,6 +2,8 @@ import type { Task } from "@rackbops/docket-core";
 import { CURRENCY_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
 import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
+import { MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "../scout.js";
+import { MAX_FOR_CHARS, MAX_SCOUT_NOTES } from "../scout-type.js";
 import { MAX_EVERY, MAX_LEAD_DAYS } from "../tracked.js";
 import { html, type Html } from "./html.js";
 import { framed, type Viewer } from "./pages.js";
@@ -13,8 +15,9 @@ import { framed, type Viewer } from "./pages.js";
  * every form posts back to this origin with the session's CSRF token. No script.
  */
 
-export type EditorType = "reminder" | "renewal" | "price";
-export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "price"];
+/** The types the editor makes and edits; the scout (#83) is made only while the model runner is set up. */
+export type EditorType = "reminder" | "renewal" | "price" | "scout";
+export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "price", "scout"];
 
 /**
  * What the web and the API can make: the editor's types, and a research request
@@ -22,7 +25,10 @@ export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "pric
  * `/research` has no edit either. It is offered only while research is available (`d.research`).
  */
 export type NewType = EditorType | "research";
-export const NEW_TYPES: readonly NewType[] = [...EDITOR_TYPES, "research"];
+export const NEW_TYPES: readonly NewType[] = ["reminder", "renewal", "price", "research", "scout"];
+
+/** The types that run on the model runner: made only while it is set up (`d.research`); a scout made before stays editable. */
+export const MODEL_TYPES: ReadonlySet<NewType> = new Set<NewType>(["research", "scout"]);
 
 export type Values = Readonly<Record<string, string>>;
 
@@ -58,11 +64,29 @@ const RESEARCH_FIELDS: readonly Field[] = [
   { name: "at", label: "Start", kind: "text", maxlength: MAX_WHEN, help: "Leave it empty to start now." },
 ];
 
+const LENS_OPTIONS = [
+  ["general", "general: no occasion in particular"],
+  ["birthday", "birthday: fun or a little grandiose"],
+  ["anniversary", "anniversary: a romantic angle"],
+  ["christmas", "Christmas: tied to their interests"],
+] as const;
+
+/** `/scout`'s options; the same on an edit, where each field shows what the scout has. */
+const SCOUT_FIELDS: readonly Field[] = [
+  { name: "interests", label: "Interests", kind: "textarea", required: true, maxlength: MAX_INTERESTS_TEXT, help: "Separated by commas or one per line, at most 20." },
+  { name: "lens", label: "Gift lens", kind: "select", options: LENS_OPTIONS },
+  { name: "for", label: "Who it is for", kind: "text", maxlength: MAX_FOR_CHARS, help: "Leave it empty if it is for you." },
+  { name: "notes", label: "Notes", kind: "textarea", maxlength: MAX_SCOUT_NOTES, help: "Anything else to weigh: a budget, what they own already. It goes to the model." },
+  { name: "every", label: "Days between runs", kind: "number", min: 1, max: MAX_SCOUT_EVERY, help: `1 to ${MAX_SCOUT_EVERY}; 1 when empty. Each run is at your preferred hour.` },
+];
+
 /** The fields each form shows, in order. An edit of a price leaves out the page itself; a research request has no edit. */
 export function fieldsFor(type: NewType, mode: "new" | "edit"): readonly Field[] {
   switch (type) {
   case "research":
     return mode === "new" ? RESEARCH_FIELDS : [];
+  case "scout":
+    return SCOUT_FIELDS;
   case "reminder":
     return [
       { name: "text", label: "Remind me to", kind: "text", required: true, maxlength: MAX_REMINDER_TEXT },
@@ -142,12 +166,14 @@ export function taskHref(v: Viewer, id: string, action = ""): string {
   return `${v.base}/tasks/${encodeURIComponent(id)}${action ? `/${action}` : ""}`;
 }
 
-const NOUN: Record<NewType, string> = { reminder: "reminder", renewal: "renewal", price: "price tracker", research: "research request" };
+const NOUN: Record<NewType, string> = { reminder: "reminder", renewal: "renewal", price: "price tracker", research: "research request", scout: "scout" };
 
 const INTRO: Partial<Record<NewType, string>> = {
   price: "I read the page once now; nothing is made unless I find a price in it.",
   research:
     "A research run looks it up on the web, then a second run checks the answer against its sources; only an answer that passes is DMed to you. It can take a while, and requests share a daily budget.",
+  scout:
+    "Each run looks on the web for 5 to 10 new things that fit the interests, through the lens, and DMs them to you; nothing shown before is shown again. A run can cost up to 1.50 USD of the daily model budget.",
 };
 
 /**

@@ -5,8 +5,9 @@ import { loadHistory } from "../history.js";
 import { TASK_BUSY } from "../locks.js";
 import { FINISHED, ownLiveTask } from "../manage.js";
 import { RESEARCH_OFF } from "../research.js";
+import { SCOUT_OFF } from "../scout.js";
 import { actOn, editableTask, makeTask, READING, saveEdit, type TaskAction, type Writer, type Written } from "./editor.js";
-import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, NEW_TYPES, type NewType } from "./editor-pages.js";
+import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_TYPES, type NewType } from "./editor-pages.js";
 import { editValues } from "./form-input.js";
 
 /**
@@ -39,9 +40,9 @@ function jsonKind(f: Field): "integer" | "number" | "string" {
   return f.decimal ? "number" : "string";
 }
 
-/** The types this bot makes now: research only while the model runner is set up (`d.research`). */
+/** The types this bot makes now: research and the scout only while the model runner is set up (`d.research`). */
 export function offeredTypes(d: Pick<TrackerDeps, "research">): readonly NewType[] {
-  return d.research ? NEW_TYPES : EDITOR_TYPES;
+  return d.research ? NEW_TYPES : NEW_TYPES.filter((t) => !MODEL_TYPES.has(t));
 }
 
 export const NOT_EDITABLE = "A research request cannot be edited. Delete it and ask again.";
@@ -111,7 +112,7 @@ export function refusal(error: string): ApiAnswer {
   if (error === NO_LONGER_LISTED) return problem(401, "invalid_token", "The token's owner is no longer on this tracker's list.");
   if (error === READING || error === TASK_BUSY) return problem(409, "busy", error);
   if (error === NOT_EDITABLE) return problem(409, "conflict", error);
-  if (error === RESEARCH_OFF) return problem(503, "unavailable", error);
+  if (error === RESEARCH_OFF || error === SCOUT_OFF) return problem(503, "unavailable", error);
   if (error === FINISHED || /^That task is [a-z]+, not [a-z]+\.$/.test(error)) return problem(409, "conflict", error);
   if (/^You already (have|track) [0-9]+ /.test(error)) return problem(409, "limit_reached", error);
   if (/ (is|are) not available on this bot\.$/.test(error)) return problem(503, "unavailable", error);
@@ -200,8 +201,8 @@ async function written(w: Writer, user: User, result: Written, status: number, b
 }
 
 /**
- * `POST /tasks`: `type` names the kind; the rest are that kind's create fields. `research` is a known
- * type even while it is unavailable, and then answers 503 with `/research`'s words.
+ * `POST /tasks`: `type` names the kind; the rest are that kind's create fields. `research` and `scout`
+ * are known types even while they are unavailable, and then answer 503 with their commands' words.
  */
 export async function createAnswer(w: Writer, user: User, body: Record<string, unknown>, base: string): Promise<ApiAnswer> {
   const type = body.type;
@@ -209,6 +210,7 @@ export async function createAnswer(w: Writer, user: User, body: Record<string, u
     return problem(400, "invalid", `\`type\` is one of ${offeredTypes(w.d).join(", ")}.`);
   }
   if (type === "research" && !w.d.research) return refusal(RESEARCH_OFF);
+  if (type === "scout" && !w.d.research) return refusal(SCOUT_OFF);
   const form = asFields(body, type as NewType, "new");
   if (!(form instanceof URLSearchParams)) return form;
   return written(w, user, await makeTask(w, type as NewType, form), 201, base);

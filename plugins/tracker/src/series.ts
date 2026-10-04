@@ -21,7 +21,7 @@ function pointLine(p: SeriesPoint, viewer: User, now: Date): string {
 export async function seriesLines(d: Pick<TrackerDeps, "store" | "clock">, user: User, taskId: string): Promise<string[]> {
   const actor = { userId: user.id, admin: user.admin };
   const task = await visibleTask(d.store, actor, taskId.trim());
-  if (task?.type === "research") return findingLines(d, user, task.id);
+  if (task?.type === "research" || task?.type === "scout") return findingLines(d, user, task.id);
   if (!task || (task.type !== "renewal" && task.type !== "price")) return [];
   const points = (await visibleSeries(d.store, actor, task.id)) ?? [];
   const now = d.clock.now();
@@ -49,7 +49,7 @@ export async function seriesLines(d: Pick<TrackerDeps, "store" | "clock">, user:
   return lines;
 }
 
-/** A research request's findings (docket 0.5.0), through `visibleFindings`: its checked claims and their sources. */
+/** A research request's or a scout's findings (docket 0.5.0), through `visibleFindings`: its checked claims or the items it showed, with their sources. */
 async function findingLines(d: Pick<TrackerDeps, "store" | "clock">, user: User, taskId: string): Promise<string[]> {
   const findings = (await visibleFindings(d.store, { userId: user.id, admin: user.admin }, taskId)) ?? [];
   if (findings.length === 0) return ["Findings: none yet"];

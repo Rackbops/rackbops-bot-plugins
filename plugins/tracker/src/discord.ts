@@ -1,4 +1,4 @@
-import type { ChatInputCommandInteraction, SlashCommandBuilder, User as DiscordUser } from "discord.js";
+import type { ChatInputCommandInteraction, SlashCommandBuilder, SlashCommandSubcommandBuilder, User as DiscordUser } from "discord.js";
 import type { User } from "@rackbops/docket-core";
 import type { PluginCommand, PluginInteractionHandler, PluginLog } from "../../../packages/api/contract.js";
 import type { Membership, Need } from "./access.js";
@@ -17,6 +17,8 @@ import { resumeTask } from "./manage.js";
 import { CURRENCY_LENGTH, DATE_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
 import { remind, type Repeat } from "./reminders.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./research.js";
+import { createScout, DEFAULT_SCOUT_EVERY, editScout, MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "./scout.js";
+import { MAX_FOR_CHARS, MAX_SCOUT_NOTES } from "./scout-type.js";
 import {
   EPHEMERAL,
   FAILED,
@@ -37,6 +39,21 @@ import type { BaselineRule, RenewalDecision } from "@rackbops/docket-types";
 import { type WebLocation, webLink } from "./web/command.js";
 
 export { lookupMembership, type Interactionish, STARTING, FAILED } from "./discord-common.js";
+
+/** The scout's `lens` option, on `/scout new` and `/scout edit` alike. */
+function lensOption(s: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
+  return s.addStringOption((o) =>
+    o
+      .setName("lens")
+      .setDescription("The gift lens (default: general)")
+      .addChoices(
+        { name: "general", value: "general" },
+        { name: "birthday: fun or a little grandiose", value: "birthday" },
+        { name: "anniversary: a romantic angle", value: "anniversary" },
+        { name: "christmas: tied to their interests", value: "christmas" },
+      ),
+  );
+}
 
 /**
  * The slash commands (plan 5.5, E2): read the options, look up membership, call actions.ts /
@@ -281,6 +298,54 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             ...(deadline !== null ? { deadline } : {}),
             ...(at !== null ? { at } : {}),
           });
+        }),
+    },
+    {
+      name: "scout",
+      build: (b: SlashCommandBuilder) =>
+        b
+          .setDescription("A scout that looks on the web every few days for things that fit someone's interests")
+          .addSubcommand((s) =>
+            lensOption(
+              s
+                .setName("new")
+                .setDescription("Start a scout: it DMs you 5 to 10 new finds each run")
+                .addStringOption((o) =>
+                  o.setName("interests").setDescription("What they are into, separated by commas").setRequired(true).setMaxLength(MAX_INTERESTS_TEXT),
+                ),
+            )
+              .addStringOption((o) => o.setName("for").setDescription("Who the ideas are for, if not you, e.g. Anne").setMaxLength(MAX_FOR_CHARS))
+              .addStringOption((o) => o.setName("notes").setDescription("Anything else to weigh: budget, what they own already").setMaxLength(MAX_SCOUT_NOTES))
+              .addIntegerOption((o) => o.setName("every").setDescription(`Days between runs (default ${DEFAULT_SCOUT_EVERY})`).setMinValue(1).setMaxValue(MAX_SCOUT_EVERY)),
+          )
+          .addSubcommand((s) =>
+            lensOption(
+              s
+                .setName("edit")
+                .setDescription("Change a scout's interests, lens, who it is for, notes or days between runs")
+                .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(MAX_TASK_ID))
+                .addStringOption((o) => o.setName("interests").setDescription("The whole new list, separated by commas").setMaxLength(MAX_INTERESTS_TEXT)),
+            )
+              .addStringOption((o) => o.setName("for").setDescription("Who the ideas are for").setMaxLength(MAX_FOR_CHARS))
+              .addStringOption((o) => o.setName("notes").setDescription("Anything else to weigh").setMaxLength(MAX_SCOUT_NOTES))
+              .addIntegerOption((o) => o.setName("every").setDescription("Days between runs").setMinValue(1).setMaxValue(MAX_SCOUT_EVERY)),
+          ),
+      handle: (interaction) =>
+        run(interaction, "registered", async (d, user) => {
+          const sub = interaction.options.getSubcommand();
+          const lens = interaction.options.getString("lens");
+          const who = interaction.options.getString("for");
+          const notes = interaction.options.getString("notes");
+          const every = interaction.options.getInteger("every");
+          const rest = {
+            ...(lens !== null ? { lens } : {}),
+            ...(who !== null ? { for: who } : {}),
+            ...(notes !== null ? { notes } : {}),
+            ...(every !== null ? { every } : {}),
+          };
+          if (sub === "new") return said(await createScout(d, user, { interests: interaction.options.getString("interests", true), ...rest }));
+          const interests = interaction.options.getString("interests");
+          return said(await editScout(d, user, interaction.options.getString("task", true), { ...(interests !== null ? { interests } : {}), ...rest }));
         }),
     },
     {

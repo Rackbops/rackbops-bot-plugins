@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.15.0] - 2026-10-04
+
+### Added
+
+- **The interest scout** (#83; plan E9, category 1 of plan 1.2). `/scout new interests [lens]
+  [for] [notes] [every]` makes a scout that runs every `every` days (default 1, at most 30) at the
+  owner's preferred hour: one `claude -p` Job on the execute lane, through the queue and the
+  runner like research, which looks on the web for 5 to 10 things published or available in the
+  last 30 days that fit the interests through a gift lens -- `general`, `birthday` (fun or a
+  little grandiose), `anniversary` (a romantic angle) or `christmas` (tied to their interests),
+  the requirement's own nuances -- and DMs them, each with its page, why it fits and a price if
+  shown; fewer than five come with the run's reason, never padding (plan item 60). The prompt,
+  schema and caps are the web-search spike's scout case: 30 turns, 1.50 USD, 10 minutes (item 61,
+  proposed). Nothing it showed is shown again: the task's state keeps a digest of each item's URL
+  (the newest 300), the next prompt names the latest 40, and a repeat is dropped from the DM
+  whatever the model returns; each item shown is a finding, keyed by the same digest. Tier 0
+  only (`notify`); model output is cleaned before it reaches a DM or a finding, and an item
+  without an http(s) URL is dropped. A failed run is retried once (an `auth_failed` one an hour
+  later; `turn_cap` and `budget_cap` not at all); one that fails for good tells the owner in one
+  DM, and the scout goes on to its next run. At most 3 scouts per person. Off, with `/scout`
+  saying so, while the execute lane is not configured.
+- **`/scout edit task ...`** changes a scout's interests (the whole list), lens, who it is for,
+  notes or days between runs; the web editor (`/new/scout`, Edit) and the task API (`POST
+  /tasks` with `type: "scout"`, `PATCH`) take the same fields by the same rules. A scout is the
+  first execute-lane task that is edited in place, and the first on a recurring schedule:
+  `/settings hour` moves it with the owner's reminders.
+- The scout type is defined in this plugin (`src/scout-type.ts`), since docket-types 0.5.0 has
+  none; giving it back to Rackbops/docket is a follow-up.
+
+### Schema
+
+- No migration. Still at 7.
+
 ## [0.14.1] - 2026-10-04
 
 ### Fixed
