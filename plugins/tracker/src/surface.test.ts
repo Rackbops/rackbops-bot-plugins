@@ -292,7 +292,7 @@ describe("the gates", () => {
   it("membership: with TRACKER_GUILD_ID set, a non-member is refused even when admitted, and cannot be allowed", async () => {
     const w = world({ members: new Set([ADMIN, LARRY]) });
     await w.plugin.activate!();
-    expect(await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } })).toBe(`<@${CURLY}> is not a member of this tracker's server.`);
+    expect(await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } })).toBe(`<@${CURLY}> is not a member of this tracker's server, or lacks the role it asks for.`);
     expect(await slash(w.plugin, "allow", ADMIN, { users: { user: LARRY } })).toContain("Allowed");
     expect(await slash(w.plugin, "register", LARRY)).toContain("You are registered.");
     expect(await slash(w.plugin, "register", STRANGER)).toBe(NOT_MEMBER);
@@ -394,7 +394,7 @@ describe("lookupMembership", () => {
     };
     expect(await slash(plugin, "register", ADMIN, { client: c })).toContain("You are registered.");
     expect(await slash(plugin, "allow", ADMIN, { client: c, users: { user: LARRY } })).toContain("Allowed");
-    expect(await slash(plugin, "allow", ADMIN, { client: c, users: { user: CURLY } })).toBe(`<@${CURLY}> is not a member of this tracker's server.`);
+    expect(await slash(plugin, "allow", ADMIN, { client: c, users: { user: CURLY } })).toBe(`<@${CURLY}> is not a member of this tracker's server, or lacks the role it asks for.`);
     expect(await slash(plugin, "register", LARRY, { client: c })).toContain("You are registered.");
     expect(await slash(plugin, "tasks", LARRY, { client: c })).toBe("You have no active tasks.");
     // From inside server B itself, no lookup is needed.

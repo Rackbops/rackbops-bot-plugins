@@ -51,6 +51,7 @@ describe("createPlugin", () => {
     expect(pkg.botPlugin.env.map((e) => e.key)).toEqual([
       "TRACKER_ADMIN_DISCORD_IDS",
       "TRACKER_GUILD_ID",
+      "TRACKER_GUILD_ROLES",
       "TRACKER_WEB_URL",
       "TRACKER_BUDGET_UNLIMITED",
       "TRACKER_CITY_HALL_URL",

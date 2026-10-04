@@ -274,7 +274,7 @@ describe("admin acts, against the command path", () => {
     const w = await setup({ guild: true, webMembership: async () => answer });
     const before = snapshot(w.dbPath);
     expect(await (await post(w.plugin, w.admin, w.adminCsrf, "/admin/allow", { discord_id: STRANGER })).text()).toContain(
-      `${STRANGER} is not a member of this tracker&#39;s server.`,
+      `${STRANGER} is not a member of this tracker&#39;s server, or lacks the role it asks for.`,
     );
     answer = null; // no Discord client yet
     expect(await (await post(w.plugin, w.admin, w.adminCsrf, "/admin/allow", { discord_id: STRANGER })).text()).toContain("I could not check");

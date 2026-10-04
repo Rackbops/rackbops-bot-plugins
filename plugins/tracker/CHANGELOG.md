@@ -24,6 +24,20 @@
   watch. Watches made before 0.17.0 stay plain.
 - A judged watch's plain-code reads are not charged; its looks are, like any model run, and while
   its owner is at a daily ceiling (with the budgets on) or the runner is down, the watch waits.
+- **The Discord-role check** (plan 1.1 and 5.5, item 46). `TRACKER_GUILD_ROLES` (new, optional):
+  comma-separated `serverId:roleId` pairs. In a server named there, a member passes the membership
+  gate only while they hold one of its roles, read off the same forced single-member lookup the
+  gate already makes (no privileged intent); a `TRACKER_GUILD_ID` server not named stays
+  membership-only, and every server named must be in `TRACKER_GUILD_ID` or the plugin refuses to
+  load. The `TRACKER_ADMIN_DISCORD_IDS` admins skip the role, never the membership. Lacking the role
+  is exactly like leaving the server: commands, buttons, `/allow` and `/task share` refuse, the web area and API
+  tokens sign out and revoke on their next re-check, and the person's tasks, history and DMs stay.
+  When none of a server's named roles exists there, the answer is a logged unknown (refused, never
+  a no); a server's own id (@everyone) refuses to load. Unset = as before.
+
+### Changed
+
+- The refusals that said "not a member of this tracker's server" now also name the role.
 
 ## [0.16.0] - 2026-10-04
 

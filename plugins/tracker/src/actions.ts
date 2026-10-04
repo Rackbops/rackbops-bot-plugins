@@ -121,7 +121,7 @@ export async function allowPerson(
   target: { discordId: string; bot: boolean; membership: Membership },
 ): Promise<string> {
   if (target.bot) return "A bot cannot use the tracker.";
-  if (target.membership === "not-member") return `<@${target.discordId}> is not a member of this tracker's server.`;
+  if (target.membership === "not-member") return `<@${target.discordId}> is not a member of this tracker's server, or lacks the role it asks for.`;
   if (target.membership === "unknown") return "I could not check that they are a member of this tracker's server. Try again in a minute.";
   const before = await d.store.findUserByDiscordId(target.discordId);
   const now = d.clock.now();

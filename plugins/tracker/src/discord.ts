@@ -27,6 +27,7 @@ import {
   lookupMembership,
   NO_MENTIONS,
   type Queue,
+  type RoleGate,
   serial,
   STARTING,
   type SurfaceContext,
@@ -70,6 +71,8 @@ export interface SurfaceWiring {
   deps(): TrackerDeps | null;
   /** `TRACKER_GUILD_ID`'s servers; null = no membership gate. */
   guildIds: readonly string[] | null;
+  /** `TRACKER_GUILD_ROLES` and the configured admins who skip it; absent = no role check. */
+  roleGate?: RoleGate;
   log: PluginLog;
   /** Test seam; defaults to asking Discord through the interaction's client. */
   membership?: (interaction: Interactionish, discordId: string) => Promise<Membership>;
@@ -91,7 +94,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
     deps: w.deps,
     queue: w.queue ?? serial(),
     membershipOf: (interaction, discordId) =>
-      w.membership ? w.membership(interaction, discordId) : lookupMembership(interaction, w.guildIds, discordId, w.log),
+      w.membership ? w.membership(interaction, discordId) : lookupMembership(interaction, w.guildIds, discordId, w.log, w.roleGate),
     log: w.log,
   };
   const membershipOf = (interaction: ChatInputCommandInteraction, discordId: string) =>
