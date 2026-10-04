@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import { NO_SUCH_TASK } from "./actions.js";
 import { KEY_PREFIX } from "./executor.js";
-import { MAX_LIVE_RESEARCH, RESEARCH_OFF } from "./research.js";
+import { MAX_LIVE_RESEARCH, RESEARCH_OFF, SHORT_QUESTION } from "./research.js";
 import { ADMIN, api, call, cleanup, csrfOf, CURLY, LARRY, makeToken, ORIGIN, people, press, signIn, slash, world } from "./web/harness.js";
 
 /**
@@ -328,11 +328,16 @@ describe("/research through city-hall", () => {
 
   it("refuses a deadline before the start, a sixth waiting request, and a question too long", async () => {
     const w = await setup();
-    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "Q", at: "tomorrow 9am", deadline: "in 2 hours" } })).toBe(
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?", at: "tomorrow 9am", deadline: "in 2 hours" } })).toBe(
       "The deadline has to be after the research starts.",
     );
     expect(await slash(w.plugin, "research", LARRY, { strings: { question: "x".repeat(1001) } })).toContain("longer than 1000 characters");
-    for (let i = 0; i < MAX_LIVE_RESEARCH; i++) expect(await slash(w.plugin, "research", LARRY, { strings: { question: `Q${i}`, at: "tomorrow 9am" } })).toContain("queued");
+    // Clerk's task t2, 2026-10-04: "0" in question, the real question in context.
+    for (const question of ["0", "ab", "12345", " ?! "]) {
+      expect(await slash(w.plugin, "research", LARRY, { strings: { question, context: "What is the current stable version of PostgreSQL?" } })).toBe(SHORT_QUESTION);
+    }
+    expect(query(w.dbPath, "SELECT seq FROM tasks")).toEqual([]);
+    for (let i = 0; i < MAX_LIVE_RESEARCH; i++) expect(await slash(w.plugin, "research", LARRY, { strings: { question: `Question ${i}`, at: "tomorrow 9am" } })).toContain("queued");
     expect(await slash(w.plugin, "research", LARRY, { strings: { question: "one more" } })).toContain(`already have ${MAX_LIVE_RESEARCH} research requests`);
     const [later] = query<{ schedule: string }>(w.dbPath, "SELECT schedule FROM tasks ORDER BY seq LIMIT 1");
     expect(JSON.parse(later?.schedule ?? "").at).toBe("2026-10-02T13:00:00.000Z"); // 9am New York
@@ -340,7 +345,7 @@ describe("/research through city-hall", () => {
 
   it("a deadline goes into the config as an instant; a run that would start past it makes no call and tells the owner", async () => {
     const w = await setup();
-    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "Q", deadline: "in 1 hour" } })).toContain("nothing is run");
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?", deadline: "in 1 hour" } })).toContain("nothing is run");
     const [t] = query<{ config: string }>(w.dbPath, "SELECT config FROM tasks");
     expect(JSON.parse(t?.config ?? "").deadline).toBe("2026-10-01T13:00:00.000Z");
     w.clock.set("2026-10-01T14:00:00.000Z");
@@ -352,7 +357,7 @@ describe("/research through city-hall", () => {
 
   it("city-hall refusing the credential holds the run without failing it, and the run goes once the key is right", async () => {
     const w = await setup({ ...CITY_HALL, TRACKER_CITY_HALL_KEY: "wrong-key" });
-    await slash(w.plugin, "research", LARRY, { strings: { question: "Q" } });
+    await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?" } });
     await w.round();
     await w.round();
     expect(w.city.jobs.size).toBe(0);

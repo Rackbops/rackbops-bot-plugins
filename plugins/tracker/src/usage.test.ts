@@ -92,7 +92,7 @@ describe("the execute lane with budgets off", () => {
     const { store, ceilings } = fixture();
     const admin = await person(store, true, "Admin");
     const larry = await person(store, false, "Larry");
-    await createTask(store, { userId: larry.id, admin: false }, larry, { type: research, title: "Q", config: { question: "Q" }, schedule: { kind: "once", at: AT } }, NOW);
+    await createTask(store, { userId: larry.id, admin: false }, larry, { type: research, title: "Q", config: { question: "What is Q?" }, schedule: { kind: "once", at: AT } }, NOW);
     // Past Larry's default (20 calls, 2 USD) and everyone's (100 calls, 10 USD) already today.
     await charge(store, { userId: larry.id, taskId: "t9", source: "run", calls: 25, costUsd: 3, at: NOW });
     await charge(store, { userId: admin.id, taskId: "t8", source: "run", calls: 80, costUsd: 8, at: NOW });

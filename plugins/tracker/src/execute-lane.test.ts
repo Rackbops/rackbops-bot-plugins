@@ -62,7 +62,7 @@ describe("the execute lane's tick (execute-lane.ts)", () => {
       executeStarted: (p) => void started.push(p),
     });
     await people(w.plugin);
-    await slash(w.plugin, "research", LARRY, { strings: { question: "Q" } });
+    await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?" } });
     await slash(w.plugin, "remind", LARRY, { strings: { text: "water the plants", when: "in 1 minute" } });
     w.clock.advance(2 * 60_000);
     const execute = w.plugin.ticks?.find((t) => t.name === "execute");
@@ -87,7 +87,7 @@ describe("the execute lane keeps one docket Lanes (review of #110)", () => {
     let now = new Date(AT);
     const clock = { now: () => new Date(now) };
     const owner = await admit(store, "111111111111111111", now);
-    await createTask(store, { userId: owner.id, admin: false }, owner, { type: research, title: "Q", config: { question: "Q" }, schedule: { kind: "once", at: AT } }, now);
+    await createTask(store, { userId: owner.id, admin: false }, owner, { type: research, title: "Q", config: { question: "What is Q?" }, schedule: { kind: "once", at: AT } }, now);
     const keys: string[] = [];
     const resetsAt = new Date(now.getTime() + 3 * 60 * 60 * 1000).toISOString();
     const executor: Executor = {
@@ -121,7 +121,7 @@ describe("a slow city-hall never holds the queue (review of #110)", () => {
       executeStarted: (p) => void started.push(p),
     });
     await people(w.plugin);
-    await slash(w.plugin, "research", LARRY, { strings: { question: "Q" } });
+    await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?" } });
     await w.plugin.ticks?.find((t) => t.name === "execute")?.run(new AbortController().signal);
     expect(started).toHaveLength(1);
     const begun = Date.now();
@@ -144,7 +144,7 @@ describe("a schedule edit while a run's Job is out (docket 0.5.0)", () => {
       store,
       { userId: owner.id, admin: false },
       owner,
-      { type: research, title: "Q", config: { question: "Q" }, schedule: { kind: "once", at: AT } },
+      { type: research, title: "Q", config: { question: "What is Q?" }, schedule: { kind: "once", at: AT } },
       new Date(AT),
     );
     const d = { store };

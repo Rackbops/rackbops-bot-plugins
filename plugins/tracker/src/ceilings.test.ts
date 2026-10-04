@@ -203,7 +203,7 @@ describe("plan 5.7: a raise re-arms the ceiling notices (review of #113)", () =>
     const { store, ceilings, d } = fixture();
     const admin = await person(store, true, "Admin");
     const larry = await person(store, false, "Larry");
-    await createTask(store, { userId: larry.id, admin: false }, larry, { type: research, title: "Q", config: { question: "Q" }, schedule: { kind: "once", at: AT } }, NOW);
+    await createTask(store, { userId: larry.id, admin: false }, larry, { type: research, title: "Q", config: { question: "What is Q?" }, schedule: { kind: "once", at: AT } }, NOW);
     const dms: { to: string; text: string }[] = [];
     const notifier: Notifier = {
       sendDm: async (to, message) => {
