@@ -325,7 +325,7 @@ describe("an aborted poll tick", () => {
 
 describe("the two notify ticks", () => {
   it("split the notify-lane types between them, the page readers on poll", () => {
-    expect([...FETCH_TYPES]).toEqual(["price"]);
+    expect([...FETCH_TYPES]).toEqual(["price", "wantlist"]);
     expect(takesType("notify", "reminder")).toBe(true);
     expect(takesType("notify", "renewal")).toBe(true);
     expect(takesType("notify", "price")).toBe(false);

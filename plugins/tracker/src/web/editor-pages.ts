@@ -4,6 +4,7 @@ import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
 import { MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "../scout.js";
 import { MAX_FOR_CHARS, MAX_SCOUT_NOTES } from "../scout-type.js";
+import { DEFAULT_BGG_HOURS, DEFAULT_PAGE_HOURS, MAX_WANT_HOURS } from "../want.js";
 import { MAX_EVERY, MAX_LEAD_DAYS } from "../tracked.js";
 import { html, type Html } from "./html.js";
 import { framed, type Viewer } from "./pages.js";
@@ -16,8 +17,8 @@ import { framed, type Viewer } from "./pages.js";
  */
 
 /** The types the editor makes and edits; the scout (#83) is made only while the model runner is set up. */
-export type EditorType = "reminder" | "renewal" | "price" | "scout";
-export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "price", "scout"];
+export type EditorType = "reminder" | "renewal" | "price" | "scout" | "wantlist";
+export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "price", "scout", "wantlist"];
 
 /**
  * What the web and the API can make: the editor's types, and a research request
@@ -25,7 +26,7 @@ export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "pric
  * `/research` has no edit either. It is offered only while research is available (`d.research`).
  */
 export type NewType = EditorType | "research";
-export const NEW_TYPES: readonly NewType[] = ["reminder", "renewal", "price", "research", "scout"];
+export const NEW_TYPES: readonly NewType[] = ["reminder", "renewal", "price", "research", "scout", "wantlist"];
 
 /** The types that run on the model runner: made only while it is set up (`d.research`); a scout made before stays editable. */
 export const MODEL_TYPES: ReadonlySet<NewType> = new Set<NewType>(["research", "scout"]);
@@ -80,6 +81,15 @@ const SCOUT_FIELDS: readonly Field[] = [
   { name: "every", label: "Days between runs", kind: "number", min: 1, max: MAX_SCOUT_EVERY, help: `1 to ${MAX_SCOUT_EVERY}; 1 when empty. Each run is at your preferred hour.` },
 ];
 
+const SOURCE_OPTIONS = [["page", "a listing page I paste"], ["bgg", "BoardGameGeek's marketplace"]] as const;
+
+/** `/want`'s limits, the same on an edit: where it looks is fixed once made. */
+const WANT_LIMITS: readonly Field[] = [
+  { name: "max", label: "Top price", kind: "text", decimal: true, help: "Only listings at or under it, and so only listings that show a price. Leave it empty for any price." },
+  { name: "currency", label: "Currency", kind: "text", maxlength: CURRENCY_LENGTH, help: "Only listings in it, such as USD. Leave it empty for any." },
+  { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}; ${DEFAULT_PAGE_HOURS} for a page and ${DEFAULT_BGG_HOURS} for BGG when empty.` },
+];
+
 /** The fields each form shows, in order. An edit of a price leaves out the page itself; a research request has no edit. */
 export function fieldsFor(type: NewType, mode: "new" | "edit"): readonly Field[] {
   switch (type) {
@@ -87,6 +97,24 @@ export function fieldsFor(type: NewType, mode: "new" | "edit"): readonly Field[]
     return mode === "new" ? RESEARCH_FIELDS : [];
   case "scout":
     return SCOUT_FIELDS;
+  case "wantlist":
+    return [
+      { name: "name", label: "What you want", kind: "text", required: true, maxlength: MAX_TITLE },
+      ...(mode === "new"
+        ? [
+          { name: "source", label: "Where to look", kind: "select", options: SOURCE_OPTIONS } as const,
+          {
+            name: "target",
+            label: "The page, or the BGG game",
+            kind: "text",
+            required: true,
+            maxlength: MAX_URL,
+            help: "A shop's listing or search page, or a BGG game's address or id. For eBay, use /want source: ebay in Discord: eBay's own saved search does the watching.",
+          } as const,
+        ]
+        : []),
+      ...WANT_LIMITS,
+    ];
   case "reminder":
     return [
       { name: "text", label: "Remind me to", kind: "text", required: true, maxlength: MAX_REMINDER_TEXT },
@@ -166,10 +194,12 @@ export function taskHref(v: Viewer, id: string, action = ""): string {
   return `${v.base}/tasks/${encodeURIComponent(id)}${action ? `/${action}` : ""}`;
 }
 
-const NOUN: Record<NewType, string> = { reminder: "reminder", renewal: "renewal", price: "price tracker", research: "research request", scout: "scout" };
+const NOUN: Record<NewType, string> = { reminder: "reminder", renewal: "renewal", price: "price tracker", research: "research request", scout: "scout", wantlist: "want-list watch" };
 
 const INTRO: Partial<Record<NewType, string>> = {
   price: "I read the page once now; nothing is made unless I find a price in it.",
+  wantlist:
+    "I look at the page or BGG every few hours and DM you each new listing within your limits, until you press Done. A page is read once now; nothing is made unless I find listings in it.",
   research:
     "A research run looks it up on the web, then a second run checks the answer against its sources; only an answer that passes is DMed to you. It can take a while, and requests share a daily budget.",
   scout:
@@ -213,7 +243,7 @@ export function editTaskPage(v: Viewer, task: Task, values: Values, o: { now: st
 <p><a class="rb-link" href="${taskHref(v, task.id)}">Back to the task</a></p>
 <h1>Edit ${task.title}</h1>
 <p class="rb-muted">Now: ${o.now}.${task.status === "paused" ? " Paused." : ""}</p>
-${o.page ? html`<p class="rb-muted">Page: ${o.page}. To track another page, make a new price tracker.</p>` : null}
+${o.page ? html`<p class="rb-muted">${task.type === "wantlist" ? html`Looking at: ${o.page}. To look somewhere else, make a new watch.` : html`Page: ${o.page}. To track another page, make a new price tracker.`}</p>` : null}
 ${alert(o.error)}
 <form method="post" action="${taskHref(v, task.id, "edit")}" class="tr-stack">
 <input type="hidden" name="csrf" value="${v.csrf}">

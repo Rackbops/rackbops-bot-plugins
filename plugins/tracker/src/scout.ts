@@ -70,9 +70,11 @@ export function scoutPlan(input: ScoutInput): Plan<{ config: ScoutConfig; every:
   if (typeof interests === "string") return { ok: false, error: interests };
   const lens = (input.lens ?? "general").trim() || "general";
   if (!(LENSES as readonly string[]).includes(lens)) return { ok: false, error: "`lens` is general, birthday, anniversary or christmas." };
-  const who = (input.for ?? "").trim().replace(/\s+/g, " ");
+  // `-` is "none": Discord sends no empty option, so `/scout new` and `/scout edit` both take it.
+  const none = (v: string | undefined) => (v === undefined || v.trim() === "-" ? "" : v);
+  const who = none(input.for).trim().replace(/\s+/g, " ");
   if (who.length > MAX_FOR_CHARS) return { ok: false, error: `\`for\` is longer than ${MAX_FOR_CHARS} characters.` };
-  const notes = (input.notes ?? "").trim();
+  const notes = none(input.notes).trim();
   if (notes.length > MAX_SCOUT_NOTES) return { ok: false, error: `\`notes\` is longer than ${MAX_SCOUT_NOTES} characters.` };
   const every = input.every ?? DEFAULT_SCOUT_EVERY;
   if (!Number.isInteger(every) || every < 1 || every > MAX_SCOUT_EVERY) return { ok: false, error: `\`every\` is a whole number of days from 1 to ${MAX_SCOUT_EVERY}.` };

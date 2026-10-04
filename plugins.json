@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-04T17:54:55.229Z",
+  "generatedAt": "2026-10-04T19:07:30.503Z",
   "plugins": [
     {
       "name": "mcp",
@@ -164,8 +164,8 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.15.0",
-      "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research and an interest scout (through city-hall, with their findings) by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
+      "version": "0.16.0",
+      "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek once its token is set, and an eBay saved search) by slash command, delivered by DM with buttons, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
       "commands": [
@@ -176,6 +176,7 @@
         "price",
         "research",
         "scout",
+        "want",
         "tasks",
         "task",
         "settings",
@@ -244,9 +245,22 @@
           "description": "Cloudflare Access service token secret for city-hall's edge, sent as CF-Access-Client-Secret. Set with TRACKER_CITY_HALL_ACCESS_CLIENT_ID or not at all.",
           "required": false,
           "secret": true
+        },
+        {
+          "key": "TRACKER_BGG_TOKEN",
+          "format": "^\\S+$",
+          "description": "BoardGameGeek's XML API Bearer token for the tracker's registered application (boardgamegeek.com/using_the_xml_api). Set = /want source: bgg watches a game's BGG marketplace listings; unset = BGG is off and /want says so. Never logged.",
+          "required": false,
+          "secret": true
         }
       ],
       "releases": [
+        {
+          "version": "0.16.0",
+          "publishedAt": "2026-10-04T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.16.0",
+          "notes": "### Added\n\n- **The want-list watcher** (#83; plan E9, category 2 of plan 1.2). `/want name source [target]\n  [max] [currency] [hours]` watches for one wanted thing until you have it. `source: page` reads a\n  shop's listing or search page you paste (roshne, 2026-10-04, \"Pages too\"), through the same\n  fenced Fetch port as `/price`, and only its structured data: JSON-LD `ItemList`s of products and\n  standalone `Product`s, with name, address, price, currency, condition and seller. The page is\n  read once at once, and nothing is made unless it lists something. `source: bgg` reads a\n  BoardGameGeek game's marketplace through BGG's XML API with `TRACKER_BGG_TOKEN` (new, secret),\n  only while that is set: BGG has not approved the application yet, so the parser runs on a\n  hand-written fixture until a real response can be captured. `source: ebay` makes nothing: the\n  answer is an eBay search, with the top price in it, and how to save it on eBay, whose own alerts\n  do the watching; the tracker never reads eBay, and an eBay page is refused as a `page`.\n- Each watch runs on the `poll` tick every `hours` (default 12 for a page, 24 for BGG), with no\n  model, and DMs each listing within the limits that it has not DMed before -- up to 5 lines, the\n  rest in `/task history` -- with a Done button that ends the watch; each listing DMed is a\n  finding, and the newest 500 are remembered. A listing over the top price is not remembered, so\n  it is sent once it drops under. Three reads in a row with nothing tell the owner once (BGG\n  refusing the token, at once). At most 20 watches per person. The web editor (`/new/wantlist`,\n  Edit: name, top price, currency, hours) and the task API (`type: \"wantlist\"`) take the same\n  fields by the same rules.\n- The wantlist type is defined in this plugin (`src/wantlist-type.ts`), as the scout's is. The\n  model's judgment of new candidates and sellers (plan 5.4) is a later piece.\n\n### Fixed\n\n- `/scout new` with `for` or `notes` set to `-` now leaves it empty, as `/scout edit` does,\n  rather than storing a dash.\n\n### Schema\n\n- No migration. Still at 7."
+        },
         {
           "version": "0.15.0",
           "publishedAt": "2026-10-04T00:00:00.000Z",
@@ -300,12 +314,6 @@
           "publishedAt": "2026-09-30T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.8.0",
           "notes": "### Added\n\n- `TRACKER_GUILD_ID` takes a comma-separated list of Discord server ids as well as one\n  (rackbops-bot-plugins#106), so one tracker can serve more than one server: a member of any listed\n  server passes the membership gate. Every place that checks membership follows -- commands and\n  buttons, `/web`'s link, `/allow` (Discord and the admin page), the web session's re-check and the\n  API token's. The servers are asked at once (one single-member lookup each, `force: true` as\n  before), and the first yes answers at once, so a slow server cannot hold up a member of another. A yes from any server is a member; a no\n  from every server is not, and only that signs a person out and revokes their API tokens; a no\n  from one server and a failed lookup on another is unknown, which refuses without revoking, so an\n  outage on one server cannot sign out its members. Inside a listed server, the person running a\n  command needs no lookup, as before. Spaces around commas are allowed and a repeated id counts\n  once; a malformed or empty entry anywhere in the list (a trailing comma included) refuses to load,\n  naming it. A single id loads and behaves exactly as before, so an existing setting needs no change.\n  One store and one admission list serve every listed server; there are no per-server admins.\n  No schema change: a rollback to 0.7.0 is safe, as long as the setting is set back to one id first\n  (0.7.0 refuses to load a list)."
-        },
-        {
-          "version": "0.7.0",
-          "publishedAt": "2026-09-30T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.7.0",
-          "notes": "### Added\n\n- The JSON task API (rackbops-bot-plugins#80, slice 4; plan 5.10, E5): \"the tracker's task API that\n  a later intake agent (E10, deferred) would use\", under `/tracker/api/v1/` when `TRACKER_WEB_URL` is\n  set. `GET /me`, `GET /types` (each type's create and edit fields -- the tracker's editor fields,\n  not docket-core's `IntakeSpec`), `GET /tasks`, `POST /tasks`, `GET /tasks/<id>` (with its\n  history), `PATCH /tasks/<id>`, `POST /tasks/<id>/pause` and `/resume`, and `DELETE /tasks/<id>`,\n  over the token owner's own\n  reminders, renewals and price trackers. Every write runs through the web editor's own calls, fed\n  the same fields read the same way (`src/web/form-input.ts`), in the same write queue: the same\n  defaults, limits, caps (200 live tasks, 20 price trackers, counted wherever made) and messages.\n  JSON bodies only (`415` otherwise), at most 16 KiB, one object, only the type's fields; errors are\n  `{\"error\": {\"code\", \"message\"}}`. Anyone else's task -- one shared with the owner, or any task to\n  an admin's token -- answers exactly as an unknown id (`404`). No CORS header ever, and a request\n  carrying an `Origin` header is refused (`403`): the API is for programs, not browser pages. The\n  README documents every endpoint, the errors and examples.\n- Personal API tokens, the API's only authentication (`Authorization: Bearer trk_...`); the session\n  cookie is never read by the API, since every plugin shares one browser origin. Made and revoked on\n  the web area's new `/tokens` page (linked from Settings): named, expiring in 30, 90 (the default)\n  or 365 days (always), stored only as a SHA-256, with made, last-used (written at most once a\n  minute) and expiry times; at most 10 live per person, and at most 10 made per person per rolling\n  hour, revoked ones counted (in memory), so making and revoking cannot flood anyone's DMs.\n  The secret is sent once by Discord DM and\n  never appears in a web response, so another plugin's script on the shared origin cannot read one\n  off the page; a token whose DM fails is deleted at once and the page says so. An admin sees a\n  person's tokens on their admin page and revokes any of them. A token acts as its owner, on the\n  owner's own tasks only; every request re-reads the owner\n  (gone or no longer registered: `401`, and their tokens are deleted) and, with `TRACKER_GUILD_ID`,\n  re-checks membership on the web's schedule. A per-token rate limit: 60 at once, then one a second\n  (`429` with `Retry-After`); requests with a token that does not look up share one global bucket of\n  30, then one every two seconds. The log names a token by its id (`k1`), never its secret.\n\n### Changed\n\n- **Schema 4** (migration 4 adds the `api_tokens` table). **This blocks a rollback to 0.6.0 or\n  older**: their `migrate` refuses a database at a schema newer than they know, so the plugin would\n  not activate. To roll back, stop the bot first, then restore a backup taken before 0.7.0 --\n  `tracker.sqlite` together with its `tracker.sqlite-wal` and `tracker.sqlite-shm` from the same\n  backup (a main file with another moment's write-ahead log is corrupt or silently wrong). Or,\n  knowing that it drops every API token, with the bot stopped delete the `api_tokens` table and set\n  `PRAGMA user_version = 3`.\n- Forget-me also erases the person's API tokens (the schema-coverage test includes the new table).\n- One who has left the `TRACKER_GUILD_ID` server loses every API token as well as every session,\n  whether the web or the API found it; a membership lookup that keeps failing ends the web session\n  after 24 hours as before, but only refuses the API (`503`) and keeps the tokens.\n- One new price tracker's page read in flight per person is now shared by the web editor and the API.\n- Internal: the editor's form readers moved to `src/web/form-input.ts`, and its writes\n  (`makeTask`, `saveEdit`, `actOn`) are exported for the API; behaviour unchanged."
         }
       ]
     },

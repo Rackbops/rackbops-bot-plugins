@@ -17,6 +17,7 @@ import { resumeTask } from "./manage.js";
 import { CURRENCY_LENGTH, DATE_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
 import { remind, type Repeat } from "./reminders.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./research.js";
+import { DEFAULT_BGG_HOURS, DEFAULT_PAGE_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
 import { createScout, DEFAULT_SCOUT_EVERY, editScout, MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "./scout.js";
 import { MAX_FOR_CHARS, MAX_SCOUT_NOTES } from "./scout-type.js";
 import {
@@ -346,6 +347,51 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           if (sub === "new") return said(await createScout(d, user, { interests: interaction.options.getString("interests", true), ...rest }));
           const interests = interaction.options.getString("interests");
           return said(await editScout(d, user, interaction.options.getString("task", true), { ...(interests !== null ? { interests } : {}), ...rest }));
+        }),
+    },
+    {
+      name: "want",
+      build: (b: SlashCommandBuilder) =>
+        b
+          .setDescription("Watch for something you want: I DM you new listings until you have it")
+          .addStringOption((o) => o.setName("name").setDescription("What you want, e.g. Wingspan Oceania expansion").setRequired(true).setMaxLength(MAX_TITLE))
+          .addStringOption((o) =>
+            o
+              .setName("source")
+              .setDescription("Where to look")
+              .setRequired(true)
+              .addChoices(
+                { name: "a listing page you paste", value: "page" },
+                { name: "BoardGameGeek's marketplace", value: "bgg" },
+                { name: "eBay (I give you a search to save on eBay)", value: "ebay" },
+              ),
+          )
+          .addStringOption((o) =>
+            o.setName("target").setDescription("The page's address, or the BGG game's address or id; for eBay, the words to search").setMaxLength(MAX_URL),
+          )
+          .addNumberOption((o) => o.setName("max").setDescription("Only listings at or under this price").setMinValue(0.01))
+          .addStringOption((o) => o.setName("currency").setDescription("Only listings in this currency, e.g. USD").setMinLength(CURRENCY_LENGTH).setMaxLength(CURRENCY_LENGTH))
+          .addIntegerOption((o) =>
+            o
+              .setName("hours")
+              .setDescription(`Hours between looks (default ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG)`)
+              .setMinValue(1)
+              .setMaxValue(MAX_WANT_HOURS),
+          ),
+      handle: (interaction) =>
+        run(interaction, "registered", (d, user) => {
+          const target = interaction.options.getString("target");
+          const max = interaction.options.getNumber("max");
+          const currency = interaction.options.getString("currency");
+          const hours = interaction.options.getInteger("hours");
+          return wantCommand(d, user, {
+            name: interaction.options.getString("name", true),
+            source: interaction.options.getString("source", true),
+            ...(target !== null ? { target } : {}),
+            ...(max !== null ? { max } : {}),
+            ...(currency !== null ? { currency } : {}),
+            ...(hours !== null ? { hours } : {}),
+          });
         }),
     },
     {

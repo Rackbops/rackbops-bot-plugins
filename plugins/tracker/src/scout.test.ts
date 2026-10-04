@@ -37,7 +37,8 @@ describe("the scout's rules", () => {
     const plan = scoutPlan({ interests: "birding, baking", lens: "birthday", for: " Anne ", notes: "" });
     expect(plan).toEqual({ ok: true, config: { interests: ["birding", "baking"], lens: "birthday", for: "Anne" }, every: 1 });
     if (plan.ok) expect(scoutTitle(plan.config)).toBe("Scout for Anne (birthday)");
-    expect(scoutTitle({ interests: ["birding", "baking"], lens: "general" })).toBe("Scout: birding, baking");
+    expect(scoutTitle({ interests: ["birding", "baking"], lens: "general" })).toBe("Scout: birding, baking");    // `-` is "none" on a new scout too, as on an edit (Discord sends no empty option).
+    expect(scoutPlan({ interests: "a", for: "-", notes: " - " })).toEqual({ ok: true, config: { interests: ["a"], lens: "general" }, every: 1 });
   });
 });
 

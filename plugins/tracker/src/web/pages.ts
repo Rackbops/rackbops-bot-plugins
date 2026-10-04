@@ -71,6 +71,7 @@ function newLinks(v: Viewer, research: boolean): Html {
 <a class="rb-btn rb-btn--primary rb-btn--sm" href="${v.base}/new/reminder">New reminder</a>
 <a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/renewal">New renewal</a>
 <a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/price">New price tracker</a>
+<a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/wantlist">New want-list watch</a>
 ${research ? html`<a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/research">New research request</a>` : null}
 ${research ? html`<a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/scout">New scout</a>` : null}
 </p>`;
@@ -134,14 +135,20 @@ function findingRow(f: FindingView): Html {
   return html`<li>${f.claim}<br><span class="rb-muted">${source} -- ${f.at}</span></li>`;
 }
 
+const EMPTY_FINDINGS: Readonly<Record<string, string>> = {
+  research: "None yet: a research request's checked claims are kept here once it is answered.",
+  scout: "None yet: what the scout shows you is kept here, so it is never shown twice.",
+  wantlist: "None yet: each listing I DM you is kept here, so it is never sent twice.",
+};
+
 function findingsSection(h: HistoryView): Html | null {
-  if (h.findings.length === 0 && h.task.type !== "research" && h.task.type !== "scout") return null;
+  if (h.findings.length === 0 && h.task.type !== "research" && h.task.type !== "scout" && h.task.type !== "wantlist") return null;
   const shown = h.findings.slice(-FINDINGS_SHOWN);
   const earlier = h.findings.length - shown.length;
   return html`<section>
 <h2>Findings</h2>
 ${earlier > 0 ? html`<p class="rb-muted">${earlier} earlier finding(s) not shown.</p>` : null}
-${shown.length === 0 ? html`<p class="rb-muted">${h.task.type === "scout" ? "None yet: what the scout shows you is kept here, so it is never shown twice." : "None yet: a research request's checked claims are kept here once it is answered."}</p>` : html`<ul>${shown.map(findingRow)}</ul>`}
+${shown.length === 0 ? html`<p class="rb-muted">${EMPTY_FINDINGS[h.task.type] ?? EMPTY_FINDINGS.research}</p>` : html`<ul>${shown.map(findingRow)}</ul>`}
 </section>`;
 }
 

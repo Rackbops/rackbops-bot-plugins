@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
 import { price, reminder, renewal, research } from "@rackbops/docket-types";
 import { scout } from "./scout-type.js";
+import { bggSource } from "./want-bgg.js";
+import { pageSource, type Source } from "./want-sources.js";
+import { wantlistType } from "./wantlist-type.js";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds } from "./access.js";
 import type { TickGate, TrackerDeps } from "./actions.js";
@@ -56,7 +59,9 @@ export const DB_FILE = "tracker.sqlite";
  * Fetch port (fetch.ts, #81) -- and `research` (#82), the execute-lane type, which runs only while
  * the city-hall Executor is configured (executor.ts): without it the execute lane is not ticked and
  * `/research` makes nothing -- and `scout` (#83), the interest scout, the plugin's own execute-lane
- * type (scout-type.ts), under the same switch. The want-list watcher is still to come (#83).
+ * type (scout-type.ts), under the same switch -- and `wantlist` (#83), the want-list watcher, on the
+ * `poll` tick like `price`, reading pasted pages here; `createPlugin` swaps in one that also reads
+ * BoardGameGeek once `TRACKER_BGG_TOKEN` is set.
  */
 export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object.freeze({
   reminder: reminder as TaskType<unknown>,
@@ -64,7 +69,14 @@ export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object
   price: price as TaskType<unknown>,
   research: research as TaskType<unknown>,
   scout: scout as TaskType<unknown>,
+  wantlist: wantlistType({ page: pageSource }) as TaskType<unknown>,
 });
+
+/** `TRACKER_BGG_TOKEN`: BGG's Bearer token for a registered application, or null when unset or empty. */
+export function parseBggToken(raw: string | undefined): string | null {
+  const token = raw?.trim() ?? "";
+  return token === "" ? null : token;
+}
 
 export interface TrackerOptions {
   clock?: Clock;
@@ -82,6 +94,8 @@ export interface TrackerOptions {
   cityHallFetch?: typeof fetch;
   /** Test seam: an Executor in place of the city-hall one, as if configured. */
   executor?: Executor;
+  /** Test seam: a BGG source in place of the token's (want-bgg.ts), as if `TRACKER_BGG_TOKEN` were set. */
+  bgg?: Source;
   /** Test seam: each execute tick's background work as it starts, so a test can await it. */
   executeStarted?: (work: Promise<void>) => void;
 }
@@ -104,7 +118,10 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   // The execute lane runs only when fully set up (or a test hands an Executor in).
   const executeOn = cityHallConfig !== null || options.executor !== undefined;
   const clock: Clock = options.clock ?? { now: () => new Date() };
-  const types = options.types ?? TRACKER_TYPES;
+  const bggToken = parseBggToken(host.env.TRACKER_BGG_TOKEN);
+  // BGG's answers are XML, read by want-bgg.ts's own bounded parser: the raw body, fenced like every read.
+  const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createPageFetch({ raw: true }) }) : null);
+  const types = options.types ?? (bgg ? { ...TRACKER_TYPES, wantlist: wantlistType({ page: pageSource, bgg }) as TaskType<unknown> } : TRACKER_TYPES);
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
   let db: Database | null = null;
@@ -350,6 +367,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         lanes,
         webEditor: webOrigin !== null,
         research: executeOn,
+        bgg: bgg !== null,
       };
       if (guildIds === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
       health.blocked = typeof host.dm === "function" ? null : "this bot has no host.dm (it predates rackbops-discord-bot#736)";

@@ -9,6 +9,7 @@ import { SCOUT_OFF } from "../scout.js";
 import { actOn, editableTask, makeTask, READING, saveEdit, type TaskAction, type Writer, type Written } from "./editor.js";
 import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_TYPES, type NewType } from "./editor-pages.js";
 import { editValues } from "./form-input.js";
+import type { WantConfig } from "../wantlist-type.js";
 
 /**
  * The task API's task routes (rackbops-bot-plugins#80, slice 4; plan 5.10, E10): list, read, make,
@@ -162,6 +163,8 @@ export async function taskJson(d: TrackerDeps, user: User, task: Task) {
     settings,
     // A price's page: read-only, since another page is another tracker (no edit takes it).
     ...(task.type === "price" ? { url: String((task.config as PriceConfig).url) } : {}),
+    // A watch's source and target: read-only too, since another place to look is another watch.
+    ...(task.type === "wantlist" ? { source: (task.config as WantConfig).source, target: (task.config as WantConfig).target } : {}),
   };
 }
 

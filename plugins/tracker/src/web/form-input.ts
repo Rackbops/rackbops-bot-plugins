@@ -8,6 +8,8 @@ import type { ResearchInput } from "../research.js";
 import type { ScoutEdit, ScoutInput } from "../scout.js";
 import type { ScoutConfig } from "../scout-type.js";
 import type { PeriodUnit, RenewalInput } from "../tracked.js";
+import type { WantEdit, WantInput } from "../want.js";
+import type { WantConfig } from "../wantlist-type.js";
 import { fieldsFor, type NewType, type Values } from "./editor-pages.js";
 
 /**
@@ -87,6 +89,34 @@ export function scoutEdit(form: URLSearchParams): ScoutEdit {
     ...(form.has("for") ? { for: str(form, "for") } : {}),
     ...(form.has("notes") ? { notes: lines(str(form, "notes")) ?? "" } : {}),
     ...(every !== undefined ? { every } : {}),
+  };
+}
+
+/** `/want`'s options: an empty target, max, currency or hours is left out, as an unset option is. */
+export function wantInput(form: URLSearchParams): WantInput {
+  const target = opt(form, "target");
+  const max = decimal(form, "max");
+  const currency = opt(form, "currency");
+  const hours = int(form, "hours");
+  return {
+    name: str(form, "name"),
+    source: str(form, "source") || "page",
+    ...(target !== undefined ? { target } : {}),
+    ...(max !== undefined ? { max } : {}),
+    ...(currency !== undefined ? { currency } : {}),
+    ...(hours !== undefined ? { hours } : {}),
+  };
+}
+
+/** A watch's edit: an empty name or hours keeps the watch's; a sent empty `max` or `currency` clears it. */
+export function wantEdit(form: URLSearchParams): WantEdit {
+  const name = opt(form, "name");
+  const hours = int(form, "hours");
+  return {
+    ...(name !== undefined ? { name } : {}),
+    ...(form.has("max") ? { max: decimal(form, "max") ?? null } : {}),
+    ...(form.has("currency") ? { currency: str(form, "currency") } : {}),
+    ...(hours !== undefined ? { hours } : {}),
   };
 }
 
@@ -184,6 +214,11 @@ export function editValues(d: Pick<TrackerDeps, "clock">, user: User, task: Task
     const c = task.config as ScoutConfig;
     const every = task.schedule?.kind === "calendar" ? task.schedule.every : 1;
     return { interests: c.interests.join("\n"), lens: c.lens, for: c.for ?? "", notes: c.notes ?? "", every: String(every) };
+  }
+  if (task.type === "wantlist") {
+    const c = task.config as WantConfig;
+    const every = task.schedule?.kind === "poll" ? task.schedule.every : "";
+    return { name: task.title, max: c.maxPrice !== undefined ? String(c.maxPrice) : "", currency: c.currency ?? "", hours: String(every) };
   }
   if (task.type !== "price") return {};
   const c = task.config as PriceConfig;

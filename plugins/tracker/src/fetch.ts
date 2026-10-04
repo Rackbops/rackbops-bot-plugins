@@ -44,6 +44,11 @@ export interface PageFetchOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   maxBytes?: number;
+  /**
+   * Hand back the body as sent (still capped at `maxBytes`), not `pageForExtraction`'s: for a reader
+   * that parses it with no backtracking pattern of its own (the BGG source's XML, want-bgg.ts).
+   */
+  raw?: boolean;
 }
 
 const systemResolve: Resolve = async (host) => (await lookup(host, { all: true, verbatim: true })).map((a) => a.address);
@@ -233,7 +238,8 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
         response.headers.forEach((value, key) => {
           out[key] = value;
         });
-        return { status: response.status, body: pageForExtraction(await readCapped(response, maxBytes)), headers: out };
+        const body = await readCapped(response, maxBytes);
+        return { status: response.status, body: o.raw ? body : pageForExtraction(body), headers: out };
       }
     },
   };

@@ -10,8 +10,10 @@ import { createReminder } from "../reminders.js";
 import { finishPrice, previewPrice, startPrice } from "../price.js";
 import { createResearch, RESEARCH_OFF } from "../research.js";
 import { createRenewal } from "../tracked.js";
-import { type EditorType, confirmDeletePage, editTaskPage, type NewType, newTaskPage, notice, ownerControls, taskHref, type Values } from "./editor-pages.js";
-import { editValues, priceEdit, priceInput, reminderEdit, reminderInput, renewalEdit, renewalInput, researchInput, scoutEdit, scoutInput, typed } from "./form-input.js";
+import { editWant, finishWant, previewWant, startWant } from "../want.js";
+import type { WantConfig } from "../wantlist-type.js";
+import { EDITOR_TYPES, type EditorType, confirmDeletePage, editTaskPage, type NewType, newTaskPage, notice, ownerControls, taskHref, type Values } from "./editor-pages.js";
+import { editValues, priceEdit, priceInput, reminderEdit, reminderInput, renewalEdit, renewalInput, researchInput, scoutEdit, scoutInput, typed, wantEdit, wantInput } from "./form-input.js";
 import { htmlResponse, redirect } from "./html.js";
 import { historyPage, notFoundPage, type Viewer } from "./pages.js";
 
@@ -32,7 +34,7 @@ export interface Editor {
   d: TrackerDeps;
   v: Viewer;
   queue: Queue;
-  /** Who has a new price's page read in flight (tracker user ids): one at a time per person. */
+  /** Who has a new price's or watch's page read in flight (tracker user ids): one at a time per person. */
   reading: Set<string>;
 }
 
@@ -68,6 +70,7 @@ export async function makeTask(w: Writer, type: NewType, form: URLSearchParams):
   // Research only queues a Job: nothing reaches city-hall until the execute tick, so nothing slow runs here.
   if (type === "research") return asUser(w, (u) => createResearch(w.d, u, researchInput(form)));
   if (type === "scout") return asUser(w, (u) => createScout(w.d, u, scoutInput(form)));
+  if (type === "wantlist") return makeWant(w, form);
   const input = priceInput(form);
   // One page read per person at a time: the web has no Discord rate limit in front of it, and
   // each read is an outbound request of up to 15 s.
@@ -85,10 +88,28 @@ export async function makeTask(w: Writer, type: NewType, form: URLSearchParams):
   }
 }
 
+/** `/want`'s rules, a page read outside the queue as a new price's is, under the same one-read-per-person guard. */
+async function makeWant(w: Writer, form: URLSearchParams): Promise<Written> {
+  const input = wantInput(form);
+  if (w.reading.has(w.userId)) return { ok: false, error: READING };
+  w.reading.add(w.userId);
+  try {
+    const started = await asUser(w, (u) => startWant(w.d, u, input));
+    if (!started.ok) return started;
+    const { start } = started;
+    // eBay makes nothing: its answer is a search to save on eBay, shown where the refusal would be.
+    if (start.kind === "answer") return { ok: false, error: start.text };
+    const seen = await previewWant(w.d, start);
+    return await asUser(w, (u) => finishWant(w.d, u, start, seen));
+  } finally {
+    w.reading.delete(w.userId);
+  }
+}
+
 /** The owner's live task of an editor type, or null (the 404). */
 export async function editableTask(d: TrackerDeps, user: User, id: string): Promise<Task | null> {
   const task = await ownLiveTask(d, user, id);
-  return task && (task.type === "reminder" || task.type === "renewal" || task.type === "price" || task.type === "scout") ? task : null;
+  return task && (EDITOR_TYPES as readonly string[]).includes(task.type) ? task : null;
 }
 
 /** An edit of `task` (already found to be the writer's) from its fields: edit.ts's rules, in the queue. */
@@ -96,6 +117,7 @@ export function saveEdit(w: Writer, task: Task, form: URLSearchParams): Promise<
   if (task.type === "reminder") return asUser(w, (u) => editReminder(w.d, u, task.id, reminderEdit(form)));
   if (task.type === "renewal") return asUser(w, (u) => editRenewal(w.d, u, task.id, renewalEdit(form)));
   if (task.type === "scout") return asUser(w, (u) => editScout(w.d, u, task.id, scoutEdit(form)));
+  if (task.type === "wantlist") return asUser(w, (u) => editWant(w.d, u, task.id, wantEdit(form)));
   return asUser(w, (u) => editPrice(w.d, u, task.id, priceEdit(form)));
 }
 
@@ -115,6 +137,7 @@ const DEFAULTS: Record<NewType, Values> = {
   price: { hours: "12", drop: "10", baseline: "last" },
   research: {},
   scout: { lens: "general", every: "1" },
+  wantlist: { source: "page" },
 };
 
 export function newGet(e: Editor, type: NewType): Response {
@@ -141,9 +164,13 @@ export async function taskPage(e: Editor, id: string, done: string | null, error
   return htmlResponse(historyPage(e.v, view, { controls, flash: notice(done, error), owner }), error ? 400 : 200);
 }
 
+function wantWhere(c: WantConfig): string {
+  return c.source === "bgg" ? `BoardGameGeek game ${c.target}` : c.target;
+}
+
 function editPage(e: Editor, task: Task, values: Values, error?: string): string {
   const now = task.schedule ? describeSchedule(task.schedule, e.v.user, e.v.user.timeZone, e.d.clock.now()) : "no schedule";
-  const page = task.type === "price" ? String((task.config as PriceConfig).url) : undefined;
+  const page = task.type === "price" ? String((task.config as PriceConfig).url) : task.type === "wantlist" ? wantWhere(task.config as WantConfig) : undefined;
   return editTaskPage(e.v, task, values, { now, ...(page !== undefined ? { page } : {}), ...(error !== undefined ? { error } : {}) });
 }
 
