@@ -16,6 +16,7 @@
     "check-contract": "bun run scripts/check-contract.ts"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.15",
     "@types/bun": "^1.4.0",
     "discord.js": "^14.27.0",
     "typescript": "^7.0.0"

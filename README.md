@@ -450,12 +450,15 @@ side.
 
 ## Testing
 
+`just check` runs everything below in CI's order (needs [just](https://github.com/casey/just)).
+
+- `just lint` -- Biome lint (no formatter).
 - `bun run check` -- typecheck.
 - `bun test` -- unit tests.
 - `bun run generate-index -- --check` -- verifies `plugins.json` matches what the plugins on disk would generate.
 - `bun run check-contract` -- verifies `packages/api/contract.d.ts` hasn't drifted from upstream. Needs network access (fetches `rackbops-discord-bot`'s live `main`) and fails if that repo is unreachable.
 
-All four run in CI on every PR and push to `main`. **A green CI run is not proof a plugin behaves
+All five run in CI on every PR and push to `main`, through the Justfile recipes; PR titles are checked as Conventional Commits. **A green CI run is not proof a plugin behaves
 correctly in the bot** -- see `rackbops-discord-bot`'s own testing docs for what only an in-app run proves.
 
 ## Publishing
