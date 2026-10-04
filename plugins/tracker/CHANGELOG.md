@@ -26,9 +26,9 @@
 - Fences for it: a page read with the watcher refuses eBay on every redirect hop, not only the
   pasted address; the BGG read follows no redirect at all, and the fenced Fetch port never carries
   a caller's `Authorization` (or cookie) to another origin; the BGG parser looks for each
-  listing's tags only inside that listing, so a hostile 3 MB answer parses in linear time; a third
-  BGG read waiting its turn is put back for the next tick, so many BGG watches cannot hold the poll
-  tick; at most 20 new listings a run; shop text in a DM has any address in it broken, so only the
+  listing's tags only inside that listing, so a hostile 3 MB answer parses in linear time; a BGG read due
+  within 5 s of the last (or while one is in flight) is put back for the next tick rather than
+  waited on, so many BGG watches cannot hold the poll tick; at most 20 new listings a run; shop text in a DM has any address in it broken, so only the
   listing's own link is a link; per-view query parameters (`utm_*`, Shopify's `_pos`/`_sid`/`_ss`,
   `srsltid`, click ids) are dropped from a listing's address, so it keeps one id. A search page
   whose list is empty is a search with no results, not a miss. A watch whose source cannot be read

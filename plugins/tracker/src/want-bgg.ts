@@ -19,12 +19,12 @@ import { type Listing, MAX_LISTINGS, type Source, SourceMiss, SourceUnavailableE
 export const BGG_HOST = "boardgamegeek.com";
 export const BGG_SPACING_MS = 5_000;
 export const BGG_ATTRIBUTION = "via BoardGameGeek";
-/**
- * BGG reads waiting their turn at most: one more is put back for the next tick (docket's
- * `ExecutorUnavailableError` requeues a notify-lane run, not a miss), so many BGG watches due
- * together cannot hold the poll tick -- and the price checks behind them -- for long.
+/*
+ * A BGG read that would have to wait for the spacing is put back for the next tick instead
+ * (docket's `ExecutorUnavailableError` requeues a notify-lane run; it is not a miss): docket runs a
+ * tick's due runs one after another, so a wait here would hold the poll tick -- and the price checks
+ * behind it -- for 5 s a watch. So at most one BGG read starts per `BGG_SPACING_MS`.
  */
-export const MAX_BGG_WAITING = 2;
 const MAX_TAG = 2_000;
 
 /** A BGG thing id from a bare number or a `boardgamegeek.com/boardgame/<id>/...` address, or null. */
@@ -135,19 +135,14 @@ export interface BggOptions {
   /** Raw bodies with no redirects followed (fetch.ts's `raw` and `noRedirects`): the XML as sent, fenced like every other read, and the token never leaves BGG's host. */
   fetch: Fetch;
   now?: () => number;
-  sleep?: (ms: number) => Promise<void>;
 }
 
-/** The `bgg` source: one request at a time, `BGG_SPACING_MS` apart, with the token. */
+/** The `bgg` source: one request at a time, at least `BGG_SPACING_MS` apart, with the token. */
 export function bggSource(o: BggOptions): Source {
   const now = o.now ?? Date.now;
-  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let last = Number.NEGATIVE_INFINITY;
-  let turn: Promise<unknown> = Promise.resolve();
-  let waiting = 0;
+  let busy = false;
   const request = async (id: number): Promise<Listing[]> => {
-    const wait = last + BGG_SPACING_MS - now();
-    if (wait > 0) await sleep(wait);
     last = now();
     let status: number;
     let body: string;
@@ -171,11 +166,11 @@ export function bggSource(o: BggOptions): Source {
     search(target) {
       const id = parseBggThingId(target);
       if (id === null) return Promise.reject(new SourceMiss("that is not a BGG game"));
-      if (waiting >= MAX_BGG_WAITING) return Promise.reject(new ExecutorUnavailableError("BGG reads are spaced out; this one waits for the next tick"));
-      waiting++;
-      const mine = turn.then(() => request(id)).finally(() => void waiting--);
-      turn = mine.catch(() => {});
-      return mine;
+      if (busy || now() < last + BGG_SPACING_MS) {
+        return Promise.reject(new ExecutorUnavailableError("BGG reads are spaced out; this one waits for the next tick"));
+      }
+      busy = true;
+      return request(id).finally(() => void (busy = false));
     },
   };
 }

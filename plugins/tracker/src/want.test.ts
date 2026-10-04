@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import type { Fetch, FetchResponse } from "@rackbops/docket-core";
+import { ExecutorUnavailableError, type Fetch, type FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../packages/api/contract.js";
 import { FetchRefusedError } from "./fetch.js";
 import { api, call, cleanup, csrfOf, LARRY, makeToken, ORIGIN, people, press, signIn, slash, world } from "./web/harness.js";
-import { BGG_SPACING_MS, bggSource, MAX_BGG_WAITING, bggThingUrl, parseBggThingId, parseMarketplace } from "./want-bgg.js";
+import { BGG_SPACING_MS, bggSource, bggThingUrl, parseBggThingId, parseMarketplace } from "./want-bgg.js";
 import { BGG_THING, shopSearch } from "./want-fixtures.js";
 import { isEbayHost, listingsFromJsonLd, type Listing, pageSource, type Source, SourceMiss, SourceUnavailableError } from "./want-sources.js";
 import { ebaySearchUrl, MAX_WANT_TASKS } from "./want.js";
@@ -109,44 +109,52 @@ describe("the BGG source", () => {
     expect(parseMarketplace("<items><item><name type=\"primary\" value=\"X\"/></item></items>")).toEqual([]);
   });
 
-  it("sends the token to the bare host, waits 5 s between requests, and maps BGG's refusals", async () => {
+  it("sends the token to the bare host, puts back a read due within 5 s of the last, and maps BGG's refusals", async () => {
     let now = 1_000_000;
-    const slept: number[] = [];
-    const asked: { url: string; headers: Record<string, string> | undefined; at: number }[] = [];
+    const asked: { url: string; headers: Record<string, string> | undefined }[] = [];
     let status = 200;
     const fetch: Fetch = {
       async get(url, headers) {
-        asked.push({ url, headers, at: now });
+        asked.push({ url, headers });
         return { status, body: BGG_THING, headers: {} };
       },
     };
-    const source = bggSource({ token: "tok", fetch, now: () => now, sleep: async (ms) => void (slept.push(ms), (now += ms)) });
-    const [a, b] = await Promise.all([source.search("300580", undefined), source.search("https://boardgamegeek.com/boardgame/266192/x", undefined)]);
-    expect(a).toHaveLength(2);
-    expect(b).toHaveLength(2);
-    expect(asked.map((x) => x.url)).toEqual([bggThingUrl(300580), bggThingUrl(266192)]);
-    expect(asked[0]?.headers?.authorization).toBe("Bearer tok");
-    expect((asked[1]?.at ?? 0) - (asked[0]?.at ?? 0)).toBeGreaterThanOrEqual(BGG_SPACING_MS);
-    expect(slept).toEqual([BGG_SPACING_MS]);
+    const source = bggSource({ token: "tok", fetch, now: () => now });
+    expect(await source.search("300580", undefined)).toHaveLength(2);
+    expect(asked[0]).toEqual({ url: bggThingUrl(300580), headers: expect.objectContaining({ authorization: "Bearer tok" }) });
+    // Within the spacing: requeued for the next tick (docket's ExecutorUnavailableError), not waited on, not a miss.
+    const soon = source.search("https://boardgamegeek.com/boardgame/266192/x", undefined);
+    await expect(soon).rejects.toThrow(ExecutorUnavailableError);
+    await expect(soon).rejects.not.toThrow(SourceMiss);
+    expect(asked).toHaveLength(1);
+    now += BGG_SPACING_MS;
+    expect(await source.search("https://boardgamegeek.com/boardgame/266192/x", undefined)).toHaveLength(2);
+    expect(asked[1]?.url).toBe(bggThingUrl(266192));
+    const next = async () => {
+      now += BGG_SPACING_MS;
+      return source.search("300580", undefined);
+    };
     status = 401;
-    await expect(source.search("300580", undefined)).rejects.toThrow(SourceUnavailableError);
+    await expect(next()).rejects.toThrow(SourceUnavailableError);
     status = 202;
-    const busy = source.search("300580", undefined);
+    const busy = next();
     await expect(busy).rejects.toThrow("BGG is busy (HTTP 202)");
     await expect(busy).rejects.not.toThrow(SourceUnavailableError);
     status = 302;
-    await expect(source.search("300580", undefined)).rejects.toThrow("BGG answered HTTP 302");
+    await expect(next()).rejects.toThrow("BGG answered HTTP 302");
   });
 
-  it("puts a third waiting read back for the next tick rather than queue it", async () => {
+  it("puts back a read while another is in flight", async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => (release = r));
     const fetch: Fetch = { async get() { await gate; return { status: 200, body: BGG_THING, headers: {} }; } };
-    const source = bggSource({ token: "t", fetch, now: () => 0, sleep: async () => {} });
-    const held = Array.from({ length: MAX_BGG_WAITING }, () => source.search("1", undefined));
+    let now = 0;
+    const source = bggSource({ token: "t", fetch, now: () => now });
+    const held = source.search("1", undefined);
+    now += 60_000;
     await expect(source.search("1", undefined)).rejects.toThrow("waits for the next tick");
     release();
-    expect(await Promise.all(held)).toHaveLength(MAX_BGG_WAITING);
+    expect(await held).toHaveLength(2);
   });
 
   it("parses a hostile 3 MB answer in linear time, and names the thing by its primary name", () => {

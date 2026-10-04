@@ -96,7 +96,7 @@ function firstOffer(offers: unknown): Json | null {
  * `srsltid`, the `utm_*` family and the click ids): dropped from a listing's address, so one listing
  * keeps one id from poll to poll and is not sent again as new.
  */
-const PER_VIEW = /^(utm_[a-z]+|_pos|_sid|_ss|_psq|_v|srsltid|gclid|gbraid|wbraid|fbclid|msclkid|mc_cid|mc_eid|ref_|pf_rd_[a-z]+|pd_rd_[a-z]+|qid|sr|crid|sprefix)$/i;
+const PER_VIEW = /^(utm_[a-z]+|_pos|_sid|_ss|_psq|srsltid|gclid|gbraid|wbraid|fbclid|msclkid|mc_cid|mc_eid|pf_rd_[a-z]+|pd_rd_[a-z]+)$/i;
 
 function absolute(raw: unknown, base: string): string | null {
   if (typeof raw !== "string" || raw.trim() === "") return null;
