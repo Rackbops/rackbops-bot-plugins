@@ -1,6 +1,6 @@
 import { type Actor, createTask, type Schedule, type TaskPatch, type User } from "@rackbops/docket-core";
 import { money } from "@rackbops/docket-types";
-import { clip, liveTaskCap, NO_LONGER_LISTED, type Plan, rescheduleKeepingSnoozes, said, type TaskResult, type TrackerDeps } from "./actions.js";
+import { clip, liveTaskCap, NO_LONGER_LISTED, NO_SUCH_TASK, type Plan, rescheduleKeepingSnoozes, said, type TaskResult, type TrackerDeps } from "./actions.js";
 import type { Step } from "./discord.js";
 import { applyEdit, busyTask, nextRun, owned, refusingScheduleError, same, savedText } from "./edit.js";
 import { FetchRefusedError, urlProblem } from "./fetch.js";
@@ -19,6 +19,11 @@ import { type WantConfig, withinLimits } from "./wantlist-type.js";
  * - `bgg`: a BoardGameGeek game, only while `TRACKER_BGG_TOKEN` is set (`d.bgg`).
  * - `ebay`: no task. The tracker never reads eBay, so the answer is an eBay search, with the price
  *   cap in it, for the owner to save on eBay; eBay's own saved-search alerts do the watching.
+ *
+ * A watch is judged (wantjudge-type.ts: the model looks at each new listing before it is DMed)
+ * whenever the model runner is set up (`d.research`), unless the owner says `judge: false`; without
+ * the runner it is a plain watch, and `judge: true` is refused. Which it is stays fixed once made,
+ * since a task's type is: to change it, make a new watch.
  */
 
 export const MAX_WANT_TASKS = 20;
@@ -31,6 +36,8 @@ export type WantSource = (typeof WANT_SOURCES)[number];
 
 export const WANT_OFF = "The want-list watcher is not available on this bot.";
 export const NO_BGG = "This bot has no BoardGameGeek access yet: BGG has not approved its application. A listing page (`source: page`) works now.";
+export const JUDGE_OFF = "Checking listings with the model needs the model runner, which this bot does not have set up. Leave `judge` out for a plain watch.";
+export const WANT_TYPES: ReadonlySet<string> = new Set(["wantlist", "wantjudge"]);
 export const EBAY_PAGE = "I never read eBay's pages. Use `source: ebay` instead: I give you an eBay search to save, and eBay emails you new listings.";
 
 export interface WantInput {
@@ -41,6 +48,8 @@ export interface WantInput {
   max?: number;
   currency?: string;
   hours?: number;
+  /** Whether the model looks at each new listing first; left out, it does whenever it can. */
+  judge?: boolean;
 }
 
 /** Every field optional: one left out keeps the task's own; an empty `max` or `currency`, or `-`, clears it. */
@@ -99,9 +108,18 @@ function ebayAnswer(words: string, limits: Limits): string {
 }
 
 async function liveWants(d: TrackerDeps, user: User): Promise<number> {
-  const active = await d.store.listTasks({ ownerId: user.id, status: "active", type: "wantlist" });
-  const paused = await d.store.listTasks({ ownerId: user.id, status: "paused", type: "wantlist" });
-  return active.length + paused.length;
+  let n = 0;
+  for (const type of WANT_TYPES) {
+    for (const status of ["active", "paused"] as const) n += (await d.store.listTasks({ ownerId: user.id, status, type })).length;
+  }
+  return n;
+}
+
+/** Whether a new watch is judged, or why it cannot be. */
+function judgePlan(d: TrackerDeps, asked: boolean | undefined): Plan<{ judge: boolean }> {
+  const can = d.research === true && d.types.wantjudge !== undefined;
+  if (asked === true && !can) return { ok: false, error: JUDGE_OFF };
+  return { ok: true, judge: asked ?? can };
 }
 
 function atCap(d: Pick<TrackerDeps, "webEditor">): string {
@@ -116,6 +134,7 @@ export interface PendingWant {
   title: string;
   hours: number;
   config: WantConfig;
+  judge: boolean;
 }
 
 /** `/want`'s checks, in the queue: the source, the target, the limits and the caps. */
@@ -126,6 +145,8 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   const planned = limitsPlan(input, source === "bgg" ? DEFAULT_BGG_HOURS : DEFAULT_PAGE_HOURS);
   if (!planned.ok) return planned;
   const { limits } = planned;
+  const judged = judgePlan(d, input.judge);
+  if (!judged.ok) return judged;
   const target = (input.target ?? "").trim();
   if (source === "ebay") {
     const words = (target || limits.name).replace(/\s+/g, " ");
@@ -155,7 +176,7 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
     ...(limits.maxPrice !== undefined ? { maxPrice: limits.maxPrice } : {}),
     ...(limits.currency ? { currency: limits.currency } : {}),
   };
-  return { ok: true, start: { kind: "task", title: limits.name, hours: limits.hours, config } };
+  return { ok: true, start: { kind: "task", title: limits.name, hours: limits.hours, config, judge: judged.judge } };
 }
 
 export type WantPreview = { ok: true; text: string } | { ok: false; error: string };
@@ -186,8 +207,8 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
   const user = await d.store.getUser(asked.id);
   if (!user || !d.admissions.isRegistered(user.id)) return { ok: false, error: NO_LONGER_LISTED };
   if (!seen.ok) return seen;
-  const type = d.types.wantlist;
-  if (!type) return { ok: false, error: WANT_OFF };
+  const type = start.judge ? d.types.wantjudge : d.types.wantlist;
+  if (!type) return { ok: false, error: start.judge ? JUDGE_OFF : WANT_OFF };
   if ((await liveWants(d, user)) >= MAX_WANT_TASKS) return { ok: false, error: atCap(d) };
   const capped = await liveTaskCap(d, user);
   if (capped) return { ok: false, error: capped };
@@ -208,6 +229,9 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
       [
         `Watching \`${task.id}\`: ${start.title}.${seen.text ? ` ${seen.text}` : ""}`,
         `I look at ${where} every ${plural(start.hours, "hour")} and DM you each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before; the first look, within a minute, DMs what is there now. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`,
+        ...(start.judge
+          ? ["The model looks at each new listing first: whether it is the thing, and what its page shows about the seller. Those looks count against your daily model budget; `judge: false` makes a watch without them."]
+          : []),
       ].join("\n"),
     ),
   };
@@ -232,7 +256,8 @@ export function editWant(d: TrackerDeps, user: User, taskId: string, input: Want
 }
 
 async function editWantLocked(d: TrackerDeps, user: User, taskId: string, input: WantEdit): Promise<TaskResult> {
-  const task = await owned(d, user, taskId, "wantlist");
+  const plain = await owned(d, user, taskId, "wantlist");
+  const task = typeof plain === "string" && plain === NO_SUCH_TASK ? await owned(d, user, taskId, "wantjudge") : plain;
   if (typeof task === "string") return { ok: false, error: task };
   const config = task.config as WantConfig;
   const schedule = task.schedule;

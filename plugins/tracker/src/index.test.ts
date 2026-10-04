@@ -298,7 +298,7 @@ describe("the plugin end to end on a real data file", () => {
     expect((await store.findUserByDiscordId(ADMIN))?.admin).toBe(true);
   });
 
-  it("registers reminder, renewal and price (#81), research (#82) and the scout (#83), the execute-lane types, which run only with an Executor, and the want-list watcher (#83)", () => {
-    expect(Object.keys(TRACKER_TYPES).sort()).toEqual(["price", "reminder", "renewal", "research", "scout", "wantlist"]);
+  it("registers reminder, renewal and price (#81), research (#82) and the scout (#83), the execute-lane types, which run only with an Executor, and the want-list watcher, plain and judged (#83)", () => {
+    expect(Object.keys(TRACKER_TYPES).sort()).toEqual(["price", "reminder", "renewal", "research", "scout", "wantjudge", "wantlist"]);
   });
 });

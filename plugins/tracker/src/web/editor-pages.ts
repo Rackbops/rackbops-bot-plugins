@@ -16,9 +16,12 @@ import { framed, type Viewer } from "./pages.js";
  * every form posts back to this origin with the session's CSRF token. No script.
  */
 
-/** The types the editor makes and edits; the scout (#83) is made only while the model runner is set up. */
-export type EditorType = "reminder" | "renewal" | "price" | "scout" | "wantlist";
-export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "price", "scout", "wantlist"];
+/**
+ * The types the editor edits; the scout (#83) is made only while the model runner is set up. A judged
+ * watch (`wantjudge`) is edited here like a plain one but made through the want-list form (`judge`).
+ */
+export type EditorType = "reminder" | "renewal" | "price" | "scout" | "wantlist" | "wantjudge";
+export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "price", "scout", "wantlist", "wantjudge"];
 
 /**
  * What the web and the API can make: the editor's types, and a research request
@@ -27,6 +30,7 @@ export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "pric
  */
 export type NewType = EditorType | "research";
 export const NEW_TYPES: readonly NewType[] = ["reminder", "renewal", "price", "research", "scout", "wantlist"];
+// `wantjudge` is in `NewType` only as an editor type: no form or API create names it.
 
 /** The types that run on the model runner: made only while it is set up (`d.research`); a scout made before stays editable. */
 export const MODEL_TYPES: ReadonlySet<NewType> = new Set<NewType>(["research", "scout"]);
@@ -82,6 +86,7 @@ const SCOUT_FIELDS: readonly Field[] = [
 ];
 
 const SOURCE_OPTIONS = [["page", "a listing page I paste"], ["bgg", "BoardGameGeek's marketplace"]] as const;
+const JUDGE_OPTIONS = [["yes", "yes: the model checks each new listing and its seller first"], ["no", "no: DM me every new listing"]] as const;
 
 /** `/want`'s limits, the same on an edit: where it looks is fixed once made. */
 const WANT_LIMITS: readonly Field[] = [
@@ -98,6 +103,7 @@ export function fieldsFor(type: NewType, mode: "new" | "edit"): readonly Field[]
   case "scout":
     return SCOUT_FIELDS;
   case "wantlist":
+  case "wantjudge":
     return [
       { name: "name", label: "What you want", kind: "text", required: true, maxlength: MAX_TITLE },
       ...(mode === "new"
@@ -110,6 +116,13 @@ export function fieldsFor(type: NewType, mode: "new" | "edit"): readonly Field[]
             required: true,
             maxlength: MAX_URL,
             help: "A shop's listing or search page, or a BGG game's address or id. For eBay, use /want source: ebay in Discord: eBay's own saved search does the watching.",
+          } as const,
+          {
+            name: "judge",
+            label: "Check listings with the model",
+            kind: "select",
+            options: JUDGE_OPTIONS,
+            help: "Each check counts against your daily model budget. Needs the model runner; fixed once the watch is made.",
           } as const,
         ]
         : []),
@@ -194,7 +207,7 @@ export function taskHref(v: Viewer, id: string, action = ""): string {
   return `${v.base}/tasks/${encodeURIComponent(id)}${action ? `/${action}` : ""}`;
 }
 
-const NOUN: Record<NewType, string> = { reminder: "reminder", renewal: "renewal", price: "price tracker", research: "research request", scout: "scout", wantlist: "want-list watch" };
+const NOUN: Record<NewType, string> = { reminder: "reminder", renewal: "renewal", price: "price tracker", research: "research request", scout: "scout", wantlist: "want-list watch", wantjudge: "checked want-list watch" };
 
 const INTRO: Partial<Record<NewType, string>> = {
   price: "I read the page once now; nothing is made unless I find a price in it.",
@@ -243,7 +256,7 @@ export function editTaskPage(v: Viewer, task: Task, values: Values, o: { now: st
 <p><a class="rb-link" href="${taskHref(v, task.id)}">Back to the task</a></p>
 <h1>Edit ${task.title}</h1>
 <p class="rb-muted">Now: ${o.now}.${task.status === "paused" ? " Paused." : ""}</p>
-${o.page ? html`<p class="rb-muted">${task.type === "wantlist" ? html`Looking at: ${o.page}. To look somewhere else, make a new watch.` : html`Page: ${o.page}. To track another page, make a new price tracker.`}</p>` : null}
+${o.page ? html`<p class="rb-muted">${task.type === "wantlist" || task.type === "wantjudge" ? html`Looking at: ${o.page}. To look somewhere else, make a new watch.` : html`Page: ${o.page}. To track another page, make a new price tracker.`}</p>` : null}
 ${alert(o.error)}
 <form method="post" action="${taskHref(v, task.id, "edit")}" class="tr-stack">
 <input type="hidden" name="csrf" value="${v.csrf}">

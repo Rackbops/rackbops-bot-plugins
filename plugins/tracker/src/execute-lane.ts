@@ -1,4 +1,4 @@
-import { type BudgetPolicy, type Clock, type Executor, Lanes, type Notifier, type Store, type TaskType, type TickResult } from "@rackbops/docket-core";
+import { type BudgetPolicy, type Clock, type Executor, type Fetch, Lanes, type Notifier, type Store, type TaskType, type TickResult } from "@rackbops/docket-core";
 import type { TaskLocks } from "./locks.js";
 import { tasksStore } from "./notify-lane.js";
 
@@ -36,6 +36,8 @@ export interface ExecuteLaneDeps {
   executor: Executor;
   locks: TaskLocks;
   budget?: BudgetPolicy;
+  /** The fenced page reads a judged want-list watch's `prepare` makes (wantjudge-type.ts); no other type here reads pages. */
+  fetch?: Fetch;
 }
 
 /** Runs `fn` holding every lock in `ids`, taken in sorted order. */
@@ -69,6 +71,7 @@ export class ExecuteLane {
       types: d.types,
       notifier: d.notifier,
       executor: d.executor,
+      ...(d.fetch ? { fetch: d.fetch } : {}),
       ...(d.budget ? { budget: d.budget } : {}),
     });
   }
