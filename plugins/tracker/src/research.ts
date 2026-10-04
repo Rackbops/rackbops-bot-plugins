@@ -21,6 +21,21 @@ export const MAX_LIVE_RESEARCH = 5;
 
 export const RESEARCH_OFF = "Research is not available on this bot yet: it needs the model runner, which is not set up here.";
 
+/** Fewer than this many characters in `question` is refused (a stray "0" once went in that way). */
+export const MIN_QUESTION_CHARS = 3;
+
+export const SHORT_QUESTION =
+  `Put the whole question in \`question\`: it needs at least ${MIN_QUESTION_CHARS} characters, with a letter in it. \`context\` is only for background.`;
+
+/**
+ * A question that is a stray character or two, or has no letter at all ("0"): what lands in
+ * `question` when the real question went into `context` by mistake (task t2 on Clerk, 2026-10-04).
+ * Refused before anything is made, so no model run is paid for it.
+ */
+function tooShort(question: string): boolean {
+  return question.length < MIN_QUESTION_CHARS || !/\p{L}/u.test(question);
+}
+
 export interface ResearchInput {
   question: string;
   context?: string;
@@ -34,6 +49,7 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
   if (!type || !d.research) return { ok: false, error: RESEARCH_OFF };
   const question = input.question.trim();
   if (question.length === 0) return { ok: false, error: "Say what to look into." };
+  if (tooShort(question)) return { ok: false, error: SHORT_QUESTION };
   if (question.length > MAX_QUESTION_CHARS) return { ok: false, error: `That question is longer than ${MAX_QUESTION_CHARS} characters.` };
   const context = input.context?.trim() ?? "";
   if (context.length > MAX_CONTEXT_CHARS) return { ok: false, error: `\`context\` is longer than ${MAX_CONTEXT_CHARS} characters.` };
