@@ -380,10 +380,12 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .setDescription(`Hours between looks (default ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG)`)
               .setMinValue(1)
               .setMaxValue(MAX_WANT_HOURS),
-          ),
+          )
+          .addBooleanOption((o) => o.setName("judge").setDescription("Have the model check each new listing and its seller first (default: yes, when it can)")),
       handle: (interaction) =>
         run(interaction, "registered", (d, user) => {
           const target = interaction.options.getString("target");
+          const judge = interaction.options.getBoolean("judge");
           const max = interaction.options.getNumber("max");
           const currency = interaction.options.getString("currency");
           const hours = interaction.options.getInteger("hours");
@@ -394,6 +396,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             ...(max !== null ? { max } : {}),
             ...(currency !== null ? { currency } : {}),
             ...(hours !== null ? { hours } : {}),
+            ...(judge !== null ? { judge } : {}),
           });
         }),
     },

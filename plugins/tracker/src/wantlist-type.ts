@@ -44,7 +44,7 @@ export const SHOWN_IN_DM = 5;
 export const MAX_NEW_PER_RUN = 20;
 
 /** Text from a shop, with any address in it broken, so Discord neither links nor previews it; only the listing's own link does. */
-function inert(text: string): string {
+export function inert(text: string): string {
   return text.replace(/([a-z][a-z0-9+.-]*):\/\//gi, "$1:/\u200b/").replace(/\bwww\./gi, "www\u200b.");
 }
 
@@ -66,7 +66,7 @@ export function withinLimits(l: Listing, config: WantConfig): boolean {
   return l.price !== undefined && l.price <= config.maxPrice + 1e-9;
 }
 
-function priceText(l: Listing, config: WantConfig): string {
+export function priceText(l: Listing, config: WantConfig): string {
   return l.price === undefined ? "price not shown" : money(l.price, l.currency ?? config.currency ?? "");
 }
 
@@ -85,7 +85,7 @@ export function renderWant(title: string, taskId: string, fresh: readonly Listin
   return clip(lines.join("\n"));
 }
 
-function miss(ctx: RunContext<WantConfig>, state: WantState, err: unknown): Outcome {
+export function miss<S extends WantState>(ctx: RunContext<WantConfig>, state: S, err: unknown): Outcome {
   const reason = err instanceof Error ? err.message : String(err);
   const misses = state.misses + 1;
   const tell = !state.warned && (misses >= MISSES_BEFORE_TELLING || err instanceof SourceUnavailableError);
@@ -101,6 +101,46 @@ function miss(ctx: RunContext<WantConfig>, state: WantState, err: unknown): Outc
     };
   }
   return outcome;
+}
+
+/** A finding for one listing: what it is, its price, and `extra` (a verdict); keyed so it is stored once. */
+export function listingFinding(l: Listing, config: WantConfig, said: string, tags: readonly string[] = []): Finding {
+  return {
+    text: clip(`${l.title} -- ${said}${l.condition ? ` -- ${l.condition}` : ""}`, 400),
+    source: l.url,
+    key: listingKey(l.id),
+    tags: ["wantlist", config.source, ...tags],
+  };
+}
+
+/**
+ * One look at the source: either the run's outcome already (a miss, or nothing new, with the state
+ * it leaves), or the listings within the limits not told before, at most `MAX_NEW_PER_RUN`, with the
+ * state after a good read (misses cleared) for the caller to add them to. Shared by the plain watch
+ * (DMs them) and the judged one (wantjudge-type.ts, has the model look first).
+ */
+export type Polled = { kind: "done"; outcome: Outcome } | { kind: "fresh"; state: WantState; fresh: Listing[]; summary: string };
+
+export async function pollWant(ctx: RunContext<WantConfig>, sources: Partial<Record<SourceId, Source>>, stored?: WantState): Promise<Polled> {
+  const state = stored ?? wantState(ctx.state);
+  const source = sources[ctx.config.source];
+  if (!source) {
+    return { kind: "done", outcome: miss(ctx, state, new SourceUnavailableError(`this bot has no ${ctx.config.source === "bgg" ? "BoardGameGeek access" : "such source"}`)) };
+  }
+  let listings: Listing[];
+  try {
+    listings = await source.search(ctx.config.target, ctx.ports.fetch);
+  } catch (err) {
+    if (err instanceof SourceMiss) return { kind: "done", outcome: miss(ctx, state, err) };
+    throw err;
+  }
+  const told = new Set(state.reported);
+  const within = listings.filter((l) => withinLimits(l, ctx.config));
+  const fresh = within.filter((l) => !told.has(listingKey(l.id))).slice(0, MAX_NEW_PER_RUN);
+  const summary = `${listings.length} listed, ${within.length} within limits, ${fresh.length} new`;
+  const read: WantState = { ...state, misses: 0, warned: false };
+  if (fresh.length === 0) return { kind: "done", outcome: { state: read, summary } };
+  return { kind: "fresh", state: read, fresh, summary };
 }
 
 /** The type over `sources`: a task whose source this bot lacks (BGG without its token) counts misses. */
@@ -119,31 +159,13 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
       ],
     },
     async run(ctx: RunContext<WantConfig>): Promise<Outcome> {
-      const state = wantState(ctx.state);
-      const source = sources[ctx.config.source];
-      if (!source) return miss(ctx, state, new SourceUnavailableError(`this bot has no ${ctx.config.source === "bgg" ? "BoardGameGeek access" : "such source"}`));
-      let listings: Listing[];
-      try {
-        listings = await source.search(ctx.config.target, ctx.ports.fetch);
-      } catch (err) {
-        if (err instanceof SourceMiss) return miss(ctx, state, err);
-        throw err;
-      }
-      const told = new Set(state.reported);
-      const within = listings.filter((l) => withinLimits(l, ctx.config));
-      const fresh = within.filter((l) => !told.has(listingKey(l.id))).slice(0, MAX_NEW_PER_RUN);
-      const summary = `${listings.length} listed, ${within.length} within limits, ${fresh.length} new`;
-      if (fresh.length === 0) return { state: { ...state, misses: 0, warned: false }, summary };
-      const findings: Finding[] = fresh.map((l) => ({
-        text: clip(`${l.title} -- ${priceText(l, ctx.config)}${l.condition ? ` -- ${l.condition}` : ""}`, 400),
-        source: l.url,
-        key: listingKey(l.id),
-        tags: ["wantlist", ctx.config.source],
-      }));
+      const polled = await pollWant(ctx, sources);
+      if (polled.kind === "done") return polled.outcome;
+      const { state, fresh, summary } = polled;
       return {
-        state: { reported: [...state.reported, ...fresh.map((l) => listingKey(l.id))].slice(-MAX_REPORTED), misses: 0, told: state.told + fresh.length, warned: false },
+        state: { ...state, reported: [...state.reported, ...fresh.map((l) => listingKey(l.id))].slice(-MAX_REPORTED), told: state.told + fresh.length },
         notify: { text: renderWant(ctx.task.title, ctx.task.id, fresh, ctx.config), actions: ["done"] },
-        findings,
+        findings: fresh.map((l) => listingFinding(l, ctx.config, priceText(l, ctx.config))),
         summary,
       };
     },

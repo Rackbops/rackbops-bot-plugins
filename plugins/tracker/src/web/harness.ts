@@ -114,7 +114,7 @@ export async function slash(
   plugin: Plugin,
   name: string,
   userId: string,
-  o: { strings?: Record<string, string>; users?: Record<string, string>; client?: unknown; sub?: string; ints?: Record<string, number>; numbers?: Record<string, number> } = {},
+  o: { strings?: Record<string, string>; users?: Record<string, string>; client?: unknown; sub?: string; ints?: Record<string, number>; numbers?: Record<string, number>; booleans?: Record<string, boolean> } = {},
 ): Promise<string> {
   const command = plugin.commands?.find((c) => c.name === name);
   if (!command) throw new Error(`no command ${name}`);
@@ -130,6 +130,7 @@ export async function slash(
       getString: (k: string) => o.strings?.[k] ?? null,
       getInteger: (k: string) => o.ints?.[k] ?? null,
       getNumber: (k: string) => o.numbers?.[k] ?? null,
+      getBoolean: (k: string) => o.booleans?.[k] ?? null,
       getUser: (k: string) => (o.users?.[k] ? { id: o.users[k], bot: false } : null),
     },
     deferReply: async (x: unknown) => void (deferred = x),

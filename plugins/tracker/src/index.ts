@@ -6,6 +6,7 @@ import { price, reminder, renewal, research } from "@rackbops/docket-types";
 import { scout } from "./scout-type.js";
 import { bggSource } from "./want-bgg.js";
 import { pageSource, type Source } from "./want-sources.js";
+import { wantjudgeType } from "./wantjudge-type.js";
 import { wantlistType } from "./wantlist-type.js";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds, parseGuildRoles } from "./access.js";
@@ -61,7 +62,9 @@ export const DB_FILE = "tracker.sqlite";
  * `/research` makes nothing -- and `scout` (#83), the interest scout, the plugin's own execute-lane
  * type (scout-type.ts), under the same switch -- and `wantlist` (#83), the want-list watcher, on the
  * `poll` tick like `price`, reading pasted pages here; `createPlugin` swaps in one that also reads
- * BoardGameGeek once `TRACKER_BGG_TOKEN` is set.
+ * BoardGameGeek once `TRACKER_BGG_TOKEN` is set -- and `wantjudge` (#83), the same watch with the
+ * model looking at each new listing first (wantjudge-type.ts): an execute-lane type, under the
+ * execute lane's switch, its plain-code reads through the same Fetch port.
  */
 export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object.freeze({
   reminder: reminder as TaskType<unknown>,
@@ -70,6 +73,7 @@ export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object
   research: research as TaskType<unknown>,
   scout: scout as TaskType<unknown>,
   wantlist: wantlistType({ page: pageSource }) as TaskType<unknown>,
+  wantjudge: wantjudgeType({ page: pageSource }) as TaskType<unknown>,
 });
 
 /** `TRACKER_BGG_TOKEN`: BGG's Bearer token for a registered application, or null when unset or empty. */
@@ -123,7 +127,11 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const bggToken = parseBggToken(host.env.TRACKER_BGG_TOKEN);
   // BGG's answers are XML, read by want-bgg.ts's own bounded parser: the raw body, fenced like every read.
   const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createPageFetch({ raw: true, noRedirects: true }) }) : null);
-  const types = options.types ?? (bgg ? { ...TRACKER_TYPES, wantlist: wantlistType({ page: pageSource, bgg }) as TaskType<unknown> } : TRACKER_TYPES);
+  const types =
+    options.types ??
+    (bgg
+      ? { ...TRACKER_TYPES, wantlist: wantlistType({ page: pageSource, bgg }) as TaskType<unknown>, wantjudge: wantjudgeType({ page: pageSource, bgg }) as TaskType<unknown> }
+      : TRACKER_TYPES);
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
   let db: Database | null = null;
@@ -344,7 +352,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       // Its budget is docket's defaults with each person's raised ceiling read before every run (ceilings.ts),
       // or none at all while TRACKER_BUDGET_UNLIMITED is on (usage.ts).
       const ceilings = new Ceilings(opened);
-      executeLane = executor ? new ExecuteLane({ store: openedStore, clock, types, notifier, executor, locks, budget: executeBudget(ceilings, budgetUnlimited) }) : null;
+      executeLane = executor ? new ExecuteLane({ store: openedStore, clock, types, notifier, executor, locks, fetch: pageFetch(), budget: executeBudget(ceilings, budgetUnlimited) }) : null;
       // One line either way: the budgets-off line only when a model run can actually happen.
       if (budgetUnlimited) host.log.info(executeLane ? UNLIMITED_LOG : UNLIMITED_IDLE_LOG);
       if (cityHallConfig) host.log.info(`execute lane on: city-hall ${cityHallConfig.url}, capability ${cityHallConfig.capability}`);

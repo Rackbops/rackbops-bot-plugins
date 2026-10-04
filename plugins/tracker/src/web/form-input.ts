@@ -98,9 +98,12 @@ export function wantInput(form: URLSearchParams): WantInput {
   const max = decimal(form, "max");
   const currency = opt(form, "currency");
   const hours = int(form, "hours");
+  const judge = opt(form, "judge");
   return {
     name: str(form, "name"),
     source: str(form, "source") || "page",
+    // "yes" or "no"; anything else is left out, so the default applies.
+    ...(judge === "yes" || judge === "no" ? { judge: judge === "yes" } : {}),
     ...(target !== undefined ? { target } : {}),
     ...(max !== undefined ? { max } : {}),
     ...(currency !== undefined ? { currency } : {}),
@@ -215,7 +218,7 @@ export function editValues(d: Pick<TrackerDeps, "clock">, user: User, task: Task
     const every = task.schedule?.kind === "calendar" ? task.schedule.every : 1;
     return { interests: c.interests.join("\n"), lens: c.lens, for: c.for ?? "", notes: c.notes ?? "", every: String(every) };
   }
-  if (task.type === "wantlist") {
+  if (task.type === "wantlist" || task.type === "wantjudge") {
     const c = task.config as WantConfig;
     const every = task.schedule?.kind === "poll" ? task.schedule.every : "";
     return { name: task.title, max: c.maxPrice !== undefined ? String(c.maxPrice) : "", currency: c.currency ?? "", hours: String(every) };

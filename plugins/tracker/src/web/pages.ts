@@ -139,10 +139,11 @@ const EMPTY_FINDINGS: Readonly<Record<string, string>> = {
   research: "None yet: a research request's checked claims are kept here once it is answered.",
   scout: "None yet: what the scout shows you is kept here, so it is never shown twice.",
   wantlist: "None yet: each listing I DM you is kept here, so it is never sent twice.",
+  wantjudge: "None yet: each new listing is kept here with what the model made of it, DMed or not, so it is never sent twice.",
 };
 
 function findingsSection(h: HistoryView): Html | null {
-  if (h.findings.length === 0 && h.task.type !== "research" && h.task.type !== "scout" && h.task.type !== "wantlist") return null;
+  if (h.findings.length === 0 && h.task.type !== "research" && h.task.type !== "scout" && h.task.type !== "wantlist" && h.task.type !== "wantjudge") return null;
   const shown = h.findings.slice(-FINDINGS_SHOWN);
   const earlier = h.findings.length - shown.length;
   return html`<section>

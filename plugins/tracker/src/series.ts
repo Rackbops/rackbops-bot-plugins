@@ -21,7 +21,7 @@ function pointLine(p: SeriesPoint, viewer: User, now: Date): string {
 export async function seriesLines(d: Pick<TrackerDeps, "store" | "clock">, user: User, taskId: string): Promise<string[]> {
   const actor = { userId: user.id, admin: user.admin };
   const task = await visibleTask(d.store, actor, taskId.trim());
-  if (task?.type === "research" || task?.type === "scout" || task?.type === "wantlist") return findingLines(d, user, task.id);
+  if (task?.type === "research" || task?.type === "scout" || task?.type === "wantlist" || task?.type === "wantjudge") return findingLines(d, user, task.id);
   if (!task || (task.type !== "renewal" && task.type !== "price")) return [];
   const points = (await visibleSeries(d.store, actor, task.id)) ?? [];
   const now = d.clock.now();

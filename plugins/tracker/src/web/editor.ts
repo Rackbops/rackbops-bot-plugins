@@ -117,7 +117,7 @@ export function saveEdit(w: Writer, task: Task, form: URLSearchParams): Promise<
   if (task.type === "reminder") return asUser(w, (u) => editReminder(w.d, u, task.id, reminderEdit(form)));
   if (task.type === "renewal") return asUser(w, (u) => editRenewal(w.d, u, task.id, renewalEdit(form)));
   if (task.type === "scout") return asUser(w, (u) => editScout(w.d, u, task.id, scoutEdit(form)));
-  if (task.type === "wantlist") return asUser(w, (u) => editWant(w.d, u, task.id, wantEdit(form)));
+  if (task.type === "wantlist" || task.type === "wantjudge") return asUser(w, (u) => editWant(w.d, u, task.id, wantEdit(form)));
   return asUser(w, (u) => editPrice(w.d, u, task.id, priceEdit(form)));
 }
 
@@ -138,12 +138,14 @@ const DEFAULTS: Record<NewType, Values> = {
   research: {},
   scout: { lens: "general", every: "1" },
   wantlist: { source: "page" },
+  wantjudge: {},
 };
 
 export function newGet(e: Editor, type: NewType): Response {
   // Without the model runner the page says so instead of offering a form that can only be refused.
   if (type === "research" && !e.d.research) return htmlResponse(newTaskPage(e.v, type, {}, undefined, RESEARCH_OFF));
   if (type === "scout" && !e.d.research) return htmlResponse(newTaskPage(e.v, type, {}, undefined, SCOUT_OFF));
+  if (type === "wantlist") return htmlResponse(newTaskPage(e.v, type, { ...DEFAULTS.wantlist, judge: e.d.research ? "yes" : "no" }));
   return htmlResponse(newTaskPage(e.v, type, type === "renewal" ? { ...DEFAULTS.renewal, currency: "USD" } : DEFAULTS[type]));
 }
 
@@ -170,7 +172,7 @@ function wantWhere(c: WantConfig): string {
 
 function editPage(e: Editor, task: Task, values: Values, error?: string): string {
   const now = task.schedule ? describeSchedule(task.schedule, e.v.user, e.v.user.timeZone, e.d.clock.now()) : "no schedule";
-  const page = task.type === "price" ? String((task.config as PriceConfig).url) : task.type === "wantlist" ? wantWhere(task.config as WantConfig) : undefined;
+  const page = task.type === "price" ? String((task.config as PriceConfig).url) : task.type === "wantlist" || task.type === "wantjudge" ? wantWhere(task.config as WantConfig) : undefined;
   return editTaskPage(e.v, task, values, { now, ...(page !== undefined ? { page } : {}), ...(error !== undefined ? { error } : {}) });
 }
 

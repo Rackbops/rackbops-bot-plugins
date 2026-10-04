@@ -6,7 +6,7 @@ import { TASK_BUSY } from "../locks.js";
 import { FINISHED, ownLiveTask } from "../manage.js";
 import { RESEARCH_OFF } from "../research.js";
 import { SCOUT_OFF } from "../scout.js";
-import { NO_BGG } from "../want.js";
+import { JUDGE_OFF, NO_BGG } from "../want.js";
 import { actOn, editableTask, makeTask, READING, saveEdit, type TaskAction, type Writer, type Written } from "./editor.js";
 import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_TYPES, type NewType } from "./editor-pages.js";
 import { editValues } from "./form-input.js";
@@ -97,7 +97,7 @@ export function asFields(body: Record<string, unknown>, type: NewType, mode: "ne
     if (!f) return problem(400, "unknown_field", `\`${key.slice(0, 40)}\` is not a field of a ${type}${mode === "edit" ? " edit" : ""}. GET types lists them.`);
     const kind = jsonKind(f);
     // A watch's top price is the one number an edit can clear: `null` sends it empty, as the form does.
-    if (value === null && mode === "edit" && type === "wantlist" && key === "max") {
+    if (value === null && mode === "edit" && (type === "wantlist" || type === "wantjudge") && key === "max") {
       form.set(key, "");
       continue;
     }
@@ -122,7 +122,7 @@ export function refusal(error: string): ApiAnswer {
   if (error === RESEARCH_OFF || error === SCOUT_OFF) return problem(503, "unavailable", error);
   if (error === FINISHED || /^That task is [a-z]+, not [a-z]+\.$/.test(error)) return problem(409, "conflict", error);
   if (/^You already (have|track|watch for) [0-9]+ /.test(error)) return problem(409, "limit_reached", error);
-  if (error === NO_BGG) return problem(503, "unavailable", error);
+  if (error === NO_BGG || error === JUDGE_OFF) return problem(503, "unavailable", error);
   if (/ (is|are) not available on this bot\.$/.test(error)) return problem(503, "unavailable", error);
   return problem(400, "invalid", error);
 }
@@ -173,7 +173,7 @@ export async function taskJson(d: TrackerDeps, user: User, task: Task) {
     // A price's page: read-only, since another page is another tracker (no edit takes it).
     ...(task.type === "price" ? { url: String((task.config as PriceConfig).url) } : {}),
     // A watch's source and target: read-only too, since another place to look is another watch.
-    ...(task.type === "wantlist" ? { source: (task.config as WantConfig).source, target: (task.config as WantConfig).target } : {}),
+    ...(task.type === "wantlist" || task.type === "wantjudge" ? { source: (task.config as WantConfig).source, target: (task.config as WantConfig).target } : {}),
   };
 }
 

@@ -1,9 +1,30 @@
 # Changelog
 
-## [Unreleased]
+## [0.17.0] - 2026-10-04
 
 ### Added
 
+- **The model's look at new want-list listings** (#83; plan 5.4 and item 63, the rest of E9). A
+  watch made while the model runner is set up is judged (the plugin's own `wantjudge` type,
+  `src/wantjudge-type.ts`, on the execute lane): the page or BGG is still read in plain code, and
+  only when that read finds listings it has not told you of does one `claude -p` Job run, through
+  the queue and the runner on the subscription. For each listing the model says whether it is the
+  thing you want (`match`, `maybe`, or `no` for an accessory, another product, a replica, parts),
+  why, in one sentence, and what the listing's own page shows about the seller and the offer --
+  ratings, sales, returns, where it ships from, anything that looks wrong -- as signals, never a
+  verdict about a person. The DM lists the listings worth a look, best first, each with that note;
+  the ones it calls `no` are not DMed but are kept as findings with the verdict, so
+  `/task history` shows them. The Job may open only the listings' pages on the watch's own site
+  (`WebFetch` scoped to the pasted page's host, or BGG's; never eBay's, never a host a listing
+  merely names) and may not search the web or read the runner's files; 12 turns, 0.50 USD, 5 minutes a look
+  (proposed, like the scout's caps). A look that fails for good sends the listings unchecked, so an
+  alert never waits on the model past its retry.
+- `/want judge:` (yes or no; the web form's and the task API's `judge`, `"yes"` or `"no"`): left
+  out, a watch is judged whenever the model runner is set up; `judge: false` makes a plain watch as
+  before; `judge: true` without the runner is refused. Fixed once made: to change it, make a new
+  watch. Watches made before 0.17.0 stay plain.
+- A judged watch's plain-code reads are not charged; its looks are, like any model run, and while
+  its owner is at a daily ceiling (with the budgets on) or the runner is down, the watch waits.
 - **The Discord-role check** (plan 1.1 and 5.5, item 46). `TRACKER_GUILD_ROLES` (new, optional):
   comma-separated `serverId:roleId` pairs. In a server named there, a member passes the membership
   gate only while they hold one of its roles, read off the same forced single-member lookup the
