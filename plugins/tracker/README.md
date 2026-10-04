@@ -14,7 +14,10 @@ you, such as a later intake agent (plan E10) -- and the one-off research request
 category 5): a question looked into on the web by a model run, checked by a second run against its
 sources, and DMed once, with its claims kept as findings -- and an admin raising one person's
 daily model ceiling from the web (#82, plan 5.7), with an operator switch that turns the daily
-ceilings off for the alpha and an admin page of daily model usage to evaluate it by. The model runs never happen here: they go
+ceilings off for the alpha and an admin page of daily model usage to evaluate it by -- and the
+interest scout (#83, plan E9, category 1): a model run every few days that looks on the web for
+things that fit someone's interests through a gift lens, DMs what it found, and does not show the
+same link twice. The model runs never happen here: they go
 through city-hall to Rackbops/docket-runner on roshne's own host (plan 5.12), and the whole execute
 lane stays off until the city-hall Executor is configured (Configuration below).
 
@@ -31,6 +34,8 @@ as in a server (plan 5.5, item 39).
 | `/renewal name amount currency renews [unit] [every] [lead] [note]` | registered | A subscription, domain, warranty or membership (docket's `renewal`, a `period` schedule). `renews` is the next renewal or expiry date, `YYYY-MM-DD`, today or later; `unit` yearly (the default), monthly, weekly or daily, `every` how many of those; the ask comes `lead` days before (default 7) at the preferred hour, with Keep, Cancel, Renewed and Snooze. If that ask is already past but the date is not, the first ask comes within a minute (a zone or hour change before it fires drops it for the next period's). Keep and Renewed record what was paid; Cancel ends it. |
 | `/price url [name] [hours] [drop] [baseline] [near]` | registered | A price (docket's `price`, a `poll` schedule every `hours`, default 12, at most 168). The page is read once at once, and nothing is created unless a price is found in it; then the first check, within a minute, DMs the starting price, and a drop of `drop` percent or more (default 10) from the `baseline` -- the last (default), first or highest price seen -- DMs the owner once per crossing. `near` is the words just before the price, for a page with no structured price. At most 20 per person. |
 | `/research question [context] [deadline] [at]` | registered | A one-off research request (docket's `research`, a `once` schedule at `at`, default now). A research run looks it up on the web (read-and-web tools only, plan 5.6), a reviewer run checks the draft against its sources, and only a passed answer is DMed to you (and accepted recipients); its claims are kept as findings on the task's page. `deadline` (docket's `parseWhen`) goes into the request; a run that would start past it makes no call and tells you. `question` must hold the question itself: fewer than 3 characters, or no letter at all (a stray `0`), is refused before anything is made. At most 5 waiting per person; every run counts against the daily budget (below). Answers that research is not available while the city-hall Executor is not set up. |
+| `/scout new interests [lens] [for] [notes] [every]` | registered | An interest scout (the plugin's own `scout` type, `src/scout-type.ts`; plan 1.2 row 1): every `every` days (default 1, at most 30) at your preferred hour, a model run looks on the web for 5 to 10 things published or available in the last 30 days that fit the `interests` (separated by commas, at most 20, each at most 80 characters) through the `lens` -- `general` (the default), `birthday` (fun or a little grandiose), `anniversary` (a romantic angle) or `christmas` (tied to their interests) -- for `for` (someone else, e.g. Anne; empty means you), weighing `notes`, and DMs them to you (and accepted recipients). A link it showed before is not shown again (it remembers the newest 300); fewer than five come with the run's reason. At most 3 scouts per person; each run counts against the daily budget (below), up to 1.50 USD. Answers that the scout is not available while the city-hall Executor is not set up. |
+| `/scout edit task [interests] [lens] [for] [notes] [every]` | registered | Changes your scout: `interests` replaces the whole list; anything left out stays; `for` or `notes` set to `-` clears it. A change of `every` keeps the start day. |
 | `/tasks` | registered | Your active tasks and the ones you receive, each with its next run; then your paused ones. |
 | `/task done task` / `/task snooze task [until]` | the task's owner | Answers the task's latest reminder (snooze: an hour, or until `until`). |
 | `/task decide task choice [amount]` | the renewal's owner | Answers the renewal's latest ask -- keep, cancel or renewed -- with the amount actually paid when it changed (a button cannot carry one). Use it instead of the button, not after it: a run is answered once. |
@@ -134,6 +139,27 @@ test budgets during beta"): with `TRACKER_BUDGET_UNLIMITED` on (Configuration, b
 while each Job's own caps (15 turns and 1 USD for a research run) still bound it and every run is
 still charged, so `/admin/usage` (below) shows what the defaults would have held.
 
+**The interest scout** (#83). A scout is one model Job per run on the execute lane, under the same
+switch, budgets and runner as research, with no reviewer run (plan item 62 keeps one for research
+only). Its prompt, JSON schema and caps are the web-search spike's scout case (docket-runner
+`spike/cases.json`; plan items 59 to 61): five to ten items, each with the page it was confirmed
+on, why it fits, and a price if shown; a `shortfall` reason rather than padding; 30 turns, 1.50
+USD and 10 minutes a run. Every item is cleaned and kept only with an http(s) URL. What it showed
+is remembered in the task's state (the newest 300, by a digest of the URL without its fragment);
+the next prompt names the latest 40, and an item already shown is dropped from the DM whatever the
+model returns. Plan 5.2 and #83 word this as a check "against `findings`"; the state is the same
+record kept beside the run, so the check needs no store read. Dedupe is by URL: the same thing at
+another address is caught only by the prompt's list of titles. Those titles are model output fed
+back to the model, cleaned and cut to 150 characters. Each item shown is also a finding, keyed by that digest. A run that fails with
+`schema_miss`, a malformed answer, `timeout` or `error` is retried once at once, `auth_failed`
+once an hour later; `turn_cap` and `budget_cap` are not retried. A run that fails for good sends one
+line to the owner (and accepted recipients) and the scout goes on to its next run. A scout runs at its owner's preferred hour,
+so `/settings hour` moves it with their reminders. With budgets on, mind the arithmetic: a run can
+cost up to 1.50 USD of a person's 2 USD day, so two or three daily scouts, or a scout and a
+research request, can reach the ceiling; a held run waits until midnight Eastern, and the next
+scheduled one is made only once it has fired. The type lives in this plugin, not in
+`@rackbops/docket-types` (0.5.0 has no scout); giving it back to docket is a follow-up.
+
 **Findings.** A passed research answer's claims are stored with their first source (docket's
 `findings`), shown on the task's page to its owner, accepted recipients and admins (docket's
 `visibleFindings`), listed in `/task history`, and returned by the task API's `GET /tasks/<id>`.
@@ -159,7 +185,7 @@ served at a hashed path, cached for a year).
 |---|---|
 | `/` | My tasks: the same list as `/tasks` (active tasks owned and received, next run in your zone; paused ones and why), each linking to its history, and links to make a new one. |
 | `/tasks/<id>` | A task's history: the same as `/task history`, for the owner, an accepted recipient or an admin. Anyone else gets the same 404 as an unknown id. The owner also sees Edit (not for a research request), Pause or Resume, and Delete. |
-| `/new/reminder`, `/new/renewal`, `/new/price`, `/new/research` | The editor's new-task forms (GET), and making one (POST). `/new/research` is linked from My tasks only while research is available; without it the page says research is not available instead of showing a form. |
+| `/new/reminder`, `/new/renewal`, `/new/price`, `/new/research`, `/new/scout` | The editor's new-task forms (GET), and making one (POST). `/new/research` and `/new/scout` are linked from My tasks only while the model runner is set up; without it the page says the type is not available instead of showing a form. A scout's interests go in a text box, separated by commas or one per line; its edit form shows the list one per line, and an emptied "Who it is for" or "Notes" clears it. |
 | `/tasks/<id>/edit` | The owner's edit form (GET) and saving it (POST). |
 | `/tasks/<id>/pause`, `/resume`, `/delete` | POST only. Delete answers a confirmation first; only a second post carrying `confirm=yes` deletes. |
 | `/settings` | Preferred hour and time zone, checked as `/register` checks them. Links to API tokens and Forget me. |
@@ -440,17 +466,18 @@ value: it is refused as the wrong JSON type (send `""` to clear a note).
 
 Which types: `GET /tasks`, `GET /tasks/<id>`, pause, resume and `DELETE` work on any task you own,
 whatever its type. `POST /tasks` takes the three editor types (reminder, renewal, price) and,
-while research is available on this bot, `research` (#82), by `/research`'s rules; while it is not,
-a `research` create answers `503 unavailable`. `PATCH` takes the three editor types only: a
-research request cannot be edited, here or in Discord, and a `PATCH` of one answers
+while the model runner is set up on this bot, `research` (#82), by `/research`'s rules, and `scout`
+(#83), by `/scout new`'s; while it is not, a `research` or `scout` create answers `503 unavailable`.
+`PATCH` takes the editor types and `scout` (a scout made while the runner was set up stays
+editable): a research request cannot be edited, here or in Discord, and a `PATCH` of one answers
 `409 conflict`.
 
 | Method and path | What |
 |---|---|
 | `GET /api/v1/me` | The token's owner (id, name, zone, preferred hour) and the token (id, name, made, expires). |
-| `GET /api/v1/types` | Each type this bot makes now (research only while it is available), whether a `PATCH` takes it (`editable`; false for research, whose `edit` is empty), and its create and edit fields: name, JSON type, required (never, for an edit), description, and limits (`maxLength`, `minimum`, `maximum`, `enum`). This describes the tracker's own editor fields -- what these endpoints take -- and is **not** docket-core's `TaskType.intake` (`IntakeSpec`), which describes a type's config. |
+| `GET /api/v1/types` | Each type this bot makes now (research and scout only while the model runner is set up), whether a `PATCH` takes it (`editable`; false for research, whose `edit` is empty), and its create and edit fields: name, JSON type, required (never, for an edit), description, and limits (`maxLength`, `minimum`, `maximum`, `enum`). This describes the tracker's own editor fields -- what these endpoints take -- and is **not** docket-core's `TaskType.intake` (`IntakeSpec`), which describes a type's config. |
 | `GET /api/v1/tasks` | Your tasks that are not deleted -- active, paused and done -- oldest first. Not the ones shared with you. |
-| `POST /api/v1/tasks` | Makes one: `type` is `reminder`, `renewal`, `price` or `research`, and the rest are that type's create fields. `201`, with `Location`. A price's page is read first, and nothing is made unless a price is found in it. A research request's fields are `question` (required), `context`, `deadline` and `at`, all text. |
+| `POST /api/v1/tasks` | Makes one: `type` is `reminder`, `renewal`, `price`, `research` or `scout`, and the rest are that type's create fields. `201`, with `Location`. A price's page is read first, and nothing is made unless a price is found in it. A research request's fields are `question` (required), `context`, `deadline` and `at`, all text. A scout's are `interests` (required, text, separated by commas or new lines), `lens`, `for` and `notes` (text) and `every` (a whole number of days). |
 | `GET /api/v1/tasks/<id>` | One of your tasks (a deleted one too), with its history: the newest runs and changes, as `/task history` shows them. |
 | `PATCH /api/v1/tasks/<id>` | Edits it: the fields to change. A price's page is not editable. |
 | `POST /api/v1/tasks/<id>/pause`, `/resume` | Body `{}`. As the web's Pause and Resume, and `/task resume`. |
@@ -479,7 +506,7 @@ and a `PATCH` naming it is refused (`unknown_field`). A write answers
 | 404 | `not_found` | No such endpoint, or no such task of yours. Anyone else's task -- one shared with you, or any task to an admin's token -- answers exactly as an unknown id. |
 | 405 | `method_not_allowed` | With `Allow`. |
 | 409 | `conflict` | A finished task edited, a research request edited, or a pause of a task not active (a resume of one not paused). |
-| 409 | `limit_reached` | 200 active or paused tasks, 20 price trackers, or 5 research requests waiting, as the commands count them. |
+| 409 | `limit_reached` | 200 active or paused tasks, 20 price trackers, 5 research requests waiting, or 3 scouts, as the commands count them. |
 | 409 | `busy` | Your last new price tracker's page is still being read, or the task is with the model runner right now (try again in a minute). |
 | 413 | `too_large` | Body over 16 KiB. |
 | 415 | `unsupported_media_type` | Not `application/json`. |
@@ -514,8 +541,8 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 | Piece | File | Notes |
 |---|---|---|
 | Store | `src/store.ts`, `src/schema.ts` | docket's `Store` port on `bun:sqlite`, in `<dataDir>/tracker/tracker.sqlite` (WAL). A Discord id belongs to at most one user. Schema versioned by `PRAGMA user_version`; a shipped migration is never edited. Schema 5 (0.9.0) is docket 0.4.0's: a run's `record`, a series point's `key`, `deliveries` (from `delivery_claims`), `usage` and `notices`. Schema 6 (0.11.0) is docket 0.5.0's, all additive: `findings`, a charge's `usage.key`, and the Executor's `executor_jobs`. Forget-me erases a person's findings and their runs' Job records too. `store.test.ts` runs docket's `STORE_CONTRACT` against it. |
-| Notify lane | `src/notify-lane.ts` | docket's `Lanes.tickNotify` on two host ticks, every 60 s, one pass per task with work (a due run, a run in flight, a DM owed or claimed), each under that task's lock through a view of the store limited to that task: `notify` runs every type but the page readers, `poll` runs only them (`price`) with the Fetch port, so a slow page never holds up a reminder. A task the execute tick holds is left for the next notify tick, never waited on. Registers `reminder`, `renewal`, `price` and `research`. |
-| Execute lane | `src/execute-lane.ts`, `src/executor.ts`, `src/research.ts` | Only when the city-hall Executor is configured: a third host tick, `execute`, that starts docket's `Lanes.tickExecute` in the background (one at a time, at most once a minute) over every task with a due execute-lane run, reserving those tasks and then holding their locks in id order, through one docket `Lanes` kept while the plugin is active (docket keeps its usage-limit pause on it). The Executor is city-hall#18's source pair (above), its I/O injected; `executor_jobs` keeps each Job key's city-hall id. `/research`'s rules. |
+| Notify lane | `src/notify-lane.ts` | docket's `Lanes.tickNotify` on two host ticks, every 60 s, one pass per task with work (a due run, a run in flight, a DM owed or claimed), each under that task's lock through a view of the store limited to that task: `notify` runs every type but the page readers, `poll` runs only them (`price`) with the Fetch port, so a slow page never holds up a reminder. A task the execute tick holds is left for the next notify tick, never waited on. Registers `reminder`, `renewal`, `price`, `research` and `scout`. |
+| Execute lane | `src/execute-lane.ts`, `src/executor.ts`, `src/research.ts`, `src/scout.ts`, `src/scout-type.ts` | Only when the city-hall Executor is configured: a third host tick, `execute`, that starts docket's `Lanes.tickExecute` in the background (one at a time, at most once a minute) over every task with a due execute-lane run, reserving those tasks and then holding their locks in id order, through one docket `Lanes` kept while the plugin is active (docket keeps its usage-limit pause on it). The Executor is city-hall#18's source pair (above), its I/O injected; `executor_jobs` keeps each Job key's city-hall id. `/research`'s and `/scout`'s rules, and the scout type. |
 | Budgets, usage | `src/ceilings.ts`, `src/usage.ts`; `src/web/ceiling-pages.ts`, `src/web/usage-pages.ts` | The execute lane's `BudgetPolicy` (docket's defaults plus each person's raise, or no ceiling at all while `TRACKER_BUDGET_UNLIMITED` is on), the ceiling changes, and the pure usage report `/admin/usage` renders from docket's `usage` table. |
 | Page reads | `src/fetch.ts` | docket's `Fetch` port for `price`: http or https on the default port, no credentials, every resolved address public (no loopback, private, link-local, CGNAT, multicast or reserved range, IPv4 or IPv6), redirects followed by hand and re-checked (at most 5), 15 s including the name lookup, at most 3 MB kept. The body is then rebuilt in linear time (`src/page.ts`) to just what extraction reads -- JSON-LD, meta tags, and the page with every `<` blanked, so `near` still reads text, attributes and script data -- because docket's extraction patterns take quadratic time on a page of unclosed tags. A read the tick's abort cuts short requeues its run instead of counting a miss. A DNS answer that changes between the check and the read is not caught here. |
 | Renewals, prices | `src/tracked.ts`, `src/price.ts`, `src/series.ts`, `src/page.ts` | `/renewal`, `/price` and `/task decide`; the series lines of `/task history`. The series (docket's `series` table, schema 1) holds a renewal's paid amounts and a price's readings. |
@@ -563,13 +590,15 @@ key>`, so two databases never collide.
   research requests -- not `/task done`, `snooze`, `decide`, `share` or the settings -- and no intake agent uses it yet
   (E10, deferred). Discord OAuth2 as a second sign-in
   method, if chosen (plan item 41).
+- The want-list watcher (E9's second half, #83), and giving the scout type back to
+  `Rackbops/docket`.
 - The rest of #82: per-type grants beyond tier 0 (research needs only `notify`), the transcripts
   policy, and live verification against a real city-hall and docket-runner
   ([Lepid-Labs/city-hall#18](https://github.com/Lepid-Labs/city-hall/pull/18) is merged as
   90a06ec, its decision record still "proposed" pending
   [Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17); the research lane
-  still needs a deployed city-hall with a runner). The scout and the want-list (E9).
-- Editing in Discord (the editor is on the web only), and changing a price tracker's page or `near` after it is made (make a new one); a free-form pattern for `price` (`near` is the safe subset: a user's regular expression run on a large page could hang the bot).
+  still needs a deployed city-hall with a runner).
+- Editing in Discord (the editor is on the web only; `/scout edit` is the one exception), and changing a price tracker's page or `near` after it is made (make a new one); a free-form pattern for `price` (`near` is the safe subset: a user's regular expression run on a large page could hang the bot).
 - An optional Discord-role gate (plan 5.5), and showing unconfirmed deliveries to admins anywhere but the log, or a run's deliveries in its history.
 
 docket-core, docket-types and `@rackbops/styles` are `devDependencies`: `bun build` bundles them

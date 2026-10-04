@@ -65,13 +65,14 @@ function cadence(entry: TaskListEntry, viewer: User, now: Date): string {
   return describeSchedule(s, entry.from ?? viewer, viewer.timeZone, now);
 }
 
-/** The links to the editor's new-task forms; research only while it is available (#82). */
+/** The links to the editor's new-task forms; research (#82) and the scout (#83) only while the model runner is set up. */
 function newLinks(v: Viewer, research: boolean): Html {
   return html`<p class="tr-row">
 <a class="rb-btn rb-btn--primary rb-btn--sm" href="${v.base}/new/reminder">New reminder</a>
 <a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/renewal">New renewal</a>
 <a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/price">New price tracker</a>
 ${research ? html`<a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/research">New research request</a>` : null}
+${research ? html`<a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/scout">New scout</a>` : null}
 </p>`;
 }
 
@@ -134,13 +135,13 @@ function findingRow(f: FindingView): Html {
 }
 
 function findingsSection(h: HistoryView): Html | null {
-  if (h.findings.length === 0 && h.task.type !== "research") return null;
+  if (h.findings.length === 0 && h.task.type !== "research" && h.task.type !== "scout") return null;
   const shown = h.findings.slice(-FINDINGS_SHOWN);
   const earlier = h.findings.length - shown.length;
   return html`<section>
 <h2>Findings</h2>
 ${earlier > 0 ? html`<p class="rb-muted">${earlier} earlier finding(s) not shown.</p>` : null}
-${shown.length === 0 ? html`<p class="rb-muted">None yet: a research request's checked claims are kept here once it is answered.</p>` : html`<ul>${shown.map(findingRow)}</ul>`}
+${shown.length === 0 ? html`<p class="rb-muted">${h.task.type === "scout" ? "None yet: what the scout shows you is kept here, so it is never shown twice." : "None yet: a research request's checked claims are kept here once it is answered."}</p>` : html`<ul>${shown.map(findingRow)}</ul>`}
 </section>`;
 }
 

@@ -174,7 +174,7 @@ describe("research from the task API", () => {
     const res = await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: "What is X?" } });
     expect(res.status).toBe(503);
     expect((await body(res)).error).toEqual({ code: "unavailable", message: RESEARCH_OFF });
-    const bad = await body(await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "scout" } }));
+    const bad = await body(await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "wantlist" } }));
     expect(bad.error.message).toBe("`type` is one of reminder, renewal, price.");
     expect(tasks(w.dbPath)).toEqual([]);
   });
@@ -187,6 +187,7 @@ describe("research from the task API", () => {
       ["renewal", true],
       ["price", true],
       ["research", false],
+      ["scout", true],
     ]);
     const research = types.types[3];
     expect(research.create.map((f: { name: string; type: string; required: boolean }) => [f.name, f.type, f.required])).toEqual([
@@ -197,8 +198,8 @@ describe("research from the task API", () => {
     ]);
     expect(research.create[0].maxLength).toBe(MAX_QUESTION_CHARS);
     expect(research.edit).toEqual([]);
-    const bad = await body(await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "scout" } }));
-    expect(bad.error.message).toBe("`type` is one of reminder, renewal, price, research.");
+    const bad = await body(await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "wantlist" } }));
+    expect(bad.error.message).toBe("`type` is one of reminder, renewal, price, research, scout.");
   });
 
   it("POST makes one by /research's rules; it reads back to its owner only, and a PATCH answers 409", async () => {

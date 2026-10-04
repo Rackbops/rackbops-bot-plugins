@@ -45,19 +45,19 @@ import { askText, firstAskIfDue, type PeriodUnit, renewalPlan } from "./tracked.
  * (locks.ts), so no run of the task fires between docket's cancel and its new schedule.
  */
 
-async function owned(d: TrackerDeps, user: User, taskId: string, type: string): Promise<Task | string> {
+export async function owned(d: TrackerDeps, user: User, taskId: string, type: string): Promise<Task | string> {
   const task = await ownLiveTask(d, user, taskId);
   if (!task || task.type !== type) return NO_SUCH_TASK;
   if (!editable(task)) return FINISHED;
   return task;
 }
 
-function same(a: unknown, b: unknown): boolean {
+export function same(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /** Writes a title/config/state change as one update and one `edited` event naming the fields. */
-async function applyEdit(d: TrackerDeps, task: Task, user: User, patch: Omit<TaskPatch, "at">): Promise<Task> {
+export async function applyEdit(d: TrackerDeps, task: Task, user: User, patch: Omit<TaskPatch, "at">): Promise<Task> {
   const fields = Object.keys(patch);
   if (fields.length === 0) return task;
   const at = d.clock.now().toISOString();
@@ -67,12 +67,12 @@ async function applyEdit(d: TrackerDeps, task: Task, user: User, patch: Omit<Tas
 }
 
 /** The next run still to fire: a queued run that fired and was put back to finish is not one. */
-async function nextRun(d: TrackerDeps, task: Task): Promise<Occurrence | null> {
+export async function nextRun(d: TrackerDeps, task: Task): Promise<Occurrence | null> {
   const queued = await d.store.listOccurrences({ taskId: task.id, status: "queued" });
   return queued.find((o) => !hasFired(o)) ?? null;
 }
 
-function savedText(task: Task, user: User, next: Occurrence | null, now: Date, what: string, jobOut = false): string {
+export function savedText(task: Task, user: User, next: Occurrence | null, now: Date, what: string, jobOut = false): string {
   const cadence = task.schedule ? describeSchedule(task.schedule, user, user.timeZone, now) : "no schedule";
   const when = task.status === "paused" ? "paused" : next ? formatInstant(next.dueAt, user.timeZone, now) : "nothing scheduled";
   return clip(`Saved \`${task.id}\` ${what}: ${cadence}. Next: ${when}.${jobOut ? ` ${JOB_OUT_NOTE}` : ""}`);
@@ -83,7 +83,7 @@ function savedText(task: Task, user: User, next: Occurrence | null, now: Date, w
  * a plain refusal; `onceJobOutRefusal` asks first, so this is the backstop for a run sent out
  * between the two.
  */
-async function refusingScheduleError(edit: () => Promise<TaskResult>): Promise<TaskResult> {
+export async function refusingScheduleError(edit: () => Promise<TaskResult>): Promise<TaskResult> {
   try {
     return await edit();
   } catch (err) {
@@ -102,7 +102,7 @@ export interface ReminderEdit {
 const blank = (v: string | undefined): v is undefined => v === undefined || v.trim() === "";
 
 /** A queue turn's answer while the execute tick holds the task (locks.ts `turn`). */
-const busyTask = (): TaskResult => ({ ok: false, error: TASK_BUSY });
+export const busyTask = (): TaskResult => ({ ok: false, error: TASK_BUSY });
 
 export function editReminder(d: TrackerDeps, user: User, taskId: string, input: ReminderEdit): Promise<TaskResult> {
   return d.locks.turn(taskId.trim(), () => refusingScheduleError(() => editReminderLocked(d, user, taskId, input)), busyTask);

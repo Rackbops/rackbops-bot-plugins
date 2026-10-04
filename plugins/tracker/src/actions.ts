@@ -212,7 +212,7 @@ async function rescheduleOwned(d: TrackerDeps, owner: User, zoneChanged: boolean
     if (!s || (s.kind !== "calendar" && s.kind !== "period")) continue;
     if (!zoneChanged && s.hour !== undefined) continue;
     // `run`, not `turn`: a zone change must reach every such task. Only execute-lane tasks are ever
-    // reserved by the execute tick, and the one execute-lane type (research) is `once`, never here.
+    // reserved by the execute tick; a scout (calendar) is one, and `run` waits out that tick's hold.
     await d.locks.run(task.id, async () => {
       // Re-read under the lock: a run may have finished it since the list above.
       const current = await d.store.getTask(task.id);
