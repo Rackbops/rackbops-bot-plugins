@@ -58,7 +58,8 @@ directly; a plugin's own build imports types from `contract.d.ts`).
 ## Testing & checks
 
 Run these **before staging** (and again after a rebase). They do not substitute for the
-**review gate** in personal. `just check` runs all of them in CI's order; each line below is
+**review gate** in personal. `just check` runs all of them, one after another (CI runs them as
+parallel jobs); each line below is
 also its own recipe (`just --list`).
 
 - **Lint** -- `just lint` (Biome, lint only; the formatter stays off -- hand-formatted).
@@ -74,12 +75,13 @@ also its own recipe (`just --list`).
 real bot against a real Discord instance proves that -- see `rackbops-discord-bot`'s own
 verification discipline.
 
-**CI (`ci.yml`) runs three jobs -- `lint` (lint + typecheck), `test`, and `checks` (build, index,
-contract) -- on every PR and on push to `main`, each through the Justfile recipes above;
+**CI (`ci.yml`) runs three jobs -- `lint` (lint + typecheck), `test`, and `checks` (typecheck,
+build, index, contract) -- on every PR and on push to `main`, each through the Justfile recipes above;
 `pr-guidelines.yml`'s `pr-title` job checks every PR title is a Conventional Commit.** This
 follows [Project Operations 1.0.0](https://lepid-labs.github.io/spec/project-operations/v1.0.0/)
-(Lepid Labs, CC BY 4.0) sections 3, 5 and 6; `lint`, `test` and `pr-title` are the check names
-its ruleset requires.
+(Lepid Labs, CC BY 4.0) sections 3, 5 and 6, with one known gap: section 5.12 wants a monorepo's
+tests as a `test-package` matrix per plugin, and `test` still runs one root `bun test`. `lint`,
+`test` and `pr-title` are the check names its ruleset requires.
 
 ---
 
@@ -90,10 +92,11 @@ Follows personal's **Code style** baseline. This repo's individuality:
 - **Bun + TypeScript, strict.** `tsconfig.json`'s `strict`, `noUnusedLocals`,
   `noUnusedParameters` are all on. No transpile step for `scripts/` -- bun runs `.ts` directly;
   `tsc --noEmit` is typecheck-only.
-- **Biome lints; nothing formats.** `biome.jsonc` runs Biome's recommended rules with the
-  formatter off. A few rules that existing plugin code breaks are `warn`, not `error`, so the
-  gate arrived without touching any plugin; each plugin's owner cleans its own up and may then
-  raise the rule back to `error`. `noControlCharactersInRegex` is off: the sanitizers that trip
+- **Biome lints; nothing formats.** `biome.jsonc` runs Biome's recommended preset with the
+  formatter off; only errors fail (`just lint` prints only those). Four rules that existing plugin
+  code breaks as errors are lowered to `warn`, so the gate arrived without touching any plugin;
+  each plugin's owner may clean its own up and raise them back. Most of the ~360 warnings are
+  rules that are warnings by default anyway (`noNonNullAssertion` alone is 320). `noControlCharactersInRegex` is off: the sanitizers that trip
   it strip control characters on purpose.
 - **No runtime dependencies at the root.** `discord.js` and `typescript`/`@types/bun` are
   `devDependencies` only (types, not runtime behavior) -- keep it that way; a plugin's own
@@ -113,8 +116,8 @@ Follows personal's **Code style** baseline. This repo's individuality:
   `package.json` `botPlugin` block + `CHANGELOG.md`) and fails on a bad name, a missing
   `hostApiVersion`, a current version with no CHANGELOG section, or a duplicate command name across
   plugins. See `CONTEXT.md` for the extractor's shape and the OIDC publishing path.
-- **`main` is protected only once roshne adds the ruleset.** Project Operations section 4 wants a
-  repository ruleset requiring `lint`, `test` and `pr-title` and a code-owner review
-  (`.github/CODEOWNERS`); it is a GitHub setting, not a file, so until it exists nothing blocks a
-  merge. Earlier this was off on purpose, pending CI being green on a few real merges
-  (`rackbops-discord-bot#84`).
+- **`main` has classic branch protection requiring `checks` and `test` (strict, admins
+  included).** That is why `checks` still typechecks. Project Operations section 4 replaces it
+  with a repository ruleset requiring `lint`, `test` and `pr-title` plus a code-owner review
+  (`.github/CODEOWNERS`) -- and section 4.1 says the classic protection is then removed, so there
+  is one source of truth. Both are GitHub settings, roshne's to change.

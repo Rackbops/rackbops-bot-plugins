@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "check": "bunx tsc --noEmit",
+    "lint": "biome lint --diagnostic-level=error .",
     "test": "bun test",
     "build": "bun run scripts/build-plugins.ts",
     "generate-index": "bun run scripts/generate-index.ts",

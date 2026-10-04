@@ -11,7 +11,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "suspicious": {
         // The sanitizers in tracker/executor.ts, tracker/web/api-tokens.ts and
         // warbandeer/characters.ts strip control characters on purpose.

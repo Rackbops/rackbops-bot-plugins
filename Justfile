@@ -12,9 +12,9 @@ install:
 # Everything CI runs, in order
 check: lint typecheck test build index-check contract-check
 
-# Lint (Biome, lint only; the formatter is off)
+# Lint (Biome, lint only; the formatter is off). Shows errors only; `bunx biome lint .` shows warnings too
 lint:
-    bunx biome lint .
+    bun run lint
 
 # Type-check every workspace
 typecheck:
