@@ -16,7 +16,7 @@
   the ones it calls `no` are not DMed but are kept as findings with the verdict, so
   `/task history` shows them. The Job may open only the listings' pages on the watch's own site
   (`WebFetch` scoped to the pasted page's host, or BGG's; never eBay's, never a host a listing
-  merely names) and may not search the web; 12 turns, 0.50 USD, 5 minutes a look
+  merely names) and may not search the web or read the runner's files; 12 turns, 0.50 USD, 5 minutes a look
   (proposed, like the scout's caps). A look that fails for good sends the listings unchecked, so an
   alert never waits on the model past its retry.
 - `/want judge:` (yes or no; the web form's and the task API's `judge`, `"yes"` or `"no"`): left

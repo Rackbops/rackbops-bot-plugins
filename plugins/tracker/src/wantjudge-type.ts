@@ -53,8 +53,8 @@ import {
  *    `pending` by number. A follow-up never reads the source, so follow-ups never chain.
  *
  * `pending` lives in the state, not in memory, so a Job collected after a restart still has the
- * listings it was about. The judge may open only the listings' own pages (`WebFetch` scoped to
- * their hosts, never eBay's; no web search), so a seller is vetted from the source's own data (item
+ * listings it was about. The judge may open only listings on the watch's own site (`WebFetch`
+ * scoped to the pasted page's host or BGG's, never eBay's; no web search), so a seller is vetted from the source's own data (item
  * 63), as signals with what the page showed, never as a verdict about a real person (plan section 6).
  * A listing the model calls "no" is not DMed but is kept as a finding, so `/task history` shows
  * it; one with no verdict is shown as "maybe". When judging fails for good, the listings go out
