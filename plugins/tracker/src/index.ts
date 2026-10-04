@@ -8,7 +8,7 @@ import { bggSource } from "./want-bgg.js";
 import { pageSource, type Source } from "./want-sources.js";
 import { wantlistType } from "./wantlist-type.js";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
-import { parseGuildIds } from "./access.js";
+import { parseGuildIds, parseGuildRoles } from "./access.js";
 import type { TickGate, TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
 import { Ceilings } from "./ceilings.js";
@@ -17,7 +17,7 @@ import { createPageFetch } from "./fetch.js";
 import { EXECUTE_EVERY_MS, ExecuteLane } from "./execute-lane.js";
 import { type CityHallConfig, createCityHallExecutor, databaseId, JobRecords, parseCityHallConfig } from "./executor.js";
 import type { Membership } from "./access.js";
-import { type Interactionish, lookupMembership, serial } from "./discord-common.js";
+import { type Interactionish, lookupMembership, type RoleGate, serial } from "./discord-common.js";
 import { createSurface, type SurfaceWiring } from "./discord.js";
 import { decideHealth, type HealthState, healthResponse } from "./health.js";
 import { TaskLocks } from "./locks.js";
@@ -46,7 +46,7 @@ import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_ID
  * slice 3) -- the JSON task API with personal tokens (#80, slice 4) -- and the one-off research
  * request through city-hall, with its findings, on the execute lane (#82).
  *
- * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID`,
+ * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID`, `TRACKER_GUILD_ROLES`,
  * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts) and `TRACKER_BUDGET_UNLIMITED` (usage.ts) and nothing else. The database is opened in `activate()` and closed in `dispose()`.
  */
 
@@ -110,6 +110,8 @@ const NO_DM: Notifier = {
 export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugin {
   const adminIds = parseAdminIds(host.env.TRACKER_ADMIN_DISCORD_IDS);
   const guildIds = parseGuildIds(host.env.TRACKER_GUILD_ID);
+  // The Discord-role check (plan 1.1, 5.5): the configured admins skip the role, never the membership.
+  const roleGate: RoleGate = { roles: parseGuildRoles(host.env.TRACKER_GUILD_ROLES, guildIds), exempt: new Set(adminIds) };
   const webOrigin = parseWebUrl(host.env.TRACKER_WEB_URL);
   const cityHall = parseCityHallConfig(host.env);
   // Budgets off for the alpha (roshne, 2026-10-02): no daily ceiling holds a run; usage is still recorded.
@@ -143,6 +145,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const surface = createSurface({
     deps: () => deps,
     guildIds,
+    roleGate,
     log: host.log,
     queue,
     web: webOrigin ? { origin: webOrigin, name: host.name, gated: guildIds !== null } : null,
@@ -250,7 +253,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   };
   const clientMembership = async (discordId: string): Promise<Membership | null> => {
     if (!discordClient) return null;
-    return lookupMembership({ guildId: null, user: { id: discordId }, client: discordClient }, guildIds, discordId, host.log);
+    return lookupMembership({ guildId: null, user: { id: discordId }, client: discordClient }, guildIds, discordId, host.log, roleGate);
   };
   const web = createWebHandler({
     name: host.name,
@@ -370,6 +373,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         bgg: bgg !== null,
       };
       if (guildIds === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
+      else if (roleGate.roles !== null) host.log.info(`role check on for ${roleGate.roles.size} of ${guildIds.length} server(s)`);
       health.blocked = typeof host.dm === "function" ? null : "this bot has no host.dm (it predates rackbops-discord-bot#736)";
       health.activatedAt = clock.now();
     },

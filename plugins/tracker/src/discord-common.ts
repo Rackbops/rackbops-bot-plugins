@@ -1,6 +1,6 @@
 import { MessageFlags } from "discord.js";
 import type { PluginLog } from "../../../packages/api/contract.js";
-import type { Membership } from "./access.js";
+import type { GuildRoles, Membership } from "./access.js";
 import type { TrackerDeps } from "./actions.js";
 
 /**
@@ -30,6 +30,12 @@ export interface Interactionish {
   client: { guilds: { fetch(id: string): Promise<{ members: { fetch(o: { user: string; force?: boolean }): Promise<unknown> } }> } };
 }
 
+/** `TRACKER_GUILD_ROLES` and who skips it (lookupMembership). */
+export interface RoleGate {
+  roles: GuildRoles | null;
+  exempt: ReadonlySet<string>;
+}
+
 /**
  * Whether `discordId` is a member of any of `guildIds`, asked of Discord through the interaction's
  * client (the host API has no member lookup; plan 5.5). A single-member fetch is a REST call and
@@ -44,16 +50,31 @@ export interface Interactionish {
  * a member forever. The in-server path below needs no lookup, so the REST calls are only for a DM,
  * another person, the web area, or a listed server's member acting from a server not listed. The
  * servers are asked together and the first yes answers at once; a no or unknown waits for them all.
+ *
+ * The role check (`TRACKER_GUILD_ROLES`, plan 1.1 and 5.5): in a server `roles` names roles for, a
+ * member counts only while they hold one of them, read off the member the same forced fetch returns
+ * (its role ids; the Guilds intent keeps the server's roles cached, no privileged intent). Lacking
+ * the role is a no for that server, exactly like not being in it -- so the web area and API tokens
+ * treat it as leaving. The in-server shortcut is skipped in such a server, since the interaction
+ * alone does not say which roles the person holds. `exempt` (the `TRACKER_ADMIN_DISCORD_IDS`
+ * admins) skip the role, never the membership, so a role misconfigured or taken away cannot lock the
+ * configured admins out. A member whose roles cannot be read is `unknown` for that server, and so is
+ * everyone when none of the roles named for a server exists in it (a mistyped or deleted role id):
+ * a configuration error refuses and is logged, it never signs anyone out of the web area.
  */
 export async function lookupMembership(
   interaction: Interactionish,
   guildIds: readonly string[] | null,
   discordId: string,
   log: PluginLog,
+  gate: RoleGate = { roles: null, exempt: new Set() },
 ): Promise<Membership> {
   if (guildIds === null) return "not-checked";
-  if (interaction.guildId !== null && guildIds.includes(interaction.guildId) && interaction.user.id === discordId) return "member";
-  const lookups = guildIds.map((guildId) => memberOf(interaction.client, guildId, discordId, log));
+  const rolesFor = (guildId: string): readonly string[] | null =>
+    gate.exempt.has(discordId) ? null : (gate.roles?.get(guildId) ?? null);
+  const here = interaction.guildId;
+  if (here !== null && guildIds.includes(here) && interaction.user.id === discordId && rolesFor(here) === null) return "member";
+  const lookups = guildIds.map((guildId) => memberOf(interaction.client, guildId, discordId, rolesFor(guildId), log));
   // The first yes answers at once, so a slow or hung server cannot hold up a member of another.
   const firstYes = new Promise<"member">((resolve) => {
     for (const l of lookups) void l.then((a) => a === "member" && resolve("member"));
@@ -62,11 +83,29 @@ export async function lookupMembership(
   return Promise.race([firstYes, all]);
 }
 
-async function memberOf(client: Interactionish["client"], guildId: string, discordId: string, log: PluginLog): Promise<"member" | "not-member" | "unknown"> {
+async function memberOf(
+  client: Interactionish["client"],
+  guildId: string,
+  discordId: string,
+  roleIds: readonly string[] | null,
+  log: PluginLog,
+): Promise<"member" | "not-member" | "unknown"> {
   try {
     const guild = await client.guilds.fetch(guildId);
-    await guild.members.fetch({ user: discordId, force: true });
-    return "member";
+    const member = await guild.members.fetch({ user: discordId, force: true });
+    if (roleIds === null) return "member";
+    const known = (guild as { roles?: { cache?: { has?: unknown } } }).roles?.cache;
+    if (typeof known?.has === "function" && !roleIds.some((id) => (known.has as (id: string) => boolean).call(known, id))) {
+      log.warn(`none of TRACKER_GUILD_ROLES's roles for ${guildId} exists in that server`);
+      return "unknown";
+    }
+    const held = (member as { roles?: { cache?: { has?: unknown } } } | null)?.roles?.cache;
+    if (typeof held?.has !== "function") {
+      log.warn(`could not read the roles of a member of ${guildId}`);
+      return "unknown";
+    }
+    const has = held.has as (id: string) => boolean;
+    return roleIds.some((id) => has.call(held, id)) ? "member" : "not-member";
   } catch (err) {
     const code = (err as { code?: unknown }).code;
     if (code === UNKNOWN_MEMBER || code === UNKNOWN_USER) return "not-member";
