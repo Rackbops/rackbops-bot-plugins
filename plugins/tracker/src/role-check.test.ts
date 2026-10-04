@@ -76,6 +76,10 @@ describe("parseGuildRoles", () => {
     expect(() => parseGuildRoles(`${GUILD}:admins`, [GUILD])).toThrow(`"${GUILD}:admins" is not a serverId:roleId pair`);
   });
 
+  it("refuses the server's own id as its role: that is @everyone", () => {
+    expect(() => parseGuildRoles(`${GUILD}:${GUILD}`, [GUILD])).toThrow("@everyone");
+  });
+
   it("refuses a server the membership gate does not ask, or no membership gate at all", () => {
     expect(() => parseGuildRoles(`${GUILD_B}:${ROLE}`, [GUILD])).toThrow(`server ${GUILD_B} is not in TRACKER_GUILD_ID`);
     expect(() => parseGuildRoles(`${GUILD}:${ROLE}`, null)).toThrow(`server ${GUILD} is not in TRACKER_GUILD_ID`);
@@ -121,12 +125,30 @@ describe("lookupMembership with roles", () => {
     expect(await lookupMembership(at(null, notIn, ADMIN), [GUILD], ADMIN, log, g)).toBe("not-member");
   });
 
-  it("a role id the server does not have is unknown for everyone, logged, never a no", async () => {
+  it("no named role existing in the server is unknown for everyone, logged once, never a no", async () => {
+    // A server id no other test uses: the configuration warnings are logged once per start.
+    const S = "123456789012345678";
     const warnings: string[] = [];
-    const c = client({ [GUILD]: { members: { [LARRY]: [ROLE] }, roles: [OTHER_ROLE] } });
-    const g = gate(`${GUILD}:${ROLE}`, [GUILD]);
-    expect(await lookupMembership(at(null, c), [GUILD], LARRY, { ...log, warn: (m: string) => void warnings.push(m) }, g)).toBe("unknown");
-    expect(warnings).toEqual([`none of TRACKER_GUILD_ROLES's roles for ${GUILD} exists in that server`]);
+    const warnLog = { ...log, warn: (m: string) => void warnings.push(m) };
+    const c = client({ [S]: { members: { [LARRY]: [ROLE] }, roles: [OTHER_ROLE] } });
+    const g = gate(`${S}:${ROLE}`, [S]);
+    expect(await lookupMembership(at(null, c), [S], LARRY, warnLog, g)).toBe("unknown");
+    expect(await lookupMembership(at(null, c), [S], LARRY, warnLog, g)).toBe("unknown");
+    expect(warnings).toEqual([
+      `TRACKER_GUILD_ROLES names role ${ROLE}, which ${S} does not have`,
+      `none of TRACKER_GUILD_ROLES's roles for ${S} exists in that server`,
+    ]);
+  });
+
+  it("one of two named roles missing: the other still decides, and the missing one is logged once", async () => {
+    const S = "234567890123456789";
+    const warnings: string[] = [];
+    const warnLog = { ...log, warn: (m: string) => void warnings.push(m) };
+    const c = client({ [S]: { members: { [LARRY]: [ROLE_2], [CURLY]: [] }, roles: [ROLE_2] } });
+    const g = gate(`${S}:${ROLE},${S}:${ROLE_2}`, [S]);
+    expect(await lookupMembership(at(null, c), [S], LARRY, warnLog, g)).toBe("member");
+    expect(await lookupMembership(at(null, c), [S], CURLY, warnLog, g)).toBe("not-member");
+    expect(warnings).toEqual([`TRACKER_GUILD_ROLES names role ${ROLE}, which ${S} does not have`]);
   });
 
   it("a member whose roles cannot be read is unknown, never a no", async () => {

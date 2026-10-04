@@ -60,7 +60,9 @@ export interface RoleGate {
  * admins) skip the role, never the membership, so a role misconfigured or taken away cannot lock the
  * configured admins out. A member whose roles cannot be read is `unknown` for that server, and so is
  * everyone when none of the roles named for a server exists in it (a mistyped or deleted role id):
- * a configuration error refuses and is logged, it never signs anyone out of the web area.
+ * a configuration error refuses rather than answering no, so it revokes no API token and ends no web
+ * session at once (a web session still ends once its 24-hour grace runs out, as in any outage). A
+ * named role the server lacks, and a server with none of its roles, are each logged once per start.
  */
 export async function lookupMembership(
   interaction: Interactionish,
@@ -95,9 +97,15 @@ async function memberOf(
     const member = await guild.members.fetch({ user: discordId, force: true });
     if (roleIds === null) return "member";
     const known = (guild as { roles?: { cache?: { has?: unknown } } }).roles?.cache;
-    if (typeof known?.has === "function" && !roleIds.some((id) => (known.has as (id: string) => boolean).call(known, id))) {
-      log.warn(`none of TRACKER_GUILD_ROLES's roles for ${guildId} exists in that server`);
-      return "unknown";
+    if (typeof known?.has === "function") {
+      const exists = (id: string) => (known.has as (id: string) => boolean).call(known, id);
+      for (const id of roleIds) {
+        if (!exists(id)) warnOnce(log, `role ${id}@${guildId}`, `TRACKER_GUILD_ROLES names role ${id}, which ${guildId} does not have`);
+      }
+      if (!roleIds.some(exists)) {
+        warnOnce(log, `none@${guildId}`, `none of TRACKER_GUILD_ROLES's roles for ${guildId} exists in that server`);
+        return "unknown";
+      }
     }
     const held = (member as { roles?: { cache?: { has?: unknown } } } | null)?.roles?.cache;
     if (typeof held?.has !== "function") {
@@ -112,6 +120,14 @@ async function memberOf(
     log.warn(`could not check membership of ${guildId}: ${err instanceof Error ? err.message : String(err)}`);
     return "unknown";
   }
+}
+
+/** Configuration warnings already logged, so a broken role does not log on every lookup. */
+const warned = new Set<string>();
+function warnOnce(log: PluginLog, key: string, message: string) {
+  if (warned.has(key)) return;
+  warned.add(key);
+  log.warn(message);
 }
 
 export type Queue = <T>(fn: () => Promise<T>) => Promise<T>;

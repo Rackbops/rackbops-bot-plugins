@@ -20,7 +20,7 @@ export type Membership = "member" | "not-member" | "unknown" | "not-checked";
 
 export type Need = "admitted" | "registered" | "admin";
 
-export const NOT_MEMBER = "This tracker is only for members of its server who have its role, where it asks for one.";
+export const NOT_MEMBER = "This tracker is only for members of its server (with its role, where it asks for one).";
 export const MEMBERSHIP_UNKNOWN = "I could not check that you are a member of this tracker's server. Try again in a minute.";
 export const NOT_ADMITTED = "You are not on this tracker's list yet: ask an admin to `/allow` you.";
 export const NOT_REGISTERED = "Run `/register` first: it sets when your reminders reach you.";
@@ -69,7 +69,7 @@ export type GuildRoles = ReadonlyMap<string, readonly string[]>;
  * named twice takes either role); a server in `TRACKER_GUILD_ID` that is not named here stays
  * membership-only. Every server named must be in `TRACKER_GUILD_ID` -- a role check without the
  * membership gate, or for a server that gate does not ask, would silently check nothing -- and
- * anything else refuses to load, naming the entry. Spaces around an entry or a colon are ignored.
+ * anything else (the server's own id as its role, which is @everyone) refuses to load, naming the entry. Spaces around an entry or a colon are ignored.
  */
 export function parseGuildRoles(raw: string | undefined, guildIds: readonly string[] | null): GuildRoles | null {
   if (raw === undefined || raw.trim() === "") return null;
@@ -80,6 +80,8 @@ export function parseGuildRoles(raw: string | undefined, guildIds: readonly stri
     if (parts.length !== 2 || !guildId || !roleId || !/^[0-9]{17,20}$/.test(guildId) || !/^[0-9]{17,20}$/.test(roleId)) {
       throw new Error(`TRACKER_GUILD_ROLES: "${entry.trim()}" is not a serverId:roleId pair`);
     }
+    // A server's own id is its @everyone role, which every member holds: it would check nothing.
+    if (roleId === guildId) throw new Error(`TRACKER_GUILD_ROLES: "${entry.trim()}" names the server's @everyone role, which every member has`);
     if (!guildIds?.includes(guildId)) throw new Error(`TRACKER_GUILD_ROLES: server ${guildId} is not in TRACKER_GUILD_ID`);
     const list = roles.get(guildId) ?? [];
     if (!list.includes(roleId)) list.push(roleId);

@@ -10,10 +10,10 @@
   gate already makes (no privileged intent); a `TRACKER_GUILD_ID` server not named stays
   membership-only, and every server named must be in `TRACKER_GUILD_ID` or the plugin refuses to
   load. The `TRACKER_ADMIN_DISCORD_IDS` admins skip the role, never the membership. Lacking the role
-  is exactly like leaving the server: commands, buttons and `/allow` refuse, the web area and API
+  is exactly like leaving the server: commands, buttons, `/allow` and `/task share` refuse, the web area and API
   tokens sign out and revoke on their next re-check, and the person's tasks, history and DMs stay.
-  A role id the server does not have is a logged unknown (refused, never revoked). Unset = as
-  before.
+  When none of a server's named roles exists there, the answer is a logged unknown (refused, never
+  a no); a server's own id (@everyone) refuses to load. Unset = as before.
 
 ### Changed
 
