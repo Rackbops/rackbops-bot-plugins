@@ -167,6 +167,9 @@ describe("the judge's runs", () => {
     expect(retry.prompt).toContain("1. A");
     const scheduled = (await type.prepare?.(ctx("2026-10-02T00:00:00.000Z", pending))) as { prompt?: string };
     expect(scheduled.prompt).toContain("1. A");
+    // A retry long overdue (its follow-up lost) is taken over by the next scheduled run.
+    const lost = (await type.prepare?.(ctx("2026-10-02T00:00:00.000Z", { ...pending, failures: 1, retryAt: "2020-01-01T00:00:00.000Z" }))) as { prompt?: string };
+    expect(lost.prompt).toContain("1. A");
   });
 
   it("counts a read that throws as a miss, and neither tells nor remembers a listing an edit put over the limit", async () => {
@@ -179,6 +182,10 @@ describe("the judge's runs", () => {
     expect(done.notify).toBeUndefined();
     expect(done.state.reported).toEqual([]);
     expect(done.state.pending).toEqual([]);
+    const failed = { kind: "budget_cap", detail: "over", durationMs: 1 } as const;
+    const gave = (await type.finish?.(ctx("followup:o1", pending, { source: "page", target: SHOP, maxPrice: 25 }), failed)) as { notify?: unknown; state: { reported: string[] } };
+    expect(gave.notify).toBeUndefined();
+    expect(gave.state.reported).toEqual([]);
   });
 });
 

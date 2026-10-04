@@ -73,6 +73,8 @@ export const JUDGE_MAX_TURNS = 12;
 export const JUDGE_MAX_BUDGET_USD = 0.5;
 export const JUDGE_TIMEOUT_MS = 300_000;
 
+/** How long past its due time a waiting retry is left to its own follow-up before a scheduled run takes it. */
+export const RETRY_GRACE_MS = 30 * 60_000;
 const WHY_CHARS = 200;
 const SELLER_CHARS = 200;
 const PENDING_TITLE = 150;
@@ -83,6 +85,8 @@ export interface JudgeState extends WantState {
   pending: Listing[];
   /** Failed tries of the current look. */
   failures: number;
+  /** When the waiting retry is due (ISO), while `failures` > 0. */
+  retryAt?: string;
 }
 
 export interface Verdict {
@@ -140,7 +144,8 @@ export function judgeState(value: unknown): JudgeState {
   const s = isObj(value) ? value : {};
   const pending = (Array.isArray(s.pending) ? s.pending : []).map(pendingListing).filter((l): l is Listing => l !== null).slice(0, MAX_NEW_PER_RUN);
   const failures = typeof s.failures === "number" && s.failures >= 0 ? s.failures : 0;
-  return { ...base, pending, failures };
+  const retryAt = typeof s.retryAt === "string" && Number.isFinite(Date.parse(s.retryAt)) ? s.retryAt : undefined;
+  return { ...base, pending, failures, ...(retryAt && failures > 0 ? { retryAt } : {}) };
 }
 
 /**
@@ -254,6 +259,7 @@ function settled(state: JudgeState, told: number): JudgeState {
     told: state.told + told,
     pending: [],
     failures: 0,
+    retryAt: undefined,
   };
 }
 
@@ -274,14 +280,18 @@ function judgeFailed(ctx: RunContext<WantConfig>, state: JudgeState, kind: Failu
   const summary = clean(`judge ${kind} (try ${failures}): ${detail}`, 300, true);
   if (RETRIED.has(kind) && failures < MAX_TRIES) {
     const wait = kind === "auth_failed" ? AUTH_RETRY_MS : 0;
-    return { state: { ...state, failures }, followUp: wait > 0 ? { at: new Date(ctx.now.getTime() + wait).toISOString() } : {}, summary };
+    const at = new Date(ctx.now.getTime() + wait).toISOString();
+    return { state: { ...state, failures, retryAt: at }, followUp: wait > 0 ? { at } : {}, summary };
   }
   const reason = SAID[kind] ?? "the check failed";
+  // As `judged`: a listing an edit put outside the limits is neither sent nor remembered.
+  const within = state.pending.filter((l) => withinLimits(l, ctx.config));
+  const kept = { ...state, pending: within };
   return {
-    state: settled(state, state.pending.length),
-    notify: { text: renderUnchecked(ctx.task.title, ctx.task.id, state.pending, reason, ctx.config), actions: ["done"] },
-    findings: state.pending.map((l) => listingFinding(l, ctx.config, priceText(l, ctx.config), ["unchecked"])),
-    summary: `${summary}; ${state.pending.length} sent unchecked`,
+    state: settled(kept, within.length),
+    ...(within.length > 0 ? { notify: { text: renderUnchecked(ctx.task.title, ctx.task.id, within, reason, ctx.config), actions: ["done"] as const } } : {}),
+    findings: within.map((l) => listingFinding(l, ctx.config, priceText(l, ctx.config), ["unchecked"])),
+    summary: `${summary}; ${within.length} sent unchecked`,
   };
 }
 
@@ -341,7 +351,9 @@ export function wantjudgeType(sources: Partial<Record<SourceId, Source>>, o: Jud
       if (state.pending.length > 0) {
         // A retry waits for its own follow-up (an auth failure's is an hour off): a scheduled run
         // that comes first leaves it be, so the backoff holds and the retry count stays true.
-        if (state.failures > 0 && !followUp) return { outcome: { summary: "a retry of the last look is waiting" } };
+        // Unless the retry is long overdue (its follow-up lost): then this run takes the look over.
+        const overdue = state.retryAt !== undefined && ctx.now.getTime() > Date.parse(state.retryAt) + RETRY_GRACE_MS;
+        if (state.failures > 0 && !followUp && !overdue) return { outcome: { summary: "a retry of the last look is waiting" } };
         return judgeJob(ctx.task.title, ctx.config, state.pending);
       }
       // A follow-up exists only to judge: with nothing pending (a scheduled run judged it first) it
