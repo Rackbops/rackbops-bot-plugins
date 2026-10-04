@@ -1,4 +1,4 @@
-import { clean, type Fetch } from "@rackbops/docket-core";
+import { clean, ExecutorUnavailableError, type Fetch } from "@rackbops/docket-core";
 import { parsePrice, safeUrl } from "@rackbops/docket-types";
 import { type Listing, MAX_LISTINGS, type Source, SourceMiss, SourceUnavailableError } from "./want-sources.js";
 
@@ -19,6 +19,12 @@ import { type Listing, MAX_LISTINGS, type Source, SourceMiss, SourceUnavailableE
 export const BGG_HOST = "boardgamegeek.com";
 export const BGG_SPACING_MS = 5_000;
 export const BGG_ATTRIBUTION = "via BoardGameGeek";
+/**
+ * BGG reads waiting their turn at most: one more is put back for the next tick (docket's
+ * `ExecutorUnavailableError` requeues a notify-lane run, not a miss), so many BGG watches due
+ * together cannot hold the poll tick -- and the price checks behind them -- for long.
+ */
+export const MAX_BGG_WAITING = 2;
 const MAX_TAG = 2_000;
 
 /** A BGG thing id from a bare number or a `boardgamegeek.com/boardgame/<id>/...` address, or null. */
@@ -54,53 +60,64 @@ function unescapeXml(s: string): string {
   });
 }
 
-/** The attributes of the first `<name ...>` tag in `xml` from `from` to `to`, or null. */
-function tagAttrs(xml: string, name: string, from: number, to: number): Record<string, string> | null {
-  let at = from;
-  while (at < to) {
+/** The attributes of each `<name ...>` tag in `xml` (one listing's text, or the head before the listings), in order. */
+function tagsAttrs(xml: string, name: string, limit = 50): Record<string, string>[] {
+  const out: Record<string, string>[] = [];
+  let at = 0;
+  while (out.length < limit) {
     const start = xml.indexOf(`<${name}`, at);
-    if (start < 0 || start >= to) return null;
-    const after = xml.charAt(start + name.length + 1);
+    if (start < 0) break;
     at = start + name.length + 1;
+    const after = xml.charAt(at);
     if (after !== " " && after !== "/" && after !== ">" && after !== "\t" && after !== "\n" && after !== "\r") continue;
-    const end = xml.indexOf(">", start);
-    if (end < 0 || end > to || end - start > MAX_TAG) return null;
+    const end = xml.indexOf(">", at);
+    if (end < 0 || end - start > MAX_TAG) break;
     const attrs: Record<string, string> = {};
     for (const m of xml.slice(start, end).matchAll(/([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*"([^"]*)"/g)) {
       attrs[(m[1] ?? "").toLowerCase()] = unescapeXml(m[2] ?? "");
     }
-    return attrs;
+    out.push(attrs);
+    at = end + 1;
   }
-  return null;
+  return out;
 }
+
+const first = (xml: string, name: string): Record<string, string> | undefined => tagsAttrs(xml, name, 1)[0];
+
+/** `<listing>` elements looked at in one answer, kept or not: the bound on the walk. */
+export const MAX_SCANNED = 1_000;
 
 /**
  * The marketplace listings in a `thing` answer: each `<listing>` inside `<marketplacelistings>`,
- * with its `price` (`currency`, `value`), `condition`, `notes` and `link` (`href`), titled by the
- * thing's primary `<name>`. A listing without a usable link is dropped. Pure.
+ * with its `price` (`currency`, `value`), `condition` and `link` (`href`), titled by the thing's
+ * primary `<name>`; a seller's `notes` are not read (free text, never put in a DM). A listing without
+ * a usable link is dropped. Each listing's tags are looked for only inside that listing's own text,
+ * and at most `MAX_SCANNED` listings are looked at, so the walk is linear in the answer. Pure.
  */
 export function parseMarketplace(xml: string): Listing[] {
-  const name = tagAttrs(xml, "name", 0, xml.length);
-  const title = clean(name?.value ?? "", 150, true) || "A BGG listing";
-  const out: Listing[] = [];
   const open = xml.indexOf("<marketplacelistings");
+  const head = open < 0 ? xml.slice(0, 200_000) : xml.slice(0, open);
+  const names = tagsAttrs(head, "name");
+  const primary = names.find((n) => n.type === "primary") ?? names[0];
+  const title = clean(primary?.value ?? "", 150, true) || "A BGG listing";
+  const out: Listing[] = [];
   if (open < 0) return out;
   const close = xml.indexOf("</marketplacelistings>", open);
   const stop = close < 0 ? xml.length : close;
   let at = open;
-  while (out.length < MAX_LISTINGS) {
+  for (let scanned = 0; scanned < MAX_SCANNED && out.length < MAX_LISTINGS; scanned++) {
     const start = xml.indexOf("<listing>", at);
     if (start < 0 || start >= stop) break;
     const endTag = xml.indexOf("</listing>", start);
     const end = endTag < 0 || endTag > stop ? stop : endTag;
     at = end + 1;
-    const link = tagAttrs(xml, "link", start, end);
-    const url = safeUrl(link?.href ?? "");
+    const one = xml.slice(start, end);
+    const url = safeUrl(first(one, "link")?.href ?? "");
     if (!url) continue;
-    const price = tagAttrs(xml, "price", start, end);
+    const price = first(one, "price");
     const value = price?.value !== undefined ? parsePrice(price.value) : null;
     const currency = (price?.currency ?? "").trim().toUpperCase();
-    const condition = clean(tagAttrs(xml, "condition", start, end)?.value ?? "", 40, true);
+    const condition = clean(first(one, "condition")?.value ?? "", 40, true);
     out.push({
       id: `bgg:${url}`,
       title,
@@ -115,7 +132,7 @@ export function parseMarketplace(xml: string): Listing[] {
 
 export interface BggOptions {
   token: string;
-  /** Raw bodies (fetch.ts's `raw`): the XML as sent, fenced like every other read. */
+  /** Raw bodies with no redirects followed (fetch.ts's `raw` and `noRedirects`): the XML as sent, fenced like every other read, and the token never leaves BGG's host. */
   fetch: Fetch;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -127,6 +144,7 @@ export function bggSource(o: BggOptions): Source {
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let last = Number.NEGATIVE_INFINITY;
   let turn: Promise<unknown> = Promise.resolve();
+  let waiting = 0;
   const request = async (id: number): Promise<Listing[]> => {
     const wait = last + BGG_SPACING_MS - now();
     if (wait > 0) await sleep(wait);
@@ -144,6 +162,7 @@ export function bggSource(o: BggOptions): Source {
     }
     if (status === 401 || status === 403) throw new SourceUnavailableError("BGG rejected the token");
     if (status === 202 || status === 429 || status >= 500) throw new SourceMiss(`BGG is busy (HTTP ${status})`);
+    // A redirect is not followed (the token goes to boardgamegeek.com only): it is a miss like any other answer.
     if (status !== 200) throw new SourceMiss(`BGG answered HTTP ${status}`);
     return parseMarketplace(body);
   };
@@ -152,7 +171,9 @@ export function bggSource(o: BggOptions): Source {
     search(target) {
       const id = parseBggThingId(target);
       if (id === null) return Promise.reject(new SourceMiss("that is not a BGG game"));
-      const mine = turn.then(() => request(id));
+      if (waiting >= MAX_BGG_WAITING) return Promise.reject(new ExecutorUnavailableError("BGG reads are spaced out; this one waits for the next tick"));
+      waiting++;
+      const mine = turn.then(() => request(id)).finally(() => void waiting--);
       turn = mine.catch(() => {});
       return mine;
     },

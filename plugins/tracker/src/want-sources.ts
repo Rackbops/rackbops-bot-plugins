@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { clean, type Fetch } from "@rackbops/docket-core";
 import { jsonLdBlocks, priceFromJson, safeUrl } from "@rackbops/docket-types";
+import { NEVER_EBAY } from "./fetch.js";
 
 /**
  * The want-list watcher's sources (category 2, plan 1.2 row 2; rackbops-bot-plugins#83): where a
@@ -59,10 +60,7 @@ export function listingKey(id: string): string {
   return createHash("sha256").update(id).digest("hex").slice(0, 32);
 }
 
-/** eBay's own hosts (and its short links): never read, by rule (plan item 20; roshne, 2026-09-29). */
-export function isEbayHost(host: string): boolean {
-  return /(^|\.)ebay\.[a-z]{2,3}(\.[a-z]{2})?$/i.test(host.replace(/\.$/, ""));
-}
+export { isEbayHost } from "./fetch.js";
 
 type Json = Record<string, unknown>;
 const isObj = (v: unknown): v is Json => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -93,11 +91,19 @@ function firstOffer(offers: unknown): Json | null {
   return isObj(offers) ? offers : null;
 }
 
+/**
+ * Query parameters a shop adds per view or per search (Shopify's `_pos`/`_sid`/`_ss`, Google's
+ * `srsltid`, the `utm_*` family and the click ids): dropped from a listing's address, so one listing
+ * keeps one id from poll to poll and is not sent again as new.
+ */
+const PER_VIEW = /^(utm_[a-z]+|_pos|_sid|_ss|_psq|_v|srsltid|gclid|gbraid|wbraid|fbclid|msclkid|mc_cid|mc_eid|ref_|pf_rd_[a-z]+|pd_rd_[a-z]+|qid|sr|crid|sprefix)$/i;
+
 function absolute(raw: unknown, base: string): string | null {
   if (typeof raw !== "string" || raw.trim() === "") return null;
   try {
     const u = new URL(raw.trim(), base);
     u.hash = "";
+    for (const key of [...u.searchParams.keys()]) if (PER_VIEW.test(key)) u.searchParams.delete(key);
     return safeUrl(u.toString());
   } catch {
     return null;
@@ -130,6 +136,12 @@ function listingOf(node: Json, base: string, fallbackUrl: unknown): Listing | nu
  * address of its own is the page itself (a product page). Pure.
  */
 export function listingsFromJsonLd(html: string, pageUrl: string): Listing[] {
+  return readListings(html, pageUrl).listings;
+}
+
+/** `listingsFromJsonLd`, and how many `ItemList`s the page declares: an empty one is a search with no results, not an unreadable page. */
+export function readListings(html: string, pageUrl: string): { listings: Listing[]; lists: number } {
+  let lists = 0;
   const out: Listing[] = [];
   const seen = new Set<string>();
   const add = (l: Listing | null) => {
@@ -146,6 +158,7 @@ export function listingsFromJsonLd(html: string, pageUrl: string): Listing[] {
     if (!isObj(node)) return;
     const types = typesOf(node);
     if (types.includes("ItemList")) {
+      lists++;
       const elements = Array.isArray(node.itemListElement) ? node.itemListElement : [node.itemListElement];
       for (const el of elements) {
         if (!isObj(el)) continue;
@@ -160,7 +173,7 @@ export function listingsFromJsonLd(html: string, pageUrl: string): Listing[] {
     if (isObj(node.mainEntity)) walk(node.mainEntity, depth + 1);
   };
   for (const block of jsonLdBlocks(html)) walk(block, 0);
-  return out;
+  return { listings: out, lists };
 }
 
 /** The `page` source: the owner's page through the fenced Fetch port, structured data only. */
@@ -170,7 +183,7 @@ export const pageSource: Source = {
     if (!fetch) throw new SourceMiss("this bot reads no pages");
     let body: string;
     try {
-      const response = await fetch.get(target);
+      const response = await fetch.get(target, { [NEVER_EBAY]: "1" });
       if (response.status !== 200) throw new SourceMiss(`HTTP ${response.status}`);
       body = response.body;
     } catch (err) {
@@ -178,8 +191,9 @@ export const pageSource: Source = {
       // The cause is kept: `/want`'s first read tells a refused page from one that failed this once.
       throw new SourceMiss(`the read failed: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
     }
-    const listings = listingsFromJsonLd(body, target);
-    if (listings.length === 0) throw new SourceMiss("no listings in the page's structured data");
+    const { listings, lists } = readListings(body, target);
+    // A search with nothing for sale (the usual state of a want) still declares its list.
+    if (listings.length === 0 && lists === 0) throw new SourceMiss("no listings in the page's structured data");
     return listings;
   },
 };

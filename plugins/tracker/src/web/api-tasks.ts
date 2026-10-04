@@ -6,6 +6,7 @@ import { TASK_BUSY } from "../locks.js";
 import { FINISHED, ownLiveTask } from "../manage.js";
 import { RESEARCH_OFF } from "../research.js";
 import { SCOUT_OFF } from "../scout.js";
+import { NO_BGG } from "../want.js";
 import { actOn, editableTask, makeTask, READING, saveEdit, type TaskAction, type Writer, type Written } from "./editor.js";
 import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_TYPES, type NewType } from "./editor-pages.js";
 import { editValues } from "./form-input.js";
@@ -95,6 +96,11 @@ export function asFields(body: Record<string, unknown>, type: NewType, mode: "ne
     const f = fields.get(key);
     if (!f) return problem(400, "unknown_field", `\`${key.slice(0, 40)}\` is not a field of a ${type}${mode === "edit" ? " edit" : ""}. GET types lists them.`);
     const kind = jsonKind(f);
+    // A watch's top price is the one number an edit can clear: `null` sends it empty, as the form does.
+    if (value === null && mode === "edit" && type === "wantlist" && key === "max") {
+      form.set(key, "");
+      continue;
+    }
     if (kind === "string") {
       if (typeof value !== "string") return problem(400, "invalid", `\`${key}\` must be a string.`);
       form.set(key, value);
@@ -115,7 +121,8 @@ export function refusal(error: string): ApiAnswer {
   if (error === NOT_EDITABLE) return problem(409, "conflict", error);
   if (error === RESEARCH_OFF || error === SCOUT_OFF) return problem(503, "unavailable", error);
   if (error === FINISHED || /^That task is [a-z]+, not [a-z]+\.$/.test(error)) return problem(409, "conflict", error);
-  if (/^You already (have|track) [0-9]+ /.test(error)) return problem(409, "limit_reached", error);
+  if (/^You already (have|track|watch for) [0-9]+ /.test(error)) return problem(409, "limit_reached", error);
+  if (error === NO_BGG) return problem(503, "unavailable", error);
   if (/ (is|are) not available on this bot\.$/.test(error)) return problem(503, "unavailable", error);
   return problem(400, "invalid", error);
 }
@@ -148,6 +155,8 @@ export async function taskJson(d: TrackerDeps, user: User, task: Task) {
       if (f.name === "when") continue; // an edit's "keep the time"; `nextAt` says when
       const raw = values[f.name];
       if (raw === undefined) continue;
+      // An unset number (a watch with no top price) is left out, not read as 0.
+      if (jsonKind(f) !== "string" && raw === "") continue;
       settings[f.name] = jsonKind(f) === "string" ? raw : Number(raw);
     }
   }

@@ -34,18 +34,28 @@ export interface WantState {
   misses: number;
   /** Listings DMed in all. */
   told: number;
+  /** Whether this run of misses has been told about already: once per run, whatever the reason. */
+  warned: boolean;
 }
 
 export const MAX_REPORTED = 500;
 export const SHOWN_IN_DM = 5;
+/** New listings taken in one run, DMed and kept as findings; any more wait for the next run. */
+export const MAX_NEW_PER_RUN = 20;
+
+/** Text from a shop, with any address in it broken, so Discord neither links nor previews it; only the listing's own link does. */
+function inert(text: string): string {
+  return text.replace(/([a-z][a-z0-9+.-]*):\/\//gi, "$1:/\u200b/").replace(/\bwww\./gi, "www\u200b.");
+}
 
 export function wantState(value: unknown): WantState {
   const s = value as Partial<WantState> | null;
-  if (!s || typeof s !== "object") return { reported: [], misses: 0, told: 0 };
+  if (!s || typeof s !== "object") return { reported: [], misses: 0, told: 0, warned: false };
   return {
     reported: Array.isArray(s.reported) ? s.reported.filter((k): k is string => typeof k === "string").slice(-MAX_REPORTED) : [],
     misses: typeof s.misses === "number" ? s.misses : 0,
     told: typeof s.told === "number" ? s.told : 0,
+    warned: s.warned === true,
   };
 }
 
@@ -62,7 +72,7 @@ function priceText(l: Listing, config: WantConfig): string {
 
 /** One DM line: what, how much, its condition and seller, then the link in <...> (no embed). */
 export function listingLine(l: Listing, config: WantConfig): string {
-  const parts = [l.title, priceText(l, config), ...(l.condition ? [l.condition] : []), ...(l.seller ? [`sold by ${l.seller}`] : [])];
+  const parts = [inert(l.title), priceText(l, config), ...(l.condition ? [inert(l.condition)] : []), ...(l.seller ? [`sold by ${inert(l.seller)}`] : [])];
   const via = config.source === "bgg" ? ` (${BGG_ATTRIBUTION})` : "";
   return `- ${parts.join(" -- ")} <${l.url}>${via}`;
 }
@@ -78,8 +88,9 @@ export function renderWant(title: string, taskId: string, fresh: readonly Listin
 function miss(ctx: RunContext<WantConfig>, state: WantState, err: unknown): Outcome {
   const reason = err instanceof Error ? err.message : String(err);
   const misses = state.misses + 1;
-  const outcome: Outcome = { state: { ...state, misses }, summary: `nothing read: ${reason}` };
-  if (misses === MISSES_BEFORE_TELLING || (err instanceof SourceUnavailableError && state.misses === 0)) {
+  const tell = !state.warned && (misses >= MISSES_BEFORE_TELLING || err instanceof SourceUnavailableError);
+  const outcome: Outcome = { state: { ...state, misses, warned: state.warned || tell }, summary: `nothing read: ${reason}` };
+  if (tell) {
     const where = ctx.config.source === "bgg" ? "BoardGameGeek" : ctx.config.target;
     outcome.notify = {
       text: clip(
@@ -120,9 +131,9 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
       }
       const told = new Set(state.reported);
       const within = listings.filter((l) => withinLimits(l, ctx.config));
-      const fresh = within.filter((l) => !told.has(listingKey(l.id)));
+      const fresh = within.filter((l) => !told.has(listingKey(l.id))).slice(0, MAX_NEW_PER_RUN);
       const summary = `${listings.length} listed, ${within.length} within limits, ${fresh.length} new`;
-      if (fresh.length === 0) return { state: { ...state, misses: 0 }, summary };
+      if (fresh.length === 0) return { state: { ...state, misses: 0, warned: false }, summary };
       const findings: Finding[] = fresh.map((l) => ({
         text: clip(`${l.title} -- ${priceText(l, ctx.config)}${l.condition ? ` -- ${l.condition}` : ""}`, 400),
         source: l.url,
@@ -130,7 +141,7 @@ export function wantlistType(sources: Partial<Record<SourceId, Source>>): TaskTy
         tags: ["wantlist", ctx.config.source],
       }));
       return {
-        state: { reported: [...state.reported, ...fresh.map((l) => listingKey(l.id))].slice(-MAX_REPORTED), misses: 0, told: state.told + fresh.length },
+        state: { reported: [...state.reported, ...fresh.map((l) => listingKey(l.id))].slice(-MAX_REPORTED), misses: 0, told: state.told + fresh.length, warned: false },
         notify: { text: renderWant(ctx.task.title, ctx.task.id, fresh, ctx.config), actions: ["done"] },
         findings,
         summary,

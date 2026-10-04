@@ -23,6 +23,19 @@
   refusing the token, at once). At most 20 watches per person. The web editor (`/new/wantlist`,
   Edit: name, top price, currency, hours) and the task API (`type: "wantlist"`) take the same
   fields by the same rules.
+- Fences for it: a page read with the watcher refuses eBay on every redirect hop, not only the
+  pasted address; the BGG read follows no redirect at all, and the fenced Fetch port never carries
+  a caller's `Authorization` (or cookie) to another origin; the BGG parser looks for each
+  listing's tags only inside that listing, so a hostile 3 MB answer parses in linear time; a third
+  BGG read waiting its turn is put back for the next tick, so many BGG watches cannot hold the poll
+  tick; at most 20 new listings a run; shop text in a DM has any address in it broken, so only the
+  listing's own link is a link; per-view query parameters (`utm_*`, Shopify's `_pos`/`_sid`/`_ss`,
+  `srsltid`, click ids) are dropped from a listing's address, so it keeps one id. A search page
+  whose list is empty is a search with no results, not a miss. A watch whose source cannot be read
+  at all (BGG refusing the token) tells the owner once per run of misses.
+- The task API answers `409 limit_reached` at the watch cap and `503` for BGG while it is off,
+  takes `max: null` on a watch's `PATCH` to clear the top price, and leaves an unset number out of a
+  task's `settings` instead of showing 0.
 - The wantlist type is defined in this plugin (`src/wantlist-type.ts`), as the scout's is. The
   model's judgment of new candidates and sellers (plan 5.4) is a later piece.
 

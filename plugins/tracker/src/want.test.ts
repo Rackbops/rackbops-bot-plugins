@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from "bun:test";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../packages/api/contract.js";
 import { FetchRefusedError } from "./fetch.js";
-import { call, cleanup, csrfOf, LARRY, ORIGIN, people, press, signIn, slash, world } from "./web/harness.js";
-import { BGG_SPACING_MS, bggSource, bggThingUrl, parseBggThingId, parseMarketplace } from "./want-bgg.js";
+import { api, call, cleanup, csrfOf, LARRY, makeToken, ORIGIN, people, press, signIn, slash, world } from "./web/harness.js";
+import { BGG_SPACING_MS, bggSource, MAX_BGG_WAITING, bggThingUrl, parseBggThingId, parseMarketplace } from "./want-bgg.js";
 import { BGG_THING, shopSearch } from "./want-fixtures.js";
 import { isEbayHost, listingsFromJsonLd, type Listing, pageSource, type Source, SourceMiss, SourceUnavailableError } from "./want-sources.js";
 import { ebaySearchUrl, MAX_WANT_TASKS } from "./want.js";
@@ -73,6 +73,17 @@ describe("listingsFromJsonLd", () => {
     await expect(pageSource.search(SHOP, fetch)).rejects.toThrow("HTTP 503");
   });
 
+  it("keeps one id for a listing whose address carries per-view parameters, and an empty search is no miss", async () => {
+    const a = listingsFromJsonLd(shopSearch([{ name: "A", url: "/p/a?variant=2&_pos=1&_sid=abc&_ss=r&utm_source=x" }]), SHOP);
+    const b = listingsFromJsonLd(shopSearch([{ name: "A", url: "/p/a?variant=2&_pos=7&_sid=def&srsltid=zz" }]), SHOP);
+    expect(a[0]?.id).toBe("https://shop.example/p/a?variant=2");
+    expect(b[0]?.id).toBe(a[0]?.id);
+    const { s, fetch } = shop([]);
+    expect(await pageSource.search(SHOP, fetch)).toEqual([]);
+    s.body = "<html></html>";
+    await expect(pageSource.search(SHOP, fetch)).rejects.toThrow("no listings in the page's structured data");
+  });
+
   it("knows eBay's hosts", () => {
     for (const h of ["ebay.com", "www.ebay.com", "ebay.co.uk", "m.ebay.de", "ebay.us", "EBAY.COM."]) expect(isEbayHost(h)).toBe(true);
     for (const h of ["notebay.com", "ebay.example.org", "shop.example"]) expect(isEbayHost(h)).toBe(false);
@@ -123,6 +134,28 @@ describe("the BGG source", () => {
     const busy = source.search("300580", undefined);
     await expect(busy).rejects.toThrow("BGG is busy (HTTP 202)");
     await expect(busy).rejects.not.toThrow(SourceUnavailableError);
+    status = 302;
+    await expect(source.search("300580", undefined)).rejects.toThrow("BGG answered HTTP 302");
+  });
+
+  it("puts a third waiting read back for the next tick rather than queue it", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const fetch: Fetch = { async get() { await gate; return { status: 200, body: BGG_THING, headers: {} }; } };
+    const source = bggSource({ token: "t", fetch, now: () => 0, sleep: async () => {} });
+    const held = Array.from({ length: MAX_BGG_WAITING }, () => source.search("1", undefined));
+    await expect(source.search("1", undefined)).rejects.toThrow("waits for the next tick");
+    release();
+    expect(await Promise.all(held)).toHaveLength(MAX_BGG_WAITING);
+  });
+
+  it("parses a hostile 3 MB answer in linear time, and names the thing by its primary name", () => {
+    const hostile = `<items><item><name type="alternate" value="Other"/><name type="primary" value="Real"/><marketplacelistings>${"<listing></listing>".repeat(160_000)}</marketplacelistings></item></items>`;
+    const t0 = performance.now();
+    expect(parseMarketplace(hostile)).toEqual([]);
+    expect(performance.now() - t0).toBeLessThan(1500);
+    const named = parseMarketplace(BGG_THING.replace('<name type="primary" sortindex="1" value="Wingspan: Oceania Expansion" />', '<name type="alternate" value="Ozeanien" /><name type="primary" value="Wingspan: Oceania Expansion" />'));
+    expect(named[0]?.title).toBe("Wingspan: Oceania Expansion");
   });
 });
 
@@ -139,6 +172,14 @@ describe("the wantlist type's pieces", () => {
     expect(withinLimits(l("f"), { source: "page", target: SHOP })).toBe(true);
   });
 
+  it("breaks any address in a shop's text, so only the listing's own link is a link", () => {
+    const text = renderWant("W", "t1", [{ id: "a", title: "Deal https://phish.example/x www.phish.example", url: "https://x.example/a", seller: "see http://y.example" }], { source: "page", target: SHOP });
+    expect(text).not.toContain("https://phish");
+    expect(text).not.toContain("http://y");
+    expect(text).not.toContain("www.phish");
+    expect(text).toContain("<https://x.example/a>");
+  });
+
   it("shows five lines and says how many more, and BGG's lines name BGG", () => {
     const many = ["a", "b", "c", "d", "e", "f", "g"].map((id) => l(id, 1, "USD"));
     const text = renderWant("Wingspan", "t9", many, { source: "bgg", target: "1" });
@@ -148,7 +189,7 @@ describe("the wantlist type's pieces", () => {
   });
 
   it("reads back a state, capped, and a broken one as fresh", () => {
-    expect(wantState(null)).toEqual({ reported: [], misses: 0, told: 0 });
+    expect(wantState(null)).toEqual({ reported: [], misses: 0, told: 0, warned: false });
     expect(wantState({ reported: Array.from({ length: MAX_REPORTED + 5 }, (_, i) => `k${i}`), misses: 2, told: 7 }).reported).toHaveLength(MAX_REPORTED);
   });
 });
@@ -287,6 +328,38 @@ describe("/want", () => {
     expect(searched).toEqual(["300580"]);
     expect(content(w.sent, 0)).toContain("Oceania: 2 new listings.");
     expect(content(w.sent, 0)).toContain("<https://boardgamegeek.com/geekmarket/product/4100001> (via BoardGameGeek)");
+  });
+
+  it("tells the owner once when BGG cannot be read at all, not again at the third miss", async () => {
+    const bgg: Source = { id: "bgg", async search() { throw new SourceUnavailableError("BGG rejected the token"); } };
+    const w = await world({ fetch: shop([]).fetch, bgg });
+    await people(w.plugin);
+    await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "bgg", target: "300580" } });
+    for (let i = 0; i < 5; i++) {
+      await pollTick(w.plugin);
+      w.clock.advance(24 * 3600_000);
+    }
+    expect(w.sent).toHaveLength(1);
+    expect(content(w.sent, 0)).toContain("Oceania: I could read no listings from BoardGameGeek just now (BGG rejected the token).");
+  });
+
+  it("over the task API: the cap is 409, BGG off is 503, and a PATCH clears the top price with null", async () => {
+    const w = await world({ fetch: shop([OCEANIA]).fetch });
+    await people(w.plugin);
+    const jar = await signIn(w.plugin, LARRY);
+    const token = await makeToken(w, jar);
+    const post = (b: Record<string, unknown>) => api(w.plugin, "POST", "/tasks", { token, body: b });
+    expect((await post({ type: "wantlist", name: "W", source: "bgg", target: "1" })).status).toBe(503);
+    const made = await post({ type: "wantlist", name: "W", source: "page", target: SHOP, max: 40 });
+    expect(made.status).toBe(201);
+    expect((await made.json()).task).toMatchObject({ source: "page", target: SHOP, settings: { max: 40 } });
+    const cleared = await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { max: null } });
+    expect(cleared.status).toBe(200);
+    expect((await cleared.json()).task.settings.max).toBeUndefined();
+    for (let i = 1; i < MAX_WANT_TASKS; i++) expect((await post({ type: "wantlist", name: `W${i}`, source: "page", target: `${SHOP}&p=${i}` })).status).toBe(201);
+    const capped = await post({ type: "wantlist", name: "More", source: "page", target: SHOP });
+    expect(capped.status).toBe(409);
+    expect((await capped.json()).error.code).toBe("limit_reached");
   });
 
   it("caps live watches per person", async () => {

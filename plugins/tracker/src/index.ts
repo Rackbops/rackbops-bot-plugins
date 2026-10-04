@@ -120,7 +120,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const clock: Clock = options.clock ?? { now: () => new Date() };
   const bggToken = parseBggToken(host.env.TRACKER_BGG_TOKEN);
   // BGG's answers are XML, read by want-bgg.ts's own bounded parser: the raw body, fenced like every read.
-  const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createPageFetch({ raw: true }) }) : null);
+  const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createPageFetch({ raw: true, noRedirects: true }) }) : null);
   const types = options.types ?? (bgg ? { ...TRACKER_TYPES, wantlist: wantlistType({ page: pageSource, bgg }) as TaskType<unknown> } : TRACKER_TYPES);
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
