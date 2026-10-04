@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import { TASK_BUSY } from "../locks.js";
-import { MAX_CONTEXT_CHARS, MAX_LIVE_RESEARCH, MAX_QUESTION_CHARS, RESEARCH_OFF } from "../research.js";
+import { MAX_CONTEXT_CHARS, MAX_LIVE_RESEARCH, MAX_QUESTION_CHARS, RESEARCH_OFF, SHORT_QUESTION } from "../research.js";
 import { NOT_EDITABLE, NOT_FOUND_MESSAGE, refusal } from "./api-tasks.js";
 import { researchInput } from "./form-input.js";
 import { api, call, cleanup, csrfOf, CURLY, hidden, type Jar, LARRY, makeToken, ORIGIN, people, signIn, slash, world } from "./harness.js";
@@ -129,10 +129,11 @@ describe("research from the web editor", () => {
     const w = await setup();
     for (const [form, reason] of [
       [{ question: "  " }, "Say what to look into."],
+      [{ question: "0", context: "What is Q?" }, "Put the whole question in <code>question</code>: it needs at least 3 characters"],
       [{ question: `<b>"hi"</b>`, deadline: "blorp" }, "<code>deadline</code>:"],
       [{ question: `<b>"hi"</b>`, at: "tomorrow 9am", deadline: "tomorrow 8am" }, "The deadline has to be after the research starts."],
       [{ question: "x".repeat(MAX_QUESTION_CHARS + 1) }, `longer than ${MAX_QUESTION_CHARS} characters`],
-      [{ question: "hi", context: "x".repeat(MAX_CONTEXT_CHARS + 1) }, `<code>context</code> is longer than ${MAX_CONTEXT_CHARS} characters.`],
+      [{ question: "hello", context: "x".repeat(MAX_CONTEXT_CHARS + 1) }, `<code>context</code> is longer than ${MAX_CONTEXT_CHARS} characters.`],
     ] as const) {
       const res = await post(w.plugin, w.larry, w.csrf, "/new/research", form);
       expect(res.status).toBe(400);
@@ -147,7 +148,7 @@ describe("research from the web editor", () => {
 
   it("the waiting cap is /research's, counted across Discord and the web; pause, resume and delete work", async () => {
     const w = await setup();
-    for (let i = 0; i < MAX_LIVE_RESEARCH - 1; i++) await slash(w.plugin, "research", LARRY, { strings: { question: `Q${i}` } });
+    for (let i = 0; i < MAX_LIVE_RESEARCH - 1; i++) await slash(w.plugin, "research", LARRY, { strings: { question: `Question ${i}` } });
     expect((await post(w.plugin, w.larry, w.csrf, "/new/research", { question: "one more" })).status).toBe(303);
     const over = await post(w.plugin, w.larry, w.csrf, "/new/research", { question: "too many" });
     expect(over.status).toBe(400);
@@ -238,16 +239,19 @@ describe("research from the task API", () => {
 
   it("refusals: an unknown field by name, /research's own words as 400, and the waiting cap as 409", async () => {
     const w = await setup();
-    const unknown = await body(await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: "Q", model: "opus" } }));
+    const unknown = await body(await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: "What is Q?", model: "opus" } }));
     expect(unknown.error.code).toBe("unknown_field");
     const empty = await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: " " } });
     expect(empty.status).toBe(400);
     expect((await body(empty)).error).toEqual({ code: "invalid", message: "Say what to look into." });
+    const stray = await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: "0", context: "What is Q?" } });
+    expect(stray.status).toBe(400);
+    expect((await body(stray)).error).toEqual({ code: "invalid", message: SHORT_QUESTION });
     const typed = await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: 7 } });
     expect((await body(typed)).error.message).toBe("`question` must be a string.");
 
     for (let i = 0; i < MAX_LIVE_RESEARCH; i++) {
-      expect((await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: `Q${i}` } })).status).toBe(201);
+      expect((await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: `Question ${i}` } })).status).toBe(201);
     }
     const over = await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: "too many" } });
     expect(over.status).toBe(409);

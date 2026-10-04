@@ -603,7 +603,7 @@ describe("review fixes (slice 3)", () => {
       executeStarted: (p) => void started.push(p),
     });
     const execute = () => w.plugin.ticks!.find((t) => t.name === "execute")!.run(new AbortController().signal);
-    await slash(w.plugin, "research", CURLY, { strings: { question: "Q" } });
+    await slash(w.plugin, "research", CURLY, { strings: { question: "What is Q?" } });
     await slash(w.plugin, "remind", CURLY, { strings: { text: "curly-plants", when: "9am", repeat: "day" } });
     let release = () => {};
     w.delivery.hold = new Promise<void>((r) => (release = r));

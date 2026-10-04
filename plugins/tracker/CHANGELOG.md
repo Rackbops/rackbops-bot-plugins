@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.14.1] - 2026-10-04
+
+### Fixed
+
+- **`/research` refuses a stray question** (#82). A `question` shorter than 3 characters, or with
+  no letter in it, is refused before any task is made, with the same words from Discord, the web
+  editor and the task API: "Put the whole question in `question`: it needs at least 3 characters,
+  with a letter in it. `context` is only for background." Found live: on Clerk, task t2
+  (2026-10-04) went in with `0` as its question and the real question in `context`, so the reply
+  echoed "queued: 0" while the run answered the question in `context`. roshne chose to add the
+  guard ("Add the guard", 2026-10-04).
+
+### Schema
+
+- No migration. Still at 7.
+
 ## [0.14.0] - 2026-10-02
 
 ### Added
