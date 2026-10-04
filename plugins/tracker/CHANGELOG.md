@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.16.0] - 2026-10-04
+
+### Added
+
+- **The want-list watcher** (#83; plan E9, category 2 of plan 1.2). `/want name source [target]
+  [max] [currency] [hours]` watches for one wanted thing until you have it. `source: page` reads a
+  shop's listing or search page you paste (roshne, 2026-10-04, "Pages too"), through the same
+  fenced Fetch port as `/price`, and only its structured data: JSON-LD `ItemList`s of products and
+  standalone `Product`s, with name, address, price, currency, condition and seller. The page is
+  read once at once, and nothing is made unless it lists something. `source: bgg` reads a
+  BoardGameGeek game's marketplace through BGG's XML API with `TRACKER_BGG_TOKEN` (new, secret),
+  only while that is set: BGG has not approved the application yet, so the parser runs on a
+  hand-written fixture until a real response can be captured. `source: ebay` makes nothing: the
+  answer is an eBay search, with the top price in it, and how to save it on eBay, whose own alerts
+  do the watching; the tracker never reads eBay, and an eBay page is refused as a `page`.
+- Each watch runs on the `poll` tick every `hours` (default 12 for a page, 24 for BGG), with no
+  model, and DMs each listing within the limits that it has not DMed before -- up to 5 lines, the
+  rest in `/task history` -- with a Done button that ends the watch; each listing DMed is a
+  finding, and the newest 500 are remembered. A listing over the top price is not remembered, so
+  it is sent once it drops under. Three reads in a row with nothing tell the owner once (BGG
+  refusing the token, at once). At most 20 watches per person. The web editor (`/new/wantlist`,
+  Edit: name, top price, currency, hours) and the task API (`type: "wantlist"`) take the same
+  fields by the same rules.
+- Fences for it: a page read with the watcher refuses eBay on every redirect hop, not only the
+  pasted address; the BGG read follows no redirect at all, and the fenced Fetch port never carries
+  a caller's `Authorization` (or cookie) to another origin; the BGG parser looks for each
+  listing's tags only inside that listing, so a hostile 3 MB answer parses in linear time; a BGG read due
+  within 5 s of the last (or while one is in flight) is put back for the next tick rather than
+  waited on, so many BGG watches cannot hold the poll tick; at most 20 new listings a run; shop text in a DM has any address in it broken, so only the
+  listing's own link is a link; per-view query parameters (`utm_*`, Shopify's `_pos`/`_sid`/`_ss`,
+  `srsltid`, click ids) are dropped from a listing's address, so it keeps one id. A search page
+  whose list is empty is a search with no results, not a miss. A watch whose source cannot be read
+  at all (BGG refusing the token) tells the owner once per run of misses.
+- The task API answers `409 limit_reached` at the watch cap and `503` for BGG while it is off,
+  takes `max: null` on a watch's `PATCH` to clear the top price, and leaves an unset number out of a
+  task's `settings` instead of showing 0.
+- The wantlist type is defined in this plugin (`src/wantlist-type.ts`), as the scout's is. The
+  model's judgment of new candidates and sellers (plan 5.4) is a later piece.
+
+### Fixed
+
+- `/scout new` with `for` or `notes` set to `-` now leaves it empty, as `/scout edit` does,
+  rather than storing a dash.
+
+### Schema
+
+- No migration. Still at 7.
+
 ## [0.15.0] - 2026-10-04
 
 ### Added

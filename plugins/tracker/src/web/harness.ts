@@ -9,6 +9,7 @@ import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import type { Membership } from "../access.js";
 import { createPlugin } from "../index.js";
 import { HOST_CANNOT_MESSAGE } from "../notifier.js";
+import type { Source } from "../want-sources.js";
 
 /**
  * The web tests' harness (rackbops-bot-plugins#80), shared by web.test.ts and editor.test.ts and
@@ -52,6 +53,8 @@ export async function world(
     env?: Record<string, string>;
     cityHallFetch?: typeof fetch;
     executeStarted?: (work: Promise<void>) => void;
+    /** A BGG source, as if `TRACKER_BGG_TOKEN` were set (want-bgg.ts). */
+    bgg?: Source;
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "tracker-web-"));
@@ -100,6 +103,7 @@ export async function world(
       ...(opts.fetch ? { fetch: () => opts.fetch as Fetch } : {}),
       ...(opts.cityHallFetch ? { cityHallFetch: opts.cityHallFetch } : {}),
       ...(opts.executeStarted ? { executeStarted: opts.executeStarted } : {}),
+      ...(opts.bgg ? { bgg: opts.bgg } : {}),
     },
   );
   await plugin.activate!();

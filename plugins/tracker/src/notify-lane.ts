@@ -33,7 +33,7 @@ import { createDmNotifier } from "./notifier.js";
  */
 
 /** The notify-lane types that read the web; they run on the `poll` tick, never on `notify`. */
-export const FETCH_TYPES: ReadonlySet<string> = new Set(["price"]);
+export const FETCH_TYPES: ReadonlySet<string> = new Set(["price", "wantlist"]);
 
 /** Which due runs a tick takes: `notify` everything but `FETCH_TYPES`, `poll` only those. */
 export type NotifyTickKind = "notify" | "poll";

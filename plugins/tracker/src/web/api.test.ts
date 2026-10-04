@@ -507,7 +507,7 @@ describe("tasks", () => {
   it("the body is checked: its type, its fields and their JSON types, by name", async () => {
     const w = await setup();
     const cases: [unknown, string, string][] = [
-      [{ text: "x", when: "9am" }, "invalid", "`type` is one of reminder, renewal, price."],
+      [{ text: "x", when: "9am" }, "invalid", "`type` is one of reminder, renewal, price, wantlist."],
       [{ type: "chore", text: "x" }, "invalid", "`type` is one of"],
       [{ type: "reminder", text: "x", when: "9am", colour: "red" }, "unknown_field", "`colour` is not a field of a reminder."],
       [{ type: "reminder", text: 5, when: "9am" }, "invalid", "`text` must be a string."],
@@ -666,7 +666,7 @@ describe("tasks", () => {
     expect((await api(w.plugin, "POST", "/tasks/t1", { token: w.token, body: {} })).headers.get("allow")).toBe("GET, PATCH, DELETE");
     expect((await api(w.plugin, "GET", "/nothing", { token: w.token })).status).toBe(404);
     const types = await body(await api(w.plugin, "GET", "/types", { token: w.token }));
-    expect(types.types.map((t: { type: string }) => t.type)).toEqual(["reminder", "renewal", "price"]);
+    expect(types.types.map((t: { type: string }) => t.type)).toEqual(["reminder", "renewal", "price", "wantlist"]);
     const price = types.types[2];
     expect(price.create.map((f: { name: string }) => f.name)).toEqual(["url", "name", "hours", "drop", "baseline", "near"]);
     expect(price.edit.map((f: { name: string }) => f.name)).not.toContain("url");

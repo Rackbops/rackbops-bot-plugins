@@ -44,6 +44,25 @@ export interface PageFetchOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   maxBytes?: number;
+  /**
+   * Hand back the body as sent (still capped at `maxBytes`), not `pageForExtraction`'s: for a reader
+   * that parses it with no backtracking pattern of its own (the BGG source's XML, want-bgg.ts).
+   */
+  raw?: boolean;
+  /** Hand back a redirect as it came, never following it: for a read that carries a credential (BGG's token). */
+  noRedirects?: boolean;
+}
+
+/**
+ * A request header that is a directive to this port, never sent: any hop to eBay is refused. The
+ * want-list watcher's page reads carry it, so a pasted page that redirects to eBay is not read
+ * either (roshne's rule: eBay's own saved-search alerts cover eBay; the tracker never reads it).
+ */
+export const NEVER_EBAY = "x-tracker-never-ebay";
+
+/** eBay's own hosts (and its short links). */
+export function isEbayHost(host: string): boolean {
+  return /(^|\.)ebay\.[a-z]{2,3}(\.[a-z]{2})?$/i.test(host.replace(/\.$/, ""));
 }
 
 const systemResolve: Resolve = async (host) => (await lookup(host, { all: true, verbatim: true })).map((a) => a.address);
@@ -162,9 +181,10 @@ function orAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-async function checkHost(url: URL, resolve: Resolve, signal: AbortSignal): Promise<void> {
+async function checkHost(url: URL, resolve: Resolve, signal: AbortSignal, neverEbay = false): Promise<void> {
   const problem = urlProblem(url.href);
   if (problem) throw new FetchRefusedError(problem);
+  if (neverEbay && isEbayHost(url.hostname)) throw new FetchRefusedError("it leads to eBay, which I never read");
   const host = url.hostname.replace(/^\[|\]$/g, "");
   let addresses: string[];
   if (isIP(host) !== 0) addresses = [host];
@@ -203,6 +223,12 @@ async function readCapped(response: Response, max: number): Promise<string> {
   return new TextDecoder().decode(all);
 }
 
+/** A caller's headers for one hop: a credential (the BGG token) never follows a redirect to another origin, as a browser's would not. */
+function sameOriginOnly(headers: Record<string, string>, sameOrigin: boolean): Record<string, string> {
+  if (sameOrigin) return headers;
+  return Object.fromEntries(Object.entries(headers).filter(([k]) => !["authorization", "cookie", "proxy-authorization"].includes(k.toLowerCase())));
+}
+
 /** The Fetch port, fenced as the file's comment says. */
 export function createPageFetch(o: PageFetchOptions = {}): Fetch {
   const resolve = o.resolve ?? systemResolve;
@@ -213,17 +239,20 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
     async get(raw: string, headers: Record<string, string> = {}): Promise<FetchResponse> {
       const signal = o.signal ? AbortSignal.any([o.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
       let url = new URL(raw);
+      const origin = url.origin;
+      const neverEbay = Object.keys(headers).some((k) => k.toLowerCase() === NEVER_EBAY);
+      const sent = Object.fromEntries(Object.entries(headers).filter(([k]) => k.toLowerCase() !== NEVER_EBAY));
       for (let hop = 0; ; hop++) {
-        await checkHost(url, resolve, signal);
+        await checkHost(url, resolve, signal, neverEbay);
         signal.throwIfAborted();
         const response = await fetchImpl(url.href, {
           method: "GET",
           redirect: "manual",
           signal,
-          headers: { "user-agent": USER_AGENT, accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8", ...headers },
+          headers: { "user-agent": USER_AGENT, accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8", ...sameOriginOnly(sent, url.origin === origin) },
         });
         const location = response.headers.get("location");
-        if (response.status >= 300 && response.status < 400 && location) {
+        if (response.status >= 300 && response.status < 400 && location && !o.noRedirects) {
           await response.body?.cancel().catch(() => {});
           if (hop >= MAX_REDIRECTS) throw new FetchRefusedError(`more than ${MAX_REDIRECTS} redirects`);
           url = new URL(location, url);
@@ -233,7 +262,8 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
         response.headers.forEach((value, key) => {
           out[key] = value;
         });
-        return { status: response.status, body: pageForExtraction(await readCapped(response, maxBytes)), headers: out };
+        const body = await readCapped(response, maxBytes);
+        return { status: response.status, body: o.raw ? body : pageForExtraction(body), headers: out };
       }
     },
   };

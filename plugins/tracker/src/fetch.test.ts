@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createPageFetch, FetchRefusedError, isPublicAddress, MAX_REDIRECTS, urlProblem } from "./fetch.js";
+import { createPageFetch, FetchRefusedError, isPublicAddress, MAX_REDIRECTS, NEVER_EBAY, urlProblem } from "./fetch.js";
 
 /** The price tracker's page reads (rackbops-bot-plugins#81): only the public internet, bounded. */
 
@@ -98,6 +98,25 @@ describe("createPageFetch", () => {
     const unresolved = createPageFetch({ resolve: async () => Promise.reject(new Error("ENOTFOUND")), fetchImpl: f.impl });
     await expect(unresolved.get("https://nowhere.example/")).rejects.toThrow("did not resolve");
     expect(f.calls).toHaveLength(0);
+  });
+
+  it("never carries a credential to another origin, never follows a redirect when told not to, and refuses eBay on any hop when asked", async () => {
+    const f = fakeFetch({
+      "https://api.example/x": () => new Response(null, { status: 302, headers: { location: "https://cdn.example/y" } }),
+      "https://cdn.example/y": () => new Response("<items/>", { status: 200 }),
+      "https://short.example/s": () => new Response(null, { status: 301, headers: { location: "https://www.ebay.com/itm/1" } }),
+    });
+    const headers = (i: number) => f.calls[i]?.init?.headers as Record<string, string>;
+    await createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl, raw: true }).get("https://api.example/x", { Authorization: "Bearer tok" });
+    expect(headers(0).Authorization).toBe("Bearer tok");
+    expect(headers(1).Authorization).toBeUndefined();
+    const stay = await createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl, raw: true, noRedirects: true }).get("https://api.example/x", { Authorization: "Bearer tok" });
+    expect(stay.status).toBe(302);
+    expect(f.calls).toHaveLength(3);
+    const reader = createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl });
+    await expect(reader.get("https://short.example/s", { [NEVER_EBAY]: "1" })).rejects.toThrow("it leads to eBay, which I never read");
+    expect(f.calls.filter((c) => c.url.includes("ebay"))).toHaveLength(0);
+    expect(headers(3)[NEVER_EBAY]).toBeUndefined();
   });
 
   it("follows a redirect to a public page, and refuses one to a private address or a loop", async () => {
