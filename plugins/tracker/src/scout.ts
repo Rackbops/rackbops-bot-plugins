@@ -31,7 +31,7 @@ export interface ScoutInput {
   every?: number;
 }
 
-/** Every field optional: one left out keeps the scout's own; an empty `for` or `notes` clears it. */
+/** Every field optional: one left out keeps the scout's own; an empty `for` or `notes`, or `-` (Discord sends no empty option), clears it. */
 export interface ScoutEdit {
   interests?: string;
   lens?: string;
@@ -57,6 +57,7 @@ export function parseInterests(raw: string): string[] | string {
   return out;
 }
 
+/** Always begins "Scout", which the DMs lead with. */
 export function scoutTitle(config: ScoutConfig): string {
   const lens = config.lens === "general" ? "" : ` (${config.lens})`;
   const base = config.for ? `Scout for ${config.for}` : `Scout: ${config.interests.join(", ")}`;
@@ -113,7 +114,7 @@ export async function createScout(d: TrackerDeps, user: User, input: ScoutInput)
     task,
     text: clip(
       `Scout \`${task.id}\` made: ${describeSchedule(schedule, user, user.timeZone, now)}. First run ${first}.\n` +
-        `Each run looks on the web for 5 to 10 new things that fit ${plan.config.interests.length} interest(s) and DMs them to you; nothing it showed you before is shown again. ` +
+        `Each run looks on the web for 5 to 10 new things that fit ${plan.config.interests.length} interest(s) and DMs them to you; a link it showed you before is not shown again. ` +
         `A run can cost up to ${SCOUT_MAX_BUDGET_USD.toFixed(2)} USD of the daily model budget. \`/scout edit ${task.id}\` changes the interests.`,
     ),
   };
@@ -129,8 +130,10 @@ async function editScoutLocked(d: TrackerDeps, user: User, taskId: string, input
   const config = task.config as ScoutConfig;
   const schedule = task.schedule?.kind === "calendar" ? task.schedule : scoutSchedule(DEFAULT_SCOUT_EVERY, user.timeZone, d.clock.now());
   const keep = (v: string | undefined): v is undefined => v === undefined || v.trim() === "";
+  const cleared = (v: string | undefined): string | undefined => (v !== undefined && v.trim() === "-" ? "" : v);
+  input = { ...input, ...(input.for !== undefined ? { for: cleared(input.for) as string } : {}), ...(input.notes !== undefined ? { notes: cleared(input.notes) as string } : {}) };
   const plan = scoutPlan({
-    interests: keep(input.interests) ? config.interests.join(", ") : input.interests,
+    interests: keep(input.interests) ? config.interests.join("\n") : input.interests,
     lens: keep(input.lens) ? config.lens : input.lens,
     // An empty `for` or `notes` clears it; left out keeps it.
     ...(input.for !== undefined ? { for: input.for } : config.for !== undefined ? { for: config.for } : {}),

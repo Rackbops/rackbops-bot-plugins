@@ -16,8 +16,8 @@ sources, and DMed once, with its claims kept as findings -- and an admin raising
 daily model ceiling from the web (#82, plan 5.7), with an operator switch that turns the daily
 ceilings off for the alpha and an admin page of daily model usage to evaluate it by -- and the
 interest scout (#83, plan E9, category 1): a model run every few days that looks on the web for
-things that fit someone's interests through a gift lens, DMs what it found, and never shows the
-same thing twice. The model runs never happen here: they go
+things that fit someone's interests through a gift lens, DMs what it found, and does not show the
+same link twice. The model runs never happen here: they go
 through city-hall to Rackbops/docket-runner on roshne's own host (plan 5.12), and the whole execute
 lane stays off until the city-hall Executor is configured (Configuration below).
 
@@ -34,8 +34,8 @@ as in a server (plan 5.5, item 39).
 | `/renewal name amount currency renews [unit] [every] [lead] [note]` | registered | A subscription, domain, warranty or membership (docket's `renewal`, a `period` schedule). `renews` is the next renewal or expiry date, `YYYY-MM-DD`, today or later; `unit` yearly (the default), monthly, weekly or daily, `every` how many of those; the ask comes `lead` days before (default 7) at the preferred hour, with Keep, Cancel, Renewed and Snooze. If that ask is already past but the date is not, the first ask comes within a minute (a zone or hour change before it fires drops it for the next period's). Keep and Renewed record what was paid; Cancel ends it. |
 | `/price url [name] [hours] [drop] [baseline] [near]` | registered | A price (docket's `price`, a `poll` schedule every `hours`, default 12, at most 168). The page is read once at once, and nothing is created unless a price is found in it; then the first check, within a minute, DMs the starting price, and a drop of `drop` percent or more (default 10) from the `baseline` -- the last (default), first or highest price seen -- DMs the owner once per crossing. `near` is the words just before the price, for a page with no structured price. At most 20 per person. |
 | `/research question [context] [deadline] [at]` | registered | A one-off research request (docket's `research`, a `once` schedule at `at`, default now). A research run looks it up on the web (read-and-web tools only, plan 5.6), a reviewer run checks the draft against its sources, and only a passed answer is DMed to you (and accepted recipients); its claims are kept as findings on the task's page. `deadline` (docket's `parseWhen`) goes into the request; a run that would start past it makes no call and tells you. `question` must hold the question itself: fewer than 3 characters, or no letter at all (a stray `0`), is refused before anything is made. At most 5 waiting per person; every run counts against the daily budget (below). Answers that research is not available while the city-hall Executor is not set up. |
-| `/scout new interests [lens] [for] [notes] [every]` | registered | An interest scout (the plugin's own `scout` type, `src/scout-type.ts`; plan 1.2 row 1): every `every` days (default 1, at most 30) at your preferred hour, a model run looks on the web for 5 to 10 things published or available in the last 30 days that fit the `interests` (separated by commas, at most 20, each at most 80 characters) through the `lens` -- `general` (the default), `birthday` (fun or a little grandiose), `anniversary` (a romantic angle) or `christmas` (tied to their interests) -- for `for` (someone else, e.g. Anne; empty means you), weighing `notes`, and DMs them to you (and accepted recipients). An item it showed before is never shown again; fewer than five come with the run's reason. At most 3 scouts per person; each run counts against the daily budget (below), up to 1.50 USD. Answers that the scout is not available while the city-hall Executor is not set up. |
-| `/scout edit task [interests] [lens] [for] [notes] [every]` | registered | Changes your scout: `interests` replaces the whole list; anything left out stays. A change of `every` keeps the start day. |
+| `/scout new interests [lens] [for] [notes] [every]` | registered | An interest scout (the plugin's own `scout` type, `src/scout-type.ts`; plan 1.2 row 1): every `every` days (default 1, at most 30) at your preferred hour, a model run looks on the web for 5 to 10 things published or available in the last 30 days that fit the `interests` (separated by commas, at most 20, each at most 80 characters) through the `lens` -- `general` (the default), `birthday` (fun or a little grandiose), `anniversary` (a romantic angle) or `christmas` (tied to their interests) -- for `for` (someone else, e.g. Anne; empty means you), weighing `notes`, and DMs them to you (and accepted recipients). A link it showed before is not shown again (it remembers the newest 300); fewer than five come with the run's reason. At most 3 scouts per person; each run counts against the daily budget (below), up to 1.50 USD. Answers that the scout is not available while the city-hall Executor is not set up. |
+| `/scout edit task [interests] [lens] [for] [notes] [every]` | registered | Changes your scout: `interests` replaces the whole list; anything left out stays; `for` or `notes` set to `-` clears it. A change of `every` keeps the start day. |
 | `/tasks` | registered | Your active tasks and the ones you receive, each with its next run; then your paused ones. |
 | `/task done task` / `/task snooze task [until]` | the task's owner | Answers the task's latest reminder (snooze: an hour, or until `until`). |
 | `/task decide task choice [amount]` | the renewal's owner | Answers the renewal's latest ask -- keep, cancel or renewed -- with the amount actually paid when it changed (a button cannot carry one). Use it instead of the button, not after it: a run is answered once. |
@@ -147,11 +147,17 @@ on, why it fits, and a price if shown; a `shortfall` reason rather than padding;
 USD and 10 minutes a run. Every item is cleaned and kept only with an http(s) URL. What it showed
 is remembered in the task's state (the newest 300, by a digest of the URL without its fragment);
 the next prompt names the latest 40, and an item already shown is dropped from the DM whatever the
-model returns. Each item shown is also a finding, keyed by that digest. A run that fails with
+model returns. Plan 5.2 and #83 word this as a check "against `findings`"; the state is the same
+record kept beside the run, so the check needs no store read. Dedupe is by URL: the same thing at
+another address is caught only by the prompt's list of titles. Those titles are model output fed
+back to the model, cleaned and cut to 150 characters. Each item shown is also a finding, keyed by that digest. A run that fails with
 `schema_miss`, a malformed answer, `timeout` or `error` is retried once at once, `auth_failed`
-once an hour later; `turn_cap` and `budget_cap` are not retried. A run that fails for good DMs the
-owner one line and the scout goes on to its next run. A scout runs at its owner's preferred hour,
-so `/settings hour` moves it with their reminders. The type lives in this plugin, not in
+once an hour later; `turn_cap` and `budget_cap` are not retried. A run that fails for good sends one
+line to the owner (and accepted recipients) and the scout goes on to its next run. A scout runs at its owner's preferred hour,
+so `/settings hour` moves it with their reminders. With budgets on, mind the arithmetic: a run can
+cost up to 1.50 USD of a person's 2 USD day, so two or three daily scouts, or a scout and a
+research request, can reach the ceiling; a held run waits until midnight Eastern, and the next
+scheduled one is made only once it has fired. The type lives in this plugin, not in
 `@rackbops/docket-types` (0.5.0 has no scout); giving it back to docket is a follow-up.
 
 **Findings.** A passed research answer's claims are stored with their first source (docket's

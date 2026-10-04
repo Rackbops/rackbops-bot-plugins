@@ -326,8 +326,8 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
                 .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(MAX_TASK_ID))
                 .addStringOption((o) => o.setName("interests").setDescription("The whole new list, separated by commas").setMaxLength(MAX_INTERESTS_TEXT)),
             )
-              .addStringOption((o) => o.setName("for").setDescription("Who the ideas are for").setMaxLength(MAX_FOR_CHARS))
-              .addStringOption((o) => o.setName("notes").setDescription("Anything else to weigh").setMaxLength(MAX_SCOUT_NOTES))
+              .addStringOption((o) => o.setName("for").setDescription("Who the ideas are for; - for you").setMaxLength(MAX_FOR_CHARS))
+              .addStringOption((o) => o.setName("notes").setDescription("Anything else to weigh; - for none").setMaxLength(MAX_SCOUT_NOTES))
               .addIntegerOption((o) => o.setName("every").setDescription("Days between runs").setMinValue(1).setMaxValue(MAX_SCOUT_EVERY)),
           ),
       handle: (interaction) =>

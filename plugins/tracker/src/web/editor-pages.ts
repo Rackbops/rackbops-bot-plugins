@@ -173,7 +173,7 @@ const INTRO: Partial<Record<NewType, string>> = {
   research:
     "A research run looks it up on the web, then a second run checks the answer against its sources; only an answer that passes is DMed to you. It can take a while, and requests share a daily budget.",
   scout:
-    "Each run looks on the web for 5 to 10 new things that fit the interests, through the lens, and DMs them to you; nothing shown before is shown again. A run can cost up to 1.50 USD of the daily model budget.",
+    "Each run looks on the web for 5 to 10 new things that fit the interests, through the lens, and DMs them to you; a link shown before is not shown again. A run can cost up to 1.50 USD of the daily model budget.",
 };
 
 /**

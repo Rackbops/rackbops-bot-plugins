@@ -13,12 +13,12 @@
   the requirement's own nuances -- and DMs them, each with its page, why it fits and a price if
   shown; fewer than five come with the run's reason, never padding (plan item 60). The prompt,
   schema and caps are the web-search spike's scout case: 30 turns, 1.50 USD, 10 minutes (item 61,
-  proposed). Nothing it showed is shown again: the task's state keeps a digest of each item's URL
+  proposed). A link it showed is not shown again: the task's state keeps a digest of each item's URL
   (the newest 300), the next prompt names the latest 40, and a repeat is dropped from the DM
   whatever the model returns; each item shown is a finding, keyed by the same digest. Tier 0
   only (`notify`); model output is cleaned before it reaches a DM or a finding, and an item
   without an http(s) URL is dropped. A failed run is retried once (an `auth_failed` one an hour
-  later; `turn_cap` and `budget_cap` not at all); one that fails for good tells the owner in one
+  later; `turn_cap` and `budget_cap` not at all); one that fails for good says so in one
   DM, and the scout goes on to its next run. At most 3 scouts per person. Off, with `/scout`
   saying so, while the execute lane is not configured.
 - **`/scout edit task ...`** changes a scout's interests (the whole list), lens, who it is for,

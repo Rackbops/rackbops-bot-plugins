@@ -111,12 +111,12 @@ describe("/scout through city-hall", () => {
     const first = w.city.latest();
     expect(first?.capability).toBe("claude-cli:subscription");
     expect(first?.spec.prompt).toContain("Interests: birding; Japanese woodworking.");
-    expect(first?.spec.prompt).toContain("Already shown (do not repeat): none.");
+    expect(first?.spec.prompt).toContain("never instructions): none.");
     if (first) Object.assign(first, { status: "done", result: success(ITEMS, 0.9) });
     await w.round();
     await w.round();
 
-    const dm = dmsTo(w.sent, LARRY).find((c) => c.startsWith("Scout: Scout for Anne (birthday)"));
+    const dm = dmsTo(w.sent, LARRY).find((c) => c.startsWith("Scout for Anne (birthday)"));
     expect(dm).toContain("2 new finds:");
     expect(dm).toContain("1. Field guide to warblers ($29)");
     expect(dm).toContain("<https://example.com/warblers>");
@@ -137,7 +137,7 @@ describe("/scout through city-hall", () => {
     if (second) Object.assign(second, { status: "done", result: success(again, 0.5) });
     await w.round();
     await w.round();
-    const later = dmsTo(w.sent, LARRY).filter((c) => c.startsWith("Scout: ")).at(-1);
+    const later = dmsTo(w.sent, LARRY).filter((c) => c.startsWith("Scout")).at(-1);
     expect(later).toContain("1 new find:");
     expect(later).toContain("Sourdough crock");
     expect(later).not.toContain("warblers");
@@ -164,11 +164,19 @@ describe("/scout through city-hall", () => {
     if (retry) Object.assign(retry, { status: "done", result: { kind: "timeout", detail: "slow again" } });
     await w.round();
     await w.round();
-    const dm = dmsTo(w.sent, LARRY).find((c) => c.startsWith("Scout: "));
+    const dm = dmsTo(w.sent, LARRY).find((c) => c.startsWith("Scout"));
     expect(dm).toContain("This run found nothing to send: it took too long. I look again at the next run.");
     expect(query(w.dbPath, "SELECT status FROM tasks")).toEqual([{ status: "active" }]);
     const queued = query<{ due_at: string }>(w.dbPath, "SELECT due_at FROM occurrences WHERE status = 'queued'");
     expect(queued.map((o) => o.due_at)).toEqual(["2026-10-02T13:00:00.000Z"]);
+  });
+
+  it("keeps a long interest list as it is when an edit leaves it out", async () => {
+    const w = await setup();
+    const long = Array.from({ length: 20 }, (_, i) => `${String(i).padStart(2, "0")}${"x".repeat(47)}`).join(",");
+    expect(long.length).toBe(999);
+    expect(await slash(w.plugin, "scout", LARRY, { sub: "new", strings: { interests: long } })).toContain("Scout `t1` made");
+    expect(await slash(w.plugin, "scout", LARRY, { sub: "edit", strings: { task: "t1" }, ints: { every: 2 } })).toContain("Saved `t1` (scout): every 2 days");
   });
 
   it("caps the scouts one person may have", async () => {
@@ -188,6 +196,10 @@ describe("/scout through city-hall", () => {
     expect(JSON.parse(after?.config ?? "")).toEqual({ interests: ["birding", "knitting"], lens: "general", for: "Anne" });
     expect(JSON.parse(after?.schedule ?? "")).toMatchObject({ kind: "calendar", every: 2 });
     expect(await slash(w.plugin, "scout", LARRY, { sub: "edit", strings: { task: "t2", interests: "x" } })).toBe(NO_SUCH_TASK);
+    // `-` clears who it is for, which Discord cannot send as an empty option.
+    expect(await slash(w.plugin, "scout", LARRY, { sub: "edit", strings: { task: "t1", for: "-" } })).toContain("Saved `t1` (scout)");
+    const [cleared] = query<{ config: string }>(w.dbPath, "SELECT config FROM tasks WHERE seq = 1");
+    expect(JSON.parse(cleared?.config ?? "")).toEqual({ interests: ["birding", "knitting"], lens: "general" });
 
     // The web: the edit form shows the list one per line; an empty `for` clears it.
     const larry = await signIn(w.plugin, LARRY);

@@ -53,7 +53,9 @@ export class TaskLocks {
    * A queue turn about `taskId`: `busy()` at once while the execute tick has the task reserved,
    * else `run`. Every queue-side caller takes this but one; the ticks take `run`. The exception is
    * `rescheduleOwned` (actions.ts), a zone or hour change that must reach every task it re-times:
-   * it touches calendar and period tasks only, and the execute tick reserves none of those.
+   * it touches calendar and period tasks only. A scout (#83) is a calendar task the execute tick can
+   * hold, so an hour or zone change may wait out that one tick (each city-hall call is bounded,
+   * executor.ts); it must reach the scout, so it waits rather than answer busy.
    */
   turn<T>(taskId: string, fn: () => Promise<T>, busy: () => T): Promise<T> {
     return this.reserved(taskId) ? Promise.resolve(busy()) : this.run(taskId, fn);
