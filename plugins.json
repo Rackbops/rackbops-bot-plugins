@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-04T19:17:50.911Z",
+  "generatedAt": "2026-10-04T20:24:16.736Z",
   "plugins": [
     {
       "name": "mcp",
@@ -194,6 +194,13 @@
           "key": "TRACKER_GUILD_ID",
           "format": "^ *[0-9]{17,20}( *, *[0-9]{17,20})* *$",
           "description": "The Discord server id whose members may use the tracker (the membership gate), or a comma-separated list of server ids (spaces around commas allowed): a member of any listed server passes. Checked on every command and button, in DMs too. Unset = no membership gate: only the admission list (/allow) applies.",
+          "required": false,
+          "secret": false
+        },
+        {
+          "key": "TRACKER_GUILD_ROLES",
+          "format": "^ *[0-9]{17,20} *: *[0-9]{17,20}( *, *[0-9]{17,20} *: *[0-9]{17,20})* *$",
+          "description": "The Discord-role check: comma-separated serverId:roleId pairs (a server named twice takes either role). In a server named here, a member passes the membership gate only while they hold one of its roles; a TRACKER_GUILD_ID server not named here stays membership-only, and every server named must be in TRACKER_GUILD_ID or the plugin refuses to load. The TRACKER_ADMIN_DISCORD_IDS admins skip the role, never the membership. Losing the role is like leaving the server: commands are refused and web sessions and API tokens end, while the person's tasks, history and DMs stay. Unset = no role check.",
           "required": false,
           "secret": false
         },

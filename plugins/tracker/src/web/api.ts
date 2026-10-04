@@ -191,7 +191,7 @@ async function authenticate(w: ApiWiring, request: Request): Promise<Auth> {
     return no(invalid);
   }
   const found = await w.recheck(user, token.memberCheckedAt);
-  if (found === "not-member") return no(problem(403, "not_member", "The token's owner is no longer a member of this tracker's server; their tokens are revoked."));
+  if (found === "not-member") return no(problem(403, "not_member", "The token's owner is no longer a member of this tracker's server, or lost the role it asks for; their tokens are revoked."));
   if (found === "unknown") return no(problem(503, "membership_unknown", "I could not check that the token's owner is still a member of this tracker's server; try again later.", { "Retry-After": "60" }));
   // The re-check may have waited: act only on the token as it stands now.
   const current = d.apiTokens.find(sent as string, d.clock.now());
