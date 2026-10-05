@@ -1,5 +1,5 @@
 import { describeSchedule, type Task, type User } from "@rackbops/docket-core";
-import type { PriceConfig, WantConfig } from "@rackbops/docket-types";
+import type { PriceConfig } from "@rackbops/docket-types";
 import { NO_LONGER_LISTED, NO_SUCH_TASK, type TaskResult, type TrackerDeps } from "../actions.js";
 import type { Queue } from "../discord-common.js";
 import { editPrice, editReminder, editRenewal } from "../edit.js";
@@ -10,7 +10,7 @@ import { createReminder } from "../reminders.js";
 import { finishPrice, previewPrice, startPrice } from "../price.js";
 import { createResearch, RESEARCH_OFF } from "../research.js";
 import { createRenewal } from "../tracked.js";
-import { editWant, finishWant, previewWant, startWant } from "../want.js";
+import { editWant, finishWant, previewWant, startWant, type WatchConfig, watchSite } from "../want.js";
 import { EDITOR_TYPES, type EditorType, confirmDeletePage, editTaskPage, type NewType, newTaskPage, notice, ownerControls, taskHref, type Values } from "./editor-pages.js";
 import { editValues, priceEdit, priceInput, reminderEdit, reminderInput, renewalEdit, renewalInput, researchInput, scoutEdit, scoutInput, typed, wantEdit, wantInput } from "./form-input.js";
 import { htmlResponse, redirect } from "./html.js";
@@ -96,8 +96,6 @@ async function makeWant(w: Writer, form: URLSearchParams): Promise<Written> {
     const started = await asUser(w, (u) => startWant(w.d, u, input));
     if (!started.ok) return started;
     const { start } = started;
-    // eBay makes nothing: its answer is a search to save on eBay, shown where the refusal would be.
-    if (start.kind === "answer") return { ok: false, error: start.text };
     const seen = await previewWant(w.d, start);
     return await asUser(w, (u) => finishWant(w.d, u, start, seen));
   } finally {
@@ -165,13 +163,18 @@ export async function taskPage(e: Editor, id: string, done: string | null, error
   return htmlResponse(historyPage(e.v, view, { controls, flash: notice(done, error), owner }), error ? 400 : 200);
 }
 
-function wantWhere(c: WantConfig): string {
+function wantWhere(c: WatchConfig): string {
+  const site = watchSite(c);
+  if (site) {
+    const what = c.game !== undefined ? `BGG game ${c.game}` : `"${c.search ?? ""}"`;
+    return `${site === "ebay" ? "the eBay listings" : "the BoardGameGeek listings"} you send in for ${what}`;
+  }
   return c.source === "bgg" ? `BoardGameGeek game ${c.target}` : c.target;
 }
 
 function editPage(e: Editor, task: Task, values: Values, error?: string): string {
   const now = task.schedule ? describeSchedule(task.schedule, e.v.user, e.v.user.timeZone, e.d.clock.now()) : "no schedule";
-  const page = task.type === "price" ? String((task.config as PriceConfig).url) : task.type === "wantlist" || task.type === "wantjudge" ? wantWhere(task.config as WantConfig) : undefined;
+  const page = task.type === "price" ? String((task.config as PriceConfig).url) : task.type === "wantlist" || task.type === "wantjudge" ? wantWhere(task.config as WatchConfig) : undefined;
   return editTaskPage(e.v, task, values, { now, ...(page !== undefined ? { page } : {}), ...(error !== undefined ? { error } : {}) });
 }
 

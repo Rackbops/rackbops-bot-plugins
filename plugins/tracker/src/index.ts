@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
-import { bggSource, pageSource, price, reminder, renewal, research, scout, type Source, wantjudgeType, wantlistType } from "@rackbops/docket-types";
+import { bggSource, inboxSource, pageSource, price, type ReadInbox, reminder, renewal, research, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds, parseGuildRoles } from "./access.js";
 import type { TickGate, TrackerDeps } from "./actions.js";
@@ -16,6 +16,7 @@ import type { Membership } from "./access.js";
 import { type Interactionish, lookupMembership, type RoleGate, serial } from "./discord-common.js";
 import { createSurface, type SurfaceWiring } from "./discord.js";
 import { decideHealth, type HealthState, healthResponse } from "./health.js";
+import { WantInbox } from "./inbox.js";
 import { TaskLocks } from "./locks.js";
 import { createDmNotifier } from "./notifier.js";
 import { type NotifyTickKind, runNotifyTick } from "./notify-lane.js";
@@ -62,6 +63,10 @@ export const DB_FILE = "tracker.sqlite";
  * BoardGameGeek once `TRACKER_BGG_TOKEN` is set -- and `wantjudge` (#83), the same watch with the
  * model looking at each new listing first (docket-types' `wantjudge`): an execute-lane type, under the
  * execute lane's switch, its plain-code reads through the same Fetch port.
+ *
+ * These are the types without a database: the want-list pair here reads pasted pages only.
+ * `createPlugin` builds the pair it runs over `wantSources`, adding the `inbox` source (the listings
+ * sent in for a watch, inbox.ts) over the database it opens, and BGG when its token is set.
  */
 export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object.freeze({
   reminder: reminder as TaskType<unknown>,
@@ -72,6 +77,14 @@ export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object
   wantlist: wantlistType({ page: pageSource }) as TaskType<unknown>,
   wantjudge: wantjudgeType({ page: pageSource }) as TaskType<unknown>,
 });
+
+/**
+ * The want-list pair over `sources`: docket-types' `wantlist` and `wantjudge`, which read a watch's
+ * listings through whichever source its config names (a page, BGG, or its inbox).
+ */
+export function wantTypes(sources: Partial<Record<SourceId, Source>>): { wantlist: TaskType<unknown>; wantjudge: TaskType<unknown> } {
+  return { wantlist: wantlistType(sources) as TaskType<unknown>, wantjudge: wantjudgeType(sources) as TaskType<unknown> };
+}
 
 /** `TRACKER_BGG_TOKEN`: BGG's Bearer token for a registered application, or null when unset or empty. */
 export function parseBggToken(raw: string | undefined): string | null {
@@ -126,11 +139,12 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const bggToken = parseBggToken(host.env.TRACKER_BGG_TOKEN);
   // BGG's answers are XML, read by docket-types' own bounded BGG parser: the raw body, fenced like every read.
   const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createPageFetch({ raw: true, noRedirects: true }) }) : null);
-  const types =
-    options.types ??
-    (bgg
-      ? { ...TRACKER_TYPES, wantlist: wantlistType({ page: pageSource, bgg }) as TaskType<unknown>, wantjudge: wantjudgeType({ page: pageSource, bgg }) as TaskType<unknown> }
-      : TRACKER_TYPES);
+  // The want-list inboxes (inbox.ts) live in the database `activate()` opens; until then, and after
+  // `dispose()`, an inbox reads as empty (no tick runs then anyway). eBay and BoardGameGeek reach a
+  // watch only this way: the tracker never opens either site (Rod, 2026-10-05).
+  let inbox: WantInbox | null = null;
+  const readInbox: ReadInbox = async (key) => inbox?.read(key) ?? [];
+  const types = options.types ?? { ...TRACKER_TYPES, ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}) }) };
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
   let db: Database | null = null;
@@ -325,6 +339,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       }
       db = opened;
       store = openedStore;
+      inbox = new WantInbox(opened);
       // The owner of a task a recipient's failures paused is told once, by a plain DM: not counted
       // toward the owner's own pause (they may simply be offline), and `/tasks` shows it regardless.
       delivery = new DeliveryHealth(opened, openedStore, {
@@ -383,6 +398,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         webEditor: webOrigin !== null,
         research: executeOn,
         bgg: bgg !== null,
+        inbox,
       };
       if (guildIds === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
       else if (roleGate.roles !== null) host.log.info(`role check on for ${roleGate.roles.size} of ${guildIds.length} server(s)`);
@@ -399,6 +415,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       executeLane = null;
       jobRecords = null;
       store = null;
+      inbox = null;
       const closing = db;
       db = null;
       // An execute tick in flight finishes its city-hall call (each is bounded) before the database

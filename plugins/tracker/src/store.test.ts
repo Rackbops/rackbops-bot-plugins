@@ -208,12 +208,12 @@ describe("SqliteStore beyond the contract", () => {
 
       // The VACUUM is kept outside the versioned schema (tracker_meta): the version is the migrations'
       // alone. A later migration (4, 0.7.0's API tokens; 5, 0.9.0's docket 0.4.0 store; 6, 0.11.0's
-      // findings and Job records; 7, 0.13.0's ceiling changes) is what
+      // findings and Job records; 7, 0.13.0's ceiling changes; 8, 0.19.0's want-list inboxes) is what
       // blocks a rollback to 0.6.0, whose migrate() refuses a user_version above its three migrations.
       const again = new Database(path);
       const version = (again.query("PRAGMA user_version").get() as { user_version: number }).user_version;
       expect(version).toBe(MIGRATIONS.length);
-      expect(MIGRATIONS).toHaveLength(7);
+      expect(MIGRATIONS).toHaveLength(8);
       const known060 = 3;
       expect(() => {
         if (version > known060) throw new Error(`tracker database is at schema ${version}, newer than this plugin knows (${known060})`);

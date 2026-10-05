@@ -5,7 +5,7 @@ import { FetchRefusedError } from "./fetch.js";
 import { api, call, cleanup, csrfOf, LARRY, makeToken, ORIGIN, people, press, signIn, slash, world } from "./web/harness.js";
 import { parseMarketplace, type Source, SourceUnavailableError } from "@rackbops/docket-types";
 import { BGG_THING, shopSearch } from "./want-fixtures.js";
-import { ebaySearchUrl, MAX_WANT_TASKS } from "./want.js";
+import { EBAY_PAGE, MAX_WANT_TASKS } from "./want.js";
 
 afterEach(cleanup);
 
@@ -130,29 +130,14 @@ describe("/want", () => {
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "page", target: SHOP } })).toBe("I cannot read that page: shop.example is not on the public internet.");
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "page", target: "http://localhost/x" } })).toBe("Only public web pages can be tracked.");
     const ebay = await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "page", target: "https://www.ebay.com/sch/i.html?_nkw=wingspan" } });
-    expect(ebay).toContain("I never read eBay's pages.");
+    expect(ebay).toBe(EBAY_PAGE);
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "page" } })).toBe("`target` is the listing page's address.");
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "page", target: SHOP, currency: "dollars" } })).toContain("`currency` is a three-letter code");
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "page", target: SHOP }, ints: { hours: 500 } })).toContain("`hours` is a whole number from 1 to 168");
     expect(await slash(w.plugin, "tasks", LARRY)).not.toContain("t1");
   });
 
-  it("answers source: ebay with a search to save on eBay, the top price in it, and makes nothing", async () => {
-    const w = await world({ fetch: shop([]).fetch });
-    await people(w.plugin);
-    const said = await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan Oceania", source: "ebay" }, numbers: { max: 35 } });
-    expect(said).toContain("I do not read eBay");
-    expect(said).toContain(`<${ebaySearchUrl("Wingspan Oceania", 35)}>`);
-    expect(ebaySearchUrl("Wingspan Oceania", 35)).toBe("https://www.ebay.com/sch/i.html?_nkw=Wingspan+Oceania&_udhi=35");
-    expect(said).toContain("Save this search");
-    expect(await slash(w.plugin, "tasks", LARRY)).not.toContain("t1");
-  });
-
-  it("refuses BGG while the bot has no token, and watches a BGG game once it has one", async () => {
-    const off = await world({ fetch: shop([]).fetch });
-    await people(off.plugin);
-    expect(await slash(off.plugin, "want", LARRY, { strings: { name: "Oceania", source: "bgg", target: "300580" } })).toContain("This bot has no BoardGameGeek access yet");
-
+  it("watches a BGG game through BGG's API once the bot has its token", async () => {
     const searched: string[] = [];
     const bgg: Source = {
       id: "bgg",
@@ -186,13 +171,13 @@ describe("/want", () => {
     expect(content(w.sent, 0)).toContain("Oceania: I could read no listings from BoardGameGeek just now (BGG rejected the token).");
   });
 
-  it("over the task API: the cap is 409, BGG off is 503, and a PATCH clears the top price with null", async () => {
+  it("over the task API: the cap is 409, judge without the runner is 503, and a PATCH clears the top price with null", async () => {
     const w = await world({ fetch: shop([OCEANIA]).fetch });
     await people(w.plugin);
     const jar = await signIn(w.plugin, LARRY);
     const token = await makeToken(w, jar);
     const post = (b: Record<string, unknown>) => api(w.plugin, "POST", "/tasks", { token, body: b });
-    expect((await post({ type: "wantlist", name: "W", source: "bgg", target: "1" })).status).toBe(503);
+    expect((await post({ type: "wantlist", name: "W", source: "page", target: SHOP, judge: "yes" })).status).toBe(503);
     const made = await post({ type: "wantlist", name: "W", source: "page", target: SHOP, max: 40 });
     expect(made.status).toBe(201);
     expect((await made.json()).task).toMatchObject({ source: "page", target: SHOP, settings: { max: 40 } });

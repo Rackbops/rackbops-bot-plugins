@@ -352,6 +352,24 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX ceiling_changes_user ON ceiling_changes (user_id, seq);
   `,
+  // 8 (0.19.0; listings sent in for a want-list watch, docket-types 0.7.0's `inbox` source): purely
+  // additive, one new table and its two indexes; no existing table or row is touched.
+  // - `want_inbox`: each listing sent in for an inbox watch (inbox.ts), oldest first by `seq`, as
+  //   the JSON of the six fields docket-types' `Submitted` has, already cleaned and capped. `key` is
+  //   the watch's inbox key (its config's `target`, `ebay-...` or `bgg-...`), what the source reads
+  //   by; `task_id` is the watch, for forget-me (roster.ts). At most `MAX_INBOX_ROWS` rows per key are
+  //   kept: the oldest go as new ones arrive. A database at 8 is refused by 0.18.1 and older.
+  `
+  CREATE TABLE want_inbox (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    listing TEXT NOT NULL,
+    at TEXT NOT NULL
+  );
+  CREATE INDEX want_inbox_key ON want_inbox (key, seq);
+  CREATE INDEX want_inbox_task ON want_inbox (task_id);
+  `,
 ];
 
 /** How long a statement waits on another connection's lock before SQLITE_BUSY. */

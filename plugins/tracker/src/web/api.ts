@@ -12,6 +12,7 @@ import {
   problem,
   typesAnswer,
 } from "./api-tasks.js";
+import { listingsAnswer } from "./api-listings.js";
 import type { Writer } from "./editor.js";
 import { readBody } from "./html.js";
 
@@ -35,11 +36,18 @@ import { readBody } from "./html.js";
  *   Requests whose token does not look up share one global bucket (`FAILED_BURST`, refilled at
  *   `FAILED_PER_SECOND`): past it they get 429 instead of 401, and a valid token is unaffected.
  * - A body is JSON (`Content-Type: application/json`), an object, at most `MAX_API_BYTES`, read no
- *   further than that. Errors are `{"error": {"code", "message"}}`.
+ *   further than that (`MAX_LISTINGS_BYTES` for the listings route, whose 40 listings with their
+ *   addresses need more). Errors are `{"error": {"code", "message"}}`.
+ * - `POST /tasks/<id>/listings` (0.19.0, api-listings.ts) sends listings in to the owner's inbox
+ *   watch -- an eBay watch, or a BGG one on a bot without BGG access -- since the tracker never opens
+ *   either site itself; `GET /tasks` shows such a watch's `site`, its words to `search` for and its
+ *   top price, for the browser helper that finds them.
  */
 
 export const API_PREFIX = "/api/v1";
 export const MAX_API_BYTES = 16 * 1024;
+/** The listings route's body: up to 40 listings, each with its address (docket keeps up to 400 characters of one) and text. */
+export const MAX_LISTINGS_BYTES = 64 * 1024;
 export const RATE_BURST = 60;
 export const RATE_PER_SECOND = 1;
 /** One bucket shared by every request whose token fails to look up (unknown, revoked, expired, malformed). */
@@ -116,9 +124,11 @@ export function bearer(header: string | null): string | null {
 type Route =
   | { kind: "me" | "types" | "tasks" }
   | { kind: "task"; id: string }
-  | { kind: "act"; id: string; action: "pause" | "resume" };
+  | { kind: "act"; id: string; action: "pause" | "resume" }
+  | { kind: "listings"; id: string };
 
 const ACT = /^\/tasks\/([^/]+)\/(pause|resume)$/;
+const LISTINGS = /^\/tasks\/([^/]+)\/listings$/;
 const ONE = /^\/tasks\/([^/]+)$/;
 
 function segment(raw: string | undefined): string {
@@ -135,6 +145,8 @@ function route(rest: string): Route | null {
   if (rest === "/tasks") return { kind: "tasks" };
   const act = ACT.exec(rest);
   if (act) return { kind: "act", id: segment(act[1]), action: act[2] as "pause" | "resume" };
+  const listings = LISTINGS.exec(rest);
+  if (listings) return { kind: "listings", id: segment(listings[1]) };
   const one = ONE.exec(rest);
   return one ? { kind: "task", id: segment(one[1]) } : null;
 }
@@ -142,19 +154,19 @@ function route(rest: string): Route | null {
 function allowedMethods(r: Route): string {
   if (r.kind === "tasks") return "GET, POST";
   if (r.kind === "task") return "GET, PATCH, DELETE";
-  if (r.kind === "act") return "POST";
+  if (r.kind === "act" || r.kind === "listings") return "POST";
   return "GET";
 }
 
 type Read = { ok: true; body: Record<string, unknown> } | { ok: false; answer: ApiAnswer };
 
 /** The body as a JSON object, or the answer refusing it. (A result wrapper: the body is the caller's, whatever its keys.) */
-async function readJson(request: Request): Promise<Read> {
+async function readJson(request: Request, max = MAX_API_BYTES): Promise<Read> {
   const type = (request.headers.get("content-type") ?? "").trim();
   const no = (answer: ApiAnswer): Read => ({ ok: false, answer });
   if (!/^application\/json *(;.*)?$/i.test(type)) return no(problem(415, "unsupported_media_type", "Send the body as Content-Type: application/json."));
-  const text = await readBody(request, MAX_API_BYTES);
-  if (text === null) return no(problem(413, "too_large", `The body is over ${MAX_API_BYTES} bytes.`));
+  const text = await readBody(request, max);
+  if (text === null) return no(problem(413, "too_large", `The body is over ${max} bytes.`));
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -217,7 +229,7 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
   const base = `${w.base}${API_PREFIX}`;
 
   if (method === "POST" || method === "PATCH") {
-    const read = await readJson(request);
+    const read = await readJson(request, r.kind === "listings" ? MAX_LISTINGS_BYTES : MAX_API_BYTES);
     if (!read.ok) return json(read.answer);
     const { body } = read;
     if (r.kind === "tasks") return json(await createAnswer(writer, user, body, base));
@@ -226,6 +238,7 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
       if (Object.keys(body).length > 0) return json(problem(400, "unknown_field", `\`${r.action}\` takes no fields: send {}.`));
       return json(await actAnswer(writer, user, r.id, r.action));
     }
+    if (r.kind === "listings") return json(await listingsAnswer(writer, user, r.id, body));
   }
   if (method === "DELETE" && r.kind === "task") return json(await actAnswer(writer, user, r.id, "delete"));
   if (r.kind === "types") return json(typesAnswer(w.d));

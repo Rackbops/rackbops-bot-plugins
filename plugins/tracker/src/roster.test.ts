@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { JobRecords } from "./executor.js";
+import { acceptListing, WantInbox } from "./inbox.js";
 import { admit } from "./people.js";
 import { Roster } from "./roster.js";
 import { openDatabase } from "./schema.js";
@@ -7,7 +8,8 @@ import { SqliteStore } from "./store.js";
 
 /**
  * Forget-me's erasure of docket's tables: deliveries (docket's `deleteDeliveries`), charges, budget
- * notices and findings (0.5.0), and the city-hall Executor's Job records of their runs.
+ * notices and findings (0.5.0), the city-hall Executor's Job records of their runs, and the
+ * listings sent in for their want-list watches (inbox.ts, 0.19.0).
  */
 
 const AT = "2026-10-01T12:00:00.000Z";
@@ -59,5 +61,27 @@ describe("forget-me and docket's delivery, usage, notice and finding rows, and t
     expect((await store.listFindings()).map((f) => f.text)).toEqual(["their claim"]);
     expect(erased.rows.executor_jobs).toBe(2);
     expect([jobs.get(hisRun), jobs.get(`${hisRun}:1`), jobs.get(theirRun)]).toEqual([null, null, "remote-theirs"]);
+  });
+
+  it("erases the listings sent in for their watches, and nobody else's", async () => {
+    const db = openDatabase(":memory:");
+    const store = new SqliteStore(db);
+    const larry = await admit(store, "111111111111111111", new Date(AT));
+    const curly = await admit(store, "222222222222222222", new Date(AT));
+    const watch = (ownerId: string, key: string) =>
+      store.createTask({ ownerId, type: "wantlist", title: "W", config: { source: "inbox", target: key }, schedule: null, lane: "notify", capabilities: ["notify"], at: AT });
+    const his = await watch(larry.id, "ebay-000000000000000000000001");
+    const theirs = await watch(curly.id, "ebay-000000000000000000000002");
+    const inbox = new WantInbox(db);
+    const listing = acceptListing({ title: "Wingspan", url: "https://www.ebay.com/itm/123456789" });
+    if (!listing) throw new Error("the listing was refused");
+    inbox.add(his.id, "ebay-000000000000000000000001", [listing, listing], new Date(AT));
+    inbox.add(theirs.id, "ebay-000000000000000000000002", [listing], new Date(AT));
+
+    const erased = new Roster(db).erase(larry.id);
+
+    expect(erased.rows.want_inbox).toBe(2);
+    expect(inbox.count("ebay-000000000000000000000001")).toBe(0);
+    expect(inbox.read("ebay-000000000000000000000002")).toEqual([{ title: "Wingspan", url: "https://www.ebay.com/itm/123456789" }]);
   });
 });
