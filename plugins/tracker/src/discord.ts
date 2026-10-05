@@ -19,7 +19,7 @@ import { remind, type Repeat } from "./reminders.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./research.js";
 import { DEFAULT_BGG_HOURS, DEFAULT_PAGE_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
 import { createScout, DEFAULT_SCOUT_EVERY, editScout, MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "./scout.js";
-import { MAX_FOR_CHARS, MAX_SCOUT_NOTES } from "./scout-type.js";
+import { type BaselineRule, MAX_FOR_CHARS, MAX_SCOUT_NOTES, type RenewalDecision } from "@rackbops/docket-types";
 import {
   EPHEMERAL,
   FAILED,
@@ -37,7 +37,6 @@ import { finishShare, prepareShare, sendShare } from "./press.js";
 import { historyWithSeries } from "./series.js";
 import { DEFAULT_POLL_HOURS, MAX_POLL_HOURS, trackPrice } from "./price.js";
 import { addRenewal, decideRenewal, DEFAULT_LEAD_DAYS, MAX_EVERY, MAX_LEAD_DAYS, type PeriodUnit } from "./tracked.js";
-import type { BaselineRule, RenewalDecision } from "@rackbops/docket-types";
 import { type WebLocation, webLink } from "./web/command.js";
 
 export { lookupMembership, type Interactionish, STARTING, FAILED } from "./discord-common.js";

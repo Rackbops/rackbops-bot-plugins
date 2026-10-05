@@ -74,7 +74,7 @@ export interface TrackerDeps {
   webEditor: boolean;
   /** Whether the execute lane runs (the city-hall Executor is configured): `/research` makes a task only then. */
   research?: boolean;
-  /** Whether the want-list watcher may read BoardGameGeek: `TRACKER_BGG_TOKEN` is set (want-bgg.ts). */
+  /** Whether the want-list watcher may read BoardGameGeek: `TRACKER_BGG_TOKEN` is set (docket-types' `bggSource`). */
   bgg?: boolean;
 }
 

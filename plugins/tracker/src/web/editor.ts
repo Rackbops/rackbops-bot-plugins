@@ -1,5 +1,5 @@
 import { describeSchedule, type Task, type User } from "@rackbops/docket-core";
-import type { PriceConfig } from "@rackbops/docket-types";
+import type { PriceConfig, WantConfig } from "@rackbops/docket-types";
 import { NO_LONGER_LISTED, NO_SUCH_TASK, type TaskResult, type TrackerDeps } from "../actions.js";
 import type { Queue } from "../discord-common.js";
 import { editPrice, editReminder, editRenewal } from "../edit.js";
@@ -11,7 +11,6 @@ import { finishPrice, previewPrice, startPrice } from "../price.js";
 import { createResearch, RESEARCH_OFF } from "../research.js";
 import { createRenewal } from "../tracked.js";
 import { editWant, finishWant, previewWant, startWant } from "../want.js";
-import type { WantConfig } from "../wantlist-type.js";
 import { EDITOR_TYPES, type EditorType, confirmDeletePage, editTaskPage, type NewType, newTaskPage, notice, ownerControls, taskHref, type Values } from "./editor-pages.js";
 import { editValues, priceEdit, priceInput, reminderEdit, reminderInput, renewalEdit, renewalInput, researchInput, scoutEdit, scoutInput, typed, wantEdit, wantInput } from "./form-input.js";
 import { htmlResponse, redirect } from "./html.js";

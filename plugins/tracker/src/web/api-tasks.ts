@@ -1,5 +1,5 @@
 import { describeSchedule, hasFired, type Task, type User } from "@rackbops/docket-core";
-import type { PriceConfig, ResearchConfig } from "@rackbops/docket-types";
+import type { PriceConfig, ResearchConfig, WantConfig } from "@rackbops/docket-types";
 import { NO_LONGER_LISTED, NO_SUCH_TASK, ownTask, type TrackerDeps } from "../actions.js";
 import { loadHistory } from "../history.js";
 import { TASK_BUSY } from "../locks.js";
@@ -10,7 +10,6 @@ import { JUDGE_OFF, NO_BGG } from "../want.js";
 import { actOn, editableTask, makeTask, READING, saveEdit, type TaskAction, type Writer, type Written } from "./editor.js";
 import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_TYPES, type NewType } from "./editor-pages.js";
 import { editValues } from "./form-input.js";
-import type { WantConfig } from "../wantlist-type.js";
 
 /**
  * The task API's task routes (rackbops-bot-plugins#80, slice 4; plan 5.10, E10): list, read, make,

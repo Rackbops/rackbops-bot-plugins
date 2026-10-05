@@ -3,7 +3,7 @@ import { CURRENCY_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TITLE, MAX_
 import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
 import { MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "../scout.js";
-import { MAX_FOR_CHARS, MAX_SCOUT_NOTES } from "../scout-type.js";
+import { MAX_FOR_CHARS, MAX_SCOUT_NOTES } from "@rackbops/docket-types";
 import { DEFAULT_BGG_HOURS, DEFAULT_PAGE_HOURS, MAX_WANT_HOURS } from "../want.js";
 import { MAX_EVERY, MAX_LEAD_DAYS } from "../tracked.js";
 import { html, type Html } from "./html.js";

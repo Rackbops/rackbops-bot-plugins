@@ -2,12 +2,12 @@ import { type Actor, type CalendarSchedule, createTask, describeSchedule, format
 import { clip, liveTaskCap, type Plan, rescheduleKeepingSnoozes, type TaskResult, type TrackerDeps } from "./actions.js";
 import { applyEdit, busyTask, nextRun, owned, refusingScheduleError, same, savedText } from "./edit.js";
 import { MAX_TITLE } from "./limits.js";
-import { LENSES, type Lens, MAX_FOR_CHARS, MAX_INTEREST_CHARS, MAX_INTERESTS, MAX_SCOUT_NOTES, SCOUT_MAX_BUDGET_USD, type ScoutConfig } from "./scout-type.js";
+import { LENSES, type Lens, MAX_FOR_CHARS, MAX_INTEREST_CHARS, MAX_INTERESTS, MAX_SCOUT_NOTES, SCOUT_MAX_BUDGET_USD, type ScoutConfig } from "@rackbops/docket-types";
 
 /**
  * The interest scout's rules (category 1, plan 1.2 row 1; rackbops-bot-plugins#83): `/scout new`
  * and `/scout edit`, and the web editor and the task API through the same calls, over the scout
- * type (scout-type.ts). Like `/research` it is made only while the execute lane runs (`d.research`);
+ * type (docket-types' `scout`). Like `/research` it is made only while the execute lane runs (`d.research`);
  * unlike a research request it is edited in place, since the interest list "must be editable"
  * (plan 1.2). A scout runs every N days at the owner's preferred hour, so a `/settings hour` change
  * moves it with their reminders (actions.ts `rescheduleOwned`).

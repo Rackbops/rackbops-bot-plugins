@@ -1,15 +1,13 @@
 import type { Task, User } from "@rackbops/docket-core";
-import type { BaselineRule, PriceConfig, RenewalConfig } from "@rackbops/docket-types";
+import type { BaselineRule, PriceConfig, RenewalConfig, ScoutConfig, WantConfig } from "@rackbops/docket-types";
 import type { TrackerDeps } from "../actions.js";
 import { renewalDate } from "../edit.js";
 import type { PriceInput } from "../price.js";
 import { type ReminderInput, type Repeat, repeatOf } from "../reminders.js";
 import type { ResearchInput } from "../research.js";
 import type { ScoutEdit, ScoutInput } from "../scout.js";
-import type { ScoutConfig } from "../scout-type.js";
 import type { PeriodUnit, RenewalInput } from "../tracked.js";
 import type { WantEdit, WantInput } from "../want.js";
-import type { WantConfig } from "../wantlist-type.js";
 import { fieldsFor, type NewType, type Values } from "./editor-pages.js";
 
 /**
