@@ -1,13 +1,10 @@
 import { type Actor, createTask, type Schedule, type TaskPatch, type User } from "@rackbops/docket-core";
-import { money } from "@rackbops/docket-types";
+import { isEbayHost, money, pageSource, parseBggThingId, type SourceId, SourceMiss, type WantConfig, withinLimits } from "@rackbops/docket-types";
 import { clip, liveTaskCap, NO_LONGER_LISTED, NO_SUCH_TASK, type Plan, rescheduleKeepingSnoozes, said, type TaskResult, type TrackerDeps } from "./actions.js";
 import type { Step } from "./discord.js";
 import { applyEdit, busyTask, nextRun, owned, refusingScheduleError, same, savedText } from "./edit.js";
 import { FetchRefusedError, urlProblem } from "./fetch.js";
 import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
-import { parseBggThingId } from "./want-bgg.js";
-import { isEbayHost, type SourceId, SourceMiss, pageSource } from "./want-sources.js";
-import { type WantConfig, withinLimits } from "./wantlist-type.js";
 
 /**
  * `/want`'s rules (category 2; rackbops-bot-plugins#83), for the command, the web editor and the task

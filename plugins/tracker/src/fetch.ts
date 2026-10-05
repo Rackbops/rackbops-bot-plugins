@@ -1,6 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
+import { isEbayHost, NEVER_EBAY } from "@rackbops/docket-types";
 import { pageForExtraction } from "./page.js";
 
 /**
@@ -54,16 +55,11 @@ export interface PageFetchOptions {
 }
 
 /**
- * A request header that is a directive to this port, never sent: any hop to eBay is refused. The
- * want-list watcher's page reads carry it, so a pasted page that redirects to eBay is not read
- * either (roshne's rule: eBay's own saved-search alerts cover eBay; the tracker never reads it).
+ * docket-types' page reads carry `NEVER_EBAY`: a directive to this port, never sent. Any hop to
+ * eBay is refused, so a pasted page that redirects to eBay is not read either (roshne's rule:
+ * eBay's own saved-search alerts cover eBay; the tracker never reads it).
  */
-export const NEVER_EBAY = "x-tracker-never-ebay";
-
-/** eBay's own hosts (and its short links). */
-export function isEbayHost(host: string): boolean {
-  return /(^|\.)ebay\.[a-z]{2,3}(\.[a-z]{2})?$/i.test(host.replace(/\.$/, ""));
-}
+export { isEbayHost, NEVER_EBAY };
 
 const systemResolve: Resolve = async (host) => (await lookup(host, { all: true, verbatim: true })).map((a) => a.address);
 

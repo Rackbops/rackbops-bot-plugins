@@ -2,7 +2,7 @@ import { type Actor, type CalendarSchedule, createTask, describeSchedule, format
 import { clip, liveTaskCap, type Plan, rescheduleKeepingSnoozes, type TaskResult, type TrackerDeps } from "./actions.js";
 import { applyEdit, busyTask, nextRun, owned, refusingScheduleError, same, savedText } from "./edit.js";
 import { MAX_TITLE } from "./limits.js";
-import { LENSES, type Lens, MAX_FOR_CHARS, MAX_INTEREST_CHARS, MAX_INTERESTS, MAX_SCOUT_NOTES, SCOUT_MAX_BUDGET_USD, type ScoutConfig } from "./scout-type.js";
+import { LENSES, type Lens, MAX_FOR_CHARS, MAX_INTEREST_CHARS, MAX_INTERESTS, MAX_SCOUT_NOTES, SCOUT_MAX_BUDGET_USD, type ScoutConfig } from "@rackbops/docket-types";
 
 /**
  * The interest scout's rules (category 1, plan 1.2 row 1; rackbops-bot-plugins#83): `/scout new`

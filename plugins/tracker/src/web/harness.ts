@@ -9,7 +9,7 @@ import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import type { Membership } from "../access.js";
 import { createPlugin } from "../index.js";
 import { HOST_CANNOT_MESSAGE } from "../notifier.js";
-import type { Source } from "../want-sources.js";
+import type { Source } from "@rackbops/docket-types";
 
 /**
  * The web tests' harness (rackbops-bot-plugins#80), shared by web.test.ts and editor.test.ts and
