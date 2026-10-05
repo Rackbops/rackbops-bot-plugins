@@ -198,6 +198,12 @@ describe("runDigests (plan 5.5)", () => {
     expect(mine).not.toContain("theirs");
     const theirs = s.calls.filter((c) => c.userId === FRIEND).at(-1)?.message.content ?? "";
     expect(theirs).toContain("theirs -- 18:00");
+    // Unanswered the next morning, the renewal's line says when it was asked, not a due date.
+    s.clock.set("2026-10-06T13:00:00.000Z");
+    await s.digests();
+    expect(s.calls.filter((c) => c.userId === OWNER).at(-1)?.message.content).toContain(
+      `- \`${renewal.id}\` Netflix -- asked Mon Oct 5, 10:00, waiting on your keep, cancel or renewed`,
+    );
   });
 
   it("uses each person's own zone and hour", async () => {

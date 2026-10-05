@@ -12,11 +12,12 @@
   and the time, and the message ends with the commands that answer them (`/task done`,
   `/task decide`, `/task snooze`). Price checks, want-list watches, scouts and research run on
   their own and owe nothing, so they are not listed; nor are tasks the person only receives, since
-  only the owner answers a run. A snoozed run is not overdue: its snooze is what is due. At most 10
+  only the owner answers a run. A renewal's line says when it was asked (its lead days before the
+  date), not the date itself. A snoozed run is not overdue: its snooze is what is due. At most 10
   lines a section, the rest counted.
 - Nothing due and nothing overdue: no DM at all.
 - Exactly once per person per day, by research-triage's claim pattern: the day is claimed in the
-  store (docket's once-only notice key `digest:<person>:<date>`) before anything is read or sent,
+  store (docket's once-only notice key `digest:<person>:<date>`) before their tasks are read or anything is sent,
   so a restart or an overlapping tick never sends it twice; a send that fails is logged and not
   retried that day. Notify lane only, on the `notify` tick after the runs due now, with no model
   call. A digest the bot was down for goes out when it is back, until the person's midnight; a

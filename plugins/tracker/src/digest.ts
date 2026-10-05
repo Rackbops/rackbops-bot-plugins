@@ -8,7 +8,7 @@ import type { DeliveryHealth } from "./delivery-health.js";
  * runs on the `notify` tick after the due runs, reads the Store, and never calls a model.
  *
  * Exactly once per person per day, by research-triage's claim pattern (plan 3, `digest_last_sent_at`):
- * the day is claimed before anything is read or sent -- docket's once-only `claimNotice`, keyed
+ * the day is claimed before the person's tasks are read or anything is sent -- docket's once-only `claimNotice`, keyed
  * `digest:<user>:<YYYY-MM-DD>` in the person's zone -- so a restart, a second tick, or a tick the host
  * abandoned can never send it twice. A crash between the claim and the send loses that day's digest
  * rather than doubling it, as a claimed delivery is never resent (plan 5.5). The claim is made even
@@ -26,6 +26,11 @@ import type { DeliveryHealth } from "./delivery-health.js";
  * - Overdue: the task's latest fired run when it fell due before today and is not answered. A run
  *   that was snoozed is not overdue: its snooze run is what is due. An older run behind a newer one
  *   is not listed: the newer run is what waits on the person.
+ *
+ * A renewal's run is its ask, `lead` days before the date, so an overdue renewal's line says "asked",
+ * not "due". docket keeps one scheduled run queued at a time, so a reminder that comes twice a day
+ * shows its next run only; a run that never fired (the lane was off) is in neither list until it
+ * fires.
  *
  * Late but same-day: the digest goes at the first `notify` tick at or after the hour, so one the bot
  * was down for goes out when it is back, until the person's midnight; a day missed entirely is not
@@ -127,7 +132,7 @@ export function formatDigest(digest: Digest, user: User, now: Date): string | nu
   const title = (t: Task) => (t.title.length > 80 ? `${t.title.slice(0, 77)}...` : t.title);
   const lines = [
     `Your day, ${dateLabel(now, zone)}:`,
-    ...section("**Overdue**", digest.overdue, (i) => `- \`${i.task.id}\` ${title(i.task)} -- due ${formatInstant(i.run.dueAt, zone, now)}, ${waitingOn(i.task)}`),
+    ...section("**Overdue**", digest.overdue, (i) => `- \`${i.task.id}\` ${title(i.task)} -- ${i.task.type === "renewal" ? "asked" : "due"} ${formatInstant(i.run.dueAt, zone, now)}, ${waitingOn(i.task)}`),
     ...section("**Due today**", digest.today, (i) =>
       i.waiting ? `- \`${i.task.id}\` ${title(i.task)} -- ${clockTime(i.run.dueAt, zone)}, ${waitingOn(i.task)}` : `- \`${i.task.id}\` ${title(i.task)} -- ${clockTime(i.run.dueAt, zone)}`,
     ),
