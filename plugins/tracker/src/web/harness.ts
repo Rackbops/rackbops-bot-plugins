@@ -97,6 +97,8 @@ export async function world(
     {
       clock,
       dbPath,
+      // These tests count every DM; the daily digest has its own (digest.test.ts).
+      digest: false,
       // The command side's gate: everyone is a member when there is one.
       ...(opts.guild ? { membership: async (): Promise<Membership> => "member" } : {}),
       ...(opts.webMembership ? { webMembership: opts.webMembership } : {}),
