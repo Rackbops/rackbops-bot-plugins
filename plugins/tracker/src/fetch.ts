@@ -47,7 +47,7 @@ export interface PageFetchOptions {
   maxBytes?: number;
   /**
    * Hand back the body as sent (still capped at `maxBytes`), not `pageForExtraction`'s: for a reader
-   * that parses it with no backtracking pattern of its own (the BGG source's XML, want-bgg.ts).
+   * that parses it with no backtracking pattern of its own (the BGG source's XML, docket-types' `bggSource`).
    */
   raw?: boolean;
   /** Hand back a redirect as it came, never following it: for a read that carries a credential (BGG's token). */

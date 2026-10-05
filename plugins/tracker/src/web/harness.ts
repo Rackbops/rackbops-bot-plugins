@@ -53,7 +53,7 @@ export async function world(
     env?: Record<string, string>;
     cityHallFetch?: typeof fetch;
     executeStarted?: (work: Promise<void>) => void;
-    /** A BGG source, as if `TRACKER_BGG_TOKEN` were set (want-bgg.ts). */
+    /** A BGG source, as if `TRACKER_BGG_TOKEN` were set (docket-types' `bggSource`). */
     bgg?: Source;
   } = {},
 ) {

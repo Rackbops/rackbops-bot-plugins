@@ -57,10 +57,10 @@ export const DB_FILE = "tracker.sqlite";
  * Fetch port (fetch.ts, #81) -- and `research` (#82), the execute-lane type, which runs only while
  * the city-hall Executor is configured (executor.ts): without it the execute lane is not ticked and
  * `/research` makes nothing -- and `scout` (#83), the interest scout, the plugin's own execute-lane
- * type (scout-type.ts), under the same switch -- and `wantlist` (#83), the want-list watcher, on the
+ * type (docket-types' `scout`), under the same switch -- and `wantlist` (#83), the want-list watcher, on the
  * `poll` tick like `price`, reading pasted pages here; `createPlugin` swaps in one that also reads
  * BoardGameGeek once `TRACKER_BGG_TOKEN` is set -- and `wantjudge` (#83), the same watch with the
- * model looking at each new listing first (wantjudge-type.ts): an execute-lane type, under the
+ * model looking at each new listing first (docket-types' `wantjudge`): an execute-lane type, under the
  * execute lane's switch, its plain-code reads through the same Fetch port.
  */
 export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object.freeze({
@@ -95,7 +95,7 @@ export interface TrackerOptions {
   cityHallFetch?: typeof fetch;
   /** Test seam: an Executor in place of the city-hall one, as if configured. */
   executor?: Executor;
-  /** Test seam: a BGG source in place of the token's (want-bgg.ts), as if `TRACKER_BGG_TOKEN` were set. */
+  /** Test seam: a BGG source in place of the token's (docket-types' `bggSource`), as if `TRACKER_BGG_TOKEN` were set. */
   bgg?: Source;
   /** Test seam: each execute tick's background work as it starts, so a test can await it. */
   executeStarted?: (work: Promise<void>) => void;
@@ -124,7 +124,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const executeOn = cityHallConfig !== null || options.executor !== undefined;
   const clock: Clock = options.clock ?? { now: () => new Date() };
   const bggToken = parseBggToken(host.env.TRACKER_BGG_TOKEN);
-  // BGG's answers are XML, read by want-bgg.ts's own bounded parser: the raw body, fenced like every read.
+  // BGG's answers are XML, read by docket-types' own bounded BGG parser: the raw body, fenced like every read.
   const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createPageFetch({ raw: true, noRedirects: true }) }) : null);
   const types =
     options.types ??

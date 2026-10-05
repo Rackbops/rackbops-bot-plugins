@@ -8,7 +8,7 @@ import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
 
 /**
  * `/want`'s rules (category 2; rackbops-bot-plugins#83), for the command, the web editor and the task
- * API alike, over the wantlist type (wantlist-type.ts). Three answers to "where do I look":
+ * API alike, over the wantlist type (docket-types' `wantlist`). Three answers to "where do I look":
  *
  * - `page`: a listing or search page the owner pastes. Checked like `/price`'s page, then read once
  *   outside the queue, so the owner hears at once whether it carries listings the watcher can read;
@@ -17,7 +17,7 @@ import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
  * - `ebay`: no task. The tracker never reads eBay, so the answer is an eBay search, with the price
  *   cap in it, for the owner to save on eBay; eBay's own saved-search alerts do the watching.
  *
- * A watch is judged (wantjudge-type.ts: the model looks at each new listing before it is DMed)
+ * A watch is judged (docket-types' `wantjudge`: the model looks at each new listing before it is DMed)
  * whenever the model runner is set up (`d.research`), unless the owner says `judge: false`; without
  * the runner it is a plain watch, and `judge: true` is refused. Which it is stays fixed once made,
  * since a task's type is: to change it, make a new watch.

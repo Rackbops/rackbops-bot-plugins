@@ -36,7 +36,7 @@ export interface ExecuteLaneDeps {
   executor: Executor;
   locks: TaskLocks;
   budget?: BudgetPolicy;
-  /** The fenced page reads a judged want-list watch's `prepare` makes (wantjudge-type.ts); no other type here reads pages. */
+  /** The fenced page reads a judged want-list watch's `prepare` makes (docket-types' `wantjudge`); no other type here reads pages. */
   fetch?: Fetch;
 }
 
