@@ -376,7 +376,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           .addIntegerOption((o) =>
             o
               .setName("hours")
-              .setDescription(`Hours between looks (default ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG, ${DEFAULT_INBOX_HOURS} for eBay)`)
+              .setDescription(`Hours between looks (default ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG's API, ${DEFAULT_INBOX_HOURS} for eBay or BGG without it)`)
               .setMinValue(1)
               .setMaxValue(MAX_WANT_HOURS),
           )

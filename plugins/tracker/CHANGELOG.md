@@ -22,7 +22,7 @@
   seller?}, ...]}`, 1 to 40 a request, each cleaned by docket-types' `submittedListing`; the usable
   ones are kept and the rest counted (`200 {"accepted", "rejected", "message"}`); none usable is a
   400. Only your own live inbox watch: anyone else's is the API's usual 404, and a page or BGG-API
-  watch a 409. The newest 200 per watch are kept.
+  watch a 409. The newest 100 per watch are kept, as many as one look reads.
 - `GET /api/v1/tasks` shows an inbox watch's `site` (`ebay` or `bgg`), its words to `search` for,
   and a BGG `game` when one was named, beside its top price and currency, so a browser helper knows
   what to look for.

@@ -20,12 +20,12 @@ import { type Listing, type Submitted, submittedListing } from "@rackbops/docket
  * An inbox is a window, not an archive: `MAX_INBOX_ROWS` rows per key, the oldest going as new ones
  * come in. The watch's own state (docket's `reported`) is what keeps a listing from being DMed
  * twice, so a row that goes after it was read loses nothing; one that goes before it was read --
- * more than `MAX_INBOX_ROWS` sent between two runs -- is lost, which is why an inbox watch polls
+ * more than `MAX_INBOX_ROWS` (100) sent between two runs -- is lost, which is why an inbox watch polls
  * hourly by default (want.ts's `DEFAULT_INBOX_HOURS`).
  */
 
-/** Rows kept per inbox key, newest first; docket's source reads at most 100 of them a run. */
-export const MAX_INBOX_ROWS = 200;
+/** Rows kept per inbox key, newest first: docket's source reads at most 100 distinct listings a run, so a row past that would never be read. */
+export const MAX_INBOX_ROWS = 100;
 /** Listings one `POST /tasks/<id>/listings` may carry. */
 export const MAX_LISTINGS_PER_POST = 40;
 
