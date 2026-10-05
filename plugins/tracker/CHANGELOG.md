@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.18.1] - 2026-10-05
+
+### Changed
+
+- **The scout and want-list types now come from `@rackbops/docket-types` 0.6.0** (plan item 104,
+  Rackbops/docket#25), and docket-core goes to 0.6.0 with them. `scout`, `wantlist`, `wantjudge`
+  and their page and BGG sources moved there unchanged; the plugin's own copies
+  (`scout-type.ts`, `wantlist-type.ts`, `wantjudge-type.ts`, `want-sources.ts`, `want-bgg.ts`)
+  are gone, and their unit tests moved with them. The fenced page fetch still honours and strips
+  the `NEVER_EBAY` header, now imported from docket-types. No behaviour change: same commands,
+  same DMs, same stored state.
+
 ## [0.18.0] - 2026-10-05
 
 ### Added
