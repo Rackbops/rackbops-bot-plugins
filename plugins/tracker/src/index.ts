@@ -24,6 +24,7 @@ import { decideHealth, type HealthState, healthResponse } from "./health.js";
 import { TaskLocks } from "./locks.js";
 import { createDmNotifier } from "./notifier.js";
 import { type NotifyTickKind, runNotifyTick } from "./notify-lane.js";
+import { runDigests } from "./digest.js";
 import { parseAdminIds, seedAdmins } from "./people.js";
 import { openDatabase, vacuumOnce } from "./schema.js";
 import { Roster } from "./roster.js";
@@ -45,7 +46,8 @@ import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_ID
  * settings (#80) -- renewals and the price tracker, with the fenced page reads on a tick of
  * their own (#81) -- the web task editor (#80, slice 2) -- the admin view and forget-me (#80,
  * slice 3) -- the JSON task API with personal tokens (#80, slice 4) -- and the one-off research
- * request through city-hall, with its findings, on the execute lane (#82).
+ * request through city-hall, with its findings, on the execute lane (#82) -- and the daily "today
+ * and overdue" digest after the runs on the `notify` tick (plan 5.5, digest.ts).
  *
  * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID`, `TRACKER_GUILD_ROLES`,
  * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts) and `TRACKER_BUDGET_UNLIMITED` (usage.ts) and nothing else. The database is opened in `activate()` and closed in `dispose()`.
@@ -102,6 +104,8 @@ export interface TrackerOptions {
   bgg?: Source;
   /** Test seam: each execute tick's background work as it starts, so a test can await it. */
   executeStarted?: (work: Promise<void>) => void;
+  /** Test seam: false leaves the daily digest (digest.ts) off the notify tick, for tests that count every DM. On by default. */
+  digest?: boolean;
 }
 
 /** A Notifier for a host without `dm`: every send is refused, and nothing went out. */
@@ -188,6 +192,11 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     if (kind === "notify") health.lastTickAt = clock.now();
     const { ran, failed } = outcome.result;
     if (failed > 0) host.log.warn(`${kind === "poll" ? "poll" : "notify"} lane: ${ran} ran, ${failed} failed`);
+    // The daily digest (plan 5.5, digest.ts), after the runs due now: a reminder never waits on it.
+    if (kind === "notify" && options.digest !== false && deps && store) {
+      const r = await runDigests({ store, notifier: deps.notifier, log: host.log, ...(delivery ? { health: delivery } : {}) }, clock.now(), signal);
+      if (r.failed > 0) host.log.warn(`digest: ${r.sent} sent, ${r.failed} failed`);
+    }
   }
 
   // The ticks still running (one the host stopped waiting on included): forget-me waits for none

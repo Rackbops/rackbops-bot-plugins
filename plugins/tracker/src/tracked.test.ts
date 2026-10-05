@@ -58,7 +58,7 @@ function world() {
   };
   const plugin = createPlugin(
     makeFakeHost({ name: "tracker", env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN }, log: { info() {}, warn() {}, error() {} }, dm }),
-    { clock, dbPath: ":memory:", fetch: () => fetch },
+    { clock, dbPath: ":memory:", fetch: () => fetch, digest: false },
   );
   return { plugin, clock, sent, shop };
 }

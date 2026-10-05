@@ -60,6 +60,8 @@ function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: 
     {
       clock,
       dbPath: ":memory:",
+      // These tests count every DM; the daily digest has its own (digest.test.ts).
+      digest: false,
       ...(members ? { membership: async (_i: Interactionish, id: string): Promise<Membership> => (members.has(id) ? "member" : "not-member") } : {}),
     },
   );

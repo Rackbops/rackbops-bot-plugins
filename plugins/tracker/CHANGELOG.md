@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.18.0] - 2026-10-05
+
+### Added
+
+- **The daily "today and overdue" digest** (plan 5.5). Once a day, at each person's preferred hour
+  in their own zone (the hour `/register` and `/settings` set, 9:00 by default), Clerk DMs them one
+  message listing their own reminders and renewals that are **overdue** -- the latest run fired
+  before today and was never marked done or decided -- and those **due today**: a run still to come
+  today, or one that already went out today and waits on an answer. Each line names the task id
+  and the time, and the message ends with the commands that answer them (`/task done`,
+  `/task decide`, `/task snooze`). Price checks, want-list watches, scouts and research run on
+  their own and owe nothing, so they are not listed; nor are tasks the person only receives, since
+  only the owner answers a run. A snoozed run is not overdue: its snooze is what is due. At most 10
+  lines a section, the rest counted.
+- Nothing due and nothing overdue: no DM at all.
+- Exactly once per person per day, by research-triage's claim pattern: the day is claimed in the
+  store (docket's once-only notice key `digest:<person>:<date>`) before anything is read or sent,
+  so a restart or an overlapping tick never sends it twice; a send that fails is logged and not
+  retried that day. Notify lane only, on the `notify` tick after the runs due now, with no model
+  call. A digest the bot was down for goes out when it is back, until the person's midnight; a
+  person whose DMs are paused after failures gets theirs later that day if the pause lifts.
+- Forget-me erases the person's digest claims too.
+
 ## [0.17.0] - 2026-10-04
 
 ### Added
