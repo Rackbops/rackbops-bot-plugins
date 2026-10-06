@@ -1,12 +1,12 @@
 import { describeSchedule, hasFired, type Task, type User } from "@rackbops/docket-core";
-import type { PriceConfig, ResearchConfig, WantConfig } from "@rackbops/docket-types";
+import type { PriceConfig, ResearchConfig } from "@rackbops/docket-types";
 import { NO_LONGER_LISTED, NO_SUCH_TASK, ownTask, type TrackerDeps } from "../actions.js";
 import { loadHistory } from "../history.js";
 import { TASK_BUSY } from "../locks.js";
 import { FINISHED, ownLiveTask } from "../manage.js";
 import { RESEARCH_OFF } from "../research.js";
 import { SCOUT_OFF } from "../scout.js";
-import { JUDGE_OFF, NO_BGG } from "../want.js";
+import { INBOX_OFF, JUDGE_OFF, type WatchConfig, watchSite } from "../want.js";
 import { actOn, editableTask, makeTask, READING, saveEdit, type TaskAction, type Writer, type Written } from "./editor.js";
 import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_TYPES, type NewType } from "./editor-pages.js";
 import { editValues } from "./form-input.js";
@@ -121,7 +121,7 @@ export function refusal(error: string): ApiAnswer {
   if (error === RESEARCH_OFF || error === SCOUT_OFF) return problem(503, "unavailable", error);
   if (error === FINISHED || /^That task is [a-z]+, not [a-z]+\.$/.test(error)) return problem(409, "conflict", error);
   if (/^You already (have|track|watch for) [0-9]+ /.test(error)) return problem(409, "limit_reached", error);
-  if (error === NO_BGG || error === JUDGE_OFF) return problem(503, "unavailable", error);
+  if (error === INBOX_OFF || error === JUDGE_OFF) return problem(503, "unavailable", error);
   if (/ (is|are) not available on this bot\.$/.test(error)) return problem(503, "unavailable", error);
   return problem(400, "invalid", error);
 }
@@ -172,7 +172,21 @@ export async function taskJson(d: TrackerDeps, user: User, task: Task) {
     // A price's page: read-only, since another page is another tracker (no edit takes it).
     ...(task.type === "price" ? { url: String((task.config as PriceConfig).url) } : {}),
     // A watch's source and target: read-only too, since another place to look is another watch.
-    ...(task.type === "wantlist" || task.type === "wantjudge" ? { source: (task.config as WantConfig).source, target: (task.config as WantConfig).target } : {}),
+    ...(task.type === "wantlist" || task.type === "wantjudge" ? watchJson(task.config as WatchConfig) : {}),
+  };
+}
+
+/**
+ * Where a watch looks, as the API shows it. An inbox watch adds what a browser helper needs to fill
+ * it (want.ts): its `site` (`ebay` or `bgg`, from its inbox key) and its words to `search` for, and
+ * a BGG `game` when one was named; its top price and currency are in `settings` as for any watch.
+ */
+function watchJson(c: WatchConfig) {
+  const site = watchSite(c);
+  return {
+    source: c.source,
+    target: c.target,
+    ...(site ? { site, ...(c.search !== undefined ? { search: c.search } : {}), ...(c.game !== undefined ? { game: c.game } : {}) } : {}),
   };
 }
 

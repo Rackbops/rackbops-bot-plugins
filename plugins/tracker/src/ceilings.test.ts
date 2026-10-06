@@ -270,8 +270,9 @@ describe("migration 7", () => {
     const before = { schema: schema(), rows: rows() };
 
     expect(migrate(db)).toBe(6);
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(7);
-    const after = schema();
+    // Every later migration runs too; migration 8's want_inbox has its own test (inbox.test.ts).
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
+    const after = schema().filter((s) => !s.name.startsWith("want_inbox"));
     expect(after.filter((s) => !s.name.startsWith("ceiling_changes"))).toEqual(before.schema);
     expect(after.filter((s) => s.name.startsWith("ceiling_changes")).map((s) => s.name)).toEqual(["ceiling_changes", "ceiling_changes_user"]);
     expect(rows()).toEqual(before.rows);

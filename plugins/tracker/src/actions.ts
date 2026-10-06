@@ -31,6 +31,7 @@ import { TASK_BUSY, type TaskLocks } from "./locks.js";
 import { admit, PeopleError, setPreferences } from "./people.js";
 import { heldRuns, restoreHeldRun } from "./retime.js";
 import type { Roster } from "./roster.js";
+import type { WantInbox } from "./inbox.js";
 import type { ApiTokens } from "./web/api-tokens.js";
 import type { Sessions } from "./web/sessions.js";
 import type { LoginLinks } from "./web/signin-link.js";
@@ -76,6 +77,8 @@ export interface TrackerDeps {
   research?: boolean;
   /** Whether the want-list watcher may read BoardGameGeek: `TRACKER_BGG_TOKEN` is set (docket-types' `bggSource`). */
   bgg?: boolean;
+  /** The want-list inboxes: the listings sent in for a watch (inbox.ts); the task API's listings route writes them. */
+  inbox?: WantInbox;
 }
 
 /** The ticks as forget-me sees them: whether one runs now, and a wait of at most `ms` for none to (false when it timed out). */

@@ -57,7 +57,7 @@ export interface PageFetchOptions {
 /**
  * docket-types' page reads carry `NEVER_EBAY`: a directive to this port, never sent. Any hop to
  * eBay is refused, so a pasted page that redirects to eBay is not read either (roshne's rule:
- * eBay's own saved-search alerts cover eBay; the tracker never reads it).
+ * the tracker never reads eBay; an eBay watch gets its listings sent in, inbox.ts).
  */
 export { isEbayHost, NEVER_EBAY };
 

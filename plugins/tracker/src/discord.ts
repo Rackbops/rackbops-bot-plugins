@@ -17,7 +17,7 @@ import { resumeTask } from "./manage.js";
 import { CURRENCY_LENGTH, DATE_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
 import { remind, type Repeat } from "./reminders.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./research.js";
-import { DEFAULT_BGG_HOURS, DEFAULT_PAGE_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
+import { DEFAULT_BGG_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
 import { createScout, DEFAULT_SCOUT_EVERY, editScout, MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "./scout.js";
 import { type BaselineRule, MAX_FOR_CHARS, MAX_SCOUT_NOTES, type RenewalDecision } from "@rackbops/docket-types";
 import {
@@ -365,7 +365,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .addChoices(
                 { name: "a listing page you paste", value: "page" },
                 { name: "BoardGameGeek's marketplace", value: "bgg" },
-                { name: "eBay (I give you a search to save on eBay)", value: "ebay" },
+                { name: "eBay (from listings you send in; I never open eBay)", value: "ebay" },
               ),
           )
           .addStringOption((o) =>
@@ -376,7 +376,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           .addIntegerOption((o) =>
             o
               .setName("hours")
-              .setDescription(`Hours between looks (default ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG)`)
+              .setDescription(`Hours between looks (default ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG's API, ${DEFAULT_INBOX_HOURS} for eBay or BGG without it)`)
               .setMinValue(1)
               .setMaxValue(MAX_WANT_HOURS),
           )

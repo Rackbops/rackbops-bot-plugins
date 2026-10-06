@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.19.0] - 2026-10-05
+
+### Added
+
+- **`/want source: ebay` makes a watch now** (Rod's choice: Clerk watches eBay and BoardGameGeek
+  for what people want through listings sent in, never by reading either site itself). It was an
+  answer only -- an eBay search to save on eBay. Now it is an inbox watch (docket-types 0.7.0's
+  `inbox` source): `target` is the words to search eBay for (the name when empty), and listings
+  reach the watch when you search eBay in your own browser, such as with Claude in Chrome, and send
+  what it finds to the task API's new `POST /api/v1/tasks/<id>/listings`; eBay's saved-search alert
+  emails are meant to follow. Each look (hourly by default, since reading what was sent in costs
+  nothing) DMs the new listings within your top price and currency, once each, with a Done button,
+  as every watch does; a judged one has the model look at each first, from what the listing says,
+  with no page opened. The answer still gives the eBay search link, with your top price in it.
+- **`/want source: bgg` without BGG's API makes the same kind of watch**: BGG declined the
+  application, so instead of refusing, the watch takes the BoardGameGeek listings you send in.
+  `target` is a BGG game (its address or id) or the words to look for. With `TRACKER_BGG_TOKEN`
+  set it reads BGG's API as before.
+- **`POST /api/v1/tasks/<id>/listings`**: `{"listings": [{title, url, price?, currency?, condition?,
+  seller?}, ...]}`, 1 to 40 a request, each cleaned by docket-types' `submittedListing`; the usable
+  ones are kept and the rest counted (`200 {"accepted", "rejected", "message"}`); none usable is a
+  400. Only your own live inbox watch: anyone else's is the API's usual 404, and a page or BGG-API
+  watch a 409. The newest 100 per watch are kept, as many as one look reads.
+- `GET /api/v1/tasks` shows an inbox watch's `site` (`ebay` or `bgg`), its words to `search` for,
+  and a BGG `game` when one was named, beside its top price and currency, so a browser helper knows
+  what to look for.
+- The web editor offers eBay as a source too.
+- Schema migration 8, purely additive: `want_inbox`, the listings sent in per watch. Forget-me
+  erases a person's with their tasks. A database at 8 is refused by 0.18.1 and older.
+
+### Changed
+
+- Every word that said the tracker does nothing for eBay now says what it does: the `/want`
+  source choice (eBay, from listings you send in), the web form's help, and pasting an eBay page
+  as `source: page`, which now points to `source: ebay`.
+- An inbox watch needs the web area (`TRACKER_WEB_URL`), where listings are sent in; without it,
+  `/want source: ebay` (or `bgg` without the token) is refused rather than made to wait forever.
+- docket-core and docket-types go to 0.7.0.
+
 ## [0.18.1] - 2026-10-05
 
 ### Changed

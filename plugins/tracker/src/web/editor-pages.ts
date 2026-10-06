@@ -4,7 +4,7 @@ import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
 import { MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "../scout.js";
 import { MAX_FOR_CHARS, MAX_SCOUT_NOTES } from "@rackbops/docket-types";
-import { DEFAULT_BGG_HOURS, DEFAULT_PAGE_HOURS, MAX_WANT_HOURS } from "../want.js";
+import { DEFAULT_BGG_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, MAX_WANT_HOURS } from "../want.js";
 import { MAX_EVERY, MAX_LEAD_DAYS } from "../tracked.js";
 import { html, type Html } from "./html.js";
 import { framed, type Viewer } from "./pages.js";
@@ -85,14 +85,14 @@ const SCOUT_FIELDS: readonly Field[] = [
   { name: "every", label: "Days between runs", kind: "number", min: 1, max: MAX_SCOUT_EVERY, help: `1 to ${MAX_SCOUT_EVERY}; 1 when empty. Each run is at your preferred hour.` },
 ];
 
-const SOURCE_OPTIONS = [["page", "a listing page I paste"], ["bgg", "BoardGameGeek's marketplace"]] as const;
+const SOURCE_OPTIONS = [["page", "a listing page I paste"], ["bgg", "BoardGameGeek's marketplace"], ["ebay", "eBay, from listings I send in"]] as const;
 const JUDGE_OPTIONS = [["yes", "yes: the model checks each new listing and its seller first"], ["no", "no: DM me every new listing"]] as const;
 
 /** `/want`'s limits, the same on an edit: where it looks is fixed once made. */
 const WANT_LIMITS: readonly Field[] = [
   { name: "max", label: "Top price", kind: "text", decimal: true, help: "Only listings at or under it, and so only listings that show a price. Leave it empty for any price." },
   { name: "currency", label: "Currency", kind: "text", maxlength: CURRENCY_LENGTH, help: "Only listings in it, such as USD. Leave it empty for any." },
-  { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}; ${DEFAULT_PAGE_HOURS} for a page and ${DEFAULT_BGG_HOURS} for BGG when empty.` },
+  { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}; when empty, ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG, and ${DEFAULT_INBOX_HOURS} for eBay (or BGG, when this bot has no BGG access), whose listings are sent in.` },
 ];
 
 /** The fields each form shows, in order. An edit of a price leaves out the page itself; a research request has no edit. */
@@ -111,11 +111,11 @@ export function fieldsFor(type: NewType, mode: "new" | "edit"): readonly Field[]
           { name: "source", label: "Where to look", kind: "select", options: SOURCE_OPTIONS } as const,
           {
             name: "target",
-            label: "The page, or the BGG game",
+            label: "The page, the BGG game, or the words to search eBay for",
             kind: "text",
-            required: true,
             maxlength: MAX_URL,
-            help: "A shop's listing or search page, or a BGG game's address or id. For eBay, use /want source: ebay in Discord: eBay's own saved search does the watching.",
+            help:
+              "A shop's listing or search page, or a BGG game's address or id. For eBay, the words to search for (the name when empty): I never open eBay, so its listings reach the watch when you send them in through the task API, such as from Claude in Chrome in your own browser. BGG works the same way while this bot has no BGG access.",
           } as const,
           {
             name: "judge",
@@ -212,7 +212,7 @@ const NOUN: Record<NewType, string> = { reminder: "reminder", renewal: "renewal"
 const INTRO: Partial<Record<NewType, string>> = {
   price: "I read the page once now; nothing is made unless I find a price in it.",
   wantlist:
-    "I look at the page or BGG every few hours and DM you each new listing within your limits, until you press Done. A page is read once now; nothing is made unless I find listings in it.",
+    "I look at the page or BGG every few hours, or at the eBay listings you send in every hour, and DM you each new listing within your limits, until you press Done. A page is read once now; nothing is made unless I find listings in it.",
   research:
     "A research run looks it up on the web, then a second run checks the answer against its sources; only an answer that passes is DMed to you. It can take a while, and requests share a daily budget.",
   scout:
