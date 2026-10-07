@@ -626,13 +626,18 @@ key>`, so two databases never collide.
 `/tracker/healthz` and the web area need the bot's `HTTP_PORT` set; without it there is no HTTP at all.
 
 **Link everyone to usr** (0.23.0, the admin page, with the usr link on). People admitted before the
-link was on are not linked to usr. One press allows each person on the list with a Discord id and no
-usr link in usr as `tracker:member`, with the pressing admin as the one who allowed them, then links
-them, up to 50 a press (the page says how many remain). usr records each link against
+link was on are not linked to usr. One press starts a run in the background (the bot answers a web
+request it waited on for 10 seconds with a 504, so the press does not wait) and goes back to the
+admin page, which shows how far the run has got and then how it ended; a second press while it runs
+starts nothing. For each person on the list with a Discord id and no usr link, one at a time, it
+checks they are a member of the server with its role, as `/allow` does; re-reads them, so someone
+forgotten meanwhile is never sent to usr; allows them in usr as `tracker:member`, with the pressing
+admin as the one who allowed them; then links them. usr records each link against
 `TRACKER_GUILD_ID`'s first server, so with no gate it refuses and says to `/allow` in the server
-instead. A refusal about the admin (not linked in usr, missing `tracker:register` or
-`tracker:member`) stops at the first person; anyone else's problem is listed by name and the rest go
-on. It never runs on its own.
+instead. Only a 400 from usr is about the one person, listed by name while the rest go on; any other
+refusal or failure (the admin not linked in usr or missing `tracker:register` or `tracker:member`,
+the key, usr unreachable) stops the run, since it would fail everyone the same way. It never starts
+on its own.
 
 **First admin and usr.** usr's `/api/discord/allow` needs the admin running `/allow` to be linked in
 usr already, so the first admin cannot be `/allow`ed by anyone. With the usr link on, a configured

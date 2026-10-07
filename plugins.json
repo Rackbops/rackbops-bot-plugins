@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-07T23:21:57.203Z",
+  "generatedAt": "2026-10-07T23:27:04.465Z",
   "plugins": [
     {
       "name": "mcp",
@@ -287,7 +287,7 @@
           "version": "0.23.0",
           "publishedAt": "2026-10-07T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.23.0",
-          "notes": "### Added\n\n- **Link everyone to usr**, on the admin page while the usr link is on: one press allows each person\n  on the list with a Discord id and no usr link in usr as `tracker:member`, with the pressing admin\n  as the one who allowed them, and links them, up to 50 a press. usr records each link against\n  `TRACKER_GUILD_ID`'s first server, so with no gate it refuses and says to `/allow` in the server.\n  A refusal about the admin stops at once; other people's problems are listed by name. It never\n  runs on its own.\n\n### Schema\n\n- No change."
+          "notes": "### Added\n\n- **Link everyone to usr**, on the admin page while the usr link is on: one press starts a run in\n  the background that, for each person on the list with a Discord id and no usr link, checks they\n  are a member of the server as `/allow` does, allows them in usr as `tracker:member` with the\n  pressing admin as the one who allowed them, and links them. The admin page shows how far it has\n  got and then how it ended; a second press while it runs starts nothing. usr records each link\n  against `TRACKER_GUILD_ID`'s first server, so with no gate it refuses and says to `/allow` in the\n  server. Someone forgotten during the run is never sent to usr. Only a 400 from usr is about one\n  person; any other refusal or failure stops the run, since it would fail everyone the same way.\n\n### Schema\n\n- No change."
         },
         {
           "version": "0.22.0",

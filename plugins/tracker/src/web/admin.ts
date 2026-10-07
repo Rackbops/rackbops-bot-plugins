@@ -75,8 +75,9 @@ async function peoplePage(a: AdminWeb, result: Result, status: number, allow?: s
   const data = { people, blocks: a.d.roster.activeBlocks(a.d.clock.now()), now: a.d.clock.now() };
   const usr = a.d.usr;
   const usrUnlinked = usr ? people.filter((p) => p.discordId !== null && usr.links.subjectOf(p.id) === null).length : null;
+  const usrRun = usr ? usrLinkRuns.get(usr) : undefined;
   return htmlResponse(
-    adminPage(a.v, data, { result, unlimited: a.d.budgetUnlimited === true, usrUnlinked, ...(allow !== undefined ? { allow } : {}) }),
+    adminPage(a.v, data, { result, unlimited: a.d.budgetUnlimited === true, usrUnlinked, ...(usrRun ? { usrRun } : {}), ...(allow !== undefined ? { allow } : {}) }),
     status,
   );
 }
@@ -144,8 +145,11 @@ export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): P
   }
   if (r.kind === "admin-usr-link") {
     if (!a.d.usr) return unknownPage(base);
-    const result = await linkEveryone(a, a.d.usr);
+    const usr = a.d.usr;
+    const result = await fresh(a, true, async (me) => startLinkEveryone(a, usr, me));
     if (result === null) return unknownPage(base);
+    // Started: the admin page shows where it has got to.
+    if (result === "started") return redirect(`${base}/admin`);
     return peoplePage(a, result, result.ok ? 200 : 400);
   }
   if (r.kind === "admin-lift") {
@@ -209,67 +213,130 @@ export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): P
   return onePerson(a, r.id, said(done));
 }
 
-/** The most people one press of "Link everyone to usr" asks usr about; the page says to press again for the rest. */
-export const MAX_USR_LINKS = 50;
+/** Where "Link everyone to usr" has got to: one run at a time per tracker, shown on the admin page. */
+export interface UsrLinkRun {
+  running: boolean;
+  done: number;
+  total: number;
+  /** The last run's outcome, once it ends. */
+  result: Result;
+}
+
+const usrLinkRuns = new WeakMap<UsrLink, UsrLinkRun>();
+const usrLinkPending = new Set<Promise<void>>();
+
+/** For tests: every run started so far has ended. */
+export async function usrLinkRunsSettled(): Promise<void> {
+  while (usrLinkPending.size > 0) await Promise.all([...usrLinkPending]);
+}
 
 /**
- * "Link everyone to usr" (the link design's backfill, after `/allow` went through usr in 0.21.0):
- * each person on the list with a Discord id and no usr link is allowed in usr as `<app>:member`,
- * with the pressing admin as the invoker, one at a time and outside the queue, then linked in it.
- * It never runs on its own. usr records each link against `TRACKER_GUILD_ID`'s first server, so
- * without a gate it refuses and says to use `/allow` in the server. A refusal about the admin
- * themselves (not linked, missing roles) stops at the first person: every other ask would fail the same way.
+ * "Link everyone to usr" (the link design's backfill, after `/allow` went through usr in 0.21.0).
+ * The bot answers a web request it waited 10 seconds on with a 504 and does not stop it, so the
+ * press only starts a run in the background and goes back to the admin page, which shows how far
+ * it got; a second press while one runs starts nothing. Each person on the list with a Discord id
+ * and no usr link is, one at a time, checked as `/allow` checks them (a member of the server, with
+ * its role), re-read in the queue (someone forgotten meanwhile is skipped, never sent to usr),
+ * allowed in usr as `<app>:member` with the pressing admin as the invoker, then linked in the queue.
+ * usr records each link against `TRACKER_GUILD_ID`'s first server, so without a gate it refuses and
+ * says to use `/allow` in the server. Only a 400 from usr is about the one person; any other refusal
+ * or failure (the admin's own usr roles, the key, usr unreachable) would fail everyone the same way,
+ * so the run stops there.
  */
-async function linkEveryone(a: AdminWeb, usr: UsrLink): Promise<Result | null> {
-  const me = await a.d.store.getUser(a.v.user.id);
-  if (!me?.admin) return null;
+function startLinkEveryone(a: AdminWeb, usr: UsrLink, me: User): Exclude<Result, null> | "started" {
   if (a.usrGuildId === null) {
     return { ok: false, text: "usr needs a server for each link, and TRACKER_GUILD_ID is unset: run /allow on each person in the server instead." };
   }
   if (me.discordId === null) return { ok: false, text: "You have no Discord id here, and usr asks who is allowing them by it." };
-  const member = `${usr.app}:${MEMBER_ROLE}`;
+  const current = usrLinkRuns.get(usr);
+  if (current?.running) return { ok: false, text: `Already linking everyone to usr: ${current.done} of ${current.total} done.` };
   const waiting = a.d.roster.people().filter((p) => p.discordId !== null && usr.links.subjectOf(p.id) === null);
   if (waiting.length === 0) return { ok: true, text: "Everyone on the list is already linked to usr." };
-  const batch = waiting.slice(0, MAX_USR_LINKS);
+  const run: UsrLinkRun = { running: true, done: 0, total: waiting.length, result: null };
+  usrLinkRuns.set(usr, run);
+  const pending: Promise<void> = linkEveryone(a, usr, me.discordId, a.usrGuildId, waiting.map((p) => p.id), run)
+    .catch((err: unknown) => {
+      a.d.log.error("usr link run failed", err);
+      run.result = { ok: false, text: `Linking to usr stopped: something went wrong. Linked ${run.done} so far; press again to go on.` };
+    })
+    .finally(() => {
+      run.running = false;
+      usrLinkPending.delete(pending);
+    });
+  usrLinkPending.add(pending);
+  return "started";
+}
+
+async function linkEveryone(a: AdminWeb, usr: UsrLink, invoker: string, guildId: string, ids: string[], run: UsrLinkRun): Promise<void> {
+  const member = `${usr.app}:${MEMBER_ROLE}`;
   let linked = 0;
   const problems: string[] = [];
-  for (const p of batch) {
+  const end = (ok: boolean, stopped?: string) => {
+    const parts = [stopped ?? `Linked ${linked} of ${ids.length} to usr.`];
+    if (problems.length > 0) parts.push(`Not linked: ${problems.join("; ")}.`);
+    run.result = { ok: ok && problems.length === 0, text: parts.join(" ") };
+  };
+  const notAdmin = () => end(false, `Linking to usr stopped: you are no longer an admin here. Linked ${linked} so far.`);
+  // Read in the queue: still on the list, with a Discord id, and still not linked.
+  const stillWaiting = (id: string) =>
+    fresh(a, true, async () => {
+      const p = await a.d.store.getUser(id);
+      return p && p.discordId !== null && usr.links.subjectOf(id) === null ? p : ("skip" as const);
+    });
+  for (const id of ids) {
+    const first = await stillWaiting(id);
+    if (first === null) return notAdmin();
+    if (first === "skip") {
+      run.done++;
+      continue;
+    }
+    const membership = await a.memberOf(first.discordId as string);
+    if (membership === "not-member" || membership === "unknown") {
+      problems.push(`${nameOf(first)}: ${membership === "not-member" ? "not a member of the server, or lacks its role" : "could not check they are a member of the server"}`);
+      run.done++;
+      continue;
+    }
+    // Again just before asking usr, so someone forgotten during the membership check is never sent.
+    const p = await stillWaiting(id);
+    if (p === null) return notAdmin();
+    if (p === "skip") {
+      run.done++;
+      continue;
+    }
     const answer = await usr.client
-      .allow({ discordId: p.discordId as string, guildId: a.usrGuildId, invokerDiscordId: me.discordId, roles: [member], ...(p.displayName ? { displayName: p.displayName } : {}) })
+      .allow({ discordId: p.discordId as string, guildId, invokerDiscordId: invoker, roles: [member], ...(p.displayName ? { displayName: p.displayName } : {}) })
       .catch((err: unknown) => err);
-    if (answer instanceof UsrError && answer.status === 403 && /invoker|cannot grant|outside the/.test(answer.reason)) {
-      return { ok: false, text: `usr refused before linking anyone further (${answer.reason}). Linked ${linked} so far. Fix that, then press again.` };
+    if (answer instanceof UsrError && answer.status === 400) {
+      problems.push(`${nameOf(p)}: ${answer.message}`);
+      run.done++;
+      continue;
     }
     if (answer instanceof Error) {
       if (!(answer instanceof UsrError)) a.d.log.error("usr allow failed", answer);
-      problems.push(`${nameOf(p)}: ${answer instanceof UsrError ? answer.message : "something went wrong"}`);
-      continue;
+      const why = answer instanceof UsrError ? answer.message : "something went wrong";
+      return end(false, `Linking to usr stopped, since it would fail for everyone: ${why}. Linked ${linked} so far; fix that, then press again.`);
     }
     const allowed = answer as AllowResult;
     if (!allowed.roles.includes(member)) {
-      problems.push(`${nameOf(p)}: usr did not give them ${member}`);
-      continue;
+      return end(false, `Linking to usr stopped: usr did not give ${nameOf(p)} ${member}. Check that the tracker's usr key's Discord service is set to app ${usr.app} (TRACKER_USR_APP). Linked ${linked} so far.`);
     }
-    // Linked in the queue, by an admin still there; someone forgotten meanwhile reads as gone.
     const outcome = await fresh(a, true, async () => {
       try {
-        return usr.links.link(p.id, allowed.userId);
+        return usr.links.link(id, allowed.userId);
       } catch (err) {
         a.d.log.error("usr link failed", err);
-        return "failed" as const;
+        // Another process linked the account at the same moment (the unique index): the same as taken, as `/allow` says.
+        return err instanceof Error && /UNIQUE constraint failed/.test(err.message) ? ("taken" as const) : ("failed" as const);
       }
     });
-    if (outcome === null) return null;
+    if (outcome === null) return notAdmin();
+    run.done++;
     if (outcome === "linked" || outcome === "relinked" || outcome === "unchanged") linked++;
     else if (outcome === "taken") problems.push(`${nameOf(p)}: their usr account is already linked to someone else here`);
     else if (outcome === "gone") problems.push(`${nameOf(p)}: left the tracker meanwhile`);
     else problems.push(`${nameOf(p)}: something went wrong keeping their usr link`);
   }
-  const more = waiting.length - batch.length;
-  const parts = [`Linked ${linked} of ${batch.length} to usr.`];
-  if (problems.length > 0) parts.push(`Not linked: ${problems.join("; ")}.`);
-  if (more > 0) parts.push(`${more} more to go: press again.`);
-  return { ok: problems.length === 0, text: parts.join(" ") };
+  end(true);
 }
 
 /** `/forget`, the person's own: the page (GET), the confirmation (POST), the erasure (POST with the word). */
