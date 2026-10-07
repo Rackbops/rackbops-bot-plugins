@@ -2,7 +2,8 @@
  * The link to our usr (Rackbops/usr), Rod's "Wire it" of 2026-10-07: people stay in the
  * tracker's store, and each is linked to a usr account by usr's opaque user id (`users.usr_subject`,
  * schema 9). This file holds the settings and the two bot calls usr offers
- * (usr `docs/discord-registration.md`); the commands and the web sign-in that use them come later.
+ * (usr `docs/discord-registration.md`); `/allow` and `/register` use them (actions.ts), and the
+ * web sign-in reads usr's cookie (usr-identity.ts).
  * Every usr path is off while `TRACKER_USR_URL` is unset, and the tracker behaves as before.
  *
  * usr has no lookup by Discord id, only by its own `sub` (usr `src/server/routes/roles.ts`), so the

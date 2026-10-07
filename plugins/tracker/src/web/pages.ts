@@ -25,14 +25,15 @@ export function framed(v: Viewer, title: string, body: Html): string {
 }
 
 /** Where a request that is not signed in lands. */
-export function signInHelpPage(base: string, note?: string): string {
+export function signInHelpPage(base: string, note?: string, usr = false): string {
   return page({
     base,
     title: "Sign in",
     body: html`<section class="rb-card">
 <h1>Sign in</h1>
 ${note ? html`<p class="rb-muted">${note}</p>` : null}
-<p>Run <code>/web</code> in Discord: the bot answers you alone with a sign-in link, good for ten minutes and one use.</p>
+${usr ? html`<p><a class="rb-btn rb-btn--primary" href="${base}/">Sign in with usr</a></p>` : null}
+<p>${usr ? "Or run" : "Run"} <code>/web</code> in Discord: the bot answers you alone with a sign-in link, good for ten minutes and one use.</p>
 </section>`,
   });
 }

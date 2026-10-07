@@ -210,7 +210,7 @@ served at a hashed path, cached for a year).
 | `/admin/people/<id>` | Admins only: one person -- Discord id, registration, zone and hour, delivery, task counts, their tasks -- with Make admin or Revoke admin, Resume delivery (when paused), and Remove from the tracker. |
 | `/admin/allow`, `/admin/people/<id>/grant`, `/revoke`, `/resume-delivery`, `/forget`, `/admin/blocks/<id>/lift`, `/admin/tokens/<id>/revoke` | Admins only, POST only: the acts below. |
 | `/api/v1/...` | The JSON task API (below): bearer tokens only, never the cookie. |
-| `/signin` | Where a request that is not signed in is sent: says to run `/web`. |
+| `/signin` | Where a request that is not signed in is sent (a POST, or any request with the usr link off): says to run `/web`, and with the usr link on offers Sign in with usr. |
 | `/login?t=...` | The link `/web` gives. |
 
 **Signing in** (plan item 41; the one-time link is the method for now, kept in
@@ -222,6 +222,20 @@ button; pressing it uses the token (once, within 10 minutes), starts a session a
 same-origin` and `Cache-Control: no-store` (every page does). Not `no-referrer`: under it a browser
 sends a form post's `Origin` as `null`, which the Origin check refuses, so no form would work; the
 pages link nowhere else, so the token never leaves in a Referer either way.
+
+**Signing in through usr** (0.22.0, while the usr link is on: `TRACKER_USR_URL`). A GET with no
+session reads usr's `nz_id` cookie, which usr sets on the parent domain named by its
+`USR_SSO_COOKIE_DOMAIN`. That domain must cover `TRACKER_WEB_URL`'s host, or the cookie never
+arrives. The token is checked offline, as usr's `docs/sso-verifier.md` says: an ES256 signature
+against usr's `/.well-known/jwks.json` (cached five minutes, fetched again on an unknown key at most
+every 30 seconds), `iss` "usr", not expired, and never a delegation token. A valid token whose
+account holds `tracker:member` and is linked to a registered person (`users.usr_subject`) opens a
+session exactly as the one-time link does, and the browser goes on to the page it asked for. With
+no valid token the browser is sent to usr's `/api/auth/sso/refresh` once, returning to the same page
+marked `?usr=1`. Coming back still without one shows why, instead of going round again. A token
+without the member role, or for an account linked to no one registered here, shows what to ask an
+admin for. The membership re-check below applies from the first page. The one-time `/web` link
+stays beside it. `src/usr-identity.ts` uses WebCrypto only.
 
 **Sessions and forms.** The session cookie is `__Secure-tracker-session`, `HttpOnly; Secure;
 SameSite=Lax; Path=/tracker/`, for 7 days from sign-in. The store keeps only SHA-256 hashes of
@@ -586,7 +600,7 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 | `TRACKER_CITY_HALL_CAPABILITY` | no | The capability tag every Job names, one only docket-runner carries (plan item 71), e.g. `claude-cli:subscription`. No default: a guessed tag could send the tracker's Jobs to another agent. |
 | `TRACKER_CITY_HALL_ACCESS_CLIENT_ID`, `TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET` | yes | A Cloudflare Access service token for city-hall's edge (`CF-Access-Client-Id` / `-Secret`), when one is in front. Both or neither. |
 | `TRACKER_BGG_TOKEN` | yes | BoardGameGeek's XML API Bearer token for the tracker's registered application. Set = `/want source: bgg` watches a game's BGG marketplace; unset or empty = `/want source: bgg` makes an inbox watch instead, whose listings are sent in (as for eBay). Never logged. To get one: register an application at boardgamegeek.com/applications (roshne applied 2026-09-29, non-commercial; approval takes a week or more), then put the token in the instance's `.env` and recreate the bot. BGG's terms ask for attribution: every BGG line in a DM says "via BoardGameGeek". |
-| `TRACKER_USR_URL` | no | The https origin of our usr (Rackbops/usr), e.g. `https://id.example.com` (no path). With `TRACKER_USR_KEY` it turns the usr link on (0.20.0): people stay in the tracker, and each is linked to a usr account by usr's user id (`users.usr_subject`). Unset = off, and the tracker behaves as before (migration 9 still adds the empty column). `/allow` and `/register` use it since 0.21.0; the web sign-in through usr comes next. |
+| `TRACKER_USR_URL` | no | The https origin of our usr (Rackbops/usr), e.g. `https://id.example.com` (no path). With `TRACKER_USR_KEY` it turns the usr link on (0.20.0): people stay in the tracker, and each is linked to a usr account by usr's user id (`users.usr_subject`). Unset = off, and the tracker behaves as before (migration 9 still adds the empty column). `/allow` and `/register` use it since 0.21.0, and the web sign-in since 0.22.0 (Signing in through usr, above). |
 | `TRACKER_USR_KEY` | yes | The tracker's usr API key, with the role `usr:discord` only (usr's `/api/discord/allow` and `/register-link`), never `tracker:admin` or `tracker:register`, and a usr Discord service (`PUT /api/discord/services/<keyId>`) set to the tracker's app. Required with `TRACKER_USR_URL`; set without it, or with whitespace in it, refuses to load. Never logged. |
 | `TRACKER_USR_APP` | no | The usr app the tracker's roles live under (`tracker:member`, `tracker:register`): lowercase words joined by `-`. It must match the app on the key's usr Discord service row, which is what usr goes by. Unset = `tracker`. Needs `TRACKER_USR_URL`. |
 

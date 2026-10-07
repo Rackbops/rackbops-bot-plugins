@@ -31,6 +31,7 @@ import { ApiTokens } from "./web/api-tokens.js";
 import { Sessions } from "./web/sessions.js";
 import { LoginLinks } from "./web/signin-link.js";
 import { createUsrClient, parseUsrConfig } from "./usr.js";
+import { UsrVerifier } from "./usr-identity.js";
 import { UsrLinks } from "./usr-links.js";
 import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_IDLE_LOG, UNLIMITED_LOG } from "./usage.js";
 
@@ -407,7 +408,16 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         research: executeOn,
         bgg: bgg !== null,
         inbox,
-        usr: usrConfig && usrClient ? { client: usrClient, app: usrConfig.app, links: new UsrLinks(opened) } : null,
+        usr:
+          usrConfig && usrClient
+            ? {
+                client: usrClient,
+                url: usrConfig.url,
+                verifier: new UsrVerifier({ url: usrConfig.url, now: () => clock.now().getTime(), ...(options.usrFetch ? { fetchImpl: options.usrFetch } : {}) }),
+                app: usrConfig.app,
+                links: new UsrLinks(opened),
+              }
+            : null,
       };
       if (guildIds === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
       else if (roleGate.roles !== null) host.log.info(`role check on for ${roleGate.roles.size} of ${guildIds.length} server(s)`);
