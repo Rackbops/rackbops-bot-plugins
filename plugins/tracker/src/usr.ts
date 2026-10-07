@@ -1,5 +1,5 @@
 /**
- * The link to our usr (Rackbops/usr), roshne's "Wire it" of 2026-10-07: people stay in the
+ * The link to our usr (Rackbops/usr), Rod's "Wire it" of 2026-10-07: people stay in the
  * tracker's store, and each is linked to a usr account by usr's opaque user id (`users.usr_subject`,
  * schema 9). This file holds the settings and the two bot calls usr offers
  * (usr `docs/discord-registration.md`); the commands and the web sign-in that use them come later.
@@ -20,7 +20,6 @@ export const USR_URL_FORMAT = "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$";
 /** usr's app names are free strings; the tracker keeps to the shape its roles are written in (`<app>:<role>`). */
 export const USR_APP_FORMAT = "^[a-z0-9]+(-[a-z0-9]+)*$";
 const APP = new RegExp(USR_APP_FORMAT);
-const MAX_APP = 40;
 export const DEFAULT_USR_APP = "tracker";
 export const USR_TIMEOUT_MS = 10_000;
 const SNOWFLAKE = /^[0-9]{17,20}$/;
@@ -30,7 +29,10 @@ export interface UsrConfig {
   url: string;
   /** Clerk's usr API key (`usr:discord` and `usr:service`). Never logged. */
   key: string;
-  /** The usr app the tracker's roles live under, `tracker` unless set. */
+  /**
+   * The usr app the tracker's roles live under, `tracker` unless set. usr itself takes the app from
+   * the key's Discord service row (`PUT /api/discord/services/<keyId>`), so the two must match.
+   */
   app: string;
 }
 
@@ -66,7 +68,7 @@ export function parseUsrConfig(env: Readonly<Record<string, string | undefined>>
   }
   if (key === undefined) throw new Error(`${USR_ENV.url} is set but ${USR_ENV.key} is not: the usr link needs both`);
   if (/\s/.test(key)) throw new Error(`${USR_ENV.key} has whitespace in it`);
-  if (app !== undefined && (app.length > MAX_APP || !APP.test(app))) {
+  if (app !== undefined && !APP.test(app)) {
     throw new Error(`${USR_ENV.app}: "${app}" is not a usr app name (lowercase words joined by "-", e.g. tracker)`);
   }
   return { url: parsed.origin, key, app: app ?? DEFAULT_USR_APP };

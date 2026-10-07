@@ -370,7 +370,7 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX want_inbox_key ON want_inbox (key, seq);
   CREATE INDEX want_inbox_task ON want_inbox (task_id);
   `,
-  // 9 (0.20.0; people linked to our usr, roshne's "Wire it" of 2026-10-07, reversing item 40's usr
+  // 9 (0.20.0; people linked to our usr, Rod's "Wire it" of 2026-10-07, reversing item 40's usr
   // half): purely additive, one nullable column and its index; no existing row is changed.
   // - `users.usr_subject`: the person's usr user id (usr's `sub`, an opaque UUID), learned from usr's
   //   `/api/discord/allow` (usr.ts); null until they are linked, and always null while the usr link

@@ -119,7 +119,7 @@
         "format": "^[a-z0-9]+(-[a-z0-9]+)*$",
         "required": false,
         "secret": false,
-        "description": "The usr app the tracker's roles live under (tracker:member, tracker:register). Unset = tracker. Needs TRACKER_USR_URL."
+        "description": "The usr app the tracker's roles live under (tracker:member, tracker:register); it must match the app on the key's usr Discord service row, which is what usr goes by. Unset = tracker. Needs TRACKER_USR_URL."
       }
     ]
   }

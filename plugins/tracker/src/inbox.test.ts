@@ -47,6 +47,11 @@ describe("WantInbox", () => {
   });
 });
 
+/** A sqlite_master row as migration 9 leaves it: SQLite appends an added column to the stored CREATE TABLE. */
+function withUsrSubject<T extends { name: string; sql?: string | null }>(s: T): T {
+  return s.name === "users" && s.sql ? { ...s, sql: s.sql.replace(/\)$/, ", usr_subject TEXT)") } : s;
+}
+
 describe("migration 8", () => {
   it("is purely additive: a database at 7 keeps every table, row and index as it was, and gains want_inbox", () => {
     const db = new Database(":memory:");
@@ -63,12 +68,11 @@ describe("migration 8", () => {
     const before = { schema: schema(), users: users() };
 
     expect(migrate(db)).toBe(7);
-    // Every later migration runs too; migration 9's users.usr_subject has its own test (usr.test.ts),
-    // so users' own definition is left out here.
+    // Every later migration runs too; migration 9's users.usr_subject has its own test (usr.test.ts):
+    // users gains exactly that column, nothing else.
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
-    const later = (s: { name: string }) => s.name === "users" || s.name === "users_usr_subject";
-    const after = schema().filter((s) => !later(s));
-    expect(after.filter((s) => !s.name.startsWith("want_inbox"))).toEqual(before.schema.filter((s) => !later(s)));
+    const after = schema().filter((s) => s.name !== "users_usr_subject");
+    expect(after.filter((s) => !s.name.startsWith("want_inbox"))).toEqual(before.schema.map(withUsrSubject));
     expect(after.filter((s) => s.name.startsWith("want_inbox")).map((s) => s.name)).toEqual(["want_inbox", "want_inbox_key", "want_inbox_task"]);
     expect(users()).toEqual(before.users.map((u) => ({ ...(u as object), usr_subject: null })));
   });
