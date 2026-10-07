@@ -225,17 +225,23 @@ pages link nowhere else, so the token never leaves in a Referer either way.
 
 **Signing in through usr** (0.22.0, while the usr link is on: `TRACKER_USR_URL`). A GET with no
 session reads usr's `nz_id` cookie, which usr sets on the parent domain named by its
-`USR_SSO_COOKIE_DOMAIN`. That domain must cover `TRACKER_WEB_URL`'s host, or the cookie never
-arrives. The token is checked offline, as usr's `docs/sso-verifier.md` says: an ES256 signature
-against usr's `/.well-known/jwks.json` (cached five minutes, fetched again on an unknown key at most
-every 30 seconds), `iss` "usr", not expired, and never a delegation token. A valid token whose
-account holds `tracker:member` and is linked to a registered person (`users.usr_subject`) opens a
-session exactly as the one-time link does, and the browser goes on to the page it asked for. With
-no valid token the browser is sent to usr's `/api/auth/sso/refresh` once, returning to the same page
-marked `?usr=1`. Coming back still without one shows why, instead of going round again. A token
+`USR_SSO_COOKIE_DOMAIN`. That domain must cover `TRACKER_WEB_URL`'s host: otherwise usr refuses the
+return address and keeps the browser on its own site. The token is checked offline, as usr's
+`docs/sso-verifier.md` says: an ES256 signature against usr's `/.well-known/jwks.json` (cached five
+minutes, fetched again on an unknown key at most every 30 seconds), `iss` "usr", not expired, and
+never a delegation token. A valid token whose account holds `tracker:member` and is linked to a
+registered person (`users.usr_subject`) opens a session as the one-time link does, once server
+membership is checked (as `/web` checks it), and the browser goes on to the page and query it asked
+for. With no valid token the browser is sent to usr's `/api/auth/sso/refresh` once, returning to
+the same address marked `?usr=1`; coming back still without one (usr's keys could not be fetched,
+the clocks disagree) says the sign-in could not be confirmed, instead of going round again. A token
 without the member role, or for an account linked to no one registered here, shows what to ask an
-admin for. The membership re-check below applies from the first page. The one-time `/web` link
-stays beside it. `src/usr-identity.ts` uses WebCrypto only.
+admin for. While signed in, a usr cookie for the person's own account that no longer carries
+`tracker:member` signs them out of every session. Sign out ends the tracker's session only, not
+usr's: for 12 hours after it, a GET does not sign back in from usr's cookie on its own, and only the
+sign-in page's "Sign in with usr" button does. Any site under usr's cookie domain can set an
+`nz_id` of its own, so every host under that domain must be trusted. The one-time `/web` link stays
+beside it. `src/usr-identity.ts` uses WebCrypto only.
 
 **Sessions and forms.** The session cookie is `__Secure-tracker-session`, `HttpOnly; Secure;
 SameSite=Lax; Path=/tracker/`, for 7 days from sign-in. The store keeps only SHA-256 hashes of

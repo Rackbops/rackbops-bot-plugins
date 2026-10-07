@@ -12,6 +12,7 @@ export const JWKS_RETRY_MS = 30 * 1000;
 export const JWKS_TIMEOUT_MS = 5000;
 /** usr's tokens are a few hundred bytes; anything far bigger is not one. */
 const MAX_TOKEN = 8192;
+const MAX_JWKS = 64 * 1024;
 
 export interface UsrIdentity {
   /** usr's opaque user id: the person's `usr_subject`. */
@@ -95,7 +96,11 @@ export class UsrVerifier {
         signal: AbortSignal.timeout(JWKS_TIMEOUT_MS),
       });
       if (!res.ok) return;
-      const body = (await res.json()) as { keys?: unknown };
+      // A JWKS is a few hundred bytes; read no more than MAX_JWKS of whatever comes.
+      if (Number(res.headers.get("content-length") ?? 0) > MAX_JWKS) return;
+      const text = await res.text();
+      if (text.length > MAX_JWKS) return;
+      const body = JSON.parse(text) as { keys?: unknown };
       if (!Array.isArray(body.keys)) return;
       const keys: Key[] = [];
       for (const k of body.keys as (JsonWebKey & { kid?: unknown })[]) {

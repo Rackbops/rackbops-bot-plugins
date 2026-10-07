@@ -6,13 +6,18 @@
 
 - **Web sign-in through our usr**, while the usr link is on (`TRACKER_USR_URL`, 0.20.0). A GET to
   the web area with no session checks usr's `nz_id` cookie offline against usr's JWKS (ES256, `iss`
-  "usr", not expired, never a delegation token). If the account holds `tracker:member` and is linked
-  to a registered person, it opens a session as the one-time link does and goes on to the page asked
-  for. With no valid cookie the browser goes to usr once for one and comes back to the same page.
-  Coming back still without one, or with an account that lacks the role or is linked to no one here,
-  shows why instead of looping. The sign-in page offers "Sign in with usr", and the `/web` one-time
-  link stays beside it. usr's cookie domain (`USR_SSO_COOKIE_DOMAIN`) must cover `TRACKER_WEB_URL`.
-  With the link off nothing changes, and no schema change.
+  "usr", not expired, never a delegation token). If the account holds `tracker:member`, is linked to
+  a registered person and is in the server, it opens a session as the one-time link does and goes on
+  to the page and query asked for. With no valid cookie the browser goes to usr once for one and
+  comes back to the same address; still without one, or with an account that lacks the role or is
+  linked to no one here, the page says why instead of looping. A signed-in person whose usr cookie
+  loses `tracker:member` is signed out. Sign out ends the tracker's session, not usr's: for 12 hours
+  only the sign-in page's "Sign in with usr" button signs back in. The `/web` one-time link stays.
+  usr's cookie domain (`USR_SSO_COOKIE_DOMAIN`) must cover `TRACKER_WEB_URL`.
+
+### Schema
+
+- No change.
 
 ## [0.21.0] - 2026-10-07
 

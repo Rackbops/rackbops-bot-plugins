@@ -32,7 +32,7 @@ export function signInHelpPage(base: string, note?: string, usr = false): string
     body: html`<section class="rb-card">
 <h1>Sign in</h1>
 ${note ? html`<p class="rb-muted">${note}</p>` : null}
-${usr ? html`<p><a class="rb-btn rb-btn--primary" href="${base}/">Sign in with usr</a></p>` : null}
+${usr ? html`<p><a class="rb-btn rb-btn--primary" href="${base}/?usr=go">Sign in with usr</a></p>` : null}
 <p>${usr ? "Or run" : "Run"} <code>/web</code> in Discord: the bot answers you alone with a sign-in link, good for ten minutes and one use.</p>
 </section>`,
   });

@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { JWKS_RETRY_MS, JWKS_TTL_MS, UsrVerifier } from "../usr-identity.js";
-import { USR_NO_COOKIE, USR_NOT_LINKED, USR_NOT_MEMBER } from "./app.js";
-import { call, cleanup, CURLY, type Jar, LARRY, ORIGIN, people, SESSION, signIn, world } from "./harness.js";
+import { LEFT_SERVER, RECHECK_FAILED, USR_NO_COOKIE, USR_NOT_LINKED, USR_NOT_MEMBER } from "./app.js";
+import { call, csrfOf, cleanup, CURLY, type Jar, LARRY, ORIGIN, people, SESSION, signIn, type WebLookup, world } from "./harness.js";
 
 /**
  * The web area's sign-in through usr's `nz_id` cookie (usr-identity.ts, app.ts `usrSignIn`): a fake
@@ -44,9 +44,9 @@ async function fakeUsr() {
   return { ...k, state, usrFetch };
 }
 
-async function usrWorld() {
+async function usrWorld(opts: { guild?: boolean; webMembership?: WebLookup } = {}) {
   const usr = await fakeUsr();
-  const w = await world({ env: { TRACKER_USR_URL: USR, TRACKER_USR_KEY: "k" }, usrFetch: usr.usrFetch });
+  const w = await world({ env: { TRACKER_USR_URL: USR, TRACKER_USR_KEY: "k" }, usrFetch: usr.usrFetch, ...opts });
   await people(w.plugin);
   return { ...w, usr };
 }
@@ -142,8 +142,7 @@ describe("web sign-in through usr", () => {
     // Back from usr still without a cookie: say why, do not go round again.
     const back = await call(w.plugin, "GET", "/settings?usr=1");
     expect(back.status).toBe(403);
-    expect(await back.text()).toContain("its sign-in cookie does not reach this site");
-    expect(USR_NO_COOKIE).toContain("USR_SSO_COOKIE_DOMAIN");
+    expect(await back.text()).toContain(USR_NO_COOKIE.slice(0, 40));
   });
 
   it("refuses usr accounts without the member role, or linked to no one registered here", async () => {
@@ -154,6 +153,73 @@ describe("web sign-in through usr", () => {
     const unlinked = await call(w.plugin, "GET", "/", { jar: new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]) });
     expect(unlinked.status).toBe(403);
     expect(await unlinked.text()).toContain(USR_NOT_LINKED.slice(0, 40));
+  });
+
+  it("keeps the address's own query across the trip to usr and back", async () => {
+    const w = await usrWorld();
+    const away = await call(w.plugin, "GET", "/settings?saved=1");
+    expect(away.headers.get("location")).toBe(`${USR}/api/auth/sso/refresh?return=${encodeURIComponent(`${ORIGIN}/tracker/settings?saved=1&usr=1`)}`);
+    linkLarry(w.dbPath);
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
+    const back = await call(w.plugin, "GET", "/settings?saved=1&usr=1", { jar });
+    expect(back.headers.get("location")).toBe("/tracker/settings?saved=1");
+  });
+
+  it("after Sign out, does not sign back in on its own; the sign-in page's button does", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
+    await call(w.plugin, "GET", "/", { jar });
+    const out = await call(w.plugin, "POST", "/logout", { jar, form: { csrf: await csrfOf(w.plugin, jar) }, origin: ORIGIN });
+    expect(out.headers.get("location")).toBe("/tracker/signin?out=1");
+    expect(jar.has(SESSION)).toBe(false);
+    const again = await call(w.plugin, "GET", "/", { jar });
+    expect(again.headers.get("location")).toBe("/tracker/signin?out=1");
+    expect(jar.has(SESSION)).toBe(false);
+    const button = await call(w.plugin, "GET", "/?usr=go", { jar });
+    expect(button.headers.get("location")).toBe("/tracker/");
+    expect(jar.has(SESSION)).toBe(true);
+    expect(jar.has("__Secure-tracker-out")).toBe(false);
+  });
+
+  it("signs out a person whose usr cookie no longer carries the member role", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
+    await call(w.plugin, "GET", "/", { jar });
+    expect((await call(w.plugin, "GET", "/", { jar })).status).toBe(200);
+    jar.set("nz_id", await sign(w.usr.pair.privateKey, identity({ roles: [] })));
+    const res = await call(w.plugin, "GET", "/", { jar });
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain(USR_NOT_MEMBER.slice(0, 40));
+    expect(jar.has(SESSION)).toBe(false);
+  });
+
+  it("checks server membership before opening the session", async () => {
+    let answer: "member" | "not-member" | null = "not-member";
+    const w = await usrWorld({ guild: true, webMembership: async () => answer });
+    linkLarry(w.dbPath);
+    const token = await sign(w.usr.pair.privateKey, identity());
+    const left = await call(w.plugin, "GET", "/", { jar: new Map([["nz_id", token]]) });
+    expect(left.status).toBe(403);
+    expect(await left.text()).toContain(LEFT_SERVER.slice(0, 30));
+    answer = null;
+    const unknown = await call(w.plugin, "GET", "/", { jar: new Map([["nz_id", token]]) });
+    expect(await unknown.text()).toContain(RECHECK_FAILED.slice(0, 30));
+    answer = "member";
+    w.clock.advance(60 * 1000);
+    const jar: Jar = new Map([["nz_id", token]]);
+    expect((await call(w.plugin, "GET", "/", { jar })).status).toBe(303);
+    expect((await call(w.plugin, "GET", "/", { jar })).status).toBe(200);
+  });
+
+  it("says it could not confirm the sign-in when usr's keys cannot be fetched", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    w.usr.state.down = true;
+    const res = await call(w.plugin, "GET", "/?usr=1", { jar: new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]) });
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain(USR_NO_COOKIE.slice(0, 40));
   });
 
   it("an expired cookie goes back to usr for a fresh one", async () => {
@@ -169,7 +235,7 @@ describe("web sign-in through usr", () => {
     const jar = await signIn(w.plugin, CURLY);
     expect((await call(w.plugin, "GET", "/", { jar })).status).toBe(200);
     const help = await (await call(w.plugin, "GET", "/signin")).text();
-    expect(help).toContain('href="/tracker/">Sign in with usr</a>');
+    expect(help).toContain('href="/tracker/?usr=go">Sign in with usr</a>');
     expect(help).toContain("Or run <code>/web</code>");
   });
 
