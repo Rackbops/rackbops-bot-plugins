@@ -32,6 +32,8 @@ import { admit, PeopleError, setPreferences } from "./people.js";
 import { heldRuns, restoreHeldRun } from "./retime.js";
 import type { Roster } from "./roster.js";
 import type { WantInbox } from "./inbox.js";
+import type { UsrLinks } from "./usr-links.js";
+import { type AllowResult, type RegisterLink, type UsrClient, UsrError } from "./usr.js";
 import type { ApiTokens } from "./web/api-tokens.js";
 import type { Sessions } from "./web/sessions.js";
 import type { LoginLinks } from "./web/signin-link.js";
@@ -79,7 +81,19 @@ export interface TrackerDeps {
   bgg?: boolean;
   /** The want-list inboxes: the listings sent in for a watch (inbox.ts); the task API's listings route writes them. */
   inbox?: WantInbox;
+  /** The link to our usr (usr.ts), when `TRACKER_USR_URL` is set: `/allow` links people, `/register` hands out usr's sign-up link. */
+  usr?: UsrLink | null;
 }
+
+/** The usr link as the commands use it: the client, the app the tracker's roles live under, and the stored links. */
+export interface UsrLink {
+  client: UsrClient;
+  app: string;
+  links: UsrLinks;
+}
+
+/** A command's answer that first calls out (usr, a DM) outside the queue, then finishes in it (discord.ts's `Step`). */
+export type OutsideStep = { outside: () => Promise<unknown>; finish: (result: unknown) => Promise<string> };
 
 /** The ticks as forget-me sees them: whether one runs now, and a wait of at most `ms` for none to (false when it timed out). */
 export interface TickGate {
@@ -117,12 +131,17 @@ export async function enter(d: TrackerDeps, discordId: string, membership: Membe
   return { ok: true, user: person, notice: resumed ? resumedNotice(resumed) : null };
 }
 
-/** `/allow @user` (plan 5.8): an admin admits a person, who can then `/register`. */
+/**
+ * `/allow @user` (plan 5.8): an admin admits a person, who can then `/register`. With the usr link
+ * on, it also allows them in usr (`tracker:member`) and keeps the usr user id usr answers with;
+ * running it again for someone already on the list links them if they are not yet.
+ */
 export async function allowPerson(
   d: TrackerDeps,
   admin: User,
-  target: { discordId: string; bot: boolean; membership: Membership },
-): Promise<string> {
+  target: { discordId: string; bot: boolean; membership: Membership; displayName?: string },
+  guildId: string | null = null,
+): Promise<string | OutsideStep> {
   if (target.bot) return "A bot cannot use the tracker.";
   if (target.membership === "not-member") return `<@${target.discordId}> is not a member of this tracker's server, or lacks the role it asks for.`;
   if (target.membership === "unknown") return "I could not check that they are a member of this tracker's server. Try again in a minute.";
@@ -130,8 +149,39 @@ export async function allowPerson(
   const now = d.clock.now();
   const user = await admit(d.store, target.discordId, now);
   d.admissions.record(user.id, admin.id, now.toISOString());
-  if (before) return `<@${target.discordId}> is already on the list.`;
-  return `Allowed <@${target.discordId}>: they can now use \`/register\`.`;
+  const text = before ? `<@${target.discordId}> is already on the list.` : `Allowed <@${target.discordId}>: they can now use \`/register\`.`;
+  const usr = d.usr;
+  if (!usr || usr.links.subjectOf(user.id) !== null) return text;
+  if (guildId === null || admin.discordId === null) return `${text}\n\nNot linked to usr: run \`/allow\` in the server to link them.`;
+  const invoker = admin.discordId;
+  return {
+    outside: () =>
+      usr.client
+        .allow({ discordId: target.discordId, guildId, invokerDiscordId: invoker, roles: [MEMBER_ROLE], ...(target.displayName ? { displayName: target.displayName } : {}) })
+        .catch((err: unknown) => err),
+    finish: async (result) => `${text}\n\n${usrAllowed(d, usr, user.id, result)}`,
+  };
+}
+
+/** The usr role `/allow` grants: the tracker's member role, under the tracker's app (`tracker:member`). */
+export const MEMBER_ROLE = "member";
+
+/** What `/allow` says of its usr half, after keeping the usr user id usr answered with. */
+function usrAllowed(d: TrackerDeps, usr: UsrLink, userId: string, result: unknown): string {
+  if (result instanceof UsrError) return `Not linked to usr: ${result.message}. They are on the tracker's list; run \`/allow\` again once it is fixed.`;
+  if (result instanceof Error) {
+    d.log.error("usr allow failed", result);
+    return "Not linked to usr: something went wrong. They are on the tracker's list; run `/allow` again to retry.";
+  }
+  const answer = result as AllowResult;
+  const member = `${usr.app}:${MEMBER_ROLE}`;
+  if (!answer.roles.includes(member)) {
+    // usr takes the app from the key's Discord service row, not from the tracker (usr.ts).
+    return `Not linked to usr: usr did not give them \`${member}\`. Check that the tracker's usr key's Discord service is set to app \`${usr.app}\` (TRACKER_USR_APP).`;
+  }
+  const outcome = usr.links.link(userId, answer.userId);
+  if (outcome === "taken") return "Not linked to usr: usr's account for them is already linked to someone else here.";
+  return "Linked to usr: they can finish their usr sign-up with `/register`.";
 }
 
 /**
@@ -145,12 +195,40 @@ export function registeredText(user: User, first: boolean): string {
   });
 }
 
-/** `/register [hour] [zone]` (plan 5.8): the admitted person's first contact; running it again edits. */
+/**
+ * `/register [hour] [zone]` (plan 5.8): the admitted person's first contact; running it again edits.
+ * With the usr link on and the person linked, the answer also carries their one-time usr sign-up
+ * link, until usr says they have signed up.
+ */
 export async function registerPerson(
   d: TrackerDeps,
   user: User,
   input: { displayName: string; hour?: number; zone?: string },
-): Promise<string> {
+  guildId: string | null = null,
+): Promise<string | OutsideStep> {
+  const text = await registerSettings(d, user, input);
+  const usr = d.usr;
+  if (!usr || guildId === null || user.discordId === null || usr.links.subjectOf(user.id) === null || usr.links.isSignedUp(user.id)) return text;
+  const discordId = user.discordId;
+  return {
+    outside: () => usr.client.registerLink({ discordId, guildId }).catch((err: unknown) => err),
+    finish: async (result) => {
+      if (result === null) {
+        usr.links.markSignedUp(user.id);
+        return text;
+      }
+      if (result instanceof UsrError) return `${text}\n\nI could not get your usr sign-up link (${result.message}). Try \`/register\` again later.`;
+      if (result instanceof Error) {
+        d.log.error("usr register-link failed", result);
+        return `${text}\n\nI could not get your usr sign-up link. Try \`/register\` again later.`;
+      }
+      const link = result as RegisterLink;
+      return `${text}\n\nFinish signing up on usr, where you will sign in to the web area: ${link.url}\nThe link works once and expires soon; \`/register\` gives a new one.`;
+    },
+  };
+}
+
+async function registerSettings(d: TrackerDeps, user: User, input: { displayName: string; hour?: number; zone?: string }): Promise<string> {
   let updated: User;
   try {
     updated = await setPreferences(d.store, user.id, {

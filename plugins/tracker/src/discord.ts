@@ -151,7 +151,8 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
         return run(
           interaction,
           "admin",
-          (d, admin, membership: Membership) => allowPerson(d, admin, { discordId: target.id, bot: target.bot, membership }),
+          (d, admin, membership: Membership) =>
+            allowPerson(d, admin, { discordId: target.id, bot: target.bot, membership, displayName: displayName(target) }, interaction.guildId),
           () => membershipOf(interaction, target.id),
         );
       },
@@ -169,11 +170,16 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
         run(interaction, "admitted", (d, user) => {
           const hour = interaction.options.getInteger("hour");
           const zone = interaction.options.getString("zone");
-          return registerPerson(d, user, {
-            displayName: displayName(interaction.user),
-            ...(hour !== null ? { hour } : {}),
-            ...(zone !== null ? { zone: zone.trim() } : {}),
-          });
+          return registerPerson(
+            d,
+            user,
+            {
+              displayName: displayName(interaction.user),
+              ...(hour !== null ? { hour } : {}),
+              ...(zone !== null ? { zone: zone.trim() } : {}),
+            },
+            interaction.guildId,
+          );
         }),
     },
     {

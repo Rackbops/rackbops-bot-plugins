@@ -123,7 +123,12 @@ export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): P
     // Looked up outside the queue, as `/allow` looks it up before its turn.
     const membership = await a.memberOf(raw);
     // A web form cannot tell a bot's id from a person's; a bot's row is harmless, since it can never run `/register`.
-    const text = await fresh(a, true, (me) => allowPerson(a.d, me, { discordId: raw, bot: false, membership }));
+    // No server here, so no call to usr: with the link on, the answer says to use `/allow` in the server.
+    const text = await fresh(a, true, async (me) => {
+      const answer = await allowPerson(a.d, me, { discordId: raw, bot: false, membership }, null);
+      if (typeof answer !== "string") throw new Error("allowPerson called out without a server");
+      return answer;
+    });
     if (text === null) return unknownPage(base);
     const ok = text.startsWith("Allowed") || text.includes("already on the list");
     return peoplePage(a, { ok, text }, ok ? 200 : 400);

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-07T00:17:23.972Z",
+  "generatedAt": "2026-10-07T15:51:32.657Z",
   "plugins": [
     {
       "name": "mcp",
@@ -164,7 +164,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.20.0",
+      "version": "0.21.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, and eBay and BoardGameGeek listings you send in through the task API, never read by the tracker; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
@@ -284,6 +284,12 @@
       ],
       "releases": [
         {
+          "version": "0.21.0",
+          "publishedAt": "2026-10-07T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.21.0",
+          "notes": "### Added\n\n- **`/allow` and `/register` through our usr**, while the usr link is on (`TRACKER_USR_URL` and\n  `TRACKER_USR_KEY`, 0.20.0). `/allow`, run in a server, also allows the person in usr as\n  `tracker:member` (the admin running it must be linked in usr and hold `tracker:register` there)\n  and keeps the usr user id usr answers with; running it again links someone already on the list\n  who is not linked yet. It does not link when usr grants another app's role, which means the\n  key's usr Discord service names another app than `TRACKER_USR_APP`, and never links two people\n  to one usr account. `/register` gives a linked person their one-time usr sign-up link, until usr\n  says they have signed up. A usr refusal or outage never undoes the admission or the\n  registration: the answer says what went wrong and to run the command again. Run in a DM,\n  `/allow` admits but asks to be run in the server to link (usr needs the server). With the link\n  off nothing changes, and no schema change."
+        },
+        {
           "version": "0.20.0",
           "publishedAt": "2026-10-07T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.20.0",
@@ -336,12 +342,6 @@
           "publishedAt": "2026-10-02T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.14.0",
           "notes": "### Added\n\n- **Budgets off for the alpha** (#82; plan 5.7). roshne, 2026-10-02, choosing option A: \"A.  but\n  lets build in an unlimited budget \"flag\" during alpha, evaluate usage during alpha, then test\n  budgets during beta.\"\n  A new operator setting, `TRACKER_BUDGET_UNLIMITED`: `true` or `1` turns it on, bot-wide; unset, empty,\n  `false` or `0` is off (the default, so nothing changes unless it is set); anything else refuses to\n  load, naming it. On, the execute lane hands docket's `budgetHold` a policy with no ceiling of\n  either kind (`BudgetLimits` null, docket-core 0.5.0), so neither a person's daily ceiling nor the\n  global one holds a run, and no ceiling notice goes out. Each Job's own caps (research: 15 turns,\n  1 USD) are unchanged, and every run is still charged to the `usage` table. The bot logs one line\n  at start saying budgets are off (or, when the execute lane is not configured, that the flag is\n  set but no model work runs); the admin's People and Usage pages carry a \"Budgets off (alpha):\n  unlimited\" banner; the person page's ceiling section says the ceiling is not enforced, and its\n  form still records a raise or a reset (its answer says the same). Proposed defaults, reversible:\n  the switch is bot-wide, not per person, and an operator env var, not a web toggle.\n- **`/admin/usage`**, an admin-only, read-only page linked from every admin page: model spend per\n  budget day for the last 14 days, newest first -- dollars and calls in all and per person -- each\n  measured against the default ceilings (2 USD / 20 calls a person, 10 USD / 100 calls in all, not\n  a person's raise): a \"would have hit the ... limit\" marker on a day that reached one, and how\n  many calls were charged after it had (roughly what the ceiling would have held). A non-admin gets\n  the unknown page's 404, as on every admin route.\n\n### Schema\n\n- No migration: the page reads the `usage` table docket already writes. Still at 7."
-        },
-        {
-          "version": "0.13.0",
-          "publishedAt": "2026-10-01T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.13.0",
-          "notes": "### Added\n\n- An admin raises a person's daily model ceiling from the web area (#82; plan 5.7, \"The admin\n  raises a person's ceiling from the web area (5.10)\"). A person's admin page gains a Daily model\n  budget section: what they spent today, their ceiling now, a form for both numbers (dollars to the\n  cent, whole model calls), **Back to the default**, and the latest 20 changes, newest first (older\n  ones stay in the table). Proposed on #82 for roshne to confirm, not decided: **a raise stands\n  until an admin changes it** (reversible: a today-only raise is a small change -- `limitsOf` and\n  `isRaised` plus a clock in `Ceilings`, and the page's badge), and **the bounds**, at least the\n  default 2 USD / 20 calls and at most the global 10 USD / 100. Setting exactly the default is a\n  reset to it, not a raise. The execute lane's budget is now docket's defaults plus `personFor`,\n  which reads the person's newest change before every run, so a held request runs on the next tick\n  after a raise; the global ceiling is still checked first. Every change -- raise or reset -- also\n  deletes that person's `budget:person:<id>:<day>` notice key for the current budget day, in the\n  same transaction, so meeting the new ceiling the same day tells the person and the admins again\n  (plan 5.7: \"nothing fails silently\"). Every change is an append-only row and a log line.\n  `POST /admin/people/<id>/ceiling` is admin only, behind the session, `Origin` and CSRF checks of\n  every admin act; a non-admin gets the unknown page's 404.\n- Forget-me deletes the person's ceiling changes, and a change they made to someone else's ceiling\n  keeps its row with `set_by` = `forgotten`.\n\n### Schema\n\n- **Migration 7, purely additive**: one new table, `ceiling_changes` (`user_id`, `usd`, `calls`,\n  `set_by`, `at`; both values null = back to the default, a `CHECK` keeps them together), and its\n  index `ceiling_changes_user`. No existing table, column or row changes. A database at 7 is\n  refused by 0.12.0 and older (their `migrate` throws on a newer schema), so a rollback past 0.13.0\n  needs the database from before the upgrade."
         }
       ]
     },
