@@ -119,6 +119,7 @@ describe("Link everyone to usr", () => {
       { status: 403, body: { error: "the invoker is not linked to a usr account" } },
       { status: 403, body: { error: 'key "clerk" is not configured as a Discord service' } },
       { status: 401, body: { error: "unauthorized" } },
+      { status: 400, body: { error: "guild_id must be a Discord id" } },
       { status: 500, body: { error: "internal" } },
     ];
     for (const refusal of refusals) {

@@ -254,7 +254,7 @@ function startLinkEveryone(a: AdminWeb, usr: UsrLink, me: User): Exclude<Result,
   if (waiting.length === 0) return { ok: true, text: "Everyone on the list is already linked to usr." };
   const run: UsrLinkRun = { running: true, done: 0, total: waiting.length, result: null };
   usrLinkRuns.set(usr, run);
-  const pending: Promise<void> = linkEveryone(a, usr, me.discordId, a.usrGuildId, waiting.map((p) => p.id), run)
+  const pending: Promise<void> = linkEveryone(a, usr, me.discordId, nameOf(me), a.usrGuildId, waiting.map((p) => p.id), run)
     .catch((err: unknown) => {
       a.d.log.error("usr link run failed", err);
       run.result = { ok: false, text: `Linking to usr stopped: something went wrong. Linked ${run.done} so far; press again to go on.` };
@@ -267,7 +267,7 @@ function startLinkEveryone(a: AdminWeb, usr: UsrLink, me: User): Exclude<Result,
   return "started";
 }
 
-async function linkEveryone(a: AdminWeb, usr: UsrLink, invoker: string, guildId: string, ids: string[], run: UsrLinkRun): Promise<void> {
+async function linkEveryone(a: AdminWeb, usr: UsrLink, invoker: string, by: string, guildId: string, ids: string[], run: UsrLinkRun): Promise<void> {
   const member = `${usr.app}:${MEMBER_ROLE}`;
   let linked = 0;
   const problems: string[] = [];
@@ -276,7 +276,7 @@ async function linkEveryone(a: AdminWeb, usr: UsrLink, invoker: string, guildId:
     if (problems.length > 0) parts.push(`Not linked: ${problems.join("; ")}.`);
     run.result = { ok: ok && problems.length === 0, text: parts.join(" ") };
   };
-  const notAdmin = () => end(false, `Linking to usr stopped: you are no longer an admin here. Linked ${linked} so far.`);
+  const notAdmin = () => end(false, `Linking to usr stopped: ${by}, who started it, is no longer an admin here. Linked ${linked} so far.`);
   // Read in the queue: still on the list, with a Discord id, and still not linked.
   const stillWaiting = (id: string) =>
     fresh(a, true, async () => {
@@ -306,7 +306,8 @@ async function linkEveryone(a: AdminWeb, usr: UsrLink, invoker: string, guildId:
     const answer = await usr.client
       .allow({ discordId: p.discordId as string, guildId, invokerDiscordId: invoker, roles: [member], ...(p.displayName ? { displayName: p.displayName } : {}) })
       .catch((err: unknown) => err);
-    if (answer instanceof UsrError && answer.status === 400) {
+    // A 400 about the request itself (the server, the admin, the role) would fail everyone; only one about the person is theirs.
+    if (answer instanceof UsrError && answer.status === 400 && !/guild_id|invoker|roles|role "/.test(answer.reason)) {
       problems.push(`${nameOf(p)}: ${answer.message}`);
       run.done++;
       continue;

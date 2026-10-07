@@ -10,8 +10,8 @@
   pressing admin as the one who allowed them, and links them. The admin page shows how far it has
   got and then how it ended; a second press while it runs starts nothing. usr records each link
   against `TRACKER_GUILD_ID`'s first server, so with no gate it refuses and says to `/allow` in the
-  server. Someone forgotten during the run is never sent to usr. Only a 400 from usr is about one
-  person; any other refusal or failure stops the run, since it would fail everyone the same way.
+  server. Someone forgotten before their turn is never sent to usr. Only a 400 from usr about the
+  person's own details is theirs; any other refusal or failure stops the run, since it would fail everyone the same way.
 
 ### Schema
 
