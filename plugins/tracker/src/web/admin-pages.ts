@@ -85,7 +85,7 @@ export interface AdminData {
 }
 
 /** `/admin`: everyone on the list, the decline blocks in force, and the allow form. */
-export function adminPage(v: Viewer, data: AdminData, o: { result?: Result; allow?: string; unlimited?: boolean } = {}): string {
+export function adminPage(v: Viewer, data: AdminData, o: { result?: Result; allow?: string; unlimited?: boolean; usrUnlinked?: number | null } = {}): string {
   const names = new Map(data.people.map((p) => [p.id, nameOf(p)]));
   const rows = data.people.map(
     (p) => html`<tr>
@@ -131,6 +131,15 @@ ${hidden(v)}
 <div><button class="rb-btn rb-btn--primary" type="submit">Allow</button></div>
 </form>
 </section>
+${
+  o.usrUnlinked === undefined || o.usrUnlinked === null
+    ? null
+    : html`<section>
+<h2>Link everyone to usr</h2>
+<p class="rb-muted">${o.usrUnlinked === 0 ? "Everyone on the list is linked to usr." : `${o.usrUnlinked} on the list ${o.usrUnlinked === 1 ? "is" : "are"} not linked to usr yet.`} Each one is allowed in usr as a member, with you as the admin who allowed them, as <code>/allow</code> does in the server.</p>
+${o.usrUnlinked === 0 ? null : html`<form method="post" action="${v.base}/admin/usr-link">${hidden(v)}<button class="rb-btn rb-btn--primary" type="submit">Link everyone to usr</button></form>`}
+</section>`
+}
 <section>
 <h2>Decline blocks</h2>
 ${blocks}

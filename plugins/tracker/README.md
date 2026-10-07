@@ -208,6 +208,7 @@ served at a hashed path, cached for a year).
 | `/admin/tasks` | Admins only: every task in the store, with its owner, status and how many receive it, each linking to its page. |
 | `/admin/deliveries` | Admins only: the DMs that did not arrive (below), newest first. |
 | `/admin/people/<id>` | Admins only: one person -- Discord id, registration, zone and hour, delivery, task counts, their tasks -- with Make admin or Revoke admin, Resume delivery (when paused), and Remove from the tracker. |
+| `/admin/usr-link` | Admins only, POST only, with the usr link on: Link everyone to usr (below). |
 | `/admin/allow`, `/admin/people/<id>/grant`, `/revoke`, `/resume-delivery`, `/forget`, `/admin/blocks/<id>/lift`, `/admin/tokens/<id>/revoke` | Admins only, POST only: the acts below. |
 | `/api/v1/...` | The JSON task API (below): bearer tokens only, never the cookie. |
 | `/signin` | Where a request that is not signed in is sent (a POST, or any request with the usr link off): says to run `/web`, and with the usr link on offers Sign in with usr. |
@@ -623,6 +624,15 @@ may serve more than one tracker instance: Job keys are `rackbops-tracker:<databa
 key>`, so two databases never collide.
 
 `/tracker/healthz` and the web area need the bot's `HTTP_PORT` set; without it there is no HTTP at all.
+
+**Link everyone to usr** (0.23.0, the admin page, with the usr link on). People admitted before the
+link was on are not linked to usr. One press allows each person on the list with a Discord id and no
+usr link in usr as `tracker:member`, with the pressing admin as the one who allowed them, then links
+them, up to 50 a press (the page says how many remain). usr records each link against
+`TRACKER_GUILD_ID`'s first server, so with no gate it refuses and says to `/allow` in the server
+instead. A refusal about the admin (not linked in usr, missing `tracker:register` or
+`tracker:member`) stops at the first person; anyone else's problem is listed by name and the rest go
+on. It never runs on its own.
 
 **First admin and usr.** usr's `/api/discord/allow` needs the admin running `/allow` to be linked in
 usr already, so the first admin cannot be `/allow`ed by anyone. With the usr link on, a configured

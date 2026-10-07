@@ -1,6 +1,7 @@
 import { DEFAULT_BUDGET, type User } from "@rackbops/docket-core";
 import type { Membership } from "../access.js";
-import { allowPerson, type TrackerDeps } from "../actions.js";
+import { allowPerson, MEMBER_ROLE, type TrackerDeps, type UsrLink } from "../actions.js";
+import { type AllowResult, UsrError } from "../usr.js";
 import {
   BUSY,
   CONFIGURED_SELF,
@@ -40,6 +41,8 @@ export interface AdminWeb {
   memberOf(discordId: string): Promise<Membership>;
   /** The `Set-Cookie` that ends this browser's session. */
   signOutCookie: string;
+  /** The server usr records a backfilled link against (`TRACKER_GUILD_ID`'s first); null with no gate. */
+  usrGuildId: string | null;
 }
 
 /** The unknown page's 404, word for word, for anyone an admin route is not for. */
@@ -68,8 +71,14 @@ function confirmed(form: URLSearchParams): "ask" | "wrong" | "yes" {
 const WRONG_WORD = `Type ${CONFIRM_WORD} to confirm. Nothing was deleted.`;
 
 async function peoplePage(a: AdminWeb, result: Result, status: number, allow?: string): Promise<Response> {
-  const data = { people: a.d.roster.people(), blocks: a.d.roster.activeBlocks(a.d.clock.now()), now: a.d.clock.now() };
-  return htmlResponse(adminPage(a.v, data, { result, unlimited: a.d.budgetUnlimited === true, ...(allow !== undefined ? { allow } : {}) }), status);
+  const people = a.d.roster.people();
+  const data = { people, blocks: a.d.roster.activeBlocks(a.d.clock.now()), now: a.d.clock.now() };
+  const usr = a.d.usr;
+  const usrUnlinked = usr ? people.filter((p) => p.discordId !== null && usr.links.subjectOf(p.id) === null).length : null;
+  return htmlResponse(
+    adminPage(a.v, data, { result, unlimited: a.d.budgetUnlimited === true, usrUnlinked, ...(allow !== undefined ? { allow } : {}) }),
+    status,
+  );
 }
 
 async function onePerson(a: AdminWeb, id: string, result: Result = null): Promise<Response> {
@@ -133,6 +142,12 @@ export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): P
     const ok = text.startsWith("Allowed") || text.includes("already on the list");
     return peoplePage(a, { ok, text }, ok ? 200 : 400);
   }
+  if (r.kind === "admin-usr-link") {
+    if (!a.d.usr) return unknownPage(base);
+    const result = await linkEveryone(a, a.d.usr);
+    if (result === null) return unknownPage(base);
+    return peoplePage(a, result, result.ok ? 200 : 400);
+  }
   if (r.kind === "admin-lift") {
     const done = await fresh(a, true, (me) => liftDeclineBlock(a.d, me, r.id));
     if (done === null) return unknownPage(base);
@@ -192,6 +207,69 @@ export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): P
   const me = await a.d.store.getUser(a.v.user.id);
   if (!me?.admin) return redirect(`${base}/`);
   return onePerson(a, r.id, said(done));
+}
+
+/** The most people one press of "Link everyone to usr" asks usr about; the page says to press again for the rest. */
+export const MAX_USR_LINKS = 50;
+
+/**
+ * "Link everyone to usr" (the link design's backfill, after `/allow` went through usr in 0.21.0):
+ * each person on the list with a Discord id and no usr link is allowed in usr as `<app>:member`,
+ * with the pressing admin as the invoker, one at a time and outside the queue, then linked in it.
+ * It never runs on its own. usr records each link against `TRACKER_GUILD_ID`'s first server, so
+ * without a gate it refuses and says to use `/allow` in the server. A refusal about the admin
+ * themselves (not linked, missing roles) stops at the first person: every other ask would fail the same way.
+ */
+async function linkEveryone(a: AdminWeb, usr: UsrLink): Promise<Result | null> {
+  const me = await a.d.store.getUser(a.v.user.id);
+  if (!me?.admin) return null;
+  if (a.usrGuildId === null) {
+    return { ok: false, text: "usr needs a server for each link, and TRACKER_GUILD_ID is unset: run /allow on each person in the server instead." };
+  }
+  if (me.discordId === null) return { ok: false, text: "You have no Discord id here, and usr asks who is allowing them by it." };
+  const member = `${usr.app}:${MEMBER_ROLE}`;
+  const waiting = a.d.roster.people().filter((p) => p.discordId !== null && usr.links.subjectOf(p.id) === null);
+  if (waiting.length === 0) return { ok: true, text: "Everyone on the list is already linked to usr." };
+  const batch = waiting.slice(0, MAX_USR_LINKS);
+  let linked = 0;
+  const problems: string[] = [];
+  for (const p of batch) {
+    const answer = await usr.client
+      .allow({ discordId: p.discordId as string, guildId: a.usrGuildId, invokerDiscordId: me.discordId, roles: [member], ...(p.displayName ? { displayName: p.displayName } : {}) })
+      .catch((err: unknown) => err);
+    if (answer instanceof UsrError && answer.status === 403 && /invoker|cannot grant|outside the/.test(answer.reason)) {
+      return { ok: false, text: `usr refused before linking anyone further (${answer.reason}). Linked ${linked} so far. Fix that, then press again.` };
+    }
+    if (answer instanceof Error) {
+      if (!(answer instanceof UsrError)) a.d.log.error("usr allow failed", answer);
+      problems.push(`${nameOf(p)}: ${answer instanceof UsrError ? answer.message : "something went wrong"}`);
+      continue;
+    }
+    const allowed = answer as AllowResult;
+    if (!allowed.roles.includes(member)) {
+      problems.push(`${nameOf(p)}: usr did not give them ${member}`);
+      continue;
+    }
+    // Linked in the queue, by an admin still there; someone forgotten meanwhile reads as gone.
+    const outcome = await fresh(a, true, async () => {
+      try {
+        return usr.links.link(p.id, allowed.userId);
+      } catch (err) {
+        a.d.log.error("usr link failed", err);
+        return "failed" as const;
+      }
+    });
+    if (outcome === null) return null;
+    if (outcome === "linked" || outcome === "relinked" || outcome === "unchanged") linked++;
+    else if (outcome === "taken") problems.push(`${nameOf(p)}: their usr account is already linked to someone else here`);
+    else if (outcome === "gone") problems.push(`${nameOf(p)}: left the tracker meanwhile`);
+    else problems.push(`${nameOf(p)}: something went wrong keeping their usr link`);
+  }
+  const more = waiting.length - batch.length;
+  const parts = [`Linked ${linked} of ${batch.length} to usr.`];
+  if (problems.length > 0) parts.push(`Not linked: ${problems.join("; ")}.`);
+  if (more > 0) parts.push(`${more} more to go: press again.`);
+  return { ok: problems.length === 0, text: parts.join(" ") };
 }
 
 /** `/forget`, the person's own: the page (GET), the confirmation (POST), the erasure (POST with the word). */

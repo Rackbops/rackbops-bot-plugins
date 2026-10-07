@@ -387,7 +387,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     if (admin && !allowed.split(", ").includes(method)) return plain(405, "Method not allowed", { Allow: allowed });
     const v: Viewer = { base, user: auth.user, csrf: auth.session.csrf };
     const e: Editor = { d, v, queue: w.queue, reading };
-    const a: AdminWeb = { d, v, queue: w.queue, memberOf: (id) => memberOf(id), signOutCookie: clear(SESSION_COOKIE) };
+    const a: AdminWeb = { d, v, queue: w.queue, memberOf: (id) => memberOf(id), signOutCookie: clear(SESSION_COOKIE), usrGuildId: w.guildIds?.[0] ?? null };
 
     if (method === "POST") {
       const form = await readForm(request);
@@ -415,6 +415,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       case "token-revoke":
         return tokenRevokePost(d, v, r.id);
       case "admin-allow":
+      case "admin-usr-link":
       case "admin-act":
       case "admin-ceiling":
       case "admin-lift":

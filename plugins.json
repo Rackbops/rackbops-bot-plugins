@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-07T16:14:38.364Z",
+  "generatedAt": "2026-10-07T23:21:57.203Z",
   "plugins": [
     {
       "name": "mcp",
@@ -164,7 +164,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.22.0",
+      "version": "0.23.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, and eBay and BoardGameGeek listings you send in through the task API, never read by the tracker; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
@@ -284,6 +284,12 @@
       ],
       "releases": [
         {
+          "version": "0.23.0",
+          "publishedAt": "2026-10-07T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.23.0",
+          "notes": "### Added\n\n- **Link everyone to usr**, on the admin page while the usr link is on: one press allows each person\n  on the list with a Discord id and no usr link in usr as `tracker:member`, with the pressing admin\n  as the one who allowed them, and links them, up to 50 a press. usr records each link against\n  `TRACKER_GUILD_ID`'s first server, so with no gate it refuses and says to `/allow` in the server.\n  A refusal about the admin stops at once; other people's problems are listed by name. It never\n  runs on its own.\n\n### Schema\n\n- No change."
+        },
+        {
           "version": "0.22.0",
           "publishedAt": "2026-10-07T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.22.0",
@@ -336,12 +342,6 @@
           "publishedAt": "2026-10-04T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.15.0",
           "notes": "### Added\n\n- **The interest scout** (#83; plan E9, category 1 of plan 1.2). `/scout new interests [lens]\n  [for] [notes] [every]` makes a scout that runs every `every` days (default 1, at most 30) at the\n  owner's preferred hour: one `claude -p` Job on the execute lane, through the queue and the\n  runner like research, which looks on the web for 5 to 10 things published or available in the\n  last 30 days that fit the interests through a gift lens -- `general`, `birthday` (fun or a\n  little grandiose), `anniversary` (a romantic angle) or `christmas` (tied to their interests),\n  the requirement's own nuances -- and DMs them, each with its page, why it fits and a price if\n  shown; fewer than five come with the run's reason, never padding (plan item 60). The prompt,\n  schema and caps are the web-search spike's scout case: 30 turns, 1.50 USD, 10 minutes (item 61,\n  proposed). A link it showed is not shown again: the task's state keeps a digest of each item's URL\n  (the newest 300), the next prompt names the latest 40, and a repeat is dropped from the DM\n  whatever the model returns; each item shown is a finding, keyed by the same digest. Tier 0\n  only (`notify`); model output is cleaned before it reaches a DM or a finding, and an item\n  without an http(s) URL is dropped. A failed run is retried once (an `auth_failed` one an hour\n  later; `turn_cap` and `budget_cap` not at all); one that fails for good says so in one\n  DM, and the scout goes on to its next run. At most 3 scouts per person. Off, with `/scout`\n  saying so, while the execute lane is not configured.\n- **`/scout edit task ...`** changes a scout's interests (the whole list), lens, who it is for,\n  notes or days between runs; the web editor (`/new/scout`, Edit) and the task API (`POST\n  /tasks` with `type: \"scout\"`, `PATCH`) take the same fields by the same rules. A scout is the\n  first execute-lane task that is edited in place, and the first on a recurring schedule:\n  `/settings hour` moves it with the owner's reminders.\n- The scout type is defined in this plugin (`src/scout-type.ts`), since docket-types 0.5.0 has\n  none; giving it back to Rackbops/docket is a follow-up.\n\n### Schema\n\n- No migration. Still at 7."
-        },
-        {
-          "version": "0.14.1",
-          "publishedAt": "2026-10-04T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.14.1",
-          "notes": "### Fixed\n\n- **`/research` refuses a stray question** (#82). A `question` shorter than 3 characters, or with\n  no letter in it, is refused before any task is made, with the same words from Discord, the web\n  editor and the task API: \"Put the whole question in `question`: it needs at least 3 characters,\n  with a letter in it. `context` is only for background.\" Found live: on Clerk, task t2\n  (2026-10-04) went in with `0` as its question and the real question in `context`, so the reply\n  echoed \"queued: 0\" while the run answered the question in `context`. roshne chose to add the\n  guard (\"Add the guard\", 2026-10-04).\n\n### Schema\n\n- No migration. Still at 7."
         }
       ]
     },
