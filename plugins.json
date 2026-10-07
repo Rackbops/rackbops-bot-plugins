@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-05T22:16:28.258Z",
+  "generatedAt": "2026-10-07T00:13:53.546Z",
   "plugins": [
     {
       "name": "mcp",
@@ -164,7 +164,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.19.0",
+      "version": "0.20.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, and eBay and BoardGameGeek listings you send in through the task API, never read by the tracker; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
@@ -259,9 +259,36 @@
           "description": "BoardGameGeek's XML API Bearer token for the tracker's registered application (boardgamegeek.com/using_the_xml_api). Set = /want source: bgg watches a game's BGG marketplace listings through BGG's API; unset = /want source: bgg makes a watch whose listings are sent in through the task API instead, as for eBay. Never logged.",
           "required": false,
           "secret": true
+        },
+        {
+          "key": "TRACKER_USR_URL",
+          "format": "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$",
+          "description": "The https origin of our usr (Rackbops/usr), e.g. https://id.example.com (no path): turns the usr link on, with TRACKER_USR_KEY. People stay in the tracker; each is linked to a usr account by usr's user id. Unset = the usr link is off and nothing changes.",
+          "required": false,
+          "secret": false
+        },
+        {
+          "key": "TRACKER_USR_KEY",
+          "format": "^\\S+$",
+          "description": "The tracker's usr API key, holding usr:discord and usr:service only (never tracker:admin or tracker:register), with a usr Discord service set to this app. Required with TRACKER_USR_URL; set without it refuses to load. Never logged.",
+          "required": false,
+          "secret": true
+        },
+        {
+          "key": "TRACKER_USR_APP",
+          "format": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "The usr app the tracker's roles live under (tracker:member, tracker:register). Unset = tracker. Needs TRACKER_USR_URL.",
+          "required": false,
+          "secret": false
         }
       ],
       "releases": [
+        {
+          "version": "0.20.0",
+          "publishedAt": "2026-10-07T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.20.0",
+          "notes": "### Added\n\n- **The link to our usr, off until set** (Rod's \"Wire it\", 2026-10-07: people stay in the tracker,\n  each linked to an account on our usr, Rackbops/usr). Three new settings, all optional:\n  `TRACKER_USR_URL` (usr's https origin), `TRACKER_USR_KEY` (the tracker's usr API key, holding\n  `usr:discord` and `usr:service`; secret, never logged) and `TRACKER_USR_APP` (the usr app the\n  tracker's roles live under, `tracker` unless set). With none set nothing changes; a URL without a\n  key, or a key or app without a URL, refuses to load. Set, the log says `usr link on`. Nothing calls\n  usr yet: `/allow`, `/register` and the web sign-in through usr come in the next releases.\n- Schema migration 9, purely additive: `users.usr_subject`, the person's usr user id, null until\n  they are linked, unique when set. A database at 9 is refused by 0.19.0 and older, so going back\n  needs the backup taken before the upgrade, as with 8."
+        },
         {
           "version": "0.19.0",
           "publishedAt": "2026-10-05T00:00:00.000Z",
@@ -315,12 +342,6 @@
           "publishedAt": "2026-10-01T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.13.0",
           "notes": "### Added\n\n- An admin raises a person's daily model ceiling from the web area (#82; plan 5.7, \"The admin\n  raises a person's ceiling from the web area (5.10)\"). A person's admin page gains a Daily model\n  budget section: what they spent today, their ceiling now, a form for both numbers (dollars to the\n  cent, whole model calls), **Back to the default**, and the latest 20 changes, newest first (older\n  ones stay in the table). Proposed on #82 for roshne to confirm, not decided: **a raise stands\n  until an admin changes it** (reversible: a today-only raise is a small change -- `limitsOf` and\n  `isRaised` plus a clock in `Ceilings`, and the page's badge), and **the bounds**, at least the\n  default 2 USD / 20 calls and at most the global 10 USD / 100. Setting exactly the default is a\n  reset to it, not a raise. The execute lane's budget is now docket's defaults plus `personFor`,\n  which reads the person's newest change before every run, so a held request runs on the next tick\n  after a raise; the global ceiling is still checked first. Every change -- raise or reset -- also\n  deletes that person's `budget:person:<id>:<day>` notice key for the current budget day, in the\n  same transaction, so meeting the new ceiling the same day tells the person and the admins again\n  (plan 5.7: \"nothing fails silently\"). Every change is an append-only row and a log line.\n  `POST /admin/people/<id>/ceiling` is admin only, behind the session, `Origin` and CSRF checks of\n  every admin act; a non-admin gets the unknown page's 404.\n- Forget-me deletes the person's ceiling changes, and a change they made to someone else's ceiling\n  keeps its row with `set_by` = `forgotten`.\n\n### Schema\n\n- **Migration 7, purely additive**: one new table, `ceiling_changes` (`user_id`, `usd`, `calls`,\n  `set_by`, `at`; both values null = back to the default, a `CHECK` keeps them together), and its\n  index `ceiling_changes_user`. No existing table, column or row changes. A database at 7 is\n  refused by 0.12.0 and older (their `migrate` throws on a newer schema), so a rollback past 0.13.0\n  needs the database from before the upgrade."
-        },
-        {
-          "version": "0.12.0",
-          "publishedAt": "2026-10-01T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.12.0",
-          "notes": "### Added\n\n- A research request from the web editor and the JSON task API (#82). `/new/research` takes\n  `/research`'s options -- the question, an optional context, deadline and start, in `/research`'s\n  words -- and makes the request through the same function, so the same limits, the cap of 5\n  waiting per person (counted across Discord, the web and the API) and the daily budget apply. My\n  tasks links to it only while research is available; without the city-hall Executor the page says\n  research is not available instead of showing a form, and a post makes nothing. `POST\n  /api/v1/tasks` takes `type: \"research\"` with `question`, `context`, `deadline` and `at`, and\n  answers `503 unavailable` in `/research`'s words while research is not available. A research\n  request is never edited, as in Discord: its page has Pause, Resume and Delete but no Edit, and a\n  `PATCH` of one answers `409 conflict`. Making one only queues its run; nothing reaches city-hall\n  until the execute tick.\n- `GET /api/v1/types` lists `research` while it is available, and gives every type an `editable`\n  flag (false for research, whose `edit` is empty). A research request read over the API carries\n  what was asked in `settings` (`question`, and `context` and `deadline` when given), to its owner\n  only.\n\n### Changed\n\n- The task API answers `409 busy`, not `400 invalid`, for a task the execute tick holds (\"That task\n  is with the model runner right now\"), as it does for a price page still being read."
         }
       ]
     },

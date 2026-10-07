@@ -266,15 +266,18 @@ describe("migration 7", () => {
     db.exec(`INSERT INTO users (discord_id, display_name, time_zone, preferred_hour, admin, created_at) VALUES ('1', 'Larry', 'UTC', 9, 1, '${AT}')`);
     db.exec(`INSERT INTO usage (user_id, task_id, occurrence_id, source, calls, cost_usd, at, key) VALUES ('u1', 't1', 'o1', 'agent', 1, 0.3, '${AT}', 'k1')`);
     const schema = () => db.query("SELECT type, name, sql FROM sqlite_master WHERE name != 'sqlite_sequence' ORDER BY name").all() as { name: string }[];
-    const rows = () => ({ users: db.query("SELECT * FROM users").all(), usage: db.query("SELECT * FROM usage").all() });
+    // `db.prepare`, not `db.query`: a cached statement keeps its columns across a later ALTER.
+    const rows = () => ({ users: db.prepare("SELECT * FROM users").all(), usage: db.prepare("SELECT * FROM usage").all() });
     const before = { schema: schema(), rows: rows() };
 
     expect(migrate(db)).toBe(6);
-    // Every later migration runs too; migration 8's want_inbox has its own test (inbox.test.ts).
+    // Every later migration runs too; migration 8's want_inbox and migration 9's users.usr_subject
+    // have their own tests (inbox.test.ts, usr.test.ts), so users' own definition is left out here.
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
-    const after = schema().filter((s) => !s.name.startsWith("want_inbox"));
-    expect(after.filter((s) => !s.name.startsWith("ceiling_changes"))).toEqual(before.schema);
+    const later = (s: { name: string }) => s.name.startsWith("want_inbox") || s.name === "users" || s.name === "users_usr_subject";
+    const after = schema().filter((s) => !later(s));
+    expect(after.filter((s) => !s.name.startsWith("ceiling_changes"))).toEqual(before.schema.filter((s) => !later(s)));
     expect(after.filter((s) => s.name.startsWith("ceiling_changes")).map((s) => s.name)).toEqual(["ceiling_changes", "ceiling_changes_user"]);
-    expect(rows()).toEqual(before.rows);
+    expect(rows()).toEqual({ ...before.rows, users: before.rows.users.map((u) => ({ ...(u as object), usr_subject: null })) });
   });
 });

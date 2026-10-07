@@ -30,6 +30,7 @@ import { parseWebUrl } from "./web/config.js";
 import { ApiTokens } from "./web/api-tokens.js";
 import { Sessions } from "./web/sessions.js";
 import { LoginLinks } from "./web/signin-link.js";
+import { parseUsrConfig } from "./usr.js";
 import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_IDLE_LOG, UNLIMITED_LOG } from "./usage.js";
 
 /**
@@ -130,6 +131,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const roleGate: RoleGate = { roles: parseGuildRoles(host.env.TRACKER_GUILD_ROLES, guildIds), exempt: new Set(adminIds) };
   const webOrigin = parseWebUrl(host.env.TRACKER_WEB_URL);
   const cityHall = parseCityHallConfig(host.env);
+  // The link to our usr (usr.ts): checked at load, so a half-set link refuses to start; off while unset.
+  const usrConfig = parseUsrConfig(host.env);
   // Budgets off for the alpha (roshne, 2026-10-02): no daily ceiling holds a run; usage is still recorded.
   const budgetUnlimited = parseBudgetUnlimited(host.env[BUDGET_UNLIMITED_KEY]);
   const cityHallConfig: CityHallConfig | null = cityHall.config;
@@ -376,6 +379,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       if (budgetUnlimited) host.log.info(executeLane ? UNLIMITED_LOG : UNLIMITED_IDLE_LOG);
       if (cityHallConfig) host.log.info(`execute lane on: city-hall ${cityHallConfig.url}, capability ${cityHallConfig.capability}`);
       else if ("missing" in cityHall && cityHall.missing.length > 0) host.log.warn(`execute lane is off, so /research is unavailable: ${cityHall.missing.join(", ")} not set`);
+      if (usrConfig) host.log.info(`usr link on: ${usrConfig.url}, app ${usrConfig.app}`);
       deps = {
         store: openedStore,
         admissions: new Admissions(opened),

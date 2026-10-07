@@ -106,14 +106,19 @@ describe("SqliteStore beyond the contract", () => {
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
     // Every row survives with its values; the new columns are null on the old rows.
     const cols = (t: string) => (all(`PRAGMA table_info(${t})`) as { name: string }[]).map((c) => c.name);
-    expect(cols("users")).not.toContain("usr_subject");
+    // Migration 5 drops the old usr_subject with its values; migration 9 brings the column back, empty.
+    expect(all("SELECT usr_subject FROM users")).toEqual(before.users.map(() => ({ usr_subject: null })));
+    expect(cols("users").at(-1)).toBe("usr_subject");
     expect(all("SELECT seq, discord_id, display_name, time_zone, preferred_hour, admin, created_at FROM users ORDER BY seq")).toEqual(before.users);
     expect(all("SELECT * FROM tasks ORDER BY seq")).toEqual(before.tasks);
     expect(all("SELECT * FROM occurrences ORDER BY seq")).toEqual(before.occurrences.map((o) => ({ ...(o as object), record: null })));
     expect(all("SELECT * FROM events ORDER BY seq")).toEqual(before.events);
     expect(all("SELECT * FROM series ORDER BY seq")).toEqual(before.series.map((p) => ({ ...(p as object), key: null })));
     expect(all("SELECT name FROM sqlite_master WHERE name = 'delivery_claims'")).toEqual([]);
-    expect(all("SELECT name FROM sqlite_master WHERE name = 'users_usr_subject'")).toEqual([]);
+    // Migration 1's plain index went with migration 5; the one there now is migration 9's, unique when set.
+    expect(all("SELECT sql FROM sqlite_master WHERE name = 'users_usr_subject'")).toEqual([
+      { sql: "CREATE UNIQUE INDEX users_usr_subject ON users (usr_subject) WHERE usr_subject IS NOT NULL" },
+    ]);
 
     const store = new SqliteStore(db);
     // The claims, as docket's deliveries: none owed, so none is ever sent again.
@@ -208,12 +213,13 @@ describe("SqliteStore beyond the contract", () => {
 
       // The VACUUM is kept outside the versioned schema (tracker_meta): the version is the migrations'
       // alone. A later migration (4, 0.7.0's API tokens; 5, 0.9.0's docket 0.4.0 store; 6, 0.11.0's
-      // findings and Job records; 7, 0.13.0's ceiling changes; 8, 0.19.0's want-list inboxes) is what
+      // findings and Job records; 7, 0.13.0's ceiling changes; 8, 0.19.0's want-list inboxes; 9, 0.20.0's
+      // usr link) is what
       // blocks a rollback to 0.6.0, whose migrate() refuses a user_version above its three migrations.
       const again = new Database(path);
       const version = (again.query("PRAGMA user_version").get() as { user_version: number }).user_version;
       expect(version).toBe(MIGRATIONS.length);
-      expect(MIGRATIONS).toHaveLength(8);
+      expect(MIGRATIONS).toHaveLength(9);
       const known060 = 3;
       expect(() => {
         if (version > known060) throw new Error(`tracker database is at schema ${version}, newer than this plugin knows (${known060})`);

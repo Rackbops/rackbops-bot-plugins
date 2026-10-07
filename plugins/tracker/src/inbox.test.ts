@@ -58,13 +58,18 @@ describe("migration 8", () => {
     }
     db.exec(`INSERT INTO users (discord_id, display_name, time_zone, preferred_hour, admin, created_at) VALUES ('1', 'Larry', 'UTC', 9, 1, '${AT.toISOString()}')`);
     const schema = () => db.query("SELECT type, name, sql FROM sqlite_master WHERE name != 'sqlite_sequence' ORDER BY name").all() as { name: string }[];
-    const before = { schema: schema(), users: db.query("SELECT * FROM users").all() };
+    // `db.prepare`, not `db.query`: a cached statement keeps its columns across a later ALTER.
+    const users = () => db.prepare("SELECT * FROM users").all();
+    const before = { schema: schema(), users: users() };
 
     expect(migrate(db)).toBe(7);
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(8);
-    const after = schema();
-    expect(after.filter((s) => !s.name.startsWith("want_inbox"))).toEqual(before.schema);
+    // Every later migration runs too; migration 9's users.usr_subject has its own test (usr.test.ts),
+    // so users' own definition is left out here.
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
+    const later = (s: { name: string }) => s.name === "users" || s.name === "users_usr_subject";
+    const after = schema().filter((s) => !later(s));
+    expect(after.filter((s) => !s.name.startsWith("want_inbox"))).toEqual(before.schema.filter((s) => !later(s)));
     expect(after.filter((s) => s.name.startsWith("want_inbox")).map((s) => s.name)).toEqual(["want_inbox", "want_inbox_key", "want_inbox_task"]);
-    expect(db.query("SELECT * FROM users").all()).toEqual(before.users);
+    expect(users()).toEqual(before.users.map((u) => ({ ...(u as object), usr_subject: null })));
   });
 });

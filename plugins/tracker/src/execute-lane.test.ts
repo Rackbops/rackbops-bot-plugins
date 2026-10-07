@@ -166,6 +166,7 @@ describe("the manifest's formats are the parser's", () => {
       "TRACKER_CITY_HALL_ACCESS_CLIENT_ID",
       "TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET",
       "TRACKER_BGG_TOKEN",
+      "TRACKER_USR_KEY",
     ]);
   });
 });
