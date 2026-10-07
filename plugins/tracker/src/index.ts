@@ -30,7 +30,8 @@ import { parseWebUrl } from "./web/config.js";
 import { ApiTokens } from "./web/api-tokens.js";
 import { Sessions } from "./web/sessions.js";
 import { LoginLinks } from "./web/signin-link.js";
-import { parseUsrConfig } from "./usr.js";
+import { createUsrClient, parseUsrConfig } from "./usr.js";
+import { UsrLinks } from "./usr-links.js";
 import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_IDLE_LOG, UNLIMITED_LOG } from "./usage.js";
 
 /**
@@ -115,6 +116,8 @@ export interface TrackerOptions {
   executeStarted?: (work: Promise<void>) => void;
   /** Test seam: false leaves the daily digest (digest.ts) off the notify tick, for tests that count every DM. On by default. */
   digest?: boolean;
+  /** Test seam for the usr link's HTTP (usr.ts). */
+  usrFetch?: typeof fetch;
 }
 
 /** A Notifier for a host without `dm`: every send is refused, and nothing went out. */
@@ -133,6 +136,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const cityHall = parseCityHallConfig(host.env);
   // The link to our usr (usr.ts): checked at load, so a half-set link refuses to start; off while unset.
   const usrConfig = parseUsrConfig(host.env);
+  const usrClient = usrConfig ? createUsrClient({ config: usrConfig, ...(options.usrFetch ? { fetchImpl: options.usrFetch } : {}) }) : null;
   // Budgets off for the alpha (roshne, 2026-10-02): no daily ceiling holds a run; usage is still recorded.
   const budgetUnlimited = parseBudgetUnlimited(host.env[BUDGET_UNLIMITED_KEY]);
   const cityHallConfig: CityHallConfig | null = cityHall.config;
@@ -403,6 +407,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         research: executeOn,
         bgg: bgg !== null,
         inbox,
+        usr: usrConfig && usrClient ? { client: usrClient, app: usrConfig.app, links: new UsrLinks(opened) } : null,
       };
       if (guildIds === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
       else if (roleGate.roles !== null) host.log.info(`role check on for ${roleGate.roles.size} of ${guildIds.length} server(s)`);

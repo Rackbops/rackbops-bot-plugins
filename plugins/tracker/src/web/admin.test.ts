@@ -269,6 +269,15 @@ describe("admin acts, against the command path", () => {
     expect(await bad.text()).toContain("&lt;b&gt;12&lt;/b&gt;");
   });
 
+  it("allow with the usr link on admits, and says to /allow in the server to link (the web has no server)", async () => {
+    const w = await setup({ env: { TRACKER_USR_URL: "https://id.example.com", TRACKER_USR_KEY: "k" } });
+    const res = await post(w.plugin, w.admin, w.adminCsrf, "/admin/allow", { discord_id: STRANGER });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain(`Allowed ${STRANGER}`);
+    expect(text).toContain("Not linked to usr: run <code>/allow</code> in the server to link them.");
+  });
+
   it("allow checks server membership as /allow does, and refuses when it cannot", async () => {
     let answer: "member" | "not-member" | null = "not-member";
     const w = await setup({ guild: true, webMembership: async () => answer });

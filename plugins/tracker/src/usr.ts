@@ -27,7 +27,7 @@ const SNOWFLAKE = /^[0-9]{17,20}$/;
 export interface UsrConfig {
   /** usr's origin, no path. */
   url: string;
-  /** Clerk's usr API key (`usr:discord` and `usr:service`). Never logged. */
+  /** Clerk's usr API key (`usr:discord` only). Never logged. */
   key: string;
   /**
    * The usr app the tracker's roles live under, `tracker` unless set. usr itself takes the app from
@@ -80,6 +80,8 @@ export class UsrError extends Error {
     message: string,
     /** The HTTP status usr answered with, or `null` when it was not reached. */
     readonly status: number | null,
+    /** usr's own reason (its `error`), cleaned as `message` carries it; empty when it gave none. */
+    readonly reason = "",
   ) {
     super(message);
     this.name = "UsrError";
@@ -115,7 +117,11 @@ export interface RegisterLink {
 export interface UsrClient {
   allow(req: AllowRequest): Promise<AllowResult>;
   /** The person's one-time usr registration link, or `null` when they are already registered there (409). */
-  registerLink(req: { discordId: string; guildId: string; displayName?: string }): Promise<RegisterLink | null>;
+  /**
+   * `policy` is usr's: `allow` (the default) only for someone `/allow` already linked, `open` for
+   * anyone, which the tracker asks for only for its own configured admins (their first link).
+   */
+  registerLink(req: { discordId: string; guildId: string; displayName?: string; policy?: "allow" | "open" }): Promise<RegisterLink | null>;
 }
 
 export interface UsrClientOptions {
@@ -129,8 +135,8 @@ export interface UsrClientOptions {
 function reason(body: unknown): string {
   const e = body && typeof body === "object" ? (body as { error?: unknown }).error : undefined;
   if (typeof e !== "string") return "";
-  const text = e.replace(/[^\x20-\x7e]/g, "").slice(0, 200).trim();
-  return text ? `: ${text}` : "";
+  // usr writes an em-dash between clauses ("not allowed yet \u2014 ask an admin ..."): keep it as "--".
+  return e.replace(/\s*\u2014\s*/g, " -- ").replace(/[^\x20-\x7e]/g, "").slice(0, 200).trim();
 }
 
 export function createUsrClient(o: UsrClientOptions): UsrClient {
@@ -161,7 +167,10 @@ export function createUsrClient(o: UsrClientOptions): UsrClient {
     if (status === 401) throw new UsrError(`usr refused the tracker's key (HTTP 401): check ${USR_ENV.key}`, status);
     if (status >= 300 && status < 400) throw new UsrError(`usr answered with a redirect (HTTP ${status}), as an edge login does`, status);
     if (status === 409 && ok409) return { status, body: parsed };
-    if (status < 200 || status >= 300) throw new UsrError(`usr answered HTTP ${status}${reason(parsed)}`, status);
+    if (status < 200 || status >= 300) {
+      const why = reason(parsed);
+      throw new UsrError(`usr answered HTTP ${status}${why ? `: ${why}` : ""}`, status, why);
+    }
     return { status, body: parsed };
   }
 
@@ -193,7 +202,7 @@ export function createUsrClient(o: UsrClientOptions): UsrClient {
       snowflake("the server", req.guildId);
       const { status, body } = await post(
         "/api/discord/register-link",
-        { discord_user_id: req.discordId, guild_id: req.guildId, policy: "allow", ...(req.displayName ? { display_name: req.displayName } : {}) },
+        { discord_user_id: req.discordId, guild_id: req.guildId, policy: req.policy ?? "allow", ...(req.displayName ? { display_name: req.displayName } : {}) },
         true,
       );
       if (status === 409) return null;
@@ -209,6 +218,8 @@ export function createUsrClient(o: UsrClientOptions): UsrClient {
       }
       // Only ever hand a person an https link: usr builds it from its own USR_PUBLIC_URL.
       if (link.protocol !== "https:") throw new UsrError("usr's registration link is not https: check usr's USR_PUBLIC_URL", status);
+      // Never hand a person credentials, which a USR_PUBLIC_URL with `user:pass@` would put in the link.
+      if (link.username !== "" || link.password !== "") throw new UsrError("usr's registration link has credentials in it: check usr's USR_PUBLIC_URL", status);
       return { url: link.href, expiresAt: b.expires_at };
     },
   };

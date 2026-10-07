@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.21.0] - 2026-10-07
+
+### Added
+
+- **`/allow` and `/register` through our usr**, while the usr link is on (`TRACKER_USR_URL` and
+  `TRACKER_USR_KEY`, 0.20.0). `/allow`, run in a server, also allows the person in usr as
+  `tracker:member` (the admin running it must be linked in usr and hold `tracker:register` and
+  `tracker:member` there) and keeps the usr user id usr answers with. usr only ever adds, so running
+  it again asks usr again: it links someone not yet linked and relinks someone whose usr link was
+  made anew. It never links two people to one usr account, and when usr refuses it says what to do
+  (get linked, which roles are missing, or that the key's usr Discord service names another app
+  than `TRACKER_USR_APP`). `/register`, run in a server, gives a linked person their one-time usr
+  sign-up link until usr says they have signed up, and a configured admin not yet linked usr's open
+  sign-up link, the first admin's way in (README, "First admin and usr"). When usr says a linked
+  person is not allowed yet (their usr link was removed), `/register` forgets their link so the next `/allow` makes it anew. A usr refusal or
+  outage never undoes the admission or the registration; a member sees a plain "try again later",
+  an admin sees usr's reason. In a DM both say to run them in the server. With the link off nothing
+  changes, and no schema change.
+
+### Changed
+
+- `TRACKER_USR_KEY` needs `usr:discord` only, not `usr:service` as 0.20.0 said: nothing the tracker
+  does looks up roles, and usr's own setup gives a bot key nothing else.
+
 ## [0.20.0] - 2026-10-07
 
 ### Added
