@@ -136,7 +136,7 @@ export function cookie(name: string, value: string, o: { base: string; maxAgeSec
  * The request body as text, or null when it is over `max` bytes: a declared length over it is
  * refused unread, and the body is read only up to `max + 1` bytes, whatever it declared.
  */
-export async function readBody(request: Request, max: number): Promise<string | null> {
+export async function readBody(request: Pick<Request, "headers" | "body">, max: number): Promise<string | null> {
   const declared = request.headers.get("content-length");
   if (declared !== null && !(/^[0-9]{1,12}$/.test(declared) && Number(declared) <= max)) return null;
   if (!request.body) return "";

@@ -41,6 +41,12 @@ export class UsrLinks {
     return row?.usr_subject ?? null;
   }
 
+  /** The tracker user id linked to usr user id `subject`, or null. */
+  userOfSubject(subject: string): string | null {
+    const row = this.db.query("SELECT seq FROM users WHERE usr_subject = ?").get(subject) as { seq: number } | null;
+    return row ? `u${row.seq}` : null;
+  }
+
   /**
    * Links the person to `subject`. `taken`: another person here is already linked to it, and nothing
    * changes. `relinked`: they were linked to a different account, which usr now says is theirs.

@@ -1,7 +1,7 @@
 import type { User } from "@rackbops/docket-core";
 import { type Membership, NOT_MEMBER } from "../access.js";
 import type { PluginHttpInfo } from "../../../../packages/api/contract.js";
-import { loadTaskList, saveSettings, type TrackerDeps } from "../actions.js";
+import { loadTaskList, MEMBER_ROLE, saveSettings, type TrackerDeps, type UsrLink } from "../actions.js";
 import type { Queue } from "../discord-common.js";
 import { MAX_ZONE } from "../limits.js";
 import { adminGet, adminPost, type AdminWeb, forgetRoute, unknownPage } from "./admin.js";
@@ -16,6 +16,7 @@ import { isAdminRoute, methodsOf, route } from "./routes.js";
 import { randomToken, safeEqual } from "./secrets.js";
 import { SESSION_TTL_MS, type Session } from "./sessions.js";
 import { LINK_TTL_MS } from "./signin-link.js";
+import { refreshUrl, SSO_COOKIE } from "../usr-identity.js";
 import { STYLESHEET, STYLESHEET_PATH } from "./theme.js";
 
 /**
@@ -50,6 +51,25 @@ export const MEMBER_CHECK_TIMEOUT_MS = 3000;
 export const MEMBER_RETRY_MS = 60 * 1000;
 
 export const LEFT_SERVER = `You are signed out. ${NOT_MEMBER}`;
+/**
+ * usr sent the browser back still without an `nz_id` the tracker can accept: usr's keys could not be
+ * fetched, the clocks disagree, or usr minted no token. (A cookie domain that misses this site never
+ * gets here: usr refuses the return address and keeps the browser.)
+ */
+export const USR_NO_COOKIE = "I could not confirm your usr sign-in. Try again in a minute, or run /web in Discord for a one-time link. If it keeps happening, tell an admin.";
+/** usr's sign-in was fine, but server membership could not be checked to open the session. */
+export const USR_RECHECK_FAILED = "I could not check that you are a member of this tracker's server. Try again in a minute.";
+export const USR_NOT_MEMBER = "Your usr account does not have this tracker's member role yet: ask an admin to run /allow for you in the server.";
+export const USR_NOT_LINKED = "Your usr account is not linked to anyone on this tracker yet: ask an admin to run /allow for you in the server, then run /register.";
+/** The mark on the address usr sends the browser back to, so a missing cookie never loops. */
+export const USR_BACK = "usr";
+/** `?usr=go`: the sign-in page's "Sign in with usr" button, which signs in even after a sign-out. */
+export const USR_GO = "go";
+/**
+ * After Sign out, how long a GET does not sign the person back in from usr's cookie on its own:
+ * longer than usr's longest `nz_id` (30 minutes by default). Signing out here does not sign out of usr.
+ */
+export const SIGNED_OUT_MS = 12 * 60 * 60 * 1000;
 export const RECHECK_FAILED = "You are signed out: I could not check that you are still a member of this tracker's server.";
 
 export interface WebWiring {
@@ -108,6 +128,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   const base = `/${w.name}`;
   const SESSION_COOKIE = `__Secure-${w.name}-session`;
   const LOGIN_COOKIE = `__Secure-${w.name}-login`;
+  const OUT_COOKIE = `__Secure-${w.name}-out`;
   const clear = (name: string) => cookie(name, "", { base, maxAgeSeconds: 0, sameSite: "Lax" });
   // In memory only, per tracker user id: the lookup still waiting on Discord, and when the last one
   // failed.
@@ -236,7 +257,62 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       return htmlResponse(signInHelpPage(base, "That sign-in link has expired or was already used."), 400, { "Set-Cookie": clear(LOGIN_COOKIE) });
     }
     const { id } = d.sessions.create(user.id, now, link?.memberCheckedAt ?? null);
-    return redirect(`${base}/`, [cookie(SESSION_COOKIE, id, { base, maxAgeSeconds: SESSION_TTL_MS / 1000, sameSite: "Lax" }), clear(LOGIN_COOKIE)]);
+    return redirect(`${base}/`, [cookie(SESSION_COOKIE, id, { base, maxAgeSeconds: SESSION_TTL_MS / 1000, sameSite: "Lax" }), clear(LOGIN_COOKIE), clear(OUT_COOKIE)]);
+  }
+
+  /**
+   * Sign-in through usr (usr-identity.ts): a valid `nz_id` naming a usr account linked to a
+   * registered person, holding `<app>:member`, opens a session as `/login` does, and the browser goes
+   * on to the page it asked for. With no valid cookie the browser is sent to usr once to get one,
+   * marked so that coming back without it shows why instead of going round again. The one-time
+   * `/web` link stays beside it.
+   */
+  async function usrSignIn(d: TrackerDeps, usr: UsrLink, request: Request, path: string, url: URL, origin: string, stale: string[]): Promise<Response> {
+    const asked = url.searchParams.get(USR_BACK);
+    // Signed out a moment ago: only the sign-in page's button signs back in, never any GET.
+    // (usr's trip back carries `?usr=1`, so the button's sign-in survives an expired `nz_id`.)
+    if (readCookie(request, OUT_COOKIE) !== null && asked !== USR_GO && asked !== "1") return redirect(`${base}/signin?out=1`, stale);
+    const identity = await usr.verifier.verify(readCookie(request, SSO_COOKIE));
+    const help = (note: string) => htmlResponse(signInHelpPage(base, note), 403, stale[0] ? { "Set-Cookie": stale[0] } : {});
+    // The address's own query, without our mark, kept across the trip to usr and back.
+    const query = new URLSearchParams(url.searchParams);
+    query.delete(USR_BACK);
+    const rest = query.toString();
+    if (!identity) {
+      if (asked === "1") return help(USR_NO_COOKIE);
+      // An address built from TRACKER_WEB_URL and our own path, never from the request's Host.
+      const back = refreshUrl(usr.url, `${origin}${base}${path}?${rest ? `${rest}&` : ""}${USR_BACK}=1`);
+      const h = new Headers({ Location: back, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
+      for (const c of stale) h.append("Set-Cookie", c);
+      return new Response(null, { status: 303, headers: h });
+    }
+    if (!identity.roles.includes(`${usr.app}:${MEMBER_ROLE}`)) return help(USR_NOT_MEMBER);
+    const userId = usr.links.userOfSubject(identity.sub);
+    const user = userId ? await d.store.getUser(userId) : null;
+    if (!user || !d.admissions.isRegistered(user.id)) return help(USR_NOT_LINKED);
+    // Membership of TRACKER_GUILD_ID, checked now as `/web` checks it before giving a link, so the
+    // session starts confirmed rather than failing its first page on a slow lookup.
+    const member = await recheck(d, user, null);
+    if (member === "not-member") return help(NOT_MEMBER);
+    if (member !== "ok") return help(USR_RECHECK_FAILED);
+    const now = d.clock.now();
+    const { id } = d.sessions.create(user.id, now, w.guildIds === null ? null : now.toISOString());
+    return redirect(`${base}${path}${rest ? `?${rest}` : ""}`, [cookie(SESSION_COOKIE, id, { base, maxAgeSeconds: SESSION_TTL_MS / 1000, sameSite: "Lax" }), clear(OUT_COOKIE)]);
+  }
+
+  /**
+   * A signed-in person whose usr cookie, for their own linked account, no longer carries
+   * `<app>:member` (an admin took it away in usr) is signed out of every session now, not when the
+   * session ends. Without the cookie nothing is known, and the session stands.
+   */
+  async function usrRevoked(d: TrackerDeps, request: Request, user: User): Promise<boolean> {
+    const usr = d.usr;
+    if (!usr) return false;
+    const identity = await usr.verifier.verify(readCookie(request, SSO_COOKIE));
+    if (!identity || identity.sub !== usr.links.subjectOf(user.id) || identity.roles.includes(`${usr.app}:${MEMBER_ROLE}`)) return false;
+    d.sessions.deleteForUser(user.id);
+    d.apiTokens.deleteForUser(user.id);
+    return true;
   }
 
   async function settingsPost(d: TrackerDeps, v: Viewer, form: URLSearchParams): Promise<Response> {
@@ -285,7 +361,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
         })
       );
     }
-    if (path === "/signin") return only("GET") ?? htmlResponse(signInHelpPage(base, signInNote(url.searchParams)));
+    if (path === "/signin") return only("GET") ?? htmlResponse(signInHelpPage(base, signInNote(url.searchParams), Boolean(d.usr)));
     if (path === "/login") return method === "GET" ? loginGet(d, url) : loginPost(d, request);
 
     // Signed in.
@@ -299,7 +375,12 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
 
     const auth = await authenticate(d, request);
     if (auth.kind === "signed-out") return htmlResponse(signInHelpPage(base, auth.note), 403, { "Set-Cookie": clear(SESSION_COOKIE) });
-    if (auth.kind !== "ok") return redirect(`${base}/signin`, auth.kind === "stale" ? [clear(SESSION_COOKIE)] : []);
+    if (auth.kind !== "ok") {
+      const stale = auth.kind === "stale" ? [clear(SESSION_COOKIE)] : [];
+      if (method === "GET" && d.usr && w.origin !== null) return usrSignIn(d, d.usr, request, path, url, w.origin, stale);
+      return redirect(`${base}/signin`, stale);
+    }
+    if (await usrRevoked(d, request, auth.user)) return htmlResponse(signInHelpPage(base, USR_NOT_MEMBER), 403, { "Set-Cookie": clear(SESSION_COOKIE) });
     // The one admin definition, read from the store on this request (authenticate re-read the row):
     // an admin whose flag was revoked a moment ago is refused now, not at their next sign-in.
     if (admin && !auth.user.admin) return unknownPage(base);
@@ -315,7 +396,10 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       switch (r.kind) {
       case "logout":
         d.sessions.delete(auth.id);
-        return redirect(`${base}/signin?out=1`, [clear(SESSION_COOKIE)]);
+        return redirect(`${base}/signin?out=1`, [
+          clear(SESSION_COOKIE),
+          ...(d.usr ? [cookie(OUT_COOKIE, "1", { base, maxAgeSeconds: SIGNED_OUT_MS / 1000, sameSite: "Lax" })] : []),
+        ]);
       case "settings":
         return settingsPost(d, v, form);
       case "new":

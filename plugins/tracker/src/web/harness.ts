@@ -55,6 +55,8 @@ export async function world(
     executeStarted?: (work: Promise<void>) => void;
     /** A BGG source, as if `TRACKER_BGG_TOKEN` were set (docket-types' `bggSource`). */
     bgg?: Source;
+    /** usr's HTTP, with `TRACKER_USR_*` in `env` (usr.ts, usr-identity.ts). */
+    usrFetch?: typeof fetch;
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "tracker-web-"));
@@ -106,6 +108,7 @@ export async function world(
       ...(opts.cityHallFetch ? { cityHallFetch: opts.cityHallFetch } : {}),
       ...(opts.executeStarted ? { executeStarted: opts.executeStarted } : {}),
       ...(opts.bgg ? { bgg: opts.bgg } : {}),
+      ...(opts.usrFetch ? { usrFetch: opts.usrFetch } : {}),
     },
   );
   await plugin.activate!();

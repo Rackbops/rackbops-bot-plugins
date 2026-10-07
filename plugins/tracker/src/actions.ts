@@ -32,6 +32,7 @@ import { admit, PeopleError, setPreferences } from "./people.js";
 import { heldRuns, restoreHeldRun } from "./retime.js";
 import type { Roster } from "./roster.js";
 import type { WantInbox } from "./inbox.js";
+import type { UsrVerifier } from "./usr-identity.js";
 import type { UsrLinks } from "./usr-links.js";
 import { type AllowResult, type RegisterLink, type UsrClient, UsrError } from "./usr.js";
 import type { ApiTokens } from "./web/api-tokens.js";
@@ -88,6 +89,10 @@ export interface TrackerDeps {
 /** The usr link as the commands use it: the client, the app the tracker's roles live under, and the stored links. */
 export interface UsrLink {
   client: UsrClient;
+  /** usr's origin (`TRACKER_USR_URL`): where the web area sends a browser to sign in. */
+  url: string;
+  /** Checks usr's `nz_id` sign-in cookie for the web area (usr-identity.ts). */
+  verifier: UsrVerifier;
   app: string;
   links: UsrLinks;
 }
