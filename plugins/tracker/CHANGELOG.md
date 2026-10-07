@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.20.0] - 2026-10-07
+
+### Added
+
+- **The link to our usr, off until set** (Rod's "Wire it", 2026-10-07: people stay in the tracker,
+  each linked to an account on our usr, Rackbops/usr). Three new settings, all optional:
+  `TRACKER_USR_URL` (usr's https origin), `TRACKER_USR_KEY` (the tracker's usr API key, holding
+  `usr:discord` and `usr:service`; secret, never logged) and `TRACKER_USR_APP` (the usr app the
+  tracker's roles live under, `tracker` unless set; it must match the app on the key's usr Discord
+  service row, which is what usr goes by). With none set the tracker behaves as before; a URL
+  without a key, or a key or app without a URL, refuses to load. Set, the log says `usr link on`.
+  Nothing calls usr yet: `/allow`, `/register` and the web sign-in through usr come in the next
+  releases.
+- Schema migration 9, purely additive: `users.usr_subject`, the person's usr user id, null until
+  they are linked, unique when set. A database at 9 is refused by 0.19.0 and older, so going back
+  needs the backup taken before the upgrade.
+
 ## [0.19.0] - 2026-10-05
 
 ### Added

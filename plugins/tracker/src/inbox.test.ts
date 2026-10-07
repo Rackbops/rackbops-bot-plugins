@@ -47,6 +47,11 @@ describe("WantInbox", () => {
   });
 });
 
+/** A sqlite_master row as migration 9 leaves it: SQLite appends an added column to the stored CREATE TABLE. */
+function withUsrSubject<T extends { name: string; sql?: string | null }>(s: T): T {
+  return s.name === "users" && s.sql ? { ...s, sql: s.sql.replace(/\)$/, ", usr_subject TEXT)") } : s;
+}
+
 describe("migration 8", () => {
   it("is purely additive: a database at 7 keeps every table, row and index as it was, and gains want_inbox", () => {
     const db = new Database(":memory:");
@@ -58,13 +63,17 @@ describe("migration 8", () => {
     }
     db.exec(`INSERT INTO users (discord_id, display_name, time_zone, preferred_hour, admin, created_at) VALUES ('1', 'Larry', 'UTC', 9, 1, '${AT.toISOString()}')`);
     const schema = () => db.query("SELECT type, name, sql FROM sqlite_master WHERE name != 'sqlite_sequence' ORDER BY name").all() as { name: string }[];
-    const before = { schema: schema(), users: db.query("SELECT * FROM users").all() };
+    // `db.prepare`, not `db.query`: a cached statement keeps its columns across a later ALTER.
+    const users = () => db.prepare("SELECT * FROM users").all();
+    const before = { schema: schema(), users: users() };
 
     expect(migrate(db)).toBe(7);
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(8);
-    const after = schema();
-    expect(after.filter((s) => !s.name.startsWith("want_inbox"))).toEqual(before.schema);
+    // Every later migration runs too; migration 9's users.usr_subject has its own test (usr.test.ts):
+    // users gains exactly that column, nothing else.
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
+    const after = schema().filter((s) => s.name !== "users_usr_subject");
+    expect(after.filter((s) => !s.name.startsWith("want_inbox"))).toEqual(before.schema.map(withUsrSubject));
     expect(after.filter((s) => s.name.startsWith("want_inbox")).map((s) => s.name)).toEqual(["want_inbox", "want_inbox_key", "want_inbox_task"]);
-    expect(db.query("SELECT * FROM users").all()).toEqual(before.users);
+    expect(users()).toEqual(before.users.map((u) => ({ ...(u as object), usr_subject: null })));
   });
 });
