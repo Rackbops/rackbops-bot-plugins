@@ -112,7 +112,7 @@
         "format": "^\\S+$",
         "required": false,
         "secret": true,
-        "description": "The tracker's usr API key, holding usr:discord and usr:service only (never tracker:admin or tracker:register), with a usr Discord service set to this app. Required with TRACKER_USR_URL; set without it refuses to load. Never logged."
+        "description": "The tracker's usr API key, holding usr:discord only (never tracker:admin or tracker:register), with a usr Discord service set to this app. Required with TRACKER_USR_URL; set without it refuses to load. Never logged."
       },
       {
         "key": "TRACKER_USR_APP",

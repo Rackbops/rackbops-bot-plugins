@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { MIGRATIONS, migrate } from "./schema.js";
 import pkg from "../package.json" with { type: "json" };
+import { UsrLinks } from "./usr-links.js";
 import { createUsrClient, parseUsrConfig, USR_APP_FORMAT, USR_URL_FORMAT, type UsrConfig, UsrError } from "./usr.js";
 
 /** The link to our usr (usr.ts) and its column, schema migration 9. */
@@ -168,6 +169,23 @@ describe("UsrClient.registerLink", () => {
     const limited = createUsrClient({ config: CONFIG, fetchImpl: fakeFetch(() => json({ error: "rate limit exceeded" }, 429)).fetchImpl });
     await expect(limited.registerLink({ discordId: PERSON, guildId: GUILD })).rejects.toThrow("HTTP 429: rate limit exceeded");
   });
+
+  it("refuses a link with credentials in it", async () => {
+    const usr = createUsrClient({ config: CONFIG, fetchImpl: fakeFetch(() => json({ url: "https://u:p@id.example.com/register/discord?t=abc", expires_at: "x" })).fetchImpl });
+    const err = await usr.registerLink({ discordId: PERSON, guildId: GUILD }).catch((e: unknown) => e);
+    expect(String(err)).toContain("has credentials in it");
+    expect(String(err)).not.toContain("u:p");
+  });
+
+  it("asks with the open policy when told to, and keeps usr's reason with its dash as --", async () => {
+    const { calls, fetchImpl } = fakeFetch(() => json({ error: "not allowed yet \u2014 ask an admin to /allow you" }, 403));
+    const usr = createUsrClient({ config: CONFIG, fetchImpl });
+    const err = (await usr.registerLink({ discordId: PERSON, guildId: GUILD, policy: "open" }).catch((e: unknown) => e)) as UsrError;
+    expect(JSON.parse((calls[0] as Call).init.body as string).policy).toBe("open");
+    expect(err.status).toBe(403);
+    expect(err.reason).toBe("not allowed yet -- ask an admin to /allow you");
+    expect(err.message).toBe("usr answered HTTP 403: not allowed yet -- ask an admin to /allow you");
+  });
 });
 
 describe("migration 9", () => {
@@ -203,5 +221,33 @@ describe("migration 9", () => {
     add("2", null);
     add("3", "6f1c2a9e-0000-4000-8000-000000000001");
     expect(() => add("4", "6f1c2a9e-0000-4000-8000-000000000001")).toThrow();
+  });
+});
+
+describe("UsrLinks", () => {
+  function people() {
+    const db = new Database(":memory:");
+    migrate(db);
+    const add = db.prepare("INSERT INTO users (discord_id, time_zone, preferred_hour, admin, created_at) VALUES (?, 'UTC', 9, 0, 'x')");
+    add.run("1");
+    add.run("2");
+    return { db, links: new UsrLinks(db) };
+  }
+
+  it("keeps nothing for someone who left while usr was being asked (forget-me)", () => {
+    const { db, links } = people();
+    db.prepare("DELETE FROM users WHERE seq = 1").run();
+    expect(links.link("u1", "s")).toBe("gone");
+    expect(links.link("u2", "s")).toBe("linked"); // the account was never held by the one who left
+  });
+
+  it("unlinks, so a later link is new, and forgets that they signed up", () => {
+    const { links } = people();
+    expect(links.link("u1", "s")).toBe("linked");
+    links.markSignedUp("u1");
+    links.unlink("u1");
+    expect(links.subjectOf("u1")).toBeNull();
+    expect(links.isSignedUp("u1")).toBe(false);
+    expect(links.link("u2", "s")).toBe("linked");
   });
 });

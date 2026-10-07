@@ -115,7 +115,8 @@ export interface TrackerOptions {
   /** Test seam: each execute tick's background work as it starts, so a test can await it. */
   executeStarted?: (work: Promise<void>) => void;
   /** Test seam: false leaves the daily digest (digest.ts) off the notify tick, for tests that count every DM. On by default. */
-  digest?: boolean;  /** Test seam for the usr link's HTTP (usr.ts). */
+  digest?: boolean;
+  /** Test seam for the usr link's HTTP (usr.ts). */
   usrFetch?: typeof fetch;
 }
 

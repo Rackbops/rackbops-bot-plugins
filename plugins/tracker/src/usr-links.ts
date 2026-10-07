@@ -11,7 +11,8 @@ function seqOf(id: string): number | null {
   return /^u[1-9][0-9]*$/.test(id) ? Number(id.slice(1)) : null;
 }
 
-export type LinkOutcome = "linked" | "unchanged" | "relinked" | "taken";
+/** `gone`: the person left the tracker (forget-me) while usr was being asked, so nothing was kept. */
+export type LinkOutcome = "linked" | "unchanged" | "relinked" | "taken" | "gone";
 
 export class UsrLinks {
   /**
@@ -48,12 +49,24 @@ export class UsrLinks {
     const seq = seqOf(userId);
     if (seq === null) throw new Error(`not a tracker user id: ${userId}`);
     return this.db.transaction((): LinkOutcome => {
+      const row = this.db.query("SELECT usr_subject FROM users WHERE seq = ?").get(seq) as { usr_subject: string | null } | null;
+      if (!row) return "gone";
       const holder = this.db.query("SELECT seq FROM users WHERE usr_subject = ?").get(subject) as { seq: number } | null;
       if (holder && holder.seq !== seq) return "taken";
-      const before = this.subjectOf(userId);
-      if (before === subject) return "unchanged";
+      if (row.usr_subject === subject) return "unchanged";
       this.db.query("UPDATE users SET usr_subject = ? WHERE seq = ?").run(subject, seq);
-      return before === null ? "linked" : "relinked";
-    })();
+      return row.usr_subject === null ? "linked" : "relinked";
+    }).immediate();
+  }
+
+  /**
+   * Forgets the person's link, when usr says it no longer knows them (its 403 to a sign-up link for
+   * someone linked here: a usr admin removed their Discord link). The next `/allow` links them anew.
+   */
+  unlink(userId: string): void {
+    const seq = seqOf(userId);
+    if (seq === null) return;
+    this.db.query("UPDATE users SET usr_subject = NULL WHERE seq = ?").run(seq);
+    this.signedUp.delete(userId);
   }
 }
