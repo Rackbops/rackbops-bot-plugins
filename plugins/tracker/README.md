@@ -237,9 +237,10 @@ the same address marked `?usr=1`; coming back still without one (usr's keys coul
 the clocks disagree) says the sign-in could not be confirmed, instead of going round again. A token
 without the member role, or for an account linked to no one registered here, shows what to ask an
 admin for. While signed in, a usr cookie for the person's own account that no longer carries
-`tracker:member` signs them out of every session. Sign out ends the tracker's session only, not
-usr's: for 12 hours after it, a GET does not sign back in from usr's cookie on its own, and only the
-sign-in page's "Sign in with usr" button does. Any site under usr's cookie domain can set an
+`tracker:member` signs them out of every session and revokes their API tokens. Sign out ends the
+tracker's session only, not usr's: for 12 hours after it, a plain GET does not sign back in from
+usr's cookie; the sign-in page's "Sign in with usr" button (and usr's trip back from it) or a `/web`
+link does. Any site under usr's cookie domain can set an
 `nz_id` of its own, so every host under that domain must be trusted. The one-time `/web` link stays
 beside it. `src/usr-identity.ts` uses WebCrypto only.
 

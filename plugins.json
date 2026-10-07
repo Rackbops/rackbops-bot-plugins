@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-07T16:10:39.208Z",
+  "generatedAt": "2026-10-07T16:14:38.364Z",
   "plugins": [
     {
       "name": "mcp",
@@ -287,7 +287,7 @@
           "version": "0.22.0",
           "publishedAt": "2026-10-07T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.22.0",
-          "notes": "### Added\n\n- **Web sign-in through our usr**, while the usr link is on (`TRACKER_USR_URL`, 0.20.0). A GET to\n  the web area with no session checks usr's `nz_id` cookie offline against usr's JWKS (ES256, `iss`\n  \"usr\", not expired, never a delegation token). If the account holds `tracker:member`, is linked to\n  a registered person and is in the server, it opens a session as the one-time link does and goes on\n  to the page and query asked for. With no valid cookie the browser goes to usr once for one and\n  comes back to the same address; still without one, or with an account that lacks the role or is\n  linked to no one here, the page says why instead of looping. A signed-in person whose usr cookie\n  loses `tracker:member` is signed out. Sign out ends the tracker's session, not usr's: for 12 hours\n  only the sign-in page's \"Sign in with usr\" button signs back in. The `/web` one-time link stays.\n  usr's cookie domain (`USR_SSO_COOKIE_DOMAIN`) must cover `TRACKER_WEB_URL`.\n\n### Schema\n\n- No change."
+          "notes": "### Added\n\n- **Web sign-in through our usr**, while the usr link is on (`TRACKER_USR_URL`, 0.20.0). A GET to\n  the web area with no session checks usr's `nz_id` cookie offline against usr's JWKS (ES256, `iss`\n  \"usr\", not expired, never a delegation token). If the account holds `tracker:member`, is linked to\n  a registered person and is in the server, it opens a session as the one-time link does and goes on\n  to the page and query asked for. With no valid cookie the browser goes to usr once for one and\n  comes back to the same address; still without one, or with an account that lacks the role or is\n  linked to no one here, the page says why instead of looping. A signed-in person whose usr cookie\n  loses `tracker:member` is signed out and loses their API tokens. Sign out ends the tracker's\n  session, not usr's: for 12 hours only the sign-in page's \"Sign in with usr\" button, or a `/web`\n  link, signs back in. The `/web` one-time link stays.\n  usr's cookie domain (`USR_SSO_COOKIE_DOMAIN`) must cover `TRACKER_WEB_URL`.\n\n### Schema\n\n- No change."
         },
         {
           "version": "0.21.0",

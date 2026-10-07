@@ -11,8 +11,9 @@
   to the page and query asked for. With no valid cookie the browser goes to usr once for one and
   comes back to the same address; still without one, or with an account that lacks the role or is
   linked to no one here, the page says why instead of looping. A signed-in person whose usr cookie
-  loses `tracker:member` is signed out. Sign out ends the tracker's session, not usr's: for 12 hours
-  only the sign-in page's "Sign in with usr" button signs back in. The `/web` one-time link stays.
+  loses `tracker:member` is signed out and loses their API tokens. Sign out ends the tracker's
+  session, not usr's: for 12 hours only the sign-in page's "Sign in with usr" button, or a `/web`
+  link, signs back in. The `/web` one-time link stays.
   usr's cookie domain (`USR_SSO_COOKIE_DOMAIN`) must cover `TRACKER_WEB_URL`.
 
 ### Schema

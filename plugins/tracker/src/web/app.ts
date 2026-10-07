@@ -271,7 +271,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     const asked = url.searchParams.get(USR_BACK);
     // Signed out a moment ago: only the sign-in page's button signs back in, never any GET.
     // (usr's trip back carries `?usr=1`, so the button's sign-in survives an expired `nz_id`.)
-    if (readCookie(request, OUT_COOKIE) !== null && asked === null) return redirect(`${base}/signin?out=1`, stale);
+    if (readCookie(request, OUT_COOKIE) !== null && asked !== USR_GO && asked !== "1") return redirect(`${base}/signin?out=1`, stale);
     const identity = await usr.verifier.verify(readCookie(request, SSO_COOKIE));
     const help = (note: string) => htmlResponse(signInHelpPage(base, note), 403, stale[0] ? { "Set-Cookie": stale[0] } : {});
     // The address's own query, without our mark, kept across the trip to usr and back.
