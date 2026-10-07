@@ -1,3 +1,5 @@
+import { readBody } from "./web/html.js";
+
 /**
  * The web area's sign-in through our usr (usr.ts, slice 3 of Rod's "Wire it"): usr's `nz_id` cookie,
  * an ES256 JWT it sets on the shared parent domain, verified offline against usr's JWKS as usr
@@ -96,10 +98,9 @@ export class UsrVerifier {
         signal: AbortSignal.timeout(JWKS_TIMEOUT_MS),
       });
       if (!res.ok) return;
-      // A JWKS is a few hundred bytes; read no more than MAX_JWKS of whatever comes.
-      if (Number(res.headers.get("content-length") ?? 0) > MAX_JWKS) return;
-      const text = await res.text();
-      if (text.length > MAX_JWKS) return;
+      // A JWKS is a few hundred bytes; read no more than MAX_JWKS bytes of whatever comes.
+      const text = await readBody(res, MAX_JWKS);
+      if (text === null) return;
       const body = JSON.parse(text) as { keys?: unknown };
       if (!Array.isArray(body.keys)) return;
       const keys: Key[] = [];

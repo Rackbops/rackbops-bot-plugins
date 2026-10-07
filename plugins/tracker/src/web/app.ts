@@ -57,6 +57,8 @@ export const LEFT_SERVER = `You are signed out. ${NOT_MEMBER}`;
  * gets here: usr refuses the return address and keeps the browser.)
  */
 export const USR_NO_COOKIE = "I could not confirm your usr sign-in. Try again in a minute, or run /web in Discord for a one-time link. If it keeps happening, tell an admin.";
+/** usr's sign-in was fine, but server membership could not be checked to open the session. */
+export const USR_RECHECK_FAILED = "I could not check that you are a member of this tracker's server. Try again in a minute.";
 export const USR_NOT_MEMBER = "Your usr account does not have this tracker's member role yet: ask an admin to run /allow for you in the server.";
 export const USR_NOT_LINKED = "Your usr account is not linked to anyone on this tracker yet: ask an admin to run /allow for you in the server, then run /register.";
 /** The mark on the address usr sends the browser back to, so a missing cookie never loops. */
@@ -255,7 +257,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       return htmlResponse(signInHelpPage(base, "That sign-in link has expired or was already used."), 400, { "Set-Cookie": clear(LOGIN_COOKIE) });
     }
     const { id } = d.sessions.create(user.id, now, link?.memberCheckedAt ?? null);
-    return redirect(`${base}/`, [cookie(SESSION_COOKIE, id, { base, maxAgeSeconds: SESSION_TTL_MS / 1000, sameSite: "Lax" }), clear(LOGIN_COOKIE)]);
+    return redirect(`${base}/`, [cookie(SESSION_COOKIE, id, { base, maxAgeSeconds: SESSION_TTL_MS / 1000, sameSite: "Lax" }), clear(LOGIN_COOKIE), clear(OUT_COOKIE)]);
   }
 
   /**
@@ -268,7 +270,8 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   async function usrSignIn(d: TrackerDeps, usr: UsrLink, request: Request, path: string, url: URL, origin: string, stale: string[]): Promise<Response> {
     const asked = url.searchParams.get(USR_BACK);
     // Signed out a moment ago: only the sign-in page's button signs back in, never any GET.
-    if (readCookie(request, OUT_COOKIE) !== null && asked !== USR_GO) return redirect(`${base}/signin?out=1`, stale);
+    // (usr's trip back carries `?usr=1`, so the button's sign-in survives an expired `nz_id`.)
+    if (readCookie(request, OUT_COOKIE) !== null && asked === null) return redirect(`${base}/signin?out=1`, stale);
     const identity = await usr.verifier.verify(readCookie(request, SSO_COOKIE));
     const help = (note: string) => htmlResponse(signInHelpPage(base, note), 403, stale[0] ? { "Set-Cookie": stale[0] } : {});
     // The address's own query, without our mark, kept across the trip to usr and back.
@@ -290,8 +293,8 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     // Membership of TRACKER_GUILD_ID, checked now as `/web` checks it before giving a link, so the
     // session starts confirmed rather than failing its first page on a slow lookup.
     const member = await recheck(d, user, null);
-    if (member === "not-member") return help(LEFT_SERVER);
-    if (member !== "ok") return help(RECHECK_FAILED);
+    if (member === "not-member") return help(NOT_MEMBER);
+    if (member !== "ok") return help(USR_RECHECK_FAILED);
     const now = d.clock.now();
     const { id } = d.sessions.create(user.id, now, w.guildIds === null ? null : now.toISOString());
     return redirect(`${base}${path}${rest ? `?${rest}` : ""}`, [cookie(SESSION_COOKIE, id, { base, maxAgeSeconds: SESSION_TTL_MS / 1000, sameSite: "Lax" }), clear(OUT_COOKIE)]);
@@ -308,6 +311,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     const identity = await usr.verifier.verify(readCookie(request, SSO_COOKIE));
     if (!identity || identity.sub !== usr.links.subjectOf(user.id) || identity.roles.includes(`${usr.app}:${MEMBER_ROLE}`)) return false;
     d.sessions.deleteForUser(user.id);
+    d.apiTokens.deleteForUser(user.id);
     return true;
   }
 

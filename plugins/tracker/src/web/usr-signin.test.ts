@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
+import { NOT_MEMBER } from "../access.js";
 import { JWKS_RETRY_MS, JWKS_TTL_MS, UsrVerifier } from "../usr-identity.js";
-import { LEFT_SERVER, RECHECK_FAILED, USR_NO_COOKIE, USR_NOT_LINKED, USR_NOT_MEMBER } from "./app.js";
-import { call, csrfOf, cleanup, CURLY, type Jar, LARRY, ORIGIN, people, SESSION, signIn, type WebLookup, world } from "./harness.js";
+import { USR_NO_COOKIE, USR_RECHECK_FAILED, USR_NOT_LINKED, USR_NOT_MEMBER } from "./app.js";
+import { call, csrfOf, cleanup, CURLY, type Jar, LARRY, openLink, ORIGIN, people, SESSION, signIn, slash, tokenOf, type WebLookup, world } from "./harness.js";
 
 /**
  * The web area's sign-in through usr's `nz_id` cookie (usr-identity.ts, app.ts `usrSignIn`): a fake
@@ -182,6 +183,34 @@ describe("web sign-in through usr", () => {
     expect(jar.has("__Secure-tracker-out")).toBe(false);
   });
 
+  it("after Sign out, the button still signs in when usr's cookie had expired (the trip to usr and back)", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
+    await call(w.plugin, "GET", "/", { jar });
+    await call(w.plugin, "POST", "/logout", { jar, form: { csrf: await csrfOf(w.plugin, jar) }, origin: ORIGIN });
+    jar.set("nz_id", await sign(w.usr.pair.privateKey, identity({ exp: NOW_S - 1 })));
+    const away = await call(w.plugin, "GET", "/?usr=go", { jar });
+    expect(away.headers.get("location")).toBe(`${USR}/api/auth/sso/refresh?return=${encodeURIComponent(`${ORIGIN}/tracker/?usr=1`)}`);
+    jar.set("nz_id", await sign(w.usr.pair.privateKey, identity()));
+    const back = await call(w.plugin, "GET", "/?usr=1", { jar });
+    expect(back.headers.get("location")).toBe("/tracker/");
+    expect(jar.has(SESSION)).toBe(true);
+  });
+
+  it("a /web sign-in ends the signed-out mark too", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
+    await call(w.plugin, "GET", "/", { jar });
+    await call(w.plugin, "POST", "/logout", { jar, form: { csrf: await csrfOf(w.plugin, jar) }, origin: ORIGIN });
+    expect(jar.has("__Secure-tracker-out")).toBe(true);
+    const { form } = await openLink(w.plugin, tokenOf(await slash(w.plugin, "web", LARRY)), jar);
+    await call(w.plugin, "POST", "/login", { jar, form: form ?? {}, origin: ORIGIN });
+    expect(jar.has(SESSION)).toBe(true);
+    expect(jar.has("__Secure-tracker-out")).toBe(false);
+  });
+
   it("signs out a person whose usr cookie no longer carries the member role", async () => {
     const w = await usrWorld();
     linkLarry(w.dbPath);
@@ -202,10 +231,12 @@ describe("web sign-in through usr", () => {
     const token = await sign(w.usr.pair.privateKey, identity());
     const left = await call(w.plugin, "GET", "/", { jar: new Map([["nz_id", token]]) });
     expect(left.status).toBe(403);
-    expect(await left.text()).toContain(LEFT_SERVER.slice(0, 30));
+    const leftText = await left.text();
+    expect(leftText).toContain(NOT_MEMBER.slice(0, 30));
+    expect(leftText).not.toContain("signed out");
     answer = null;
     const unknown = await call(w.plugin, "GET", "/", { jar: new Map([["nz_id", token]]) });
-    expect(await unknown.text()).toContain(RECHECK_FAILED.slice(0, 30));
+    expect(await unknown.text()).toContain(USR_RECHECK_FAILED.replace("'", "&#39;"));
     answer = "member";
     w.clock.advance(60 * 1000);
     const jar: Jar = new Map([["nz_id", token]]);
