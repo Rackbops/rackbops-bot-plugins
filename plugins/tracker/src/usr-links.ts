@@ -55,6 +55,8 @@ export class UsrLinks {
       if (holder && holder.seq !== seq) return "taken";
       if (row.usr_subject === subject) return "unchanged";
       this.db.query("UPDATE users SET usr_subject = ? WHERE seq = ?").run(subject, seq);
+      // A new account has not signed up yet, whatever the old one had.
+      this.signedUp.delete(userId);
       return row.usr_subject === null ? "linked" : "relinked";
     }).immediate();
   }

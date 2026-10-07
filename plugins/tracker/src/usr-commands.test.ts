@@ -225,6 +225,22 @@ describe("/register with the usr link on", () => {
     expect(w.usr.calls).toEqual([{ path: "/api/discord/register-link", body: { discord_user_id: ADMIN, guild_id: GUILD, policy: "open" } }]);
   });
 
+  it("never asks for an open link for anyone but a configured admin not yet linked", async () => {
+    const w = world();
+    await started(w);
+    // Larry is admitted but not linked (usr refused): /register asks usr for nothing at all.
+    w.usr.answers["/api/discord/allow"]!.push({ status: 500, body: {} });
+    await slash(w.plugin, "allow", ADMIN, { target: LARRY });
+    await slash(w.plugin, "register", LARRY);
+    // Linked people get the allow policy; the only open ask was the configured admin's own.
+    w.usr.answers["/api/discord/allow"]!.push(allowed(undefined, "6f1c2a9e-0000-4000-8000-000000000003"));
+    await slash(w.plugin, "allow", ADMIN, { target: CURLY });
+    w.usr.answers["/api/discord/register-link"]!.push(link());
+    await slash(w.plugin, "register", CURLY);
+    const asks = w.usr.calls.filter((c) => c.path === "/api/discord/register-link");
+    expect(asks.map((c) => [c.body.discord_user_id, c.body.policy])).toEqual([[CURLY, "allow"]]);
+  });
+
   it("tells a configured admin already signed up on usr to /allow themselves", async () => {
     const w = world();
     await w.plugin.activate!();
@@ -249,6 +265,18 @@ describe("/register with the usr link on", () => {
     // Unlinked: /register no longer asks usr, and /allow links them anew.
     expect(await slash(w.plugin, "register", LARRY)).not.toContain("usr");
     expect(await slash(w.plugin, "allow", ADMIN, { target: LARRY })).toContain("Linked to usr: they can finish");
+  });
+
+  it("keeps the link when usr's 403 is about the key, not the person", async () => {
+    const w = world();
+    await started(w);
+    w.usr.answers["/api/discord/allow"]!.push(allowed());
+    await slash(w.plugin, "allow", ADMIN, { target: LARRY });
+    w.usr.answers["/api/discord/register-link"]!.push({ status: 403, body: { error: 'key "clerk" is not configured as a Discord service' } }, link());
+    const answer = await slash(w.plugin, "register", LARRY);
+    expect(answer).toContain("I could not get your usr sign-up link. Try `/register` again later.");
+    expect(answer).not.toContain("no longer has you");
+    expect(await slash(w.plugin, "register", LARRY)).toContain("https://id.example.com/register/discord?t=abc"); // still linked
   });
 
   it("still registers when usr fails, and shows a member no settings names", async () => {

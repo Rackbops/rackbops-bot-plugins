@@ -200,9 +200,10 @@ function usrAllowed(d: TrackerDeps, usr: UsrLink, userId: string, result: unknow
   try {
     outcome = usr.links.link(userId, answer.userId);
   } catch (err) {
-    // Another process linked the account at the same moment (the unique index): the same as taken.
     d.log.error("usr link failed", err);
-    outcome = "taken";
+    // Another process linked the account at the same moment (the unique index): the same as taken.
+    if (err instanceof Error && /UNIQUE constraint failed/.test(err.message)) outcome = "taken";
+    else return "Not linked to usr: something went wrong keeping their usr link. They are on the tracker's list; run `/allow` again to retry.";
   }
   if (outcome === "gone") return "Not linked to usr: they left the tracker while usr was being asked.";
   if (outcome === "taken") return "Not linked to usr: usr's account for them is already linked to someone else here.";
@@ -250,7 +251,7 @@ export async function registerPerson(
         usr.links.markSignedUp(user.id);
         return firstAdmin ? `${text}\n\nYou are signed up on usr. Once a usr admin gives you \`${usr.app}:register\` and \`${usr.app}:${MEMBER_ROLE}\` there, run \`/allow\` on yourself to link your tracker account.` : text;
       }
-      if (result instanceof UsrError && result.status === 403 && linked) {
+      if (result instanceof UsrError && result.status === 403 && linked && result.reason.includes("not allowed yet")) {
         // usr no longer knows their Discord link (a usr admin removed it): forget ours, so /allow relinks.
         usr.links.unlink(user.id);
         return `${text}\n\nusr no longer has you on its list: ask an admin to run \`/allow\` for you again.`;

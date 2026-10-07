@@ -13,8 +13,8 @@
   (get linked, which roles are missing, or that the key's usr Discord service names another app
   than `TRACKER_USR_APP`). `/register`, run in a server, gives a linked person their one-time usr
   sign-up link until usr says they have signed up, and a configured admin not yet linked usr's open
-  sign-up link, the first admin's way in (README, "First admin and usr"). When usr no longer knows a
-  linked person, `/register` forgets their link so the next `/allow` makes it anew. A usr refusal or
+  sign-up link, the first admin's way in (README, "First admin and usr"). When usr says a linked
+  person is not allowed yet (their usr link was removed), `/register` forgets their link so the next `/allow` makes it anew. A usr refusal or
   outage never undoes the admission or the registration; a member sees a plain "try again later",
   an admin sees usr's reason. In a DM both say to run them in the server. With the link off nothing
   changes, and no schema change.

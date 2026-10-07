@@ -250,4 +250,12 @@ describe("UsrLinks", () => {
     expect(links.isSignedUp("u1")).toBe(false);
     expect(links.link("u2", "s")).toBe("linked");
   });
+
+  it("forgets that they signed up when relinked to another account", () => {
+    const { links } = people();
+    links.link("u1", "s");
+    links.markSignedUp("u1");
+    expect(links.link("u1", "t")).toBe("relinked");
+    expect(links.isSignedUp("u1")).toBe(false);
+  });
 });
