@@ -1600,7 +1600,7 @@ function failures(n: number): MemberOutcome[] {
  * Wires `/party` for USER in guild G1, with a party that is playing (default) or idle.
  *
  * Returns `calls`, one array in which the token fake's refreshes ("refresh") and the runner's skips
- * ("skip:<guild>") are recorded as they happen; hand it to `fakePartyCommand` and the interaction's
+ * ("skip:<guild>:<fromIndex>") are recorded as they happen; hand it to `fakePartyCommand` and the interaction's
  * own calls join them, so a test can assert the exact order of everything the handler did.
  */
 function wireParty({
@@ -2083,6 +2083,40 @@ describe("the party's skip command", () => {
 
   // #152 (C): the party moves while the defer is in flight; the skip is decided from the party as it
   // is after it, and the runner is told which track the skip was for.
+
+  test("a skip from a later track tells the runner that track's index", async () => {
+    const { calls } = wireParty({
+      scopes: PARTY_SCOPES,
+      members: ["host", USER],
+      index: 1,
+      queue: [partyTrack("One"), partyTrack("Two"), partyTrack("Three")],
+    });
+    const run = fakePartyCommand("skip", {}, USER, "G1", calls);
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["defer", "skip:G1:1", "edit"]);
+    expect(run.edits[0]?.content).toContain("Skipped to **Three**");
+  });
+
+  test("a skip whose party stopped on another track during the defer says nothing is playing", async () => {
+    const { calls } = wireParty({
+      scopes: PARTY_SCOPES,
+      members: ["host", USER],
+      queue: [partyTrack("One"), partyTrack("Two")],
+    });
+    const run = fakePartyCommand("skip", {}, USER, "G1", calls, async () => {
+      // Not playing, and on another track: what a party stopped by anything but the runner looks like.
+      const { trackStartedAt: _stopped, ...stopped } = getParty(partiesState(), "G1")!;
+      await commitParties(openParty(partiesState(), { ...stopped, index: 1 }));
+    });
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["defer", "edit"]);
+    expect(run.edits[0]?.content).toContain("The track changed just now");
+    expect(run.edits[0]?.content).toContain("nothing playing");
+    // The track at the party's index is not named: nothing is playing it.
+    expect(run.edits[0]?.content).not.toContain("**Two**");
+  });
 
   test("a skip whose track changed during the defer is refused", async () => {
     const { calls } = wireParty({

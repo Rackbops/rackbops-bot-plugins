@@ -879,8 +879,8 @@ async function handlePartySkip(interaction: ChatInputCommandInteraction, guildId
   }
   // A skip and a track ending naturally are the same transition, so both go through the runner's
   // one advance path -- there is no second place that decides what "next" means. Nothing awaits
-  // between the read above and the runner's own check of the index, so it only refuses if the party
-  // moved before this line; the branch keeps the contract honest.
+  // between the read above and the runner's own check of the index, so the runner cannot refuse
+  // here; the branch below is the contract kept honest, not a path this code takes.
   const outcomes = await runner.skip(guildId, current.index);
   if (outcomes === undefined) {
     await interaction.editReply({ content: skipRefusedReply(getParty(partiesState(), guildId)) });
@@ -890,8 +890,9 @@ async function handlePartySkip(interaction: ChatInputCommandInteraction, guildId
 }
 
 /**
- * The answer to a skip the party had moved past, or whose party was gone: it names what is playing
- * now, so the person who pressed skip can decide whether they still want to.
+ * The answer to a skip the party had moved past, or whose party was gone. When a track is playing it
+ * names it, so the person who pressed skip can decide whether they still want to; otherwise it says
+ * the party ended, or has nothing playing.
  */
 function skipRefusedReply(current: Party | undefined): string {
   if (current === undefined) return "The party ended just now.";

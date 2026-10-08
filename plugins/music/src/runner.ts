@@ -137,29 +137,36 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     const delay = msUntilAdvance(party, deps.now());
     if (delay === undefined) return;
     // The track this timer is for. The boundary advances from it and from no other track: if the
-    // party has moved on by the time the timer fires (a skip got there first, or anything else moved
-    // it), the timer does nothing instead of advancing it a second time.
+    // party has moved on by the time the timer fires (anything that moved it without cancelling this
+    // timer: a skip and a boundary do cancel it), the timer does nothing instead of advancing it a
+    // second time.
     const armedFor = party.index;
-    timers.set(
-      guildId,
-      deps.schedule(delay, () => {
-        // This timer is the plugin's own: the host wraps command and tick paths, but nothing awaits
-        // this promise, and an unawaited rejection ends the whole bot process (the host's own source
-        // says so: rackbops-discord-bot src/announce.ts). A failed disk write at the boundary, or a
-        // token refresh that cannot save, is therefore caught here, logged, and the party re-armed.
-        // `commitParties` sets the in-memory state before it awaits the writer, so by the time it
-        // rejects the party has already moved on and the next timer lands at the next boundary: a
-        // persistent failure is logged once per boundary, never in a loop. Nothing retries the
-        // boundary that failed, though: when the write is the one that moves the party, its members
-        // are not played the new track (and a last-track notice is not sent), so their players stay
-        // idle until the next boundary plays them again; the sweep leaves an idle player alone by
-        // design (#151).
-        advanceParty(guildId, armedFor).catch((err: unknown) => {
+    const handle = deps.schedule(delay, () => {
+      // This timer is the plugin's own: the host wraps command and tick paths, but nothing awaits
+      // this promise, and an unawaited rejection ends the whole bot process (the host's own source
+      // says so: rackbops-discord-bot src/announce.ts). A failed disk write at the boundary, or a
+      // token refresh that cannot save, is therefore caught here, logged, and the party re-armed.
+      // `commitParties` sets the in-memory state before it awaits the writer, so by the time it
+      // rejects the party has already moved on and the next timer lands at the next boundary: a
+      // persistent failure is logged once per boundary, never in a loop. Nothing retries the
+      // boundary that failed, though: when the write is the one that moves the party, its members
+      // are not played the new track (and a last-track notice is not sent), so their players stay
+      // idle until the next boundary plays them again; the sweep leaves an idle player alone by
+      // design (#151).
+      advanceParty(guildId, armedFor)
+        .then((moved) => {
+          // A refused advance returns before it touches the timers, so the handle that just fired is
+          // still in the map. Drop it: left there, the sweep would take it for a live timer and never
+          // re-arm the party. Only when it is still THIS handle -- a skip that was refused for the same
+          // reason leaves the map to the advance that won, and does not do this.
+          if (moved === undefined && timers.get(guildId) === handle) timers.delete(guildId);
+        })
+        .catch((err: unknown) => {
           deps.log.error(`party in guild ${guildId}: advancing to the next track failed; re-arming`, err);
           arm(guildId);
         });
-      }),
-    );
+    });
+    timers.set(guildId, handle);
   }
 
   /**

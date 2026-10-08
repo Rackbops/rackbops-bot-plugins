@@ -314,6 +314,59 @@ describe("a skip or a boundary from a track the party has left", () => {
     runner.stopAll();
   });
 
+  test("a skip from an index the party has not reached is refused too", async () => {
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    plays.length = 0;
+    // The index is ahead of the party's own, so it was not decided against this party.
+    const refused = await runner.skip("G1", 1);
+
+    expect(refused).toBeUndefined();
+    expect(plays).toEqual([]);
+    expect(getParty(partiesState(), "G1")?.index).toBe(0);
+    runner.stopAll();
+  });
+
+  test("a skip or a boundary for a party that is gone does nothing", async () => {
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, notices, errors } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    plays.length = 0;
+    resetPartiesForTest(freshParties());
+    await clock.advanceTo(NOW + TRACK_MS);
+
+    expect(await runner.skip("G1", 0)).toBeUndefined();
+    expect(plays).toEqual([]);
+    expect(notices).toEqual([]);
+    expect(errors).toEqual([]);
+    runner.stopAll();
+  });
+
+  test("a refused boundary leaves no stale timer handle behind, so the sweep re-arms the party", async () => {
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, infos } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    // The party moves under the runner and is playing its second track; the timer armed for the first
+    // fires and is refused.
+    resetPartiesForTest(openParty(freshParties(), party({ index: 1, trackStartedAt: NOW })));
+    await clock.advanceTo(NOW + TRACK_MS);
+    expect(clock.pendingCount()).toBe(0);
+
+    await runner.sweep();
+
+    // Left in the map, the fired handle would pass for a live timer and the sweep would leave it be.
+    expect(infos).toContain("re-arming party in guild G1");
+    expect(clock.pendingCount()).toBe(1);
+    runner.stopAll();
+  });
+
   test("a boundary armed for a track the party has left does nothing", async () => {
     const { client, plays } = fakeSpotify();
     const clock = fakeClock();
