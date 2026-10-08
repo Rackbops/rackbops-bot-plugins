@@ -260,7 +260,7 @@ describe("a skip or a boundary from a track the party has left", () => {
   test("a skip from an index the party has left is refused and changes nothing", async () => {
     const { client, plays } = fakeSpotify();
     const clock = fakeClock();
-    const { runner } = makeRunner(client, clock);
+    const { runner, infos } = makeRunner(client, clock);
 
     await runner.start("G1");
     await runner.skip("G1", 0);
@@ -273,7 +273,11 @@ describe("a skip or a boundary from a track the party has left", () => {
     expect(refused).toBeUndefined();
     expect(plays).toHaveLength(playsAfterTheWinner);
     expect(getParty(partiesState(), "G1")?.index).toBe(1);
-    // The refusal left the winner's timer alone.
+    // The refusal left the winner's timer alone: still pending, and still the one the runner knows of
+    // (a sweep finds nothing to re-arm).
+    expect(clock.pendingCount()).toBe(1);
+    await runner.sweep();
+    expect(infos).not.toContain("re-arming party in guild G1");
     expect(clock.pendingCount()).toBe(1);
     runner.stopAll();
   });

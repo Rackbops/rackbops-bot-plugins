@@ -157,8 +157,9 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
         .then((moved) => {
           // A refused advance returns before it touches the timers, so the handle that just fired is
           // still in the map. Drop it: left there, the sweep would take it for a live timer and never
-          // re-arm the party. Only when it is still THIS handle -- a skip that was refused for the same
-          // reason leaves the map to the advance that won, and does not do this.
+          // re-arm the party. The identity check is defensive: a timer that fires is the map's current
+          // handle (every other path cancels a handle before it replaces or removes it), but if an
+          // `arm` ever landed between the fire and this callback, its handle would not be ours to delete.
           if (moved === undefined && timers.get(guildId) === handle) timers.delete(guildId);
         })
         .catch((err: unknown) => {

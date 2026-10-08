@@ -2105,7 +2105,8 @@ describe("the party's skip command", () => {
       queue: [partyTrack("One"), partyTrack("Two")],
     });
     const run = fakePartyCommand("skip", {}, USER, "G1", calls, async () => {
-      // Not playing, and on another track: what a party stopped by anything but the runner looks like.
+      // Not playing, and on another track: the shape a party has when a run-off party has had a track
+      // queued behind its index and nothing has started it yet.
       const { trackStartedAt: _stopped, ...stopped } = getParty(partiesState(), "G1")!;
       await commitParties(openParty(partiesState(), { ...stopped, index: 1 }));
     });
