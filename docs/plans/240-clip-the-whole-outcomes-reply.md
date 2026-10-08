@@ -46,3 +46,12 @@ Written 2026-10-08 against `main` with #242 merged (#153); cites are to `7faecc9
 | A message that fits is untouched | 1, 2 | "a message that fits is untouched"; "without a lead it reads as before" | always cut to `limit - 3` and append `...` -- the equality assertions |
 
 Run each mutation in a scratch worktree, never in the tree under test; name the red test per row in the PR.
+
+## Corrections found by the review gate (added after the plan above, which is kept as it was posted)
+
+- **"discord.js refuses it before sending" (What is wrong) is false.** discord.js 14.27 checks only that `content` is a string (`MessagePayload.js:111` -> `Util.js:228`, `verifyString`); no length is checked anywhere in its source. The request goes out and Discord's API rejects it (inferred: HTTP 400, error 50035), and discord.js then throws -- so the handler still throws after its defer and the channel still hears nothing, which is the effect the plan describes.
+- **"The lead always survives because the cut is from the end" holds only while the lead fits on its own.** `clip` keeps the first 1997 characters, so a lead of 1998 or more is cut too. The length guarantee still holds (it is what the clip is for), the JSDoc now says so, and a test pins it. A Spotify title that long is not realistic; at the idle-add site the earlier "Started the party with ..." edit would be refused first.
+- **The numbers.** A `failures()` line is 88 characters (89 with its newline), not about 95, so 40 of them are about 3580 rather than 3800; 23 lines pass 2000 on their own. "About fifteen members" holds for the longest runner sentence (the missing-scope message, a 136-character line); the "no player is awake" sentence needs 18 and the test helper's 23. And the bug fires before the body is "at its cap": any body over about 1955 characters, unclipped, plus a 44-character lead was already refused.
+- **The helper's ids.** `String(100000000000000000 + i)` is past 2^53, where neighbouring integers are the same double: the 40 "members" had 3 distinct ids. The helper builds them as strings now and a test checks they are distinct.
+- **Tests beyond the plan's list:** the exact 2000 / 2001 boundary through `formatOutcomes`, a lead too long to fit on its own, and the add and skip tests' `startsWith` now include the artist and the "Playing for 0 people." line (dropping the artist from the add lead survived the plan's assertion).
+- "The spinner case of #194's `music-commands-party-9`" cites a machine-local review report; it was not checked.

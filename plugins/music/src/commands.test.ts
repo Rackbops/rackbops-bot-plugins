@@ -1213,12 +1213,14 @@ function partyTrack(name: string): PartyTrack {
 }
 
 /**
- * `n` members the runner could not play for, each with an error sentence. A line is about 95
- * characters, so 40 of them are roughly 3800 -- far past Discord's 2000, whatever line leads them.
+ * `n` members the runner could not play for, each with an error sentence. A line is 88 characters
+ * (89 with its newline), so 40 of them are about 3580 -- far past Discord's 2000, whatever line leads
+ * them; 23 lines are enough on their own. The ids are built as strings: a number this size is past
+ * 2^53, where neighbouring integers are the same double.
  */
 function failures(n: number): MemberOutcome[] {
   return Array.from({ length: n }, (_, i) => ({
-    discordUserId: String(100000000000000000 + i),
+    discordUserId: `1000000000000000${String(i).padStart(2, "0")}`,
     ok: false,
     error: "their Spotify didn't take the command: no active device was found",
   }));
@@ -1413,7 +1415,7 @@ describe("the party's add command", () => {
     const content = run.followUps[0]?.content ?? "";
     expect(content.length).toBeLessThanOrEqual(2000);
     // The lead survives the cut, and so does the start of the member list; the tail is what goes.
-    expect(content.startsWith(`<@${USER}> queued **One**`)).toBe(true);
+    expect(content.startsWith(`<@${USER}> queued **One** -- Band\nPlaying for 0 people.\n`)).toBe(true);
     expect(content).toContain("<@100000000000000000>:");
     expect(content.endsWith("...")).toBe(true);
   });
@@ -1494,7 +1496,7 @@ describe("the party's skip command", () => {
     expect(run.edits).toHaveLength(1);
     const content = run.edits[0]?.content ?? "";
     expect(content.length).toBeLessThanOrEqual(2000);
-    expect(content.startsWith("Skipped to **Two**")).toBe(true);
+    expect(content.startsWith("Skipped to **Two** -- Band\nPlaying for 0 people.\n")).toBe(true);
     expect(content).toContain("<@100000000000000000>:");
     expect(content.endsWith("...")).toBe(true);
   });
@@ -1558,6 +1560,8 @@ describe("formatOutcomes with a leading line", () => {
 
   test("the whole message, lead included, fits Discord's limit", () => {
     const lead = "<@1> queued **One** -- Band";
+    // The fixture really is 40 different members, not 40 copies of a few.
+    expect(new Set(failures(40).map((o) => o.discordUserId)).size).toBe(40);
     const text = formatOutcomes(failures(40), lead);
 
     expect(text.length).toBeLessThanOrEqual(2000);
@@ -1585,5 +1589,12 @@ describe("formatOutcomes with a leading line", () => {
     expect(over.length).toBe(2000);
     expect(over.endsWith("...")).toBe(true);
     expect(over.startsWith(`${fits}x`)).toBe(true);
+  });
+
+  test("a lead too long to fit on its own is cut with the rest, never sent over the limit", () => {
+    const text = formatOutcomes(ONE_PLAYED, "x".repeat(2500));
+
+    expect(text.length).toBe(2000);
+    expect(text).toBe(`${"x".repeat(1997)}...`);
   });
 });

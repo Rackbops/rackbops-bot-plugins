@@ -638,7 +638,8 @@ async function requirePartyAccess(
  * `lead` is the line the caller wants in front ("Skipped to ...", "<@user> queued ..."). It is
  * clipped together with the rest, once, so the WHOLE reply fits Discord's limit: a caller that put
  * its own line in front of an already-clipped body went over it as soon as enough members failed at
- * once, and Discord refuses a message that long. The cut falls on the end, so the lead survives.
+ * once, and Discord refuses a message that long. The cut falls on the end, so the lead survives as
+ * long as it fits on its own; a lead near the limit is cut too, which keeps the length guarantee.
  */
 export function formatOutcomes(outcomes: readonly MemberOutcome[], lead?: string): string {
   const played = outcomes.filter((o) => o.ok).length;
