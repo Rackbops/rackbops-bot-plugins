@@ -13,6 +13,10 @@
   checking or resyncing the members before them: it drops the resyncs it has left and looks again on
   the next sweep. A track ending inside the one member's resync already in flight (its token
   refresh and play call) can still slip through, and the next sweep corrects it (#234).
+- `/party add` now checks the caller's Spotify access under an ephemeral reply, so the authorize link
+  (which carries a single-use sign-in token) and "not connected" / "no longer valid" answers go only
+  to the person who ran it; the channel still hears who queued what, through a separate public
+  message, exactly as `/party start` already worked (#134).
 - One token refresh at a time per user: a second refresh for the same person while one is out (the
   party sweep and a track start, or a command during either) now joins it instead of racing it,
   which used to let the loser delete or overwrite a token Spotify had just rotated. A refresh also
