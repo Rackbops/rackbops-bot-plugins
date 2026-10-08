@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- The Spotify connect callback now answers "Something went wrong" and logs which stage failed
+  (never the token or the code) when something in the handshake throws (the bot's own store failing
+  to write, say), instead of leaving the browser on Bun's error response, and the callback server
+  renders no debug page. A party notice in the channel now sets its own mentions instead of
+  inheriting the host client's default: it pings nobody, except that the drop-out notice pings the
+  member it is about, so Spotify's error text in it can never ping @everyone, @here or a role
+  whatever the host's default is (#190).
 - The reply after an add that starts an idle party, and the reply after `/party skip`, are now
   clipped to Discord's 2000 characters as a whole. Before, the per-member outcome list was clipped
   but the leading line ("<@user> queued ...", "Skipped to ...") was added on top, so with many

@@ -51,7 +51,13 @@ export interface CallbackDeps {
    *  the grant carries, so a later feature can check for its own scope before it calls. */
   saveConnection(discordUserId: string, refreshToken: string, scopes?: string): Promise<void>;
   rateLimiter: RateLimiter;
+  /** Where a contained failure is recorded. Optional, so a caller that wires no logger still gets the
+   *  plain page -- it just leaves nothing for an operator to read. */
+  log?: { error(message: string, err?: unknown): void };
 }
+
+const FAILURE_PAGE_TITLE = "Something went wrong";
+const FAILURE_PAGE_BODY = "The bot couldn't finish connecting your Spotify. Run /spotify connect again for a fresh link.";
 
 /** Escapes text before it goes into the HTML response -- `error` comes straight off the query
  *  string, so reflecting it raw would be a stored-nothing but very real XSS. */
@@ -81,7 +87,11 @@ function page(title: string, body: string, status: number): Response {
 /**
  * The whole callback lifecycle. Returns an HTML page in every case -- a human's browser lands here,
  * not a program, so a bare 400 with a one-word body would leave someone staring at a blank tab with
- * no idea whether their account connected.
+ * no idea whether their account connected. That includes a throw from `redeemState`, `exchangeCode`
+ * or `saveConnection` (a store write that fails, say): it is answered with a plain 500 page that
+ * sends the person back to `/spotify connect`, and logged through `deps.log` as the stage that
+ * failed plus the error -- never the state token, the code, the query string or a refresh token.
+ * The rate limiter runs before that catch; a throw from it is the server's `error` handler's.
  */
 export async function handleCallback(req: Request, clientIp: string, deps: CallbackDeps): Promise<Response> {
   const url = new URL(req.url);
@@ -103,34 +113,48 @@ export async function handleCallback(req: Request, clientIp: string, deps: Callb
     return page("Something went wrong", "That link is missing its state token. Run /spotify connect again.", 400);
   }
 
-  const redeemed = await deps.redeemState(stateToken);
-  if (!redeemed.ok) return page("That link didn't work", redeemed.error, 400);
+  // The three awaits below can each throw: the real `redeemState` and `saveConnection` both commit
+  // the store, which changes memory before it awaits the file write, so a full disk rejects AFTER the
+  // state token is consumed (and, on the last, after Spotify's one-time code is spent). `stage` says
+  // which of them it was, so the log tells an operator whether memory and disk may now disagree.
+  let stage = "redeeming the state";
+  try {
+    const redeemed = await deps.redeemState(stateToken);
+    if (!redeemed.ok) return page("That link didn't work", redeemed.error, 400);
 
-  if (oauthError !== null) {
-    return page(
-      "Not connected",
-      oauthError === "access_denied"
-        ? "You declined the Spotify permission request. Nothing was connected."
-        : `Spotify reported: ${oauthError}`,
-      200,
+    if (oauthError !== null) {
+      return page(
+        "Not connected",
+        oauthError === "access_denied"
+          ? "You declined the Spotify permission request. Nothing was connected."
+          : `Spotify reported: ${oauthError}`,
+        200,
+      );
+    }
+    if (code === null) {
+      return page("Something went wrong", "Spotify didn't send an authorization code. Run /spotify connect again.", 400);
+    }
+
+    stage = "exchanging the code";
+    const exchanged = await deps.exchangeCode(code);
+    if (!exchanged.ok) return page("Couldn't finish connecting", exchanged.error, 502);
+
+    // Spotify's own answer wins; the scopes the handshake ASKED for are the fallback, for the case
+    // where a token response omits `scope` -- recording nothing there would leave a genuinely
+    // party-capable connection looking playlist-only until the user reconnected for no reason.
+    stage = "saving the connection";
+    await deps.saveConnection(
+      redeemed.discordUserId,
+      exchanged.value.refreshToken,
+      exchanged.value.scopes ?? redeemed.scopes,
     );
+    return page("Spotify connected", "You can close this tab and go back to Discord.", 200);
+  } catch (err) {
+    // The stage and the error only: never the state token, the code, the query string or a refresh
+    // token, and the browser sees none of the error's text either.
+    deps.log?.error(`Spotify callback failed while ${stage}`, err);
+    return page(FAILURE_PAGE_TITLE, FAILURE_PAGE_BODY, 500);
   }
-  if (code === null) {
-    return page("Something went wrong", "Spotify didn't send an authorization code. Run /spotify connect again.", 400);
-  }
-
-  const exchanged = await deps.exchangeCode(code);
-  if (!exchanged.ok) return page("Couldn't finish connecting", exchanged.error, 502);
-
-  // Spotify's own answer wins; the scopes the handshake ASKED for are the fallback, for the case
-  // where a token response omits `scope` -- recording nothing there would leave a genuinely
-  // party-capable connection looking playlist-only until the user reconnected for no reason.
-  await deps.saveConnection(
-    redeemed.discordUserId,
-    exchanged.value.refreshToken,
-    exchanged.value.scopes ?? redeemed.scopes,
-  );
-  return page("Spotify connected", "You can close this tab and go back to Discord.", 200);
 }
 
 /**
@@ -154,9 +178,18 @@ export function startCallbackServer(
     // The callback is a bare GET with query parameters; nothing legitimate carries a body.
     maxRequestBodySize: 8 * 1024,
     idleTimeout: 30,
+    // No source-excerpt error page for whoever's browser lands here; `error` below is the net under
+    // anything `handleCallback`'s own catch does not cover (`clientIpFrom`, a rate limiter that
+    // throws). `development` only decides what Bun answers when no `error` handler produces a
+    // response -- the handler throwing, say -- so it is a second net, not the first.
+    development: false,
     fetch: (req, srv) => {
       const clientIp = clientIpFrom(req, srv.requestIP(req)?.address, proxy);
       return handleCallback(req, clientIp, deps);
+    },
+    error(err) {
+      deps.log?.error("Spotify callback server error", err);
+      return page(FAILURE_PAGE_TITLE, FAILURE_PAGE_BODY, 500);
     },
   });
   const boundPort = server.port ?? port;

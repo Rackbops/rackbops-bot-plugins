@@ -142,6 +142,42 @@ describe("activate / dispose", () => {
     }
   });
 
+  test("a callback whose store write fails is logged through the plugin's logger and answered with a plain page (#190)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
+    const errors: string[] = [];
+    try {
+      const port = freePort();
+      const host = makeFakeHost({ name: "music",
+        env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: String(port) },
+        dataDir: dir,
+        // Every write fails, like a full disk. Nothing in activate() writes, so it still comes up.
+        storage: {
+          ...makeRealStorage(),
+          createJsonWriter: () => ({
+            save: async () => {
+              throw new Error("disk full");
+            },
+          }),
+        },
+        log: { info() {}, warn() {}, error: (m) => errors.push(m) },
+      });
+      const plugin = createPlugin(host);
+      await plugin.activate?.();
+      try {
+        // No such handshake: redeemState still commits (the token is consumed either way), and the
+        // commit is what throws. Only activate()'s own `log: host.log` can put that in the bot log.
+        const response = await fetch(`http://127.0.0.1:${port}/spotify/callback?code=C&state=NO-SUCH-STATE`);
+        expect(response.status).toBe(500);
+        expect(await response.text()).toContain("Something went wrong");
+        expect(errors).toEqual(["Spotify callback failed while redeeming the state"]);
+      } finally {
+        await plugin.dispose?.();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("activate creates the store file, so a first run persists from the start", async () => {
     const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
     try {
