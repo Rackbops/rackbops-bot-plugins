@@ -134,10 +134,13 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     const track = currentTrack(party);
     if (track === undefined) return { discordUserId, ok: false, error: "there's nothing queued" };
 
-    // Refreshed every time, with no cache: a cached token would carry cached SCOPES with it, so
-    // someone who had just reconnected to grant playback access would keep being told to reconnect
-    // until the cache aged out -- the exact failure this feature exists to avoid. It is one call,
-    // it runs in parallel with every other member's, and it is nowhere near Spotify's limits.
+    // Refreshed every time, with no cache beyond a refresh already in flight for this member
+    // (tokens.ts shares one for the few hundred milliseconds it takes): a cached token would carry
+    // cached SCOPES with it, so someone who had just reconnected to grant playback access would keep
+    // being told to reconnect until the cache aged out -- the exact failure this feature exists to
+    // avoid. A call landing inside an in-flight refresh can see scopes one refresh old; the next
+    // call sees the new ones. It is one call, it runs in parallel with every other member's, and it
+    // is nowhere near Spotify's limits.
     const token = await deps.accessTokenFor(discordUserId);
     if (!token.ok) {
       // A refresh Spotify could not do right now (unreachable, slow, 429, 5xx) is the same kind of
