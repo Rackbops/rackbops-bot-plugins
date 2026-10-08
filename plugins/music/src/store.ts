@@ -98,7 +98,10 @@ export type RedeemResult =
  */
 export function redeemPendingAuth(state: MusicState, stateToken: string, now: number): RedeemResult {
   const swept = prunePending(state, now);
-  const entry = state.pending[stateToken];
+  // `pending` is a plain object parsed from JSON, so a bare index also finds INHERITED keys:
+  // `__proto__`, `constructor` and `toString` would come back as a defined "entry" with no expiry and
+  // no user. The token comes straight off the callback URL, so only an own key may count as a handshake.
+  const entry = Object.hasOwn(state.pending, stateToken) ? state.pending[stateToken] : undefined;
   const { [stateToken]: _removed, ...rest } = swept.pending;
   const without: MusicState = { ...swept, pending: rest };
   if (entry === undefined) return { ok: false, reason: "unknown", state: without };

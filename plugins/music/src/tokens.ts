@@ -63,7 +63,13 @@ export async function accessTokenFor(spotify: SpotifyClient, discordUserId: stri
 }
 
 async function refreshOnce(spotify: SpotifyClient, discordUserId: string): Promise<TokenResult> {
-  const connection = musicState().connections[discordUserId];
+  // Own keys only: `connections` is a plain object parsed from JSON, so a bare index would also find
+  // an inherited key (`__proto__`, `constructor`) and hand back something with no refresh token, and
+  // `spotify.refresh(undefined)` would go out. The reads after the await are left as plain indexes:
+  // they could only see an inherited key for a non-numeric id, and Discord ids are numeric snowflakes.
+  const connection = Object.hasOwn(musicState().connections, discordUserId)
+    ? musicState().connections[discordUserId]
+    : undefined;
   if (connection === undefined) return notConnected();
   const refreshed = await spotify.refresh(connection.refreshToken);
   // Everything below is decided against the connection as it is NOW, not as it was before the await.
