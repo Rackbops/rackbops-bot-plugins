@@ -32,7 +32,10 @@ import {
 import { classifyPlayerError, hasScopes, PARTY_SCOPES, type SpotifyClient } from "./spotify.js";
 import type { TokenResult } from "./tokens.js";
 
-/** How many consecutive failures a member gets before the party stops calling their player. */
+/**
+ * How many consecutive failures a member gets before the party stops calling their player. The count
+ * starts fresh with every party and every Join (#234), so it normally spans one stint in one party.
+ */
 export const MAX_MEMBER_FAILURES = 2;
 
 // The token lookup's real contract, re-exported for the tests' fakes: its failure `kind` is what
@@ -93,6 +96,14 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
 
   function failureKey(guildId: string, userId: string): string {
     return `${guildId}:${userId}`;
+  }
+
+  /** A party's counts start fresh: a strike taken in an earlier party must not follow a member (#234). */
+  function forgetGuild(guildId: string): void {
+    const prefix = `${guildId}:`;
+    for (const key of [...failures.keys()]) {
+      if (key.startsWith(prefix)) failures.delete(key);
+    }
   }
 
   function arm(guildId: string): void {
@@ -200,7 +211,7 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     return { discordUserId, ok: false, error: played.error };
   }
 
-  /** Records a failure and drops the member once they have failed twice running. */
+  /** Records a failure and drops the member once they have failed twice running (since the party started or their last Join). */
   async function noteOutcome(party: Party, outcome: MemberOutcome): Promise<void> {
     const key = failureKey(party.guildId, outcome.discordUserId);
     if (outcome.ok) {
@@ -239,6 +250,7 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     playCurrent,
 
     async start(guildId) {
+      forgetGuild(guildId);
       await commitParties(markStarted(partiesState(), guildId, deps.now()));
       const outcomes = await playCurrent(guildId);
       arm(guildId);
@@ -250,6 +262,9 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     },
 
     async syncMember(guildId, discordUserId) {
+      // Pressing Join is a fresh start for that member, and Join is idempotent: an earlier strike
+      // (from a previous stint in this party, or an earlier party) must not make this attempt their second.
+      failures.delete(failureKey(guildId, discordUserId));
       const party = getParty(partiesState(), guildId);
       if (party === undefined) return { discordUserId, ok: false, error: "there's no party here" };
       if (party.trackStartedAt === undefined) return { discordUserId, ok: true };
@@ -288,6 +303,21 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
 
         for (const entry of drifted) {
           if (entry === undefined) continue;
+
+          // The checks above are network awaits and so is every resync below, and the track
+          // boundary rides on its own timer: it can fire inside any of them and play everyone the
+          // next track. `party` is the snapshot from before the awaits, so resyncing against it would
+          // put a member back on the track that just ended. Re-read before EACH resync; if the party
+          // moved (or closed) the verdicts still to act on are stale -- drop them, the next sweep
+          // checks again. A boundary landing inside the one member's resync already in flight (its
+          // token refresh and play call) still slips through: one stale resync, corrected by the
+          // next sweep.
+          const current = getParty(partiesState(), party.guildId);
+          if (current === undefined || current.index !== party.index || current.trackStartedAt !== party.trackStartedAt) {
+            deps.log.info(`party in guild ${party.guildId} moved during the sweep; skipping resync`);
+            break;
+          }
+
           deps.log.info(`resyncing ${entry.discordUserId} in guild ${party.guildId}`);
           const outcome = await playFor(party, entry.discordUserId, entry.positionMs);
           await noteOutcome(party, outcome);
