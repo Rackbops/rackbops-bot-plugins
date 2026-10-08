@@ -900,28 +900,101 @@ describe("the tick, when the host aborts it", () => {
     runner.stopAll();
   });
 
-  test("the log counts the party it stopped in and the ones after it", async () => {
-    const second = party({ guildId: "G2", channelId: "C2", hostId: "host2", members: ["host2"] });
-    resetPartiesForTest(openParty(openParty(freshParties(), party({ members: ["host"] })), second));
+  /**
+   * One sweep over three one-member parties, G1..G3 (members h1..h3, each their own party's host),
+   * with the host's signal firing inside the call `abort` names. A member listed in `drifted` reports
+   * track one at 0:00 (drift at NOW + 30 s); the others are in sync. Records which members the sweep
+   * asked for a token and which it played to.
+   */
+  async function sweepThree(
+    abort: { in: "playbackState" | "play" | "moved"; member: string; failPlay?: boolean },
+    drifted: string[],
+  ) {
+    const guilds = ["G1", "G2", "G3"];
+    resetPartiesForTest(
+      guilds.reduce(
+        (state, guildId, i) =>
+          openParty(state, party({ guildId, channelId: `C${i + 1}`, hostId: `h${i + 1}`, members: [`h${i + 1}`] })),
+        freshParties(),
+      ),
+    );
     const controller = new AbortController();
+    const tokenCalls: string[] = [];
+    const plays: string[] = [];
+    let runner: PartyRunner;
     const { client } = fakeSpotify({
-      // Only the second party's check lets the host's abort land; the first party is in sync.
       playbackState: async (accessToken) => {
-        if (accessToken === "host2") {
+        if (abort.in === "playbackState" && accessToken === abort.member) controller.abort();
+        if (abort.in === "moved" && accessToken === abort.member) {
+          // A track boundary lands in the same window the host's abort does.
+          await runner.skip(`G${accessToken.slice(1)}`);
           controller.abort();
-          return DRIFTED;
         }
-        return { ok: true, value: { isPlaying: true, progressMs: 30_000, trackUri: "spotify:track:one" } };
+        const inSync = !drifted.includes(accessToken);
+        return {
+          ok: true,
+          value: { isPlaying: true, progressMs: inSync ? 30_000 : 0, trackUri: "spotify:track:one" },
+        };
+      },
+      play: async (accessToken) => {
+        plays.push(accessToken);
+        if (abort.in === "play" && accessToken === abort.member) {
+          controller.abort();
+          if (abort.failPlay === true) return { ok: false, error: "couldn't reach Spotify" };
+        }
+        return { ok: true, value: undefined };
       },
     });
     const clock = fakeClock();
-    const { runner, infos } = makeRunner(client, clock, (id) => ({ ok: true, accessToken: id, scopes: PARTY_SCOPES }));
+    const made = makeRunner(client, clock, (id) => {
+      tokenCalls.push(id);
+      return { ok: true, accessToken: id, scopes: PARTY_SCOPES };
+    });
+    runner = made.runner;
 
     await clock.advanceTo(NOW + 30_000);
     await runner.sweep(controller.signal);
-
-    expect(abortedLines(infos)).toEqual(["party sweep aborted by the host; 1 parties left unchecked"]);
     runner.stopAll();
+    return {
+      tokenCalls,
+      plays,
+      warnings: made.warnings,
+      aborted: abortedLines(made.infos),
+      moved: made.infos.filter((m) => m.includes("moved during the sweep")),
+    };
+  }
+
+  test("an abort during one party's last resync stops the sweep before the next party's checks", async () => {
+    const { tokenCalls, aborted } = await sweepThree({ in: "play", member: "h1" }, ["h1"]);
+
+    // h1 was asked for a token for its check and its resync; h2 and h3 never were.
+    expect(tokenCalls).toEqual(["h1", "h1"]);
+    expect(aborted).toEqual(["party sweep aborted by the host; 2 parties left unchecked"]);
+  });
+
+  test("an abort during the second party's checks counts it and the third as unchecked", async () => {
+    const { tokenCalls, plays, aborted } = await sweepThree({ in: "playbackState", member: "h2" }, ["h2"]);
+
+    expect(tokenCalls).toEqual(["h1", "h2"]);
+    expect(plays).toEqual([]);
+    expect(aborted).toEqual(["party sweep aborted by the host; 2 parties left unchecked"]);
+  });
+
+  test("an abort that cancels the second party's resync play counts it and the third, and is not a strike", async () => {
+    const { tokenCalls, warnings, aborted } = await sweepThree({ in: "play", member: "h2", failPlay: true }, ["h2"]);
+
+    expect(tokenCalls).toEqual(["h1", "h2", "h2"]);
+    expect(warnings).toEqual([]);
+    expect(aborted).toEqual(["party sweep aborted by the host; 2 parties left unchecked"]);
+  });
+
+  test("a host abort wins over a party that moved in the same window", async () => {
+    const { plays, aborted, moved } = await sweepThree({ in: "moved", member: "h1" }, ["h1"]);
+
+    // The boundary's own plays happened; the sweep then saw the abort, not the move.
+    expect(plays).toEqual(["h1"]);
+    expect(aborted).toEqual(["party sweep aborted by the host; 3 parties left unchecked"]);
+    expect(moved).toEqual([]);
   });
 
   test("the sweep's playback read and the resync's play carry the host's signal", async () => {

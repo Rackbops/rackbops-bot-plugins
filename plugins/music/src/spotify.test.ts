@@ -276,19 +276,29 @@ describe("a player call and the host's signal", () => {
     ["transfer", (c, s) => c.transfer("AT", "d1", s)],
   ];
 
+  /**
+   * Runs `run` with `AbortSignal.timeout` replaced by one the test controls, so the client's own
+   * 10-second bound can be made to fire at once. Returns that bound's controller.
+   */
+  async function withControllableBound(
+    run: (timeoutSignal: AbortController) => Promise<void>,
+  ): Promise<void> {
+    const bound = new AbortController();
+    const timeout = spyOn(AbortSignal, "timeout").mockReturnValue(bound.signal);
+    try {
+      await run(bound);
+      expect(timeout).toHaveBeenCalledWith(10_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  }
+
   for (const [name, run] of calls) {
-    test(`${name} given the host's signal is aborted with it, and is still bounded by the client's timeout`, async () => {
+    test(`${name} given the host's signal is aborted with it`, async () => {
       const { client, seen } = player();
       const controller = new AbortController();
-      const timeout = spyOn(AbortSignal, "timeout");
-      try {
-        await run(client, controller.signal);
 
-        expect(timeout).toHaveBeenCalledTimes(1);
-        expect(timeout).toHaveBeenCalledWith(10_000);
-      } finally {
-        timeout.mockRestore();
-      }
+      await run(client, controller.signal);
 
       expect(seen).toHaveLength(1);
       expect(seen[0]?.aborted).toBe(false);
@@ -296,16 +306,32 @@ describe("a player call and the host's signal", () => {
       expect(seen[0]?.aborted).toBe(true);
     });
 
-    test(`${name} without a signal is bounded only by the client's own timeout`, async () => {
+    test(`${name} given the host's signal is still ended by the client's own 10 s bound`, async () => {
       const { client, seen } = player();
-      const unrelated = new AbortController();
+      const controller = new AbortController();
 
-      await run(client);
-      unrelated.abort();
+      await withControllableBound(async (bound) => {
+        await run(client, controller.signal);
+        expect(seen[0]?.aborted).toBe(false);
+        bound.abort();
+      });
 
-      expect(seen).toHaveLength(1);
-      expect(seen[0]).toBeDefined();
-      expect(seen[0]?.aborted).toBe(false);
+      // The bound fired; the host's own signal did not.
+      expect(seen[0]?.aborted).toBe(true);
+      expect(controller.signal.aborted).toBe(false);
+    });
+
+    test(`${name} without a signal is ended by the client's own 10 s bound`, async () => {
+      const { client, seen } = player();
+
+      await withControllableBound(async (bound) => {
+        await run(client);
+        expect(seen).toHaveLength(1);
+        expect(seen[0]?.aborted).toBe(false);
+        bound.abort();
+      });
+
+      expect(seen[0]?.aborted).toBe(true);
     });
   }
 

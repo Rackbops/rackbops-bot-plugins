@@ -82,8 +82,10 @@ export interface PartyRunner {
   syncMember(guildId: string, discordUserId: string): Promise<MemberOutcome>;
   /**
    * The host tick: re-arm anything that lost its timer, then check for drift. `signal` is the host's
-   * own (its 30 s bound, or a shutdown): the sweep stops between steps once it fires, and the calls
-   * it makes to Spotify are cancelled with it (#147).
+   * own (its 30 s bound, or a shutdown): the sweep stops between steps once it fires, and its player
+   * calls to Spotify (the playback read, play, devices, transfer) are cancelled with it (#147). The
+   * token refresh is not: it is the single flight shared with commands, bounded at 10 s on its own,
+   * and a rotated token it was about to store must not be lost.
    */
   sweep(signal?: AbortSignal): Promise<void>;
   /** Cancels every armed timer, and arms no new one afterwards. Called from `dispose()`. */
@@ -316,7 +318,8 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
         // In parallel, and deliberately: this runs inside the host's ONE shared 60-second tick,
         // which executes every plugin's checks in sequence and skips the next tick if this one
         // overruns. Five members checked one after another, each bounded at ten seconds, could eat
-        // most of that budget on its own.
+        // most of that budget on its own. (`accessTokenFor` takes no signal, on purpose: see `sweep`'s
+        // doc comment above. The playback read after it does.)
         const drifted = await Promise.all(
           party.members.map(async (discordUserId) => {
             const token = await deps.accessTokenFor(discordUserId);
@@ -353,9 +356,12 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
 
           deps.log.info(`resyncing ${entry.discordUserId} in guild ${party.guildId}`);
           const outcome = await playFor(party, entry.discordUserId, entry.positionMs, signal);
-          // A failure while the host's signal fired is as likely the abort's doing (the cancelled
+          // A failure once the host's signal has fired is as likely the abort's doing (the cancelled
           // call reads as "couldn't reach Spotify") as the member's: counting it would be a strike,
-          // and perhaps a drop and a post, nobody earned. The next sweep resyncs them again.
+          // and perhaps a drop and a post, nobody earned. So no failure is noted after an abort,
+          // including one the abort did not cause (a token problem found in this same resync); that
+          // member is dealt with at the next track boundary, like any member the checks above skip.
+          // The next sweep resyncs the rest again.
           if (!outcome.ok && sweepAborted(signal, parties.length - index)) return;
           await noteOutcome(party, outcome);
         }
