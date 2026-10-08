@@ -596,7 +596,7 @@ async function handleSpotify(interaction: ChatInputCommandInteraction): Promise<
   await replyEphemeral(
     interaction,
     `[Connect your Spotify account](${authorizeUrl(config.spotify, stateToken)})\n` +
-      "The link is good for 10 minutes and only for you. Asking again replaces it.",
+      "The link is good for 10 minutes. Don't share it: whoever finishes it attaches their Spotify to your Discord account. Asking again replaces it.",
   );
 }
 
@@ -863,15 +863,42 @@ async function handlePartySkip(interaction: ChatInputCommandInteraction, guildId
     return;
   }
   await interaction.deferReply();
-  const next = party.queue[party.index + 1];
+  // The defer is a round trip to Discord, and the party moves in the meantime: the track can end on
+  // its own, another member can skip, a track can be queued, the party can close. So what the skip
+  // means is decided from the party as it is now, and the runner is told which track this skip is
+  // for: a skip the party has already moved past is refused, not applied to the track after it.
+  const current = getParty(partiesState(), guildId);
+  if (current === undefined || current.index !== party.index) {
+    await interaction.editReply({ content: skipRefusedReply(current) });
+    return;
+  }
+  const next = current.queue[current.index + 1];
   if (next === undefined) {
     await interaction.editReply({ content: "That was the last track. `/party add` something else." });
     return;
   }
   // A skip and a track ending naturally are the same transition, so both go through the runner's
-  // one advance path -- there is no second place that decides what "next" means.
-  const outcomes = await runner.skip(guildId);
+  // one advance path -- there is no second place that decides what "next" means. Nothing awaits
+  // between the read above and the runner's own check of the index, so the runner cannot refuse
+  // here; the branch below is the contract kept honest, not a path this code takes.
+  const outcomes = await runner.skip(guildId, current.index);
+  if (outcomes === undefined) {
+    await interaction.editReply({ content: skipRefusedReply(getParty(partiesState(), guildId)) });
+    return;
+  }
   await interaction.editReply({ content: formatOutcomes(outcomes, `Skipped to **${next.name}** -- ${next.artist}`) });
+}
+
+/**
+ * The answer to a skip the party had moved past, or whose party was gone. When a track is playing it
+ * names it, so the person who pressed skip can decide whether they still want to; otherwise it says
+ * the party ended, or has nothing playing.
+ */
+function skipRefusedReply(current: Party | undefined): string {
+  if (current === undefined) return "The party ended just now.";
+  const playing = current.trackStartedAt === undefined ? undefined : currentTrack(current);
+  if (playing === undefined) return "The track changed just now -- the party has nothing playing now.";
+  return `The track changed just now -- the party is on **${playing.name}** -- ${playing.artist}. Skip again if you still want to.`;
 }
 
 async function handlePartyLeave(interaction: ChatInputCommandInteraction, guildId: string): Promise<void> {

@@ -247,10 +247,147 @@ describe("playing a party", () => {
 
     await runner.start("G1");
     plays.length = 0;
-    await runner.skip("G1");
+    await runner.skip("G1", 0);
 
     expect(getParty(partiesState(), "G1")?.index).toBe(1);
     expect(plays.every((p) => p.uri === "spotify:track:two")).toBe(true);
+    runner.stopAll();
+  });
+});
+
+// #152 (C): a skip, or a boundary, moves the party on from the track it was meant for and no other.
+describe("a skip or a boundary from a track the party has left", () => {
+  test("a skip from an index the party has left is refused and changes nothing", async () => {
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, infos } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    await runner.skip("G1", 0);
+    const playsAfterTheWinner = plays.length;
+    // The advance that won armed a timer for the track it moved to.
+    expect(clock.pendingCount()).toBe(1);
+
+    const refused = await runner.skip("G1", 0);
+
+    expect(refused).toBeUndefined();
+    expect(plays).toHaveLength(playsAfterTheWinner);
+    expect(getParty(partiesState(), "G1")?.index).toBe(1);
+    // The refusal left the winner's timer alone: still pending, and still the one the runner knows of
+    // (a sweep finds nothing to re-arm).
+    expect(clock.pendingCount()).toBe(1);
+    await runner.sweep();
+    expect(infos).not.toContain("re-arming party in guild G1");
+    expect(clock.pendingCount()).toBe(1);
+    runner.stopAll();
+  });
+
+  test("two skips for the same track advance once", async () => {
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    plays.length = 0;
+    const results = await Promise.all([runner.skip("G1", 0), runner.skip("G1", 0)]);
+
+    // One of them moved the party on; the other was refused.
+    expect(results.filter((r) => r === undefined)).toHaveLength(1);
+    expect(getParty(partiesState(), "G1")?.index).toBe(1);
+    // One play of track two per member, and nothing else.
+    expect(plays.map((p) => p.uri)).toEqual(["spotify:track:two", "spotify:track:two"]);
+    runner.stopAll();
+  });
+
+  test("a skip during a boundary advances once", async () => {
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    plays.length = 0;
+    // The timer fires and starts moving the party; the skip arrives while it is still playing.
+    const boundary = clock.advanceTo(NOW + TRACK_MS);
+    const skipped = await runner.skip("G1", 0);
+    await boundary;
+
+    // The boundary got there first, so the skip meant for track one was refused.
+    expect(skipped).toBeUndefined();
+    expect(getParty(partiesState(), "G1")?.index).toBe(1);
+    expect(plays.map((p) => p.uri)).toEqual(["spotify:track:two", "spotify:track:two"]);
+    runner.stopAll();
+  });
+
+  test("a skip from an index the party has not reached is refused too", async () => {
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    plays.length = 0;
+    // The index is ahead of the party's own, so it was not decided against this party.
+    const refused = await runner.skip("G1", 1);
+
+    expect(refused).toBeUndefined();
+    expect(plays).toEqual([]);
+    expect(getParty(partiesState(), "G1")?.index).toBe(0);
+    runner.stopAll();
+  });
+
+  test("a skip or a boundary for a party that is gone does nothing", async () => {
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, notices, errors } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    plays.length = 0;
+    resetPartiesForTest(freshParties());
+    await clock.advanceTo(NOW + TRACK_MS);
+
+    expect(await runner.skip("G1", 0)).toBeUndefined();
+    expect(plays).toEqual([]);
+    expect(notices).toEqual([]);
+    expect(errors).toEqual([]);
+    runner.stopAll();
+  });
+
+  test("a refused boundary leaves no stale timer handle behind, so the sweep re-arms the party", async () => {
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, infos } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    // The party moves under the runner and is playing its second track; the timer armed for the first
+    // fires and is refused.
+    resetPartiesForTest(openParty(freshParties(), party({ index: 1, trackStartedAt: NOW })));
+    await clock.advanceTo(NOW + TRACK_MS);
+    expect(clock.pendingCount()).toBe(0);
+
+    await runner.sweep();
+
+    // Left in the map, the fired handle would pass for a live timer and the sweep would leave it be.
+    expect(infos).toContain("re-arming party in guild G1");
+    expect(clock.pendingCount()).toBe(1);
+    runner.stopAll();
+  });
+
+  test("a boundary armed for a track the party has left does nothing", async () => {
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, notices } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    plays.length = 0;
+    // The party moves under the runner, not through it: it is on the second track now, and the timer
+    // armed for the first is still pending.
+    resetPartiesForTest(openParty(freshParties(), party({ index: 1, trackStartedAt: NOW })));
+    await clock.advanceTo(NOW + TRACK_MS);
+
+    expect(plays).toEqual([]);
+    // An unguarded advance from index 1 would run the two-track fixture off the end.
+    expect(notices).toEqual([]);
+    expect(getParty(partiesState(), "G1")?.index).toBe(1);
+    expect(getParty(partiesState(), "G1")?.trackStartedAt).toBe(NOW);
     runner.stopAll();
   });
 });
@@ -350,7 +487,7 @@ describe("members who can't play", () => {
 
     // The second strike has to come from the party, not from another Join: a Join is a fresh start
     // for that member (#234), so a second syncMember would be a first strike again.
-    await runner.skip("G1");
+    await runner.skip("G1", 0);
     expect(getParty(partiesState(), "G1")?.members).not.toContain("friend");
     expect(notices[0]?.endsWith("Try later.")).toBe(true);
     runner.stopAll();
@@ -370,7 +507,7 @@ describe("a refresh Spotify couldn't do right now", () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain(`friend in guild G1 failed 1 of ${MAX_MEMBER_FAILURES}`);
 
-    await runner.skip("G1");
+    await runner.skip("G1", 0);
     expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
     expect(notices).toHaveLength(1);
     expect(mentions).toEqual(["friend"]);
@@ -424,7 +561,7 @@ describe("a refresh Spotify couldn't do right now", () => {
     expect(plays).toHaveLength(1);
     expect(notices).toEqual([]);
 
-    await runner.skip("G1");
+    await runner.skip("G1", 0);
     expect(getParty(partiesState(), "G1")?.members).toEqual(["host", "friend"]);
     expect(plays).toHaveLength(3);
     runner.stopAll();
@@ -438,8 +575,8 @@ describe("a refresh Spotify couldn't do right now", () => {
     const { runner } = makeRunner(client, clock, tokenSequence("friend", [UNAVAILABLE, GOOD, UNAVAILABLE]));
 
     await runner.start("G1");
-    await runner.skip("G1");
-    await runner.skip("G1");
+    await runner.skip("G1", 0);
+    await runner.skip("G1", 1);
     expect(getParty(partiesState(), "G1")?.index).toBe(2);
     expect(getParty(partiesState(), "G1")?.members).toEqual(["host", "friend"]);
     runner.stopAll();
@@ -506,7 +643,7 @@ describe("a member's failure count", () => {
 
     await runner.start("G1");
     // The queue runs out: the party stays open, idle, and the friend's strike stays on the books.
-    await runner.skip("G1");
+    await runner.skip("G1", 0);
     expect(getParty(partiesState(), "G1")?.trackStartedAt).toBeUndefined();
 
     // `/party add` on an idle party enqueues the track and calls `start`.
@@ -572,7 +709,7 @@ describe("a member's failure count", () => {
 
     await runner.start("G10");
     await runner.start("G1");
-    await runner.skip("G10");
+    await runner.skip("G10", 0);
 
     expect(getParty(partiesState(), "G10")?.members).toEqual(["host10"]);
     expect(getParty(partiesState(), "G1")?.members).toEqual(["host", "friend"]);
@@ -586,7 +723,7 @@ describe("a member's failure count", () => {
 
     await runner.start("G1");
     await runner.syncMember("G1", "latecomer");
-    await runner.skip("G1");
+    await runner.skip("G1", 0);
 
     expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
     runner.stopAll();
@@ -657,7 +794,7 @@ describe("the tick", () => {
 
   test("a boundary that fires during the sweep's checks cancels that tick's resync", async () => {
     const { plays, warnings, infos } = await sweepInterruptedBy(async (runner) => {
-      await runner.skip("G1");
+      await runner.skip("G1", 0);
     });
 
     expect(getParty(partiesState(), "G1")?.index).toBe(1);
@@ -726,7 +863,7 @@ describe("the tick", () => {
         calls.push({ accessToken, uri, positionMs });
         if (!fired) {
           fired = true;
-          await runner.skip("G1");
+          await runner.skip("G1", 0);
         }
         return { ok: true, value: undefined };
       },
@@ -759,7 +896,7 @@ describe("the tick", () => {
     const { client } = fakeSpotify({
       // Only the first party's check lets its boundary land.
       playbackState: async (accessToken) => {
-        if (accessToken === "host") await runner.skip("G1");
+        if (accessToken === "host") await runner.skip("G1", 0);
         return { ok: true, value: { isPlaying: true, progressMs: 0, trackUri: "spotify:track:one" } };
       },
       play: async (accessToken, uri, positionMs) => {
@@ -906,7 +1043,7 @@ describe("the tick, when the host aborts it", () => {
     await runner.start("G1");
     await clock.advanceTo(NOW + 30_000);
     await runner.sweep(controller.signal);
-    await runner.skip("G1");
+    await runner.skip("G1", 0);
 
     // The success cleared the strike, so this blip is a first strike again, not a second.
     expect(getParty(partiesState(), "G1")?.members).toEqual(["friend"]);
@@ -941,7 +1078,7 @@ describe("the tick, when the host aborts it", () => {
         if (abort.in === "playbackState" && accessToken === abort.member) controller.abort();
         if (abort.in === "moved" && accessToken === abort.member) {
           // A track boundary lands in the same window the host's abort does.
-          await runner.skip(`G${accessToken.slice(1)}`);
+          await runner.skip(`G${accessToken.slice(1)}`, 0);
           controller.abort();
         }
         const inSync = !drifted.includes(accessToken);
@@ -1082,7 +1219,7 @@ describe("the tick, when the host aborts it", () => {
     runner.stopAll();
     expect(clock.pendingCount()).toBe(0);
 
-    await runner.skip("G1");
+    await runner.skip("G1", 0);
     expect(clock.pendingCount()).toBe(0);
   });
 
