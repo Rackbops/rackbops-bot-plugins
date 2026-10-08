@@ -602,6 +602,33 @@ describe("createSetlistFmClient retries", () => {
     }
   });
 
+  test("each attempt of a retried request gets its own timeout signal, not the first one's leftovers", async () => {
+    // A bound shared by every attempt would already be spent by the time a later attempt starts
+    // (each retry follows a sleep of up to five seconds).
+    const timeout = spyOn(AbortSignal, "timeout");
+    try {
+      const signals: Array<AbortSignal | null | undefined> = [];
+      let calls = 0;
+      const client = createSetlistFmClient(
+        "KEY",
+        async (_url, init) => {
+          signals.push(init?.signal);
+          calls += 1;
+          return calls < 3 ? json({}, 503) : json(BEATLES);
+        },
+        async () => {},
+      );
+
+      expect((await client.getSetlist("63de4613")).ok).toBe(true);
+
+      expect(signals).toHaveLength(3);
+      expect(new Set(signals).size).toBe(3);
+      expect(timeout.mock.calls).toEqual([[10_000], [10_000], [10_000]]);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   test("a 5xx is retried, and running out of attempts reports the status", async () => {
     const { client, slept, calls } = scripted([json({}, 503)]);
     const result = await client.getSetlist("x");

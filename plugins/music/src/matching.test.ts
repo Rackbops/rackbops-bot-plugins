@@ -273,9 +273,9 @@ describe("explainCandidate", () => {
   });
 });
 
-// #193: every row of VARIANT_PENALTIES, one case each. Each row was removable, or its number
-// changeable, with the suite green: the cases above only exercise karaoke, "in the style of",
-// "originally (performed) by" and live.
+// #193: every row of VARIANT_PENALTIES, one case each. Most rows were removable, or their number
+// changeable, with the suite green: the cases above pin the karaoke and live rows, the
+// "in the style of" and "originally (performed) by" alternatives, and nothing else.
 describe("variant penalties", () => {
   const song = { name: "Song", artist: "Band" };
 
@@ -306,9 +306,30 @@ describe("variant penalties", () => {
     expect(explainCandidate(liveSong, track("Live and Let Die", ["Wings"])).penalty).toBe(0);
   });
 
-  test("a karaoke label among the artists costs 100 on its own", () => {
-    // Not first in the list: the rule reads every credited artist, not just the primary one.
-    expect(explainCandidate(song, track("Song", ["Band", "Karaoke Kings"])).penalty).toBe(100);
+  test.each<[string, string[]]>([
+    ["first", ["Karaoke Kings", "Band", "Other"]],
+    ["in the middle", ["Band", "Karaoke Kings", "Other"]],
+    ["last", ["Band", "Other", "Karaoke Kings"]],
+  ])("a karaoke label credited %s among the artists costs 100 on its own", (_where, artists) => {
+    // The rule reads every credited artist, wherever the label sits in the list.
+    expect(explainCandidate(song, track("Song", artists)).penalty).toBe(100);
+  });
+
+  test("penalties add up: a live remix pays both rows, and a karaoke label's credit on top", () => {
+    expect(explainCandidate(song, track("Song (Live) (Remix)", ["Band"])).penalty).toBe(55);
+    expect(explainCandidate(song, track("Song (Live) (Remix)", ["Karaoke Kings"])).penalty).toBe(155);
+  });
+
+  // A marker is a whole word: a title word that merely contains one is not a variant of anything.
+  test.each<[string, string]>([
+    ["live", "Alive"],
+    ["concert", "Concerto"],
+    ["demo", "Democracy"],
+    ["demo", "Mademoiselle"],
+    ["tribute", "Attribute"],
+    ["remix", "Premix"],
+  ])("the %s marker does not fire inside a longer word: %s costs nothing", (_marker, word) => {
+    expect(explainCandidate(song, track(`Song (${word})`, ["Band"])).penalty).toBe(0);
   });
 });
 
