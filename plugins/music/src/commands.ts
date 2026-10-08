@@ -19,7 +19,7 @@ import type { MusicConfig } from "./config.js";
 import { parseDateOption, parseSetlistUrl, type SetlistFmClient, type Setlist } from "./setlistfm.js";
 import type { SpotifyClient } from "./spotify.js";
 import { authorizeUrl, hasScopes, PARTY_SCOPES } from "./spotify.js";
-import { normalize, pickBestTrack } from "./matching.js";
+import { normalize, pickTrackFromQuery } from "./matching.js";
 import { buildPlaylist, isoDate, type BuildOutcome, type BuildResult } from "./build.js";
 import { toMatchRun, type MatchRun } from "./matchlog.js";
 import { accessTokenFor } from "./tokens.js";
@@ -781,8 +781,10 @@ async function handlePartyAdd(interaction: ChatInputCommandInteraction, guildId:
     await interaction.editReply({ content: `Spotify search failed: ${found.error}` });
     return;
   }
-  // The same scorer `/setlist` uses, so "the wrong live version" is wrong in exactly one place.
-  const match = pickBestTrack({ name: query, artist: "" }, found.value);
+  // The same scorer `/setlist` uses for a title, so "the wrong live version" is wrong in exactly one
+  // place; a query typed as "title artist" or "artist title" (the option promises both) falls back to
+  // a split of the query against each candidate's title and artists (#155).
+  const match = pickTrackFromQuery(query, found.value);
   if (match === undefined) {
     await interaction.editReply({ content: `Nothing on Spotify matched "${query}".` });
     return;

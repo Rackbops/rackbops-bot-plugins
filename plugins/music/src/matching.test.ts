@@ -5,6 +5,7 @@ import {
   normalize,
   parseSuitePart,
   pickBestTrack,
+  pickTrackFromQuery,
   scoreCandidate,
   withinOneEdit,
   type TrackCandidate,
@@ -513,6 +514,106 @@ describe("pickBestTrack", () => {
     ]);
     expect(best!.track.name).toBe("Detroit 442 - Remastered");
     expect(best!.confidence).toBe("low");
+  });
+});
+
+// #155: `/party add`'s free-text query, which may be "title", "title artist" or "artist title".
+describe("pickTrackFromQuery", () => {
+  const queen = track("Bohemian Rhapsody", ["Queen"]);
+  const dust = track("Another One Bites the Dust", ["Queen"]);
+
+  test("a plain title still matches exactly as before", () => {
+    const page = [dust, queen];
+    const asTitle = pickBestTrack({ name: "Bohemian Rhapsody", artist: "" }, page);
+
+    expect(asTitle!.track).toBe(queen);
+    // Same answer, same confidence and score: the title is tried first, unchanged.
+    expect(pickTrackFromQuery("Bohemian Rhapsody", page)).toEqual(asTitle);
+  });
+
+  test("a query that is a whole title wins over a reading of it as title and artist", () => {
+    const literal = track("Hey Jude Band", ["Someone Else"]);
+    const split = track("Hey Jude", ["Band"]);
+
+    expect(pickTrackFromQuery("Hey Jude Band", [split, literal])!.track).toBe(literal);
+  });
+
+  test("title then artist finds the track the title alone would not", () => {
+    // Read as a title, the whole query fits no candidate...
+    expect(pickBestTrack({ name: "Bohemian Rhapsody Queen", artist: "" }, [dust, queen])).toBeUndefined();
+
+    const best = pickTrackFromQuery("Bohemian Rhapsody Queen", [dust, queen]);
+
+    expect(best!.track).toBe(queen);
+    expect(best!.confidence).toBe("high");
+  });
+
+  test("artist then title too", () => {
+    const best = pickTrackFromQuery("Queen Bohemian Rhapsody", [dust, queen]);
+
+    expect(best!.track).toBe(queen);
+    expect(best!.confidence).toBe("high");
+  });
+
+  test("accents, case and punctuation do not cost the split a match", () => {
+    const now = track("Don't Stop Me Now", ["Queen"]);
+
+    expect(pickTrackFromQuery("DON'T stop me now - Queen", [dust, now])!.track).toBe(now);
+    expect(pickTrackFromQuery("queen: dont stop me now", [dust, now])!.track).toBe(now);
+  });
+
+  test("a partial artist still counts, with medium confidence", () => {
+    // `artistScore` credits 22 when one name contains the other: "que" is inside "queen".
+    const best = pickTrackFromQuery("Bohemian Rhapsody Que", [dust, queen]);
+
+    expect(best!.track).toBe(queen);
+    expect(best!.confidence).toBe("medium");
+    expect(best!.score).toBe(122);
+  });
+
+  test("an exact artist beats a partial one, whatever the page order", () => {
+    const tribute = track("Bohemian Rhapsody", ["Queen Tribute"]);
+
+    const best = pickTrackFromQuery("Bohemian Rhapsody Queen", [tribute, queen]);
+
+    expect(best!.track).toBe(queen);
+    expect(best!.confidence).toBe("high");
+  });
+
+  test("the longer title wins when two candidates both fit", () => {
+    // "Hey" and "Hey Jude" both head "Hey Jude Band", and both artists fit what is left of it exactly.
+    const hey = track("Hey", ["Jude Band"]);
+    const heyJude = track("Hey Jude", ["Band"]);
+
+    expect(pickTrackFromQuery("Hey Jude Band", [hey, heyJude])!.track).toBe(heyJude);
+    expect(pickTrackFromQuery("Hey Jude Band", [heyJude, hey])!.track).toBe(heyJude);
+  });
+
+  test("only the candidate whose whole title heads the query fits", () => {
+    const rhapsody = track("Rhapsody", ["Queen"]);
+    const page = [rhapsody, queen];
+
+    expect(pickTrackFromQuery("Rhapsody Queen", page)!.track).toBe(rhapsody);
+    expect(pickTrackFromQuery("Bohemian Rhapsody Queen", page)!.track).toBe(queen);
+  });
+
+  test("on a full tie the page order decides", () => {
+    const first = track("Bohemian Rhapsody", ["Queen"]);
+    const second = { ...track("Bohemian Rhapsody", ["Queen"]), uri: "spotify:track:second" };
+
+    expect(pickTrackFromQuery("Bohemian Rhapsody Queen", [first, second])!.track).toBe(first);
+  });
+
+  test("nothing matches when neither half fits", () => {
+    // The title fits but the rest of the query names no artist of the track.
+    expect(pickTrackFromQuery("Bohemian Rhapsody Beatles", [dust, queen])).toBeUndefined();
+    // The artist fits but no title does.
+    expect(pickTrackFromQuery("Queen Yesterday", [dust, queen])).toBeUndefined();
+  });
+
+  test("an empty page, or a query with nothing in it, is a miss rather than a crash", () => {
+    expect(pickTrackFromQuery("Bohemian Rhapsody Queen", [])).toBeUndefined();
+    expect(pickTrackFromQuery("!!!", [dust, queen])).toBeUndefined();
   });
 });
 

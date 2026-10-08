@@ -360,6 +360,48 @@ export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandida
 }
 
 /**
+ * The best candidate for one free-text query -- the entry point for `/party add`, whose option takes
+ * "Track name, or track and artist". Unlike a setlist entry there is no separate artist field, so the
+ * query is first tried as a title (exactly what `pickBestTrack` does with `artist: ""`, and the answer
+ * whenever that finds anything), and only when no candidate's title fits is it read as "title artist"
+ * or "artist title": a candidate matches when its whole normalized title heads or ends the normalized
+ * query and what is left over names one of its artists (`artistScore` above zero, so a partial artist
+ * counts as it does everywhere else).
+ *
+ * Among split matches the higher artist score wins, then the longer title (it accounts for more of the
+ * query), then page order. The result is shaped like `pickBestTrack`'s: `high` for an exact artist,
+ * `medium` for a partial one, and a `score` that sits above any title-only score so two matches from
+ * the same call stay comparable. The setlist path never comes through here.
+ */
+export function pickTrackFromQuery(query: string, candidates: readonly TrackCandidate[]): Match | undefined {
+  const asTitle = pickBestTrack({ name: query, artist: "" }, candidates);
+  if (asTitle !== undefined) return asTitle;
+
+  const wanted = normalize(query);
+  let best: { track: TrackCandidate; artist: number; titleLength: number } | undefined;
+  for (const candidate of candidates) {
+    const title = normalize(candidate.name);
+    if (title === "") continue;
+    const artists = candidate.artistNames.map(normalize);
+    // What is left of the query once the title is taken off its front ("title artist") or its back
+    // ("artist title"); either reading may apply, and the better-scoring one counts.
+    const rests: string[] = [];
+    if (wanted.startsWith(`${title} `)) rests.push(wanted.slice(title.length + 1));
+    if (wanted.endsWith(` ${title}`)) rests.push(wanted.slice(0, wanted.length - title.length - 1));
+    for (const rest of rests) {
+      const artist = artistScore(artists, rest);
+      if (artist <= 0) continue;
+      // Strictly greater on both counts, so the first candidate on a full tie (page order) is kept.
+      if (best === undefined || artist > best.artist || (artist === best.artist && title.length > best.titleLength)) {
+        best = { track: candidate, artist, titleLength: title.length };
+      }
+    }
+  }
+  if (best === undefined) return undefined;
+  return { track: best.track, confidence: best.artist === 40 ? "high" : "medium", score: 100 + best.artist };
+}
+
+/**
  * The ordered search queries to try for one song. `findSong` (build.ts) stops early once one of
  * them is confident (#61) -- it no longer stops at merely the first that yields any match.
  *
