@@ -80,9 +80,15 @@ export interface PartyRunner {
   skip(guildId: string): Promise<MemberOutcome[]>;
   /** One member only -- used by Join, so someone arriving mid-track lands in the right place. */
   syncMember(guildId: string, discordUserId: string): Promise<MemberOutcome>;
-  /** The host tick: re-arm anything that lost its timer, then check for drift. */
-  sweep(): Promise<void>;
-  /** Cancels every armed timer. Called from `dispose()`. */
+  /**
+   * The host tick: re-arm anything that lost its timer, then check for drift. `signal` is the host's
+   * own (its 30 s bound, or a shutdown): the sweep stops between steps once it fires, and its player
+   * calls to Spotify (the playback read, play, devices, transfer) are cancelled with it (#147). The
+   * token refresh is not: it is the single flight shared with commands, bounded at 10 s on its own,
+   * and a rotated token it was about to store must not be lost.
+   */
+  sweep(signal?: AbortSignal): Promise<void>;
+  /** Cancels every armed timer, and arms no new one afterwards. Called from `dispose()`. */
   stopAll(): void;
   /** Cancels one party's timer, for `/party stop`. */
   stop(guildId: string): void;
@@ -93,9 +99,19 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
   // Not persisted: a restart is a fine moment to give a member another chance, and the alternative
   // is carrying a grudge in the file that holds the party.
   const failures = new Map<string, number>();
+  // Set by `stopAll` (dispose). A `start`, `skip` or timer-driven advance that was already awaiting
+  // its plays when the plugin was disposed would otherwise arm a fresh timer afterwards (#147).
+  let stopped = false;
 
   function failureKey(guildId: string, userId: string): string {
     return `${guildId}:${userId}`;
+  }
+
+  /** True once the host has aborted the sweep; says so once, with how many parties it left unchecked. */
+  function sweepAborted(signal: AbortSignal | undefined, partiesLeft: number): boolean {
+    if (signal?.aborted !== true) return false;
+    deps.log.info(`party sweep aborted by the host; ${partiesLeft} parties left unchecked`);
+    return true;
   }
 
   /** A party's counts start fresh: a strike taken in an earlier party must not follow a member (#234). */
@@ -107,6 +123,7 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
   }
 
   function arm(guildId: string): void {
+    if (stopped) return;
     timers.get(guildId)?.cancel();
     timers.delete(guildId);
     const party = getParty(partiesState(), guildId);
@@ -141,7 +158,12 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
    * Plays one track on one member. Every failure path ends in something a person could act on:
    * a missing scope says reconnect, a free account says Premium, an idle Spotify says press play.
    */
-  async function playFor(party: Party, discordUserId: string, positionMs: number): Promise<MemberOutcome> {
+  async function playFor(
+    party: Party,
+    discordUserId: string,
+    positionMs: number,
+    signal?: AbortSignal,
+  ): Promise<MemberOutcome> {
     const track = currentTrack(party);
     if (track === undefined) return { discordUserId, ok: false, error: "there's nothing queued" };
 
@@ -175,19 +197,19 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
       };
     }
 
-    const played = await deps.spotify.play(token.accessToken, track.uri, positionMs);
+    const played = await deps.spotify.play(token.accessToken, track.uri, positionMs, undefined, signal);
     if (played.ok) return { discordUserId, ok: true };
 
     const problem = classifyPlayerError(played.status, played.error);
     if (problem === "no-device") {
       // One rescue attempt: if they have a player that is merely idle rather than gone, make it the
       // active one and try again. Anything else needs them to open Spotify themselves.
-      const devices = await deps.spotify.devices(token.accessToken);
+      const devices = await deps.spotify.devices(token.accessToken, signal);
       const target = devices.ok ? devices.value[0] : undefined;
       if (target !== undefined) {
-        const moved = await deps.spotify.transfer(token.accessToken, target.id);
+        const moved = await deps.spotify.transfer(token.accessToken, target.id, signal);
         if (moved.ok) {
-          const retry = await deps.spotify.play(token.accessToken, track.uri, positionMs, target.id);
+          const retry = await deps.spotify.play(token.accessToken, track.uri, positionMs, target.id, signal);
           if (retry.ok) return { discordUserId, ok: true };
         }
       }
@@ -273,8 +295,15 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
       return outcome;
     },
 
-    async sweep() {
-      for (const party of Object.values(partiesState().parties)) {
+    async sweep(signal) {
+      const parties = Object.values(partiesState().parties);
+      for (const [index, party] of parties.entries()) {
+        // The host's signal fires at its 30 s bound and on shutdown, and README.md asks a tick to
+        // stop between steps once it does. This is the check before each party AND before its
+        // per-member phase (nothing in between awaits), so an aborted sweep makes no Spotify or token
+        // call at all. The count includes the party it stopped in.
+        if (sweepAborted(signal, parties.length - index)) return;
+
         if (party.trackStartedAt === undefined) continue;
 
         // A timer is lost whenever the process restarts mid-party. Re-arming here is what makes a
@@ -289,12 +318,13 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
         // In parallel, and deliberately: this runs inside the host's ONE shared 60-second tick,
         // which executes every plugin's checks in sequence and skips the next tick if this one
         // overruns. Five members checked one after another, each bounded at ten seconds, could eat
-        // most of that budget on its own.
+        // most of that budget on its own. (`accessTokenFor` takes no signal, on purpose: see `sweep`'s
+        // doc comment above. The playback read after it does.)
         const drifted = await Promise.all(
           party.members.map(async (discordUserId) => {
             const token = await deps.accessTokenFor(discordUserId);
             if (!token.ok || !hasScopes(token.scopes, PARTY_SCOPES)) return undefined;
-            const state = await deps.spotify.playbackState(token.accessToken);
+            const state = await deps.spotify.playbackState(token.accessToken, signal);
             if (!state.ok) return undefined;
             const verdict = decideSync(party, state.value, deps.now());
             return verdict.action === "resync" ? { discordUserId, positionMs: verdict.positionMs } : undefined;
@@ -303,6 +333,12 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
 
         for (const entry of drifted) {
           if (entry === undefined) continue;
+
+          // The host may have aborted during the checks above, or during the resync before this one.
+          // A resync is a play (and possibly a devices read, a transfer and a retry), then a write if
+          // the member is dropped; none of it starts after an abort was observed. This comes before
+          // the re-read below so a host abort wins over everything else.
+          if (sweepAborted(signal, parties.length - index)) return;
 
           // The checks above are network awaits and so is every resync below, and the track
           // boundary rides on its own timer: it can fire inside any of them and play everyone the
@@ -319,13 +355,21 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
           }
 
           deps.log.info(`resyncing ${entry.discordUserId} in guild ${party.guildId}`);
-          const outcome = await playFor(party, entry.discordUserId, entry.positionMs);
+          const outcome = await playFor(party, entry.discordUserId, entry.positionMs, signal);
+          // A failure once the host's signal has fired is as likely the abort's doing (the cancelled
+          // call reads as "couldn't reach Spotify") as the member's: counting it would be a strike,
+          // and perhaps a drop and a post, nobody earned. So no failure is noted after an abort,
+          // including one the abort did not cause (a token problem found in this same resync); that
+          // member is dealt with at the next track boundary, like any member the checks above skip.
+          // The next sweep resyncs the rest again.
+          if (!outcome.ok && sweepAborted(signal, parties.length - index)) return;
           await noteOutcome(party, outcome);
         }
       }
     },
 
     stopAll() {
+      stopped = true;
       for (const timer of timers.values()) timer.cancel();
       timers.clear();
     },

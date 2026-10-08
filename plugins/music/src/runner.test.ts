@@ -766,3 +766,331 @@ describe("the tick", () => {
     ]);
   });
 });
+
+describe("the tick, when the host aborts it", () => {
+  const DRIFTED = { ok: true, value: { isPlaying: true, progressMs: 0, trackUri: "spotify:track:one" } } as const;
+  const abortedLines = (infos: string[]) => infos.filter((m) => m.includes("aborted"));
+
+  test("an already-aborted signal makes the sweep do nothing", async () => {
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    let tokenCalls = 0;
+    const { runner, notices, infos } = makeRunner(client, clock, () => {
+      tokenCalls += 1;
+      return GOOD;
+    });
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep(AbortSignal.abort());
+
+    expect(tokenCalls).toBe(0);
+    expect(plays).toEqual([]);
+    expect(notices).toEqual([]);
+    expect(abortedLines(infos)).toEqual(["party sweep aborted by the host; 1 parties left unchecked"]);
+    runner.stopAll();
+  });
+
+  test("a sweep that was never aborted still checks and resyncs", async () => {
+    const { client, plays } = fakeSpotify({ playbackState: async () => DRIFTED });
+    const clock = fakeClock();
+    const { runner, infos } = makeRunner(client, clock);
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep(new AbortController().signal);
+
+    expect(plays.map((p) => p.uri)).toEqual(["spotify:track:one", "spotify:track:one"]);
+    expect(abortedLines(infos)).toEqual([]);
+    runner.stopAll();
+  });
+
+  test("a sweep stops before the resync once the host aborts during its checks", async () => {
+    const controller = new AbortController();
+    const { client, plays } = fakeSpotify({
+      playbackState: async () => {
+        controller.abort();
+        return DRIFTED;
+      },
+    });
+    const clock = fakeClock();
+    const { runner, infos } = makeRunner(client, clock);
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep(controller.signal);
+
+    expect(plays).toEqual([]);
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host", "friend"]);
+    expect(abortedLines(infos)).toHaveLength(1);
+    runner.stopAll();
+  });
+
+  test("an abort between two resyncs stops the second one", async () => {
+    const controller = new AbortController();
+    const calls: string[] = [];
+    const { client } = fakeSpotify({
+      playbackState: async () => DRIFTED,
+      play: async (accessToken) => {
+        calls.push(accessToken);
+        controller.abort();
+        return { ok: true, value: undefined };
+      },
+    });
+    const clock = fakeClock();
+    const { runner, infos } = makeRunner(client, clock, (id) => ({ ok: true, accessToken: id, scopes: PARTY_SCOPES }));
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep(controller.signal);
+
+    expect(calls).toEqual(["host"]);
+    expect(abortedLines(infos)).toHaveLength(1);
+    runner.stopAll();
+  });
+
+  test("an abort that cancels a resync's play does not count a strike against the member", async () => {
+    resetPartiesForTest(openParty(freshParties(), party({ members: ["host"] })));
+    const controller = new AbortController();
+    const { client } = fakeSpotify({
+      playbackState: async () => DRIFTED,
+      // What the client reports for a call the host's signal cancelled.
+      play: async () => {
+        controller.abort();
+        return { ok: false, error: "couldn't reach Spotify" };
+      },
+    });
+    const clock = fakeClock();
+    const { runner, warnings, notices, infos } = makeRunner(client, clock);
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep(controller.signal);
+
+    expect(warnings).toEqual([]);
+    expect(notices).toEqual([]);
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
+    expect(abortedLines(infos)).toHaveLength(1);
+    runner.stopAll();
+  });
+
+  test("a resync that succeeded as the host aborted still clears the member's earlier strike", async () => {
+    resetPartiesForTest(openParty(freshParties(), party({ members: ["friend"] })));
+    const controller = new AbortController();
+    const { client } = fakeSpotify({
+      playbackState: async () => DRIFTED,
+      // The play lands, then the host's signal fires: the resync worked.
+      play: async () => {
+        controller.abort();
+        return { ok: true, value: undefined };
+      },
+    });
+    const clock = fakeClock();
+    // Strike one comes from `start`; the sweep's check and its resync get a token each; the boundary
+    // after it is the next blip.
+    const { runner, notices } = makeRunner(
+      client,
+      clock,
+      tokenSequence("friend", [UNAVAILABLE, GOOD, GOOD, UNAVAILABLE]),
+    );
+
+    await runner.start("G1");
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep(controller.signal);
+    await runner.skip("G1");
+
+    // The success cleared the strike, so this blip is a first strike again, not a second.
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["friend"]);
+    expect(notices.filter((m) => m.includes("dropped out"))).toEqual([]);
+    runner.stopAll();
+  });
+
+  /**
+   * One sweep over three one-member parties, G1..G3 (members h1..h3, each their own party's host),
+   * with the host's signal firing inside the call `abort` names. A member listed in `drifted` reports
+   * track one at 0:00 (drift at NOW + 30 s); the others are in sync. Records which members the sweep
+   * asked for a token and which it played to.
+   */
+  async function sweepThree(
+    abort: { in: "playbackState" | "play" | "moved"; member: string; failPlay?: boolean },
+    drifted: string[],
+  ) {
+    const guilds = ["G1", "G2", "G3"];
+    resetPartiesForTest(
+      guilds.reduce(
+        (state, guildId, i) =>
+          openParty(state, party({ guildId, channelId: `C${i + 1}`, hostId: `h${i + 1}`, members: [`h${i + 1}`] })),
+        freshParties(),
+      ),
+    );
+    const controller = new AbortController();
+    const tokenCalls: string[] = [];
+    const plays: string[] = [];
+    let runner: PartyRunner;
+    const { client } = fakeSpotify({
+      playbackState: async (accessToken) => {
+        if (abort.in === "playbackState" && accessToken === abort.member) controller.abort();
+        if (abort.in === "moved" && accessToken === abort.member) {
+          // A track boundary lands in the same window the host's abort does.
+          await runner.skip(`G${accessToken.slice(1)}`);
+          controller.abort();
+        }
+        const inSync = !drifted.includes(accessToken);
+        return {
+          ok: true,
+          value: { isPlaying: true, progressMs: inSync ? 30_000 : 0, trackUri: "spotify:track:one" },
+        };
+      },
+      play: async (accessToken) => {
+        plays.push(accessToken);
+        if (abort.in === "play" && accessToken === abort.member) {
+          controller.abort();
+          if (abort.failPlay === true) return { ok: false, error: "couldn't reach Spotify" };
+        }
+        return { ok: true, value: undefined };
+      },
+    });
+    const clock = fakeClock();
+    const made = makeRunner(client, clock, (id) => {
+      tokenCalls.push(id);
+      return { ok: true, accessToken: id, scopes: PARTY_SCOPES };
+    });
+    runner = made.runner;
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep(controller.signal);
+    runner.stopAll();
+    return {
+      tokenCalls,
+      plays,
+      warnings: made.warnings,
+      aborted: abortedLines(made.infos),
+      moved: made.infos.filter((m) => m.includes("moved during the sweep")),
+    };
+  }
+
+  test("an abort during one party's last resync stops the sweep before the next party's checks", async () => {
+    const { tokenCalls, aborted } = await sweepThree({ in: "play", member: "h1" }, ["h1"]);
+
+    // h1 was asked for a token for its check and its resync; h2 and h3 never were.
+    expect(tokenCalls).toEqual(["h1", "h1"]);
+    expect(aborted).toEqual(["party sweep aborted by the host; 2 parties left unchecked"]);
+  });
+
+  test("an abort during the second party's checks counts it and the third as unchecked", async () => {
+    const { tokenCalls, plays, aborted } = await sweepThree({ in: "playbackState", member: "h2" }, ["h2"]);
+
+    expect(tokenCalls).toEqual(["h1", "h2"]);
+    expect(plays).toEqual([]);
+    expect(aborted).toEqual(["party sweep aborted by the host; 2 parties left unchecked"]);
+  });
+
+  test("an abort that cancels the second party's resync play counts it and the third, and is not a strike", async () => {
+    const { tokenCalls, warnings, aborted } = await sweepThree({ in: "play", member: "h2", failPlay: true }, ["h2"]);
+
+    expect(tokenCalls).toEqual(["h1", "h2", "h2"]);
+    expect(warnings).toEqual([]);
+    expect(aborted).toEqual(["party sweep aborted by the host; 2 parties left unchecked"]);
+  });
+
+  test("a host abort wins over a party that moved in the same window", async () => {
+    const { plays, aborted, moved } = await sweepThree({ in: "moved", member: "h1" }, ["h1"]);
+
+    // The boundary's own plays happened; the sweep then saw the abort, not the move.
+    expect(plays).toEqual(["h1"]);
+    expect(aborted).toEqual(["party sweep aborted by the host; 3 parties left unchecked"]);
+    expect(moved).toEqual([]);
+  });
+
+  test("the sweep's playback read and the resync's play carry the host's signal", async () => {
+    resetPartiesForTest(openParty(freshParties(), party({ members: ["host"] })));
+    const controller = new AbortController();
+    const seen: { read?: AbortSignal; play?: AbortSignal } = {};
+    const { client } = fakeSpotify({
+      playbackState: async (_accessToken, signal) => {
+        if (signal !== undefined) seen.read = signal;
+        return DRIFTED;
+      },
+      play: async (_accessToken, _uri, _positionMs, _deviceId, signal) => {
+        if (signal !== undefined) seen.play = signal;
+        return { ok: true, value: undefined };
+      },
+    });
+    const clock = fakeClock();
+    const { runner } = makeRunner(client, clock);
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep(controller.signal);
+
+    expect(seen.read).toBe(controller.signal);
+    expect(seen.play).toBe(controller.signal);
+    runner.stopAll();
+  });
+
+  test("the no-device rescue's devices read, transfer and retry carry it too", async () => {
+    resetPartiesForTest(openParty(freshParties(), party({ members: ["host"] })));
+    const controller = new AbortController();
+    const seen: Record<string, AbortSignal | undefined> = {};
+    let firstPlay = true;
+    const { client } = fakeSpotify({
+      playbackState: async () => DRIFTED,
+      play: async (_accessToken, _uri, _positionMs, deviceId, signal) => {
+        if (firstPlay) {
+          firstPlay = false;
+          return { ok: false, error: "Player command failed: No active device found", status: 404 };
+        }
+        seen[`retry:${deviceId}`] = signal;
+        return { ok: true, value: undefined };
+      },
+      devices: async (_accessToken, signal) => {
+        seen.devices = signal;
+        return { ok: true, value: [{ id: "d1", name: "Phone", isActive: false }] };
+      },
+      transfer: async (_accessToken, _deviceId, signal) => {
+        seen.transfer = signal;
+        return { ok: true, value: undefined };
+      },
+    });
+    const clock = fakeClock();
+    const { runner } = makeRunner(client, clock);
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep(controller.signal);
+
+    expect(seen.devices).toBe(controller.signal);
+    expect(seen.transfer).toBe(controller.signal);
+    expect(seen["retry:d1"]).toBe(controller.signal);
+    runner.stopAll();
+  });
+
+  test("no timer is armed after dispose", async () => {
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    expect(clock.pendingCount()).toBe(1);
+    runner.stopAll();
+    expect(clock.pendingCount()).toBe(0);
+
+    await runner.skip("G1");
+    expect(clock.pendingCount()).toBe(0);
+  });
+
+  test("a start that is mid-play when the plugin is disposed arms no timer afterwards", async () => {
+    const clock = fakeClock();
+    let runner: PartyRunner;
+    let disposed = false;
+    const { client } = fakeSpotify({
+      play: async () => {
+        if (!disposed) {
+          disposed = true;
+          runner.stopAll();
+        }
+        return { ok: true, value: undefined };
+      },
+    });
+    const made = makeRunner(client, clock);
+    runner = made.runner;
+
+    await runner.start("G1");
+
+    expect(disposed).toBe(true);
+    expect(clock.pendingCount()).toBe(0);
+  });
+});

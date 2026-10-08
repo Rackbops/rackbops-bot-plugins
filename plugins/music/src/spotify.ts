@@ -203,6 +203,10 @@ export interface SpotifyClient {
   // The player half -- everything below needs PARTY_SCOPES and a Premium account, and each one can
   // fail with "no active device", which is the ordinary state of a Spotify account nobody is
   // currently using. `classifyPlayerError` turns those failures into something sayable.
+  //
+  // Each takes an optional trailing `signal`: the host's tick signal, which the party sweep passes
+  // so its calls are cancelled with it (#147). A call aborted that way fails like any other that
+  // could not reach Spotify; the 10-second bound applies either way.
 
   /** Starts ONE track at a position. `deviceId` omitted = whatever device is currently active. */
   play(
@@ -210,12 +214,13 @@ export interface SpotifyClient {
     uri: string,
     positionMs: number,
     deviceId?: string,
+    signal?: AbortSignal,
   ): Promise<Result<undefined>>;
   /** Current playback, or `undefined` when Spotify answers 204 (nothing playing anywhere). */
-  playbackState(accessToken: string): Promise<Result<PlaybackState | undefined>>;
-  devices(accessToken: string): Promise<Result<SpotifyDevice[]>>;
+  playbackState(accessToken: string, signal?: AbortSignal): Promise<Result<PlaybackState | undefined>>;
+  devices(accessToken: string, signal?: AbortSignal): Promise<Result<SpotifyDevice[]>>;
   /** Makes a device the active one, so a `play` with no `deviceId` lands there. */
-  transfer(accessToken: string, deviceId: string): Promise<Result<undefined>>;
+  transfer(accessToken: string, deviceId: string, signal?: AbortSignal): Promise<Result<undefined>>;
 }
 
 export type PlayerProblem = "scope" | "premium" | "no-device" | "other";
@@ -291,10 +296,16 @@ async function describeFailure(response: Response): Promise<{ error: string; cod
 export function createSpotifyClient(config: SpotifyConfig, fetchImpl: FetchLike = fetch): SpotifyClient {
   const basicAuth = `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64")}`;
 
-  async function call(url: string, init: RequestInit): Promise<Result<unknown>> {
+  async function call(url: string, init: RequestInit, signal?: AbortSignal): Promise<Result<unknown>> {
     let response: Response;
     try {
-      response = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      // The client's own bound always applies; a caller's signal (the host's tick signal) is added
+      // to it, so the request ends at whichever comes first.
+      const bounded = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+      response = await fetchImpl(url, {
+        ...init,
+        signal: signal === undefined ? bounded : AbortSignal.any([bounded, signal]),
+      });
     } catch (err) {
       const timedOut = err instanceof Error && err.name === "TimeoutError";
       return { ok: false, error: timedOut ? "Spotify took too long to answer" : "couldn't reach Spotify" };
@@ -394,24 +405,30 @@ export function createSpotifyClient(config: SpotifyConfig, fetchImpl: FetchLike 
       return { ok: true, value: added };
     },
 
-    async play(accessToken, uri, positionMs, deviceId) {
+    async play(accessToken, uri, positionMs, deviceId, signal) {
       const query = deviceId === undefined ? "" : `?device_id=${encodeURIComponent(deviceId)}`;
-      const result = await call(`${API_BASE}/me/player/play${query}`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        // One explicit URI rather than a context: the bot is the sequencer, so every member is told
-        // exactly which track to be on. Handing Spotify a playlist context would let each member's
-        // own shuffle or repeat setting decide what comes next, and they would drift apart.
-        body: JSON.stringify({ uris: [uri], position_ms: Math.max(0, Math.round(positionMs)) }),
-      });
+      const result = await call(
+        `${API_BASE}/me/player/play${query}`,
+        {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          // One explicit URI rather than a context: the bot is the sequencer, so every member is told
+          // exactly which track to be on. Handing Spotify a playlist context would let each member's
+          // own shuffle or repeat setting decide what comes next, and they would drift apart.
+          body: JSON.stringify({ uris: [uri], position_ms: Math.max(0, Math.round(positionMs)) }),
+        },
+        signal,
+      );
       if (!result.ok) return result;
       return { ok: true, value: undefined };
     },
 
-    async playbackState(accessToken) {
-      const result = await call(`${API_BASE}/me/player`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+    async playbackState(accessToken, signal) {
+      const result = await call(
+        `${API_BASE}/me/player`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        signal,
+      );
       if (!result.ok) return result;
       // 204 (nothing playing) comes back from `call` as an undefined value, and is a normal answer
       // here rather than a failure -- it is what the party sees when a member has closed Spotify.
@@ -432,10 +449,12 @@ export function createSpotifyClient(config: SpotifyConfig, fetchImpl: FetchLike 
       return { ok: true, value: state };
     },
 
-    async devices(accessToken) {
-      const result = await call(`${API_BASE}/me/player/devices`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+    async devices(accessToken, signal) {
+      const result = await call(
+        `${API_BASE}/me/player/devices`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        signal,
+      );
       if (!result.ok) return result;
       const raw = (result.value as { devices?: unknown })?.devices;
       if (!Array.isArray(raw)) return { ok: true, value: [] };
@@ -455,14 +474,18 @@ export function createSpotifyClient(config: SpotifyConfig, fetchImpl: FetchLike 
       return { ok: true, value: devices };
     },
 
-    async transfer(accessToken, deviceId) {
-      const result = await call(`${API_BASE}/me/player`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        // `play: false` -- transferring must not start whatever was paused on that device; the
-        // party decides what plays, and it does that with its own `play` call a moment later.
-        body: JSON.stringify({ device_ids: [deviceId], play: false }),
-      });
+    async transfer(accessToken, deviceId, signal) {
+      const result = await call(
+        `${API_BASE}/me/player`,
+        {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          // `play: false` -- transferring must not start whatever was paused on that device; the
+          // party decides what plays, and it does that with its own `play` call a moment later.
+          body: JSON.stringify({ device_ids: [deviceId], play: false }),
+        },
+        signal,
+      );
       if (!result.ok) return result;
       return { ok: true, value: undefined };
     },

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
   authorizeUrl,
   chunkUris,
@@ -252,6 +252,98 @@ describe("createSpotifyClient", () => {
     });
     await client.addTracks("AT", "PL 1/x", ["spotify:track:a"]);
     expect(seen).toBe("https://api.spotify.com/v1/playlists/PL%201%2Fx/items");
+  });
+});
+
+describe("a player call and the host's signal", () => {
+  /** Runs one player call against a fetch that records the signal it was handed, then settles. */
+  function player(): {
+    client: ReturnType<typeof createSpotifyClient>;
+    seen: (AbortSignal | undefined)[];
+  } {
+    const seen: (AbortSignal | undefined)[] = [];
+    const client = createSpotifyClient(CONFIG, async (_url, init) => {
+      seen.push(init?.signal ?? undefined);
+      return new Response(null, { status: 204 });
+    });
+    return { client, seen };
+  }
+
+  const calls: [string, (c: ReturnType<typeof createSpotifyClient>, s?: AbortSignal) => Promise<unknown>][] = [
+    ["playbackState", (c, s) => c.playbackState("AT", s)],
+    ["play", (c, s) => c.play("AT", "spotify:track:one", 0, undefined, s)],
+    ["devices", (c, s) => c.devices("AT", s)],
+    ["transfer", (c, s) => c.transfer("AT", "d1", s)],
+  ];
+
+  /**
+   * Runs `run` with `AbortSignal.timeout` replaced by one the test controls, so the client's own
+   * 10-second bound can be made to fire at once. Returns that bound's controller.
+   */
+  async function withControllableBound(
+    run: (timeoutSignal: AbortController) => Promise<void>,
+  ): Promise<void> {
+    const bound = new AbortController();
+    const timeout = spyOn(AbortSignal, "timeout").mockReturnValue(bound.signal);
+    try {
+      await run(bound);
+      expect(timeout).toHaveBeenCalledWith(10_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  }
+
+  for (const [name, run] of calls) {
+    test(`${name} given the host's signal is aborted with it`, async () => {
+      const { client, seen } = player();
+      const controller = new AbortController();
+
+      await run(client, controller.signal);
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.aborted).toBe(false);
+      controller.abort();
+      expect(seen[0]?.aborted).toBe(true);
+    });
+
+    test(`${name} given the host's signal is still ended by the client's own 10 s bound`, async () => {
+      const { client, seen } = player();
+      const controller = new AbortController();
+
+      await withControllableBound(async (bound) => {
+        await run(client, controller.signal);
+        expect(seen[0]?.aborted).toBe(false);
+        bound.abort();
+      });
+
+      // The bound fired; the host's own signal did not.
+      expect(seen[0]?.aborted).toBe(true);
+      expect(controller.signal.aborted).toBe(false);
+    });
+
+    test(`${name} without a signal is ended by the client's own 10 s bound`, async () => {
+      const { client, seen } = player();
+
+      await withControllableBound(async (bound) => {
+        await run(client);
+        expect(seen).toHaveLength(1);
+        expect(seen[0]?.aborted).toBe(false);
+        bound.abort();
+      });
+
+      expect(seen[0]?.aborted).toBe(true);
+    });
+  }
+
+  test("a call aborted by the host reports that Spotify could not be reached", async () => {
+    const client = createSpotifyClient(CONFIG, async (_url, init) => {
+      if (init?.signal?.aborted) throw init.signal.reason;
+      return new Response(null, { status: 204 });
+    });
+
+    const result = await client.playbackState("AT", AbortSignal.abort());
+
+    expect(result).toEqual({ ok: false, error: "couldn't reach Spotify" });
   });
 });
 
