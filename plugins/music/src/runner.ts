@@ -32,7 +32,10 @@ import {
 import { classifyPlayerError, hasScopes, PARTY_SCOPES, type SpotifyClient } from "./spotify.js";
 import type { TokenResult } from "./tokens.js";
 
-/** How many consecutive failures a member gets before the party stops calling their player. */
+/**
+ * How many consecutive failures a member gets before the party stops calling their player. The count
+ * starts fresh with every party and every Join (#234), so it only ever spans one stint in one party.
+ */
 export const MAX_MEMBER_FAILURES = 2;
 
 // The token lookup's real contract, re-exported for the tests' fakes: its failure `kind` is what
@@ -208,7 +211,7 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     return { discordUserId, ok: false, error: played.error };
   }
 
-  /** Records a failure and drops the member once they have failed twice running. */
+  /** Records a failure and drops the member once they have failed twice running (since the party started or their last Join). */
   async function noteOutcome(party: Party, outcome: MemberOutcome): Promise<void> {
     const key = failureKey(party.guildId, outcome.discordUserId);
     if (outcome.ok) {
@@ -298,19 +301,22 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
           }),
         );
 
-        // The checks above are network awaits, and the track boundary rides on its own timer: it can
-        // fire inside that window and play everyone the next track. `party` is the snapshot from
-        // before the awaits, so resyncing against it would put a member back on the track that just
-        // ended, at a position past its end. If the party moved (or closed), this tick's verdicts
-        // are stale -- drop them; the next sweep checks again.
-        const current = getParty(partiesState(), party.guildId);
-        if (current === undefined || current.index !== party.index || current.trackStartedAt !== party.trackStartedAt) {
-          deps.log.info(`party in guild ${party.guildId} moved during the sweep; skipping resync`);
-          continue;
-        }
-
         for (const entry of drifted) {
           if (entry === undefined) continue;
+
+          // The checks above are network awaits and so is every resync below, and the track
+          // boundary rides on its own timer: it can fire inside any of them and play everyone the
+          // next track. `party` is the snapshot from before the awaits, so resyncing against it would
+          // put a member back on the track that just ended, at a position past its end. Re-read
+          // before EACH resync; if the party moved (or closed) the verdicts still to act on are
+          // stale -- drop them, the next sweep checks again. A boundary landing inside the one play
+          // call already in flight still slips through: one stale resync, corrected by the next sweep.
+          const current = getParty(partiesState(), party.guildId);
+          if (current === undefined || current.index !== party.index || current.trackStartedAt !== party.trackStartedAt) {
+            deps.log.info(`party in guild ${party.guildId} moved during the sweep; skipping resync`);
+            break;
+          }
+
           deps.log.info(`resyncing ${entry.discordUserId} in guild ${party.guildId}`);
           const outcome = await playFor(party, entry.discordUserId, entry.positionMs);
           await noteOutcome(party, outcome);

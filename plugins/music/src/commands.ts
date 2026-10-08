@@ -645,8 +645,10 @@ export function formatOutcomes(outcomes: readonly MemberOutcome[]): string {
 
 /**
  * The Join button's reply. `stillMember` is read from the party AFTER the first sync: a fatal
- * outcome (Premium, a missing scope, a dead grant, a disconnect) has already removed the member
- * by then, and "Joined, but ..." would tell them they are in when they are not (#234).
+ * outcome has already removed the member by then, and "Joined, but ..." would tell them they are in
+ * when they are not (#234). `requirePartyAccess` has already turned away a dead grant, a disconnect
+ * and a missing scope before the sync runs, so the fatal outcomes that reach this reply are Premium
+ * and Spotify refusing the command itself.
  */
 export function formatJoinReply(outcome: MemberOutcome, stillMember: boolean): string {
   if (outcome.ok) return "You're in. Your Spotify should be playing along.";

@@ -11,6 +11,7 @@ import {
   addMember,
   closeParty,
   commitParties,
+  enqueue,
   freshParties,
   getParty,
   markStarted,
@@ -469,7 +470,8 @@ describe("a member's failure count", () => {
     expect(warnings).toHaveLength(1);
 
     runner.stop("G1");
-    // A new, unstarted party with the same members -- what `/party start` opens after a `/party stop`.
+    // A new, unstarted party in the same guild, as `/party stop` then `/party start` leave behind. It
+    // keeps the same members so the stale strike belongs to someone who is still in it.
     const { trackStartedAt: _started, ...unstarted } = party();
     resetPartiesForTest(openParty(freshParties(), unstarted));
 
@@ -478,6 +480,26 @@ describe("a member's failure count", () => {
     expect(notices).toEqual([]);
     expect(warnings).toHaveLength(2);
     expect(warnings[1]).toContain(`friend in guild G1 failed 1 of ${MAX_MEMBER_FAILURES}`);
+    runner.stopAll();
+  });
+
+  test("a host's strike from an earlier party does not close the next one", async () => {
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, notices } = makeRunner(client, clock, tokenSequence("host", [UNAVAILABLE]));
+
+    await runner.start("G1");
+    expect(getParty(partiesState(), "G1")).toBeDefined();
+
+    runner.stop("G1");
+    const { trackStartedAt: _started, ...unstarted } = party();
+    resetPartiesForTest(openParty(freshParties(), unstarted));
+
+    // One strike for the host in this party, not two: a second would drop them, and dropping the
+    // host closes the whole party.
+    await runner.start("G1");
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host", "friend"]);
+    expect(notices).toEqual([]);
     runner.stopAll();
   });
 
@@ -639,5 +661,82 @@ describe("the tick", () => {
 
     expect(plays).toEqual([{ accessToken: "AT", uri: "spotify:track:one", positionMs: 30_000 }]);
     expect(infos).toEqual([]);
+  });
+
+  test("a track queued during the sweep's checks is not a move", async () => {
+    const { plays, infos } = await sweepInterruptedBy(async () => {
+      await commitParties(
+        enqueue(partiesState(), "G1", [{ uri: "spotify:track:three", name: "Three", artist: "Band", durationMs: TRACK_MS }]),
+      );
+    });
+
+    expect(plays).toEqual([{ accessToken: "AT", uri: "spotify:track:one", positionMs: 30_000 }]);
+    expect(infos).toEqual([]);
+  });
+
+  test("a boundary that fires during one member's resync cancels the resyncs after it", async () => {
+    resetPartiesForTest(openParty(freshParties(), party({ members: ["host", "friend"] })));
+    const clock = fakeClock();
+    const calls: { accessToken: string; uri: string; positionMs: number }[] = [];
+    let runner: PartyRunner;
+    let fired = false;
+    const { client } = fakeSpotify({
+      // Both members report track one at 0:00, so both are drifted against the sweep's snapshot.
+      playbackState: async () => ({ ok: true, value: { isPlaying: true, progressMs: 0, trackUri: "spotify:track:one" } }),
+      // The first play is the host's resync; the boundary lands while it is in flight.
+      play: async (accessToken, uri, positionMs) => {
+        calls.push({ accessToken, uri, positionMs });
+        if (!fired) {
+          fired = true;
+          await runner.skip("G1");
+        }
+        return { ok: true, value: undefined };
+      },
+    });
+    const made = makeRunner(client, clock, (id) => ({ ok: true, accessToken: id, scopes: PARTY_SCOPES }));
+    runner = made.runner;
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep();
+    runner.stopAll();
+
+    // The host's resync (stale by the time the boundary lands), then the boundary's own plays for
+    // both members -- and nothing that puts the friend back on track one.
+    expect(calls).toEqual([
+      { accessToken: "host", uri: "spotify:track:one", positionMs: 30_000 },
+      { accessToken: "host", uri: "spotify:track:two", positionMs: 0 },
+      { accessToken: "friend", uri: "spotify:track:two", positionMs: 0 },
+    ]);
+    expect(made.infos.filter((m) => m.includes("moved during the sweep"))).toHaveLength(1);
+  });
+
+  test("a party that moved does not stop the sweep reaching the next party", async () => {
+    const other = party({ guildId: "G2", channelId: "C2", hostId: "host2", members: ["host2"] });
+    resetPartiesForTest(openParty(openParty(freshParties(), party({ members: ["host"] })), other));
+    const clock = fakeClock();
+    const calls: { accessToken: string; uri: string; positionMs: number }[] = [];
+    let runner: PartyRunner;
+    const { client } = fakeSpotify({
+      // Only the first party's check lets its boundary land.
+      playbackState: async (accessToken) => {
+        if (accessToken === "host") await runner.skip("G1");
+        return { ok: true, value: { isPlaying: true, progressMs: 0, trackUri: "spotify:track:one" } };
+      },
+      play: async (accessToken, uri, positionMs) => {
+        calls.push({ accessToken, uri, positionMs });
+        return { ok: true, value: undefined };
+      },
+    });
+    const made = makeRunner(client, clock, (id) => ({ ok: true, accessToken: id, scopes: PARTY_SCOPES }));
+    runner = made.runner;
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep();
+    runner.stopAll();
+
+    expect(calls).toEqual([
+      { accessToken: "host", uri: "spotify:track:two", positionMs: 0 },
+      { accessToken: "host2", uri: "spotify:track:one", positionMs: 30_000 },
+    ]);
   });
 });

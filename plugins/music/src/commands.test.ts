@@ -22,6 +22,7 @@ import {
   removeMember,
   resetPartiesForTest,
 } from "./party.js";
+import { resetClientForTest } from "./notify.js";
 import type { MemberOutcome, PartyRunner } from "./runner.js";
 import type { SetlistFmClient, SetlistFmResult, SetlistListResult } from "./setlistfm.js";
 import { PARTY_SCOPES, type SpotifyClient } from "./spotify.js";
@@ -954,6 +955,7 @@ function wireJoin(syncMember: PartyRunner["syncMember"]): void {
 describe("the Join button", () => {
   afterEach(() => {
     resetPartiesForTest(freshParties());
+    resetClientForTest();
   });
 
   test("a first sync that dropped the joiner is answered with 'Couldn't join', never 'Joined, but'", async () => {
