@@ -773,7 +773,8 @@ describe("pickTrackFromQuery", () => {
     const lemon = track("Lemon", ["米津玄師"]);
     expect(pickTrackFromQuery("Lemon 米津玄師", [lemon])!.track).toBe(lemon);
     expect(pickTrackFromQuery("米津玄師 Lemon", [lemon])!.track).toBe(lemon);
-    // Another name in the same script does not answer it, which it did while both read as "".
+    // Another name in the same script does not answer it. While non-Latin text was dropped as
+    // punctuation the query collapsed to "lemon", and the title pass answered it whatever the artist.
     expect(pickTrackFromQuery("Lemon 宇多田ヒカル", [lemon])).toBeUndefined();
   });
 
@@ -850,6 +851,14 @@ describe("non-Latin text (#150)", () => {
     expect(normalize("Кино")).toBe("кино");
   });
 
+  test("case and punctuation fold in other scripts too, and a mixed-script title keeps both halves", () => {
+    // These are what the character class decides: a title that is ONLY non-Latin would also come
+    // back as itself from the empty-result fallback, whatever the class kept.
+    expect(normalize("Группа Крови!")).toBe("группа крови");
+    expect(normalize("Lemon (レモン)")).toBe("lemon レモン");
+    expect(normalize("夜に駆ける (Live)")).not.toBe(normalize("群青 (Live)"));
+  });
+
   test("a Latin letter with no decomposition is kept", () => {
     expect(normalize("Bjørk")).toBe("bjørk");
     // An accent that DOES decompose still folds to its base letter.
@@ -860,6 +869,36 @@ describe("non-Latin text (#150)", () => {
     expect(normalize("???")).toBe("???");
     expect(normalize("???")).not.toBe(normalize("..."));
     expect(normalize("  ")).toBe("");
+    // Lower-cased as well: a circled capital is a symbol, so it takes the fallback and has a case.
+    expect(normalize("  ⒶⒷ  ")).toBe("ⓐⓑ");
+  });
+
+  test.each<[string, string]>([
+    ["バンド", "バント"],
+    ["ボート", "ボード"],
+    ["ばか", "ぱか"],
+    ["ガ", "カ"],
+    ["दिल", "दाल"],
+    ["का", "की"],
+    ["का", "क"],
+    ["ไม่", "ไม้"],
+    ["ไก่", "ไก้"],
+  ])("%s and %s are different words: a mark belongs to its letter", (a, b) => {
+    expect(normalize(a)).not.toBe(normalize(b));
+  });
+
+  test("a mark does not split its word, and a recomposed syllable is one character", () => {
+    expect(normalize("ロードショー")).toBe("ロードショー");
+    expect(normalize("ガンダム")).toBe("ガンダム");
+    expect(normalize("사랑").length).toBe(2);
+  });
+
+  test("a mark with nothing before it is punctuation, not a word", () => {
+    // U+FE0F, the emoji variation selector, is a mark: it must not turn "Love ❤️" into "love ️".
+    expect(normalize("Love ❤️")).toBe("love");
+    // An emoji-only title has no letter, so it is itself, and two different ones are not equal.
+    expect(normalize("❤️")).toBe("❤️");
+    expect(normalize("❤️")).not.toBe(normalize("★"));
   });
 
   test("a kanji title picks the right kanji track, not the first on the page", () => {
@@ -873,6 +912,31 @@ describe("non-Latin text (#150)", () => {
 
     // With the right track absent there is nothing to add: the other kanji title is not a match.
     expect(pickBestTrack(song, [wrong])).toBeUndefined();
+  });
+
+  test("titles that differ only in a voiced mark are different titles, and a mark opens no gap", () => {
+    expect(pickBestTrack({ name: "バンド", artist: "X" }, [candidate("a", "バント", ["X"])])).toBeUndefined();
+    // "ロード" is not a prefix of "ロードショー" (Latin "road" scores 0 against "roadshow" the same way).
+    expect(pickBestTrack({ name: "ロード", artist: "X" }, [candidate("b", "ロードショー", ["X"])])).toBeUndefined();
+    // A one-syllable Hangul title is one character, under the prefix rule's three-character floor.
+    expect(pickBestTrack({ name: "눈", artist: "X" }, [candidate("c", "눈 (Live)", ["X"])])).toBeUndefined();
+  });
+
+  test("a punctuation-only title picks its own track, not every punctuation-only one", () => {
+    const song = { name: "???", artist: "Band" };
+    const dots = candidate("dots", "...", ["Band"]);
+    const same = candidate("same", "???", ["Band"]);
+
+    expect(pickBestTrack(song, [dots, same])?.track.uri).toBe(same.uri);
+    expect(pickBestTrack(song, [dots])).toBeUndefined();
+  });
+
+  test("a non-Latin primary artist's other editions count for the tie-break", () => {
+    const song = { name: "夜に駆ける", artist: "YOASOBI" };
+    const first = candidate("one", "夜に駆ける", ["YOASOBI"]);
+    const second = candidate("two", "夜に駆ける", ["YOASOBI"]);
+    // Both primary artists used to normalise to "", which the tie-break reads as "no artist".
+    expect(explainCandidate(song, first, [first, second]).tieBreak).toBe(0.01);
   });
 
   test("a Cyrillic performer matches only itself", () => {
@@ -889,5 +953,7 @@ describe("non-Latin text (#150)", () => {
     // A blank artist name is contained in every name, so without a guard it would score the partial 22.
     expect(explainCandidate(song, candidate("b", "Song", [""])).artist).toBe(0);
     expect(explainCandidate(song, candidate("c", "Song", ["   "])).artist).toBe(0);
+    // ...and it is skipped, not the end of the list: a real credit after it still counts in full.
+    expect(explainCandidate(song, candidate("d", "Song", ["", "Queen"])).artist).toBe(40);
   });
 });
