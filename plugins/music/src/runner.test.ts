@@ -483,6 +483,29 @@ describe("a member's failure count", () => {
     runner.stopAll();
   });
 
+  test("an idle party restarted by adding a track, with no stop in between, starts its counts afresh", async () => {
+    resetPartiesForTest(openParty(freshParties(), party({ queue: [party().queue[0]!] })));
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, notices } = makeRunner(client, clock, tokenSequence("friend", [UNAVAILABLE]));
+
+    await runner.start("G1");
+    // The queue runs out: the party stays open, idle, and the friend's strike stays on the books.
+    await runner.skip("G1");
+    expect(getParty(partiesState(), "G1")?.trackStartedAt).toBeUndefined();
+
+    // `/party add` on an idle party enqueues the track and calls `start`.
+    await commitParties(
+      enqueue(partiesState(), "G1", [{ uri: "spotify:track:three", name: "Three", artist: "Band", durationMs: TRACK_MS }]),
+    );
+    await runner.start("G1");
+
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host", "friend"]);
+    // Only the queue running out was announced, not a drop.
+    expect(notices.filter((m) => m.includes("dropped out"))).toEqual([]);
+    runner.stopAll();
+  });
+
   test("a host's strike from an earlier party does not close the next one", async () => {
     const { client } = fakeSpotify();
     const clock = fakeClock();

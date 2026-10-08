@@ -34,7 +34,7 @@ import type { TokenResult } from "./tokens.js";
 
 /**
  * How many consecutive failures a member gets before the party stops calling their player. The count
- * starts fresh with every party and every Join (#234), so it only ever spans one stint in one party.
+ * starts fresh with every party and every Join (#234), so it normally spans one stint in one party.
  */
 export const MAX_MEMBER_FAILURES = 2;
 
@@ -307,10 +307,11 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
           // The checks above are network awaits and so is every resync below, and the track
           // boundary rides on its own timer: it can fire inside any of them and play everyone the
           // next track. `party` is the snapshot from before the awaits, so resyncing against it would
-          // put a member back on the track that just ended, at a position past its end. Re-read
-          // before EACH resync; if the party moved (or closed) the verdicts still to act on are
-          // stale -- drop them, the next sweep checks again. A boundary landing inside the one play
-          // call already in flight still slips through: one stale resync, corrected by the next sweep.
+          // put a member back on the track that just ended. Re-read before EACH resync; if the party
+          // moved (or closed) the verdicts still to act on are stale -- drop them, the next sweep
+          // checks again. A boundary landing inside the one member's resync already in flight (its
+          // token refresh and play call) still slips through: one stale resync, corrected by the
+          // next sweep.
           const current = getParty(partiesState(), party.guildId);
           if (current === undefined || current.index !== party.index || current.trackStartedAt !== party.trackStartedAt) {
             deps.log.info(`party in guild ${party.guildId} moved during the sweep; skipping resync`);
