@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- The Spotify connect callback now answers "Something went wrong" and logs which stage failed
+  (never the token or the code) when something in the handshake throws (the bot's own store failing
+  to write, say), instead of leaving the browser on Bun's error response, and the callback server
+  renders no debug page. A party notice in the channel now sets its own mentions instead of
+  inheriting the host client's default: it pings nobody, except that the drop-out notice pings the
+  member it is about, so Spotify's error text in it can never ping @everyone, @here or a role
+  whatever the host's default is (#190).
 - The party sweep now honours the abort signal the host gives every tick: it stops between steps
   (before each party, before its per-member checks, before each resync) once the host's 30 s bound
   passes or the bot shuts down, instead of carrying on issuing play commands and writing the party

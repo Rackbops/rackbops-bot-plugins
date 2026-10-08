@@ -6,7 +6,7 @@ import { createSetlistFmClient } from "./setlistfm.js";
 import { createSpotifyClient } from "./spotify.js";
 import { createRateLimiter, startCallbackServer } from "./server.js";
 import { initMatchLog, recordRun } from "./matchlog.js";
-import { initParties, type Party } from "./party.js";
+import { initParties } from "./party.js";
 import { notifyParty } from "./notify.js";
 import { createPartyRunner, realScheduler, type PartyRunner } from "./runner.js";
 import { accessTokenFor } from "./tokens.js";
@@ -50,7 +50,7 @@ export function createPlugin(host: HostApi): Plugin {
       accessTokenFor: (discordUserId) => accessTokenFor(client, discordUserId),
       now: () => Date.now(),
       schedule: realScheduler,
-      notify: (party: Party, message: string) => notifyParty(party, message),
+      notify: notifyParty,
       log: host.log,
     });
   }
@@ -112,6 +112,7 @@ export function createPlugin(host: HostApi): Plugin {
         const server = startCallbackServer(config.callbackPort, {
           callbackPath: config.spotify.callbackPath,
           rateLimiter: createRateLimiter({ windowMs: 60_000, max: 30 }),
+          log: host.log,
           redeemState: async (stateToken) => {
             const redeemed = redeemPendingAuth(musicState(), stateToken, Date.now());
             // Persisted either way: the token is consumed on a failed redemption too, so a leaked

@@ -109,6 +109,8 @@ function makeRunner(
   token: (id: string) => TokenResult = () => ({ ok: true, accessToken: "AT", scopes: PARTY_SCOPES }),
 ) {
   const notices: string[] = [];
+  // The third `notify` argument, index-aligned with `notices`: who a message may ping, or undefined.
+  const mentions: (string | undefined)[] = [];
   const warnings: string[] = [];
   const infos: string[] = [];
   const errors: string[] = [];
@@ -118,8 +120,9 @@ function makeRunner(
     accessTokenFor: async (id) => token(id),
     now: clock.now,
     schedule: clock.schedule,
-    notify: async (_party, message) => {
+    notify: async (_party, message, mention) => {
       notices.push(message);
+      mentions.push(mention);
     },
     log: {
       info(m) {
@@ -134,7 +137,7 @@ function makeRunner(
       },
     },
   };
-  return { runner: createPartyRunner(deps), notices, warnings, infos, errors, errorCauses };
+  return { runner: createPartyRunner(deps), notices, mentions, warnings, infos, errors, errorCauses };
 }
 
 // What `accessTokenFor` answers, by `kind`. The texts are copied from tokens.ts, whose own tests pin
@@ -209,7 +212,7 @@ describe("playing a party", () => {
     resetPartiesForTest(openParty(freshParties(), party({ index: 1 })));
     const { client } = fakeSpotify();
     const clock = fakeClock();
-    const { runner, notices } = makeRunner(client, clock);
+    const { runner, notices, mentions } = makeRunner(client, clock);
 
     await runner.start("G1");
     await clock.advanceTo(NOW + TRACK_MS);
@@ -217,6 +220,8 @@ describe("playing a party", () => {
     expect(getParty(partiesState(), "G1")).toBeDefined();
     expect(getParty(partiesState(), "G1")?.trackStartedAt).toBeUndefined();
     expect(notices.join(" ")).toContain("last track");
+    // About no one in particular, so it may ping no one.
+    expect(mentions).toEqual([undefined]);
     runner.stopAll();
   });
 
@@ -317,7 +322,7 @@ describe("members who can't play", () => {
       play: async () => ({ ok: false, error: "Player command failed: Premium required", status: 403 }),
     });
     const clock = fakeClock();
-    const { runner, notices } = makeRunner(client, clock);
+    const { runner, notices, mentions } = makeRunner(client, clock);
 
     await runner.syncMember("G1", "friend");
 
@@ -325,6 +330,8 @@ describe("members who can't play", () => {
     expect(notices.join(" ")).toContain("Premium");
     // A fragment reason gets its one period from the runner.
     expect(notices[0]?.endsWith("control playback.")).toBe(true);
+    // The drop-out line can carry Spotify's own text, so only the member it is about may be pinged.
+    expect(mentions).toEqual(["friend"]);
     runner.stopAll();
   });
 
@@ -354,7 +361,7 @@ describe("a refresh Spotify couldn't do right now", () => {
   test("costs a member their place only on the SECOND one, like any other blip", async () => {
     const { client, plays } = fakeSpotify();
     const clock = fakeClock();
-    const { runner, notices, warnings } = makeRunner(client, clock, tokenSequence("friend", [UNAVAILABLE]));
+    const { runner, notices, mentions, warnings } = makeRunner(client, clock, tokenSequence("friend", [UNAVAILABLE]));
 
     await runner.start("G1");
     expect(getParty(partiesState(), "G1")?.members).toEqual(["host", "friend"]);
@@ -366,6 +373,7 @@ describe("a refresh Spotify couldn't do right now", () => {
     await runner.skip("G1");
     expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
     expect(notices).toHaveLength(1);
+    expect(mentions).toEqual(["friend"]);
     expect(notices[0]).toContain("<@friend> has dropped out");
     expect(notices[0]).toContain("still saved");
     expect(notices[0]?.endsWith("again.")).toBe(true);

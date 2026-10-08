@@ -10,6 +10,14 @@
 // It is best-effort by construction: before any `/party` command has run in this process there is
 // no client to borrow, so a party that survives a restart keeps PLAYING but goes quiet in chat
 // until someone runs a command again. Playback never depends on this module.
+//
+// Stepping outside the Host API also steps outside `host.announce`'s mention-safe posting (the
+// README's `announce` row says "mention-safe"), so this file sets the mentions itself rather than
+// inherit whatever the borrowed client defaults to -- the host's is `{ parse: [] }` today
+// (rackbops-discord-bot `src/client.ts`), but that is the host's choice, not this file's. A notice
+// pings nobody unless the caller names the one member it is about. A message can carry text the bot
+// did not write -- the runner's drop-out notice embeds Spotify's own error text -- so `@everyone`,
+// `@here` and role mentions must never resolve.
 
 import type { Client } from "discord.js";
 import type { Party } from "./party.js";
@@ -28,14 +36,18 @@ export function resetClientForTest(): void {
 
 /**
  * Posts to the party's channel. Never throws: a deleted channel, a missing permission or a bot with
- * no client yet must not take down the tick or the timer that called it.
+ * no client yet must not take down the tick or the timer that called it. `mention` is the one
+ * Discord user id the message may ping; with none, nobody is pinged.
  */
-export async function notifyParty(party: Party, message: string): Promise<void> {
+export async function notifyParty(party: Party, message: string, mention?: string): Promise<void> {
   if (client === undefined) return;
   try {
     const channel = await client.channels.fetch(party.channelId);
     if (channel === null || !channel.isTextBased() || !("send" in channel)) return;
-    await channel.send({ content: message });
+    await channel.send({
+      content: message,
+      allowedMentions: mention === undefined ? { parse: [] } : { parse: [], users: [mention] },
+    });
   } catch {
     // Deliberately silent: the caller is a timer or the host's tick, and neither has anywhere
     // useful to surface "couldn't post a message about the music that is playing fine".
