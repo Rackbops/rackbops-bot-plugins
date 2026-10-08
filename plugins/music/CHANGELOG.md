@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- The party sweep now honours the abort signal the host gives every tick: it stops between steps
+  (before each party, before its per-member checks, before each resync) once the host's 30 s bound
+  passes or the bot shuts down, instead of carrying on issuing play commands and writing the party
+  file after the host has given up on it, and the Spotify calls it makes are cancelled with the
+  signal. A resync cancelled that way is not counted as a strike against the member. The runner also
+  arms no timer once the plugin has been disposed: a track change or start that was still playing
+  when it was disposed no longer schedules the next boundary afterwards (#147).
 - A party member's failure count now starts fresh with every party and every Join: a strike taken
   in an earlier party, or before leaving and rejoining, no longer follows them into the next one and
   turns a single blip into a drop (or, for the host, into closing the new party). The Join button
