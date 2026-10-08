@@ -869,6 +869,61 @@ describe("the tick, when the host aborts it", () => {
     runner.stopAll();
   });
 
+  test("a resync that succeeded as the host aborted still clears the member's earlier strike", async () => {
+    resetPartiesForTest(openParty(freshParties(), party({ members: ["friend"] })));
+    const controller = new AbortController();
+    const { client } = fakeSpotify({
+      playbackState: async () => DRIFTED,
+      // The play lands, then the host's signal fires: the resync worked.
+      play: async () => {
+        controller.abort();
+        return { ok: true, value: undefined };
+      },
+    });
+    const clock = fakeClock();
+    // Strike one comes from `start`; the sweep's check and its resync get a token each; the boundary
+    // after it is the next blip.
+    const { runner, notices } = makeRunner(
+      client,
+      clock,
+      tokenSequence("friend", [UNAVAILABLE, GOOD, GOOD, UNAVAILABLE]),
+    );
+
+    await runner.start("G1");
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep(controller.signal);
+    await runner.skip("G1");
+
+    // The success cleared the strike, so this blip is a first strike again, not a second.
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["friend"]);
+    expect(notices.filter((m) => m.includes("dropped out"))).toEqual([]);
+    runner.stopAll();
+  });
+
+  test("the log counts the party it stopped in and the ones after it", async () => {
+    const second = party({ guildId: "G2", channelId: "C2", hostId: "host2", members: ["host2"] });
+    resetPartiesForTest(openParty(openParty(freshParties(), party({ members: ["host"] })), second));
+    const controller = new AbortController();
+    const { client } = fakeSpotify({
+      // Only the second party's check lets the host's abort land; the first party is in sync.
+      playbackState: async (accessToken) => {
+        if (accessToken === "host2") {
+          controller.abort();
+          return DRIFTED;
+        }
+        return { ok: true, value: { isPlaying: true, progressMs: 30_000, trackUri: "spotify:track:one" } };
+      },
+    });
+    const clock = fakeClock();
+    const { runner, infos } = makeRunner(client, clock, (id) => ({ ok: true, accessToken: id, scopes: PARTY_SCOPES }));
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep(controller.signal);
+
+    expect(abortedLines(infos)).toEqual(["party sweep aborted by the host; 1 parties left unchecked"]);
+    runner.stopAll();
+  });
+
   test("the sweep's playback read and the resync's play carry the host's signal", async () => {
     resetPartiesForTest(openParty(freshParties(), party({ members: ["host"] })));
     const controller = new AbortController();

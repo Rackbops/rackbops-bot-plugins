@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
   authorizeUrl,
   chunkUris,
@@ -277,11 +277,18 @@ describe("a player call and the host's signal", () => {
   ];
 
   for (const [name, run] of calls) {
-    test(`${name} given the host's signal is aborted with it`, async () => {
+    test(`${name} given the host's signal is aborted with it, and is still bounded by the client's timeout`, async () => {
       const { client, seen } = player();
       const controller = new AbortController();
+      const timeout = spyOn(AbortSignal, "timeout");
+      try {
+        await run(client, controller.signal);
 
-      await run(client, controller.signal);
+        expect(timeout).toHaveBeenCalledTimes(1);
+        expect(timeout).toHaveBeenCalledWith(10_000);
+      } finally {
+        timeout.mockRestore();
+      }
 
       expect(seen).toHaveLength(1);
       expect(seen[0]?.aborted).toBe(false);
