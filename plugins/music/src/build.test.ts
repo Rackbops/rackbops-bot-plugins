@@ -117,7 +117,7 @@ describe("playlistDescription", () => {
     // the apps' cap at 300, so the number is the client's own choice, not a documented contract.
     expect(MAX_DESCRIPTION_LENGTH).toBe(300);
     // Exactly the limit, not just under it: the clip keeps limit - 1 characters and adds the
-    // ellipsis, so the result is as long as Spotify allows and no shorter.
+    // ellipsis, so the result is as long as the limit allows and no shorter.
     expect(description.length).toBe(MAX_DESCRIPTION_LENGTH);
     expect(description.endsWith("…")).toBe(true);
     expect(description.startsWith("T".repeat(MAX_DESCRIPTION_LENGTH - 1))).toBe(true);
