@@ -774,10 +774,12 @@ async function handlePartySkip(interaction: ChatInputCommandInteraction, guildId
     await replyEphemeral(interaction, "Only people in the party can skip.");
     return;
   }
-  // Being in the party is the authorisation, and a skip never uses the skipper's own Spotify: the
-  // runner refreshes every member's token itself when it plays the next track. So there is no access
-  // check here -- which would have been a token refresh, up to ten seconds, ahead of the defer
-  // below, and Discord gives an interaction three seconds before it expires.
+  // Being in the party is the authorisation, so there is no access check here. There used to be one:
+  // a refresh of the skipper's own token, up to ten seconds, ahead of the defer below -- and Discord
+  // gives an interaction three seconds before it expires. The skipper's token is still refreshed,
+  // by the runner and as a member, when it plays the next track; but that is after the
+  // acknowledgement and in parallel with everyone else's, and a skipper whose Spotify can't play
+  // shows up in the outcomes like any other member instead of blocking the skip.
   const { config, runner } = required();
   if (runner === undefined) {
     await replyEphemeral(interaction, formatNotConfigured(config.missing));

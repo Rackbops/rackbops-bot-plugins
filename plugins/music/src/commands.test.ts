@@ -1424,19 +1424,37 @@ describe("the party's add command", () => {
 // ---------------------------------------------------------------------------------------------------
 
 describe("the party's skip command", () => {
-  test("a member's skip is acknowledged before anything is awaited, and needs none of their Spotify", async () => {
+  test("a member's skip is acknowledged before anything is awaited, with no refresh of their token ahead of it", async () => {
     // USER is connected with the party scopes, so the old access check WOULD have refreshed their
-    // token ahead of the defer -- "refresh" must appear nowhere in the sequence.
+    // token ahead of the defer. The runner here is a double that refreshes nothing, so "refresh"
+    // appearing anywhere in the sequence would mean the command layer did it.
     const { calls } = wireParty({
       scopes: PARTY_SCOPES,
       members: ["host", USER],
       queue: [partyTrack("One"), partyTrack("Two")],
     });
     const run = fakePartyCommand("skip", {}, USER, "G1", calls);
-    await handleParty()(run.interaction);
+    const pending = handleParty()(run.interaction);
+    // Synchronously, before the first microtask turn: the defer is already out. An await of anything
+    // -- a refresh, a store commit, a bare Promise.resolve() -- ahead of it would leave `calls` empty.
+    expect(calls).toEqual(["defer"]);
+    await pending;
 
     expect(calls).toEqual(["defer", "skip:G1", "edit"]);
-    expect(run.edits[0]?.content).toContain("Skipped to **Two**");
+    // A public defer: the "Skipped to" line is for the channel.
+    expect(run.defers).toEqual([{}]);
+    expect(run.edits[0]?.content).toContain("Skipped to **Two** -- Band");
+  });
+
+  test("a skip in a server with no party is refused without a defer", async () => {
+    const { calls } = wireParty({ scopes: PARTY_SCOPES, members: ["host", USER] });
+    // The party is in G1; this interaction comes from G2.
+    const run = fakePartyCommand("skip", {}, USER, "G2", calls);
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["reply"]);
+    expect(run.replies[0]?.content).toContain("No party here");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
   });
 
   test("a non-member is refused without a defer", async () => {

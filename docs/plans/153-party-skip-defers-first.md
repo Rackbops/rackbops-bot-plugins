@@ -47,3 +47,10 @@ Written 2026-10-08 against `main` at `3356230`; the test harness it reuses was a
 | Not configured is refused ephemerally | 1, 2 | "not configured is refused ephemerally" | defer before the runner check -- "defer" appears |
 
 Run each mutation in a scratch worktree, never in the tree under test; name the red test per row in the PR.
+
+## Corrections found by the review gate (added after the plan above, which is kept as it was posted)
+
+- **"The skipper's own connection is never used by the skip" (What is wrong, coverage row 2, step 3's CHANGELOG text) is false as written.** The skipper must be a party member, and `runner.skip` -> `advanceParty` -> `playCurrent` runs `playFor` for every member, the skipper included (`runner.ts:233`, `:144`): their token is refreshed and their player driven, and a dead grant there still removes their stored connection (`tokens.ts:74-76`). What the change removes is the command layer's own refresh of the skipper's token, which sat ahead of the defer (before this change the skipper was refreshed twice, once there and once by the runner). The comment in `handlePartySkip` and the CHANGELOG bullet say that instead. Coverage row 2's test therefore proves "the command layer adds no refresh" (the runner double refreshes nothing), and is named that way.
+- **A consequence the plan did not state:** a skipper with a dead grant, no connection or missing scopes used to be refused privately by the access check; now the skip goes ahead, the runner names them in the public "Skipped to" reply (`formatOutcomes`) and drops them from the party on a permanent problem (`runner.ts:150-151`, `:219-224`) -- which closes the party if they are the host (`party.ts:87`). The CHANGELOG says so.
+- Step 2's "keeps only `content` today" is imprecise: the recorder already pushed the whole options object, only its type annotation was narrower.
+- Tests added by the gate: a synchronous check that the defer is the first call (`calls` is `["defer"]` before the first microtask turn), the public defer (`defers` is `[{}]`), and the "No party here." refusal.
