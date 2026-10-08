@@ -30,7 +30,7 @@ export interface PartyTrack {
 export interface Party {
   guildId: string;
   channelId: string;
-  /** Who started it. Only they can stop it, and their leaving ends it. */
+  /** Who started it. They (or anyone who can manage the server) can stop it, and their leaving ends it. */
   hostId: string;
   /** Discord user ids, the host included. Order is join order. */
   members: string[];
@@ -82,8 +82,8 @@ export function addMember(state: PartiesState, guildId: string, userId: string):
 export function removeMember(state: PartiesState, guildId: string, userId: string): PartiesState {
   const party = state.parties[guildId];
   if (party === undefined) return state;
-  // The host leaving ends the party rather than orphaning it: they own stopping it, and a party
-  // playing on into an empty channel is worse than one that closes.
+  // The host leaving ends the party rather than orphaning it: it is theirs to stop (or a server
+  // manager's), and a party playing on into an empty channel is worse than one that closes.
   if (userId === party.hostId) return closeParty(state, guildId);
   return replace(state, { ...party, members: party.members.filter((id) => id !== userId) });
 }
