@@ -370,8 +370,8 @@ export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandida
  *
  * Among split matches the higher artist score wins, then the longer title (it accounts for more of the
  * query), then page order. The result is shaped like `pickBestTrack`'s: `high` for an exact artist,
- * `medium` for a partial one, and a `score` that sits above any title-only score so two matches from
- * the same call stay comparable. The setlist path never comes through here.
+ * `medium` for a partial one, and a `score` of 100 (the title) plus the artist's points. The setlist
+ * path never comes through here.
  */
 export function pickTrackFromQuery(query: string, candidates: readonly TrackCandidate[]): Match | undefined {
   const asTitle = pickBestTrack({ name: query, artist: "" }, candidates);
