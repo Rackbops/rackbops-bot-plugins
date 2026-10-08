@@ -807,8 +807,10 @@ async function handlePartyAdd(interaction: ChatInputCommandInteraction, guildId:
   // long enough for the last track to end (the boundary timer parks `index` at the end of the queue
   // and clears `trackStartedAt`), for a second add to start the party, or for the party to close.
   // And there is no await between this read and the commit below, so nothing can change it in
-  // between. "Not playing" is the whole test: a party that ran off the end is startable whatever its
-  // index, because the track added here is then its current one.
+  // between. "Not playing" is the whole test: a party that is not playing is startable whatever its
+  // index. One that ran off the end has `index` at the end of the queue, so the track added here is
+  // its current one; a party the old version of this check left stuck short of the end (it may be
+  // saved that way) starts on the track it was stuck on, with the new one queued behind it.
   const fresh = getParty(partiesState(), guildId);
   if (fresh === undefined) {
     await interaction.editReply({

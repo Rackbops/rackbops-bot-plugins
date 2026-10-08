@@ -1609,6 +1609,7 @@ function wireParty({
   skipOutcomes = [],
   index = 0,
   search,
+  noClock = false,
 }: {
   scopes: string;
   connected?: boolean;
@@ -1631,6 +1632,8 @@ function wireParty({
   index?: number;
   /** Replaces the Spotify search fake, to run something while a `/party add` is waiting on it. */
   search?: SpotifyClient["searchTracks"];
+  /** Leaves the wiring's clock out, as production does: a started party is stamped with the real time. */
+  noClock?: boolean;
 }): { started: string[]; calls: string[] } {
   const started: string[] = [];
   const calls: string[] = [];
@@ -1686,7 +1689,7 @@ function wireParty({
       : {}),
     serverRunning: () => true,
     // The clock a party an add starts is stamped with (a Date, as `Wiring.now` is).
-    now: () => new Date(PARTY_NOW),
+    ...(noClock ? {} : { now: () => new Date(PARTY_NOW) }),
     log: captureLog,
   });
   return { started, calls };
@@ -1748,6 +1751,9 @@ describe("the party's add command", () => {
       expect(text).not.toContain("Grant it here");
     }
     expect(getParty(partiesState(), "G1")?.queue.map((t) => t.name)).toEqual(["Zero", "One"]);
+    // A plain add to a playing party leaves its clock alone: re-stamping it would send the next
+    // sweep to resync every member to the top of a track that is already well under way.
+    expect(getParty(partiesState(), "G1")?.trackStartedAt).toBe(1);
   });
 
   test("adding to an idle party starts it and the channel hears who queued what", async () => {
@@ -1822,6 +1828,8 @@ describe("the party's add command", () => {
   test("a party left open but not playing, with a track still waiting, is started by the next add", async () => {
     // The wedged shape an earlier late add left behind (and may have saved to parties.json): not
     // playing, but `index` short of the queue's end, which the old test read as "something to play".
+    // The start plays the track it was stuck on ("Stuck"), the new one waits behind it; the reply
+    // still names the track just added, an oddity of this one-off recovery.
     const { started } = wireParty({
       scopes: PARTY_SCOPES,
       party: "idle",
@@ -1865,11 +1873,19 @@ describe("the party's add command", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
+    let arrived = 0;
+    let bothArrived!: () => void;
+    const both = new Promise<void>((resolve) => {
+      bothArrived = resolve;
+    });
     const { started } = wireParty({
       scopes: PARTY_SCOPES,
       party: "idle",
-      // Both adds park here, past their access checks, until the test lets them go together.
+      // Both adds park here, past their access checks, until the test has seen both arrive and lets
+      // them go together.
       search: async () => {
+        arrived += 1;
+        if (arrived === 2) bothArrived();
         await gate;
         return { ok: true, value: ONE_HIT };
       },
@@ -1877,6 +1893,8 @@ describe("the party's add command", () => {
     const first = fakePartyCommand("add", { query: "One" }, USER);
     const second = fakePartyCommand("add", { query: "One" }, USER);
     const pending = [handleParty()(first.interaction), handleParty()(second.interaction)];
+    await both;
+    expect(started).toEqual([]);
     release();
     await Promise.all(pending);
 
@@ -1889,6 +1907,18 @@ describe("the party's add command", () => {
     expect(queuedRun.followUps).toHaveLength(1);
     expect(queuedRun.followUps[0]?.content).not.toContain("Playing for");
     expect(getParty(partiesState(), "G1")?.queue.map((t) => t.name)).toEqual(["One", "One"]);
+  });
+
+  test("without a wiring clock, as in production, the started party is stamped with the real time", async () => {
+    wireParty({ scopes: PARTY_SCOPES, party: "idle", noClock: true });
+    const before = Date.now();
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+    const after = Date.now();
+
+    const stamped = getParty(partiesState(), "G1")?.trackStartedAt;
+    expect(stamped).toBeGreaterThanOrEqual(before);
+    expect(stamped).toBeLessThanOrEqual(after);
   });
 
   test("an add whose party ended while it was searching says so", async () => {
