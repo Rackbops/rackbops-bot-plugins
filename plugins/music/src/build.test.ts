@@ -190,12 +190,32 @@ describe("findSong", () => {
     expect(await findSong(client, "AT", song("One"))).toMatchObject({ ok: false, error: "Spotify returned HTTP 429" });
   });
 
-  test("a failure on the optional second query doesn't discard a match the first one already found", async () => {
+  test("a fatal search failure's trace ends with the failed query, marked", async () => {
+    const asked: string[] = [];
     const { client } = fakeSpotify({}, {
-      searchTracks: async (_t, query) =>
-        query.startsWith("track:")
+      searchTracks: async (_t, query) => {
+        asked.push(query);
+        return { ok: false, error: "Spotify returned HTTP 429" };
+      },
+    });
+    const found = await findSong(client, "AT", song("One"));
+    expect(found.ok).toBe(false);
+    // The failed query, no candidates because none came back, and the reason on the entry itself.
+    expect(found.trace.queries).toStrictEqual([
+      { query: asked[0], candidates: [], error: "Spotify returned HTTP 429" },
+    ]);
+    expect(asked).toHaveLength(1);
+  });
+
+  test("a failure on the optional second query doesn't discard a match the first one already found", async () => {
+    const asked: string[] = [];
+    const { client } = fakeSpotify({}, {
+      searchTracks: async (_t, query) => {
+        asked.push(query);
+        return query.startsWith("track:")
           ? { ok: true, value: [candidate("One", "Someone Else")] } // a usable, if unconfident, match
-          : { ok: false, error: "Spotify returned HTTP 429" },
+          : { ok: false, error: "Spotify returned HTTP 429" };
+      },
     });
     const found = await findSong(client, "AT", song("One"));
     // #61 made this second query possible where before it would never have run at all; a
@@ -203,7 +223,11 @@ describe("findSong", () => {
     expect(found.ok).toBe(true);
     expect(found.ok === true && found.match?.confidence).toBe("low");
     expect(found.trace.hitQuery).toBe(0);
-    expect(found.trace.queries).toHaveLength(1);
+    // ...but it IS in the trace (#192), marked, as the last entry: the search was cut short, not
+    // exhausted, and a reader of the match log can tell the two apart.
+    expect(found.trace.queries).toHaveLength(2);
+    expect(found.trace.queries![1]).toStrictEqual({ query: asked[1], candidates: [], error: "Spotify returned HTTP 429" });
+    expect(found.trace.queries![0]!.error).toBeUndefined();
   });
 });
 
@@ -282,6 +306,50 @@ describe("buildPlaylist", () => {
     });
     const result = await buildPlaylist(client, "AT", setlist());
     expect(result.ok).toBe(false);
+  });
+
+  test("a failed add names the playlist that was created", async () => {
+    const { client, created } = fakeSpotify({ One: [candidate("One")], Two: [candidate("Two")] }, {
+      addTracks: async () => ({ ok: false, error: "Spotify returned HTTP 500 (after adding 100 of 250)" }),
+    });
+
+    const result = await buildPlaylist(client, "AT", setlist());
+
+    expect(created).toHaveLength(1);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // On the result itself, for the match log...
+    expect(result.playlistUrl).toBe("https://open.spotify.com/playlist/PL1");
+    // ...and in the text the user is shown, after the failure it explains.
+    expect(result.error).toContain("HTTP 500 (after adding 100 of 250)");
+    expect(result.error).toContain("https://open.spotify.com/playlist/PL1");
+    expect(result.error).toBe(
+      "Spotify returned HTTP 500 (after adding 100 of 250). " +
+        "The playlist was created and holds whatever landed before that: https://open.spotify.com/playlist/PL1",
+    );
+  });
+
+  test("a failure before the playlist exists carries no playlist", async () => {
+    // Nothing matched: no playlist was made.
+    const none = await buildPlaylist(fakeSpotify({}).client, "AT", setlist());
+    expect(none.ok).toBe(false);
+    expect("playlistUrl" in none).toBe(false);
+
+    // The playlist could not be created.
+    const noPlaylist = fakeSpotify({ One: [candidate("One")] }, {
+      createPlaylist: async () => ({ ok: false, error: "Spotify returned HTTP 403" }),
+    });
+    const refused = await buildPlaylist(noPlaylist.client, "AT", setlist());
+    expect(refused.ok).toBe(false);
+    expect(refused.ok === false && refused.error).toBe("Spotify returned HTTP 403");
+    expect("playlistUrl" in refused).toBe(false);
+  });
+
+  test("a successful build's playlist url is where it always was", async () => {
+    const { client } = fakeSpotify({ One: [candidate("One")], Two: [candidate("Two")] });
+    const result = await buildPlaylist(client, "AT", setlist());
+    expect(result.ok && result.outcome.playlistUrl).toBe("https://open.spotify.com/playlist/PL1");
+    expect(result.ok && "playlistUrl" in result).toBe(false);
   });
 
   // Updated for #63/#64: a cover is now searched under the performer-side names first, and the
@@ -499,8 +567,10 @@ describe("buildPlaylist traces", () => {
     const failed = result.songs[1]!;
     expect(failed.searchArtist).toBe("Band");
     expect(failed.error).toBe("Spotify returned HTTP 429");
-    // The query that failed is recorded, with nothing returned for it.
-    expect(failed.queries).toEqual([{ query: 'track:"Two" artist:"Band"', candidates: [] }]);
+    // The query that failed is recorded, with nothing returned for it and the reason on the entry.
+    expect(failed.queries).toStrictEqual([
+      { query: 'track:"Two" artist:"Band"', candidates: [], error: "Spotify returned HTTP 429" },
+    ]);
   });
 
   test("a failed build still returns its traces", async () => {
@@ -764,6 +834,12 @@ describe("findSong / buildPlaylist: artist fallback (#63/#64)", () => {
     expect(found.ok).toBe(true);
     expect(found.ok === true && found.match?.confidence).toBe("low");
     expect(found.trace.foundUnder).toBe("Performer");
+    // Performer's two queries, then the fallback name's first, which failed: marked, last, no candidates.
+    expect(found.trace.queries).toHaveLength(3);
+    const last = found.trace.queries![2]!;
+    expect(last.query).toContain("Fallback");
+    expect(last.candidates).toEqual([]);
+    expect(last.error).toBe("Spotify returned HTTP 429");
   });
 
   test("called with no artists argument, findSong searches only song.searchArtist -- the replay's contract", async () => {

@@ -74,6 +74,14 @@ export interface CandidateTrace extends ScoreBreakdown {
 export interface QueryTrace {
   query: string;
   candidates: CandidateTrace[];
+  /**
+   * Present when this query FAILED (after the client's own retries): `candidates` is empty because
+   * no answer came back, not because nothing matched. Without it a failure swallowed after a
+   * match was already in hand left a complete-looking query list behind a `low` or `medium` pick,
+   * and tuning could not tell "nothing better exists" from "the fallback search was rate-limited"
+   * (#192).
+   */
+  error?: string;
 }
 
 export type SongOutcome = MatchConfidence | "missing" | "error";
@@ -104,17 +112,23 @@ export interface SongTrace {
    * winning one was "high" (#61): the page that a first `medium`/`low` came from, and the page
    * that then beat it, both matter to whoever reads the trace -- including a `high` reached only
    * after falling back to a second artist name (#63/#64). On an "error" outcome the last entry is
-   * the query that failed, with no candidates.
+   * the query that failed, with no candidates; a failure swallowed after a match was in hand ends
+   * the list the same way (#192) -- the last entry carries `error` and the pick is unchanged.
    */
   queries?: QueryTrace[];
   /** Present when the outcome is "error". */
   error?: string;
 }
 
-/** Both arms carry `songs`: a failed build is exactly the one whose search record matters most. */
+/**
+ * Both arms carry `songs`: a failed build is exactly the one whose search record matters most. The
+ * failure arm carries `playlistUrl` when the playlist WAS created and only adding tracks failed:
+ * that private playlist, holding whatever landed, is in the user's library, and a retry would make
+ * a second one (#192).
+ */
 export type BuildResult =
   | { ok: true; outcome: BuildOutcome; songs: SongTrace[] }
-  | { ok: false; error: string; songs: SongTrace[] };
+  | { ok: false; error: string; songs: SongTrace[]; playlistUrl?: string };
 
 export type FindSongResult =
   | { ok: true; match?: Match; trace: SongTrace }
@@ -183,12 +197,14 @@ function betterAcrossNames(current: BestSoFar | undefined, found: { match: Match
  * the best found so far is not `high`. A `high` under any name ends the search immediately; the
  * name it was found under is `foundUnder` on the returned trace.
  *
- * A search that FAILS (a 429, an expired token) is fatal only when NO match exists yet under any
- * name tried so far -- that is a missing song and an error must never collapse into each other, or
- * a rate-limited run would silently report a setlist whose every song is "not on Spotify". Once
- * any match is in hand, a later failure (the same name's next query, or a later name's) just stops
- * the whole search there and reports the best already found, exactly as if the failed query, and
- * every name after it, had never been attempted (#61, carried across names).
+ * A search that FAILS (a 429 that outlasted the client's retries, an expired token) is fatal only
+ * when NO match exists yet under any name tried so far -- that is a missing song and an error must
+ * never collapse into each other, or a rate-limited run would silently report a setlist whose every
+ * song is "not on Spotify". Once any match is in hand, a later failure (the same name's next query,
+ * or a later name's) just stops the whole search there and reports the best already found, as if
+ * every name after it had never been attempted (#61, carried across names) -- except that the
+ * failed query is the last entry of `queries`, marked with its `error` (#192), so the trace shows
+ * the search was cut short rather than exhausted.
  */
 export async function findSong(
   spotify: SpotifyClient,
@@ -206,8 +222,8 @@ export async function findSong(
     for (const query of buildQueries(wanted)) {
       const result = await spotify.searchTracks(accessToken, query);
       if (!result.ok) {
+        queries.push({ query, candidates: [], error: result.error });
         if (best === undefined && nameBest === undefined) {
-          queries.push({ query, candidates: [] });
           return {
             ok: false,
             error: result.error,
@@ -330,7 +346,15 @@ export async function buildPlaylist(
   // DIFFERENT titles, not the same song played twice, so it is added only once.
   const uris = resolved.map((r) => r.match.track.uri);
   const added = await spotify.addTracks(accessToken, created.value.id, uris);
-  if (!added.ok) return { ok: false, error: added.error, songs };
+  if (!added.ok) {
+    // The playlist exists, private, holding whatever landed before the failure; say where it is.
+    return {
+      ok: false,
+      error: `${added.error}. The playlist was created and holds whatever landed before that: ${created.value.url}`,
+      songs,
+      playlistUrl: created.value.url,
+    };
+  }
 
   return {
     ok: true,

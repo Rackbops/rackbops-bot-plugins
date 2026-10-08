@@ -14,6 +14,7 @@
 // that is the wall an operator will hit and no wording of ours explains it better.
 
 import type { TrackCandidate } from "./matching.js";
+import { defaultSleep, isRetryable, MAX_RETRIES, parseRetryAfter, retryDelay, type SleepLike } from "./retry.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const ACCOUNTS_BASE = "https://accounts.spotify.com";
@@ -195,10 +196,25 @@ export interface SpotifyClient {
   exchangeCode(code: string): Promise<Result<{ accessToken: string; refreshToken: string; scopes?: string }>>;
   /** Trades a stored refresh token for a usable access token (and possibly a rotated refresh token). */
   refresh(refreshToken: string): Promise<Result<SpotifyTokens>>;
-  searchTracks(accessToken: string, query: string): Promise<Result<TrackCandidate[]>>;
-  createPlaylist(accessToken: string, name: string, description: string): Promise<Result<PlaylistCreated>>;
+  // The three calls a `/setlist` build makes (`searchTracks` is also what `/party add` calls). They
+  // retry a bounded number of times (#192): `searchTracks` on a rate limit or a server error, the
+  // two POSTs (`createPlaylist`, `addTracks`) on a rate limit only, since repeating a POST that a
+  // server error followed could duplicate it. Each takes an optional trailing `signal`: once it
+  // fires it cancels the request and ends the retries before the next wait.
+  searchTracks(accessToken: string, query: string, signal?: AbortSignal): Promise<Result<TrackCandidate[]>>;
+  createPlaylist(
+    accessToken: string,
+    name: string,
+    description: string,
+    signal?: AbortSignal,
+  ): Promise<Result<PlaylistCreated>>;
   /** Adds in 100-URI batches, in order; the first failed batch aborts and is reported. */
-  addTracks(accessToken: string, playlistId: string, uris: readonly string[]): Promise<Result<number>>;
+  addTracks(
+    accessToken: string,
+    playlistId: string,
+    uris: readonly string[],
+    signal?: AbortSignal,
+  ): Promise<Result<number>>;
 
   // The player half -- everything below needs PARTY_SCOPES and a Premium account, and each one can
   // fail with "no active device", which is the ordinary state of a Spotify account nobody is
@@ -293,30 +309,76 @@ async function describeFailure(response: Response): Promise<{ error: string; cod
   return code === undefined ? { error } : { error, code };
 }
 
-export function createSpotifyClient(config: SpotifyConfig, fetchImpl: FetchLike = fetch): SpotifyClient {
+export function createSpotifyClient(
+  config: SpotifyConfig,
+  fetchImpl: FetchLike = fetch,
+  sleepImpl: SleepLike = defaultSleep,
+): SpotifyClient {
   const basicAuth = `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString("base64")}`;
 
-  async function call(url: string, init: RequestInit, signal?: AbortSignal): Promise<Result<unknown>> {
-    let response: Response;
-    try {
-      // The client's own bound always applies; a caller's signal (the host's tick signal) is added
-      // to it, so the request ends at whichever comes first.
-      const bounded = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-      response = await fetchImpl(url, {
-        ...init,
-        signal: signal === undefined ? bounded : AbortSignal.any([bounded, signal]),
-      });
-    } catch (err) {
-      const timedOut = err instanceof Error && err.name === "TimeoutError";
-      return { ok: false, error: timedOut ? "Spotify took too long to answer" : "couldn't reach Spotify" };
-    }
-    if (!response.ok) return { ok: false, ...(await describeFailure(response)), status: response.status };
-    // 201/204 bodies: addTracks gets a snapshot object, but nothing reads it.
-    if (response.status === 204) return { ok: true, value: undefined };
-    try {
-      return { ok: true, value: await response.json() };
-    } catch {
-      return { ok: true, value: undefined };
+  /**
+   * One request, or with `opts.retry` a bounded run of them. Only the three BUILD calls retry
+   * (`searchTracks`, `createPlaylist`, `addTracks`): a `/setlist` runs from ~50 searches (more for a
+   * set of covers) against a quota pooled across every dev-mode app the developer owns, so a 429
+   * mid-build would otherwise
+   * throw away every song matched so far. The token calls and the four player calls do not: the
+   * runner's sweep and a party's plays run under the host's bounds and must stay one request long,
+   * and the token refresh is the single flight shared with every command.
+   *
+   * The two retry policies differ on purpose. A search is a read, safe to repeat on any retryable
+   * status ("any": a 429 or a 5xx). `createPlaylist` and `addTracks` are POSTs, which are NOT
+   * idempotent: a 5xx can follow a request Spotify DID apply, and repeating it would make a second
+   * playlist, or add a batch of tracks twice (Spotify allows duplicates). A 429 is a rate limit,
+   * which a client is expected to back off from and retry (RFC 6585; Spotify's guidance), so those
+   * retry on a 429 alone ("rate-limit"), on the assumption that a rate-limited request was not
+   * processed. Any other failure is reported as it is; for a failed `addTracks` the reply then
+   * points at the playlist that was made (#192), while a `createPlaylist` that Spotify applied but
+   * answered with a 5xx or a timeout leaves a playlist nothing can point at.
+   *
+   * A retry waits as `setlistfm.ts` does (`retry.ts`): a `Retry-After` wins, one past the cap ends
+   * the retries, and a transport failure (a timeout, DNS) is never retried. A `signal` that has
+   * already fired ends them before the next wait; one that fires DURING a wait (up to the cap) does
+   * not cut it short, and the next attempt then fails at once on the combined signal.
+   */
+  async function call(
+    url: string,
+    init: RequestInit,
+    signal?: AbortSignal,
+    opts: { retry?: "any" | "rate-limit" } = {},
+  ): Promise<Result<unknown>> {
+    for (let attempt = 0; ; attempt += 1) {
+      let response: Response;
+      try {
+        // The client's own bound always applies; a caller's signal (the host's tick signal) is added
+        // to it, so the request ends at whichever comes first.
+        const bounded = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+        response = await fetchImpl(url, {
+          ...init,
+          signal: signal === undefined ? bounded : AbortSignal.any([bounded, signal]),
+        });
+      } catch (err) {
+        const timedOut = err instanceof Error && err.name === "TimeoutError";
+        return { ok: false, error: timedOut ? "Spotify took too long to answer" : "couldn't reach Spotify" };
+      }
+      if (!response.ok) {
+        const failure = { ok: false as const, ...(await describeFailure(response)), status: response.status };
+        const retryable =
+          opts.retry === "any"
+            ? isRetryable(response.status)
+            : opts.retry === "rate-limit" && response.status === 429;
+        if (!retryable || attempt === MAX_RETRIES) return failure;
+        const delay = retryDelay(attempt, parseRetryAfter(response.headers.get("Retry-After"), Date.now()));
+        if (delay === undefined || signal?.aborted === true) return failure;
+        await sleepImpl(delay);
+        continue;
+      }
+      // 201/204 bodies: addTracks gets a snapshot object, but nothing reads it.
+      if (response.status === 204) return { ok: true, value: undefined };
+      try {
+        return { ok: true, value: await response.json() };
+      } catch {
+        return { ok: true, value: undefined };
+      }
     }
   }
 
@@ -362,23 +424,31 @@ export function createSpotifyClient(config: SpotifyConfig, fetchImpl: FetchLike 
       return tokenCall(new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken }));
     },
 
-    async searchTracks(accessToken, query) {
+    async searchTracks(accessToken, query, signal) {
       const params = new URLSearchParams({ q: query, type: "track", limit: String(SEARCH_LIMIT) });
-      const result = await call(`${API_BASE}/search?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+      const result = await call(
+        `${API_BASE}/search?${params.toString()}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        signal,
+        { retry: "any" },
+      );
       if (!result.ok) return result;
       return { ok: true, value: toTrackCandidates(result.value) };
     },
 
-    async createPlaylist(accessToken, name, description) {
-      const result = await call(`${API_BASE}/me/playlists`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        // Private by default: a playlist auto-created from a Discord command should not appear on
-        // the user's public profile unless they choose to make it so.
-        body: JSON.stringify({ name, description, public: false }),
-      });
+    async createPlaylist(accessToken, name, description, signal) {
+      const result = await call(
+        `${API_BASE}/me/playlists`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          // Private by default: a playlist auto-created from a Discord command should not appear on
+          // the user's public profile unless they choose to make it so.
+          body: JSON.stringify({ name, description, public: false }),
+        },
+        signal,
+        { retry: "rate-limit" },
+      );
       if (!result.ok) return result;
       const created = result.value as { id?: unknown; external_urls?: { spotify?: unknown } };
       if (typeof created?.id !== "string") return { ok: false, error: "Spotify didn't return a playlist id" };
@@ -389,14 +459,19 @@ export function createSpotifyClient(config: SpotifyConfig, fetchImpl: FetchLike 
       return { ok: true, value: { id: created.id, url } };
     },
 
-    async addTracks(accessToken, playlistId, uris) {
+    async addTracks(accessToken, playlistId, uris, signal) {
       let added = 0;
       for (const chunk of chunkUris(uris)) {
-        const result = await call(`${API_BASE}/playlists/${encodeURIComponent(playlistId)}/items`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ uris: chunk }),
-        });
+        const result = await call(
+          `${API_BASE}/playlists/${encodeURIComponent(playlistId)}/items`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ uris: chunk }),
+          },
+          signal,
+          { retry: "rate-limit" },
+        );
         // A partial failure leaves the playlist half-filled on purpose: the tracks that DID land are
         // still useful, and the reply names how many made it rather than pretending nothing happened.
         if (!result.ok) return { ok: false, error: `${result.error} (after adding ${added} of ${uris.length})` };

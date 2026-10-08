@@ -685,6 +685,28 @@ describe("recording a build", () => {
     expect(recorded[0]!.songs.map((s) => s.outcome)).toEqual(["missing", "missing"]);
   });
 
+  test("a failed add tells the user where the half-filled playlist is", async () => {
+    const recorded: MatchRun[] = [];
+    wireBuild(
+      async (run) => void recorded.push(run),
+      buildSpotify({
+        addTracks: async () => ({ ok: false, error: "Spotify returned HTTP 500 (after adding 100 of 250)" }),
+      }),
+    );
+    const run = fakeCommand({ artist: "Band" });
+
+    await handleSetlist()(run.interaction);
+
+    // The reply is the failure text, and it now says where the playlist that was created is...
+    expect(shown(run)).toContain("open.spotify.com/playlist/PL1");
+    expect(shown(run)).toContain("HTTP 500");
+    // ...and so does the log, apart from the error text, so the playlist can be found from the log.
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]!.ok).toBe(false);
+    expect(recorded[0]!.added).toBe(0);
+    expect(recorded[0]!.playlistUrl).toBe("https://open.spotify.com/playlist/PL1");
+  });
+
   test("a build picked from the same-day menu is recorded too", async () => {
     const recorded: MatchRun[] = [];
     wireBuild(async (run) => void recorded.push(run), buildSpotify());
