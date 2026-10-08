@@ -13,6 +13,7 @@ import {
   PARTY_JOIN_ID,
   parsePickerCustomId,
   pickerCustomId,
+  PRIVATE_FAILURE_NOTE,
 } from "./commands.js";
 import {
   commitParties,
@@ -329,32 +330,51 @@ describe("formatPickPrompt", () => {
 /**
  * A stand-in for the one slash-command interaction, carrying only what `handleSetlist` touches.
  * `edits` is what the user would end up seeing, since the handler defers first and then edits.
+ * `followUps` are separate messages (public unless they carry the ephemeral flag themselves), and
+ * `calls` is every call in the order it happened -- Discord resolves a deferred reply with the first
+ * message sent after the defer, so the order decides whether a follow-up lands as its own message.
  */
 function fakeCommand(options: Record<string, string>, userId = "user-1") {
   const edits: { content?: string; components?: unknown[] }[] = [];
   const replies: { content?: string }[] = [];
+  const followUps: { content?: string; flags?: unknown }[] = [];
+  const calls: string[] = [];
   const interaction = {
     user: { id: userId },
     deferred: false,
     replied: false,
     options: { getString: (name: string) => options[name] ?? null },
     deferReply: async () => {
+      calls.push("defer");
       interaction.deferred = true;
     },
     reply: async (opts: { content?: string }) => {
+      calls.push("reply");
       replies.push(opts);
       interaction.replied = true;
     },
     editReply: async (opts: { content?: string; components?: unknown[] }) => {
+      calls.push("edit");
       edits.push(opts);
     },
+    followUp: async (opts: { content?: string; flags?: unknown }) => {
+      calls.push("followUp");
+      followUps.push(opts);
+    },
   };
-  return { interaction: interaction as unknown as ChatInputCommandInteraction, edits, replies };
+  return { interaction: interaction as unknown as ChatInputCommandInteraction, edits, replies, followUps, calls };
 }
 
-/** What the user is shown, wherever the handler chose to put it. */
-function shown(run: { edits: { content?: string }[]; replies: { content?: string }[] }): string {
-  return [...run.replies, ...run.edits].map((m) => m.content ?? "").join("\n");
+/**
+ * What the user is shown, wherever the handler chose to put it. An ephemeral follow-up is shown to
+ * the caller, so it counts; which of these were PUBLIC is for the tests that assert placement.
+ */
+function shown(run: {
+  edits: { content?: string }[];
+  replies: { content?: string }[];
+  followUps: { content?: string }[];
+}): string {
+  return [...run.replies, ...run.edits, ...run.followUps].map((m) => m.content ?? "").join("\n");
 }
 
 function wire(showsOn: SetlistFmClient["showsOn"], latest?: SetlistFmClient["latestForArtist"]): void {
@@ -491,27 +511,52 @@ function fakePick(
   const replies: { content?: string }[] = [];
   const updates: { content?: string; components?: unknown[] }[] = [];
   const edits: { content?: string }[] = [];
+  const followUps: { content?: string; flags?: unknown }[] = [];
+  // Every call in the order it happened, as in `fakeCommand`.
+  const calls: string[] = [];
   const interaction = {
     customId,
     values,
     user: { id: userId },
     isStringSelectMenu: () => isSelect,
     reply: async (opts: { content?: string }) => {
+      calls.push("reply");
       replies.push(opts);
     },
     update: async (opts: { content?: string; components?: unknown[] }) => {
+      calls.push("update");
       updates.push(opts);
     },
     editReply: async (opts: { content?: string }) => {
+      calls.push("edit");
       edits.push(opts);
     },
+    followUp: async (opts: { content?: string; flags?: unknown }) => {
+      calls.push("followUp");
+      followUps.push(opts);
+    },
   };
-  return { interaction: interaction as unknown as MessageComponentInteraction, replies, updates, edits };
+  return {
+    interaction: interaction as unknown as MessageComponentInteraction,
+    replies,
+    updates,
+    edits,
+    followUps,
+    calls,
+  };
 }
 
-function wirePicker(getSetlist: SetlistFmClient["getSetlist"]): void {
+/**
+ * Wires the picker's second half. By default nobody is connected and Spotify is a stand-in nothing
+ * calls; `connected` stores a connection for "user-1" and `spotify` replaces the stand-in, for the
+ * tests that need the build to get past (or fail at) the token.
+ */
+function wirePicker(
+  getSetlist: SetlistFmClient["getSetlist"],
+  { connected = false, spotify }: { connected?: boolean; spotify?: SpotifyClient } = {},
+): void {
   logged = [];
-  resetStoreForTest(freshState());
+  resetStoreForTest(connected ? putConnection(freshState(), "user-1", "RT", 1) : freshState());
   initCommands({
     config: { setlistFmKey: "KEY", missing: [] },
     setlistFm: {
@@ -519,7 +564,7 @@ function wirePicker(getSetlist: SetlistFmClient["getSetlist"]): void {
       latestForArtist: async (): Promise<SetlistFmResult> => ({ ok: false, error: "not used here" }),
       showsOn: async (): Promise<SetlistListResult> => ({ ok: true, setlists: [] }),
     },
-    spotify: {} as unknown as SpotifyClient,
+    spotify: spotify ?? ({} as unknown as SpotifyClient),
     serverRunning: () => true,
     log: captureLog,
   });
@@ -809,6 +854,82 @@ describe("naming the artist used", () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------------------
+// #239: a failed Spotify refresh is the caller's business, not the channel's
+// ---------------------------------------------------------------------------------------------------
+
+/** What a Spotify refresh answers when the stored grant is dead (HTTP 400 `invalid_grant`). */
+const DEAD_GRANT_REFRESH: SpotifyClient["refresh"] = async () => ({
+  ok: false,
+  status: 400,
+  code: "invalid_grant",
+  error: "Refresh token revoked",
+});
+
+/**
+ * The one shape every token failure shares: the public reply is resolved with a neutral line, and
+ * the reason -- the caller's own connection state -- arrives afterwards in a follow-up that only
+ * they can see. `first` is whatever the handler did before the build (`defer` for a command,
+ * `update` for the picker).
+ */
+function expectPrivateFailure(
+  run: {
+    edits: { content?: string }[];
+    followUps: { content?: string; flags?: unknown }[];
+    calls: string[];
+  },
+  first: string,
+  reason: string,
+): void {
+  expect(run.edits).toHaveLength(1);
+  expect(run.edits[0]?.content).toBe(PRIVATE_FAILURE_NOTE);
+  expect(run.followUps).toHaveLength(1);
+  expect(run.followUps[0]?.flags).toBe(MessageFlags.Ephemeral);
+  expect(run.followUps[0]?.content).toContain(reason);
+  expect(run.calls).toEqual([first, "edit", "followUp"]);
+  expectOneStop("token");
+}
+
+describe("a failed Spotify refresh during /setlist stays with the caller", () => {
+  test("a caller who hasn't connected is told privately", async () => {
+    wireBuild(async () => {}, buildSpotify(), { connected: false });
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+
+    expectPrivateFailure(run, "defer", "/spotify connect");
+  });
+
+  test("a dead grant is told privately", async () => {
+    wireBuild(async () => {}, buildSpotify({ refresh: DEAD_GRANT_REFRESH }));
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+
+    expectPrivateFailure(run, "defer", "no longer valid");
+  });
+
+  test("a refresh Spotify can't do right now is told privately too", async () => {
+    wireBuild(
+      async () => {},
+      buildSpotify({ refresh: async () => ({ ok: false, status: 503, error: "Spotify returned HTTP 503" }) }),
+    );
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+
+    expectPrivateFailure(run, "defer", "still saved");
+  });
+
+  test("a successful build still answers in the channel", async () => {
+    wireBuild(async () => {}, buildSpotify());
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain("Added 1 of 2 songs.");
+    expect(run.followUps).toEqual([]);
+    expect(run.calls).toEqual(["defer", "edit"]);
+  });
+});
+
 describe("the show picker", () => {
   test("someone else's click is turned away, since the playlist would be built on their account", async () => {
     let fetched = false;
@@ -848,6 +969,50 @@ describe("the show picker", () => {
     const run = fakePick(pickerCustomId("user-1"), ["bbb222"], "user-1");
     await musicInteractions(run.interaction);
     expect(run.edits[0]!.content).toContain("HTTP 503");
+  });
+
+  test("a picked show whose caller hasn't connected is told privately", async () => {
+    wirePicker(async () => ({ ok: true, setlist: setlist() }));
+    const run = fakePick(pickerCustomId("user-1"), ["abc123"], "user-1");
+    await musicInteractions(run.interaction);
+
+    expect(run.updates).toHaveLength(1);
+    expect(run.updates[0]?.content).toBe("Building the playlist...");
+    expectPrivateFailure(run, "update", "/spotify connect");
+  });
+
+  test("a picked show whose grant is dead is told privately", async () => {
+    wirePicker(async () => ({ ok: true, setlist: setlist() }), {
+      connected: true,
+      spotify: buildSpotify({ refresh: DEAD_GRANT_REFRESH }),
+    });
+    const run = fakePick(pickerCustomId("user-1"), ["abc123"], "user-1");
+    await musicInteractions(run.interaction);
+
+    expect(run.updates).toHaveLength(1);
+    expectPrivateFailure(run, "update", "no longer valid");
+  });
+
+  test("a picked show that builds still answers in the channel", async () => {
+    wirePicker(
+      async () => ({
+        ok: true,
+        setlist: setlist({
+          songs: [
+            { name: "One", searchArtist: "Band", isCover: false },
+            { name: "Two", searchArtist: "Band", isCover: false },
+          ],
+        }),
+      }),
+      { connected: true, spotify: buildSpotify() },
+    );
+    const run = fakePick(pickerCustomId("user-1"), ["abc123"], "user-1");
+    await musicInteractions(run.interaction);
+
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain("Added 1 of 2 songs.");
+    expect(run.followUps).toEqual([]);
+    expect(run.calls).toEqual(["update", "edit"]);
   });
 });
 

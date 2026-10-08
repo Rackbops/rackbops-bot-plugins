@@ -275,7 +275,19 @@ async function recordBuild(setlist: Setlist, built: BuildResult): Promise<void> 
 }
 
 /**
- * Searches, creates and fills the playlist, reporting each failure through `edit` rather than
+ * What the channel is told when the caller's own Spotify connection is why a build did not happen:
+ * the reason itself (their connection state) goes to the caller alone, in a follow-up only they see.
+ */
+export const PRIVATE_FAILURE_NOTE = "Couldn't build that playlist for you. The reason is in a note only you can see.";
+
+/** The two places `buildInto` can write: the public reply, and a message only the caller sees. */
+interface BuildOutput {
+  edit: (content: string) => Promise<void>;
+  whisper: (content: string) => Promise<void>;
+}
+
+/**
+ * Searches, creates and fills the playlist, reporting each failure through `out.edit` rather than
  * throwing. Shared by the slash command and the picker: both arrive here with a resolved setlist
  * and an already-open (deferred or updated) Discord response to write into.
  *
@@ -288,24 +300,30 @@ async function recordBuild(setlist: Setlist, built: BuildResult): Promise<void> 
 async function buildInto(
   setlist: Setlist,
   discordUserId: string,
-  edit: (content: string) => Promise<void>,
+  out: BuildOutput,
   askedArtist?: string,
 ): Promise<void> {
   const { config, spotify } = required();
   if (spotify === undefined) {
     logStop("not-configured", formatNotConfigured(config.missing));
-    await edit(formatNotConfigured(config.missing));
+    await out.edit(formatNotConfigured(config.missing));
     return;
   }
   const token = await accessTokenFor(spotify, discordUserId);
   if (!token.ok) {
     logStop("token", token.error);
-    await edit(token.error);
+    // The text names the caller's own connection state ("haven't connected", "no longer valid"), and
+    // the reply `out.edit` writes to is public: the deferred `/setlist` reply, or the picker message.
+    // So the reason goes in an ephemeral follow-up. The public reply still has to be resolved, hence
+    // the neutral edit first -- a follow-up sent before it would take that reply's place instead of
+    // arriving as its own message.
+    await out.edit(PRIVATE_FAILURE_NOTE);
+    await out.whisper(token.error);
     return;
   }
   const built = await buildPlaylist(spotify, token.accessToken, setlist);
   try {
-    await edit(built.ok ? formatBuildReply(setlist, built.outcome, askedArtist) : built.error);
+    await out.edit(built.ok ? formatBuildReply(setlist, built.outcome, askedArtist) : built.error);
   } finally {
     await recordBuild(setlist, built);
   }
@@ -449,8 +467,13 @@ async function handleSetlist(interaction: ChatInputCommandInteraction): Promise<
   await buildInto(
     resolved.setlist,
     interaction.user.id,
-    async (content) => {
-      await interaction.editReply({ content });
+    {
+      edit: async (content) => {
+        await interaction.editReply({ content });
+      },
+      whisper: async (content) => {
+        await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
+      },
     },
     url === null ? artist ?? undefined : undefined,
   );
@@ -506,8 +529,13 @@ async function handlePick(interaction: MessageComponentInteraction | ModalSubmit
     await interaction.editReply({ content: one.error });
     return;
   }
-  await buildInto(one.setlist, interaction.user.id, async (content) => {
-    await interaction.editReply({ content });
+  await buildInto(one.setlist, interaction.user.id, {
+    edit: async (content) => {
+      await interaction.editReply({ content });
+    },
+    whisper: async (content) => {
+      await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
+    },
   });
 }
 
