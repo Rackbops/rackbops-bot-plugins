@@ -2016,6 +2016,52 @@ describe("the party's add command", () => {
     expect(started).toEqual([]);
   });
 
+  // #155: the option says "Track name, or track and artist".
+  test("a 'title artist' query is queued", async () => {
+    const asked: string[] = [];
+    wireParty({
+      scopes: PARTY_SCOPES,
+      search: async (_token, query) => {
+        asked.push(query);
+        return { ok: true, value: [{ ...track("Bohemian Rhapsody", "Queen"), durationMs: 180_000 }] };
+      },
+    });
+    const run = fakePartyCommand("add", { query: "Bohemian Rhapsody Queen" }, USER);
+    await handleParty()(run.interaction);
+
+    // The query goes to Spotify as typed; the matching is what had to learn the shape.
+    expect(asked).toEqual(["Bohemian Rhapsody Queen"]);
+    expect(run.edits[0]?.content).toContain("Queued **Bohemian Rhapsody**");
+    expect(run.followUps).toHaveLength(1);
+    expect(run.followUps[0]?.content).toContain(`<@${USER}> queued **Bohemian Rhapsody**`);
+    expect(getParty(partiesState(), "G1")?.queue.map((t) => t.name)).toEqual(["Zero", "Bohemian Rhapsody"]);
+  });
+
+  test("an 'artist title' query is queued too, and a title on its own still is", async () => {
+    for (const query of ["Queen Bohemian Rhapsody", "Bohemian Rhapsody"]) {
+      wireParty({
+        scopes: PARTY_SCOPES,
+        search: async () => ({ ok: true, value: [{ ...track("Bohemian Rhapsody", "Queen"), durationMs: 180_000 }] }),
+      });
+      const run = fakePartyCommand("add", { query }, USER);
+      await handleParty()(run.interaction);
+
+      expect(run.edits[0]?.content).toContain("Queued **Bohemian Rhapsody**");
+    }
+  });
+
+  test("a query whose artist half names nobody on the page is still a miss", async () => {
+    wireParty({
+      scopes: PARTY_SCOPES,
+      search: async () => ({ ok: true, value: [{ ...track("Bohemian Rhapsody", "Queen"), durationMs: 180_000 }] }),
+    });
+    const run = fakePartyCommand("add", { query: "Bohemian Rhapsody Beatles" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.edits[0]?.content).toContain('Nothing on Spotify matched "Bohemian Rhapsody Beatles"');
+    expect(run.followUps).toEqual([]);
+  });
+
   test("a track Spotify gave no length for stays with the invoker", async () => {
     const { started } = wireParty({ scopes: PARTY_SCOPES, party: "idle", noDuration: true });
     const run = fakePartyCommand("add", { query: "One" }, USER);
