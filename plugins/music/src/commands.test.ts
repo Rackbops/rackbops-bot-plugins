@@ -13,7 +13,7 @@ import {
 } from "./commands.js";
 import type { SetlistFmClient, SetlistFmResult, SetlistListResult } from "./setlistfm.js";
 import type { SpotifyClient } from "./spotify.js";
-import { freshState, putConnection, resetStoreForTest } from "./store.js";
+import { freshState, musicState, putConnection, resetStoreForTest } from "./store.js";
 import type { BuildOutcome } from "./build.js";
 import type { MatchRun } from "./matchlog.js";
 import type { TrackCandidate } from "./matching.js";
@@ -699,12 +699,28 @@ describe("recording a build", () => {
     const recorded: MatchRun[] = [];
     wireBuild(
       async (run) => void recorded.push(run),
-      buildSpotify({ refresh: async () => ({ ok: false, error: "Refresh token revoked" }) }),
+      buildSpotify({
+        refresh: async () => ({ ok: false, status: 400, code: "invalid_grant", error: "Refresh token revoked" }),
+      }),
     );
     const run = fakeCommand({ artist: "Band" });
     await handleSetlist()(run.interaction);
     expect(shown(run)).toContain("no longer valid");
     expect(recorded).toEqual([]);
+  });
+
+  test("nothing is recorded and the connection is kept when Spotify cannot refresh it right now", async () => {
+    const recorded: MatchRun[] = [];
+    wireBuild(
+      async (run) => void recorded.push(run),
+      buildSpotify({ refresh: async () => ({ ok: false, status: 503, error: "Spotify returned HTTP 503" }) }),
+    );
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+    expect(shown(run)).toContain("still saved");
+    expect(shown(run)).not.toContain("no longer valid");
+    expect(recorded).toEqual([]);
+    expect(musicState().connections["user-1"]?.refreshToken).toBe("RT");
   });
 
   test("nothing is recorded when Spotify is not connected", async () => {
