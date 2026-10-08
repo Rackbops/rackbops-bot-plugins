@@ -24,8 +24,18 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-/** A sleep that returns at once, for tests that would otherwise really wait out a retry. */
-const noSleep: SleepLike = async () => {};
+/**
+ * A sleep that returns at once, for tests that would otherwise really wait out a retry. It throws
+ * after a handful of calls: a retry loop that lost its bound would otherwise spin forever on
+ * microtasks (nothing here ever yields to a timer) and hang the run instead of failing the test.
+ */
+function noSleep(): SleepLike {
+  let sleeps = 0;
+  return async () => {
+    sleeps += 1;
+    if (sleeps > 20) throw new Error("runaway retries");
+  };
+}
 
 describe("authorizeUrl", () => {
   test("carries the client id, redirect, state and only the two playlist scopes", () => {
@@ -290,7 +300,7 @@ describe("createSpotifyClient", () => {
 
   test("a non-JSON error body still yields the status, not a crash", async () => {
     // A 502 is retried on the build calls (#192); the no-op sleep keeps the test from really waiting.
-    const client = createSpotifyClient(CONFIG, async () => new Response("<html>502</html>", { status: 502 }), noSleep);
+    const client = createSpotifyClient(CONFIG, async () => new Response("<html>502</html>", { status: 502 }), noSleep());
     const result = await client.searchTracks("AT", "q");
     expect(result).toEqual({ ok: false, error: "Spotify returned HTTP 502", status: 502 });
   });
@@ -343,7 +353,7 @@ describe("createSpotifyClient", () => {
         call += 1;
         return call === 1 ? json({}, 201) : json({ error: { message: "Rate limited" } }, 429);
       },
-      noSleep,
+      noSleep(),
     );
     const uris = Array.from({ length: 150 }, (_, i) => `spotify:track:${i}`);
     const result = await client.addTracks("AT", "PL1", uris);
