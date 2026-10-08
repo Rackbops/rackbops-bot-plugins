@@ -9,7 +9,9 @@
 // still escapes (a logger that itself throws, say).
 //
 // The log carries NO Discord user id and no token. It records what was searched and what came back,
-// never who asked.
+// never who asked. The one pointer into a user's Spotify library it holds is the URL of the playlist
+// a build made (`playlistUrl`, #192): a link to that private playlist, with no name or id of the
+// person who asked, kept so a half-filled playlist can be found from the log.
 
 import type { HostApi, HostStorage, PluginLog } from "../../../packages/api/contract.js";
 import type { BuildResult, SongTrace } from "./build.js";
@@ -38,6 +40,12 @@ export interface MatchRun {
    * first batch of 100 had landed; the error text says how many made it.
    */
   added: number;
+  /**
+   * The playlist this build made: always on a successful run, and on a failed one only when the
+   * playlist was created and adding tracks failed, so the half-filled playlist in the user's
+   * library can be found from the log (#192).
+   */
+  playlistUrl?: string;
   songs: SongTrace[];
 }
 
@@ -73,6 +81,8 @@ export function toMatchRun(setlist: Setlist, result: BuildResult, at: string): M
   if (setlist.cityName !== undefined && setlist.cityName !== "") run.city = setlist.cityName;
   if (setlist.tourName !== undefined && setlist.tourName !== "") run.tour = setlist.tourName;
   if (!result.ok) run.error = result.error;
+  const playlistUrl = result.ok ? result.outcome.playlistUrl : result.playlistUrl;
+  if (playlistUrl !== undefined) run.playlistUrl = playlistUrl;
   return run;
 }
 
