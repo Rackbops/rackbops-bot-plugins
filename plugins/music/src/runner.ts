@@ -206,11 +206,17 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     }
     const count = (failures.get(key) ?? 0) + 1;
     failures.set(key, count);
-    if (!outcome.fatal && count < MAX_MEMBER_FAILURES) return;
+    const reason = outcome.error ?? "their Spotify stopped responding";
+    if (!outcome.fatal && count < MAX_MEMBER_FAILURES) {
+      // Not dropped yet, and a timer-driven boundary has nobody to reply to, so the log is the only
+      // place a first strike shows up at all.
+      deps.log.warn(`${outcome.discordUserId} in guild ${party.guildId} failed ${count} of ${MAX_MEMBER_FAILURES}: ${reason}`);
+      return;
+    }
     failures.delete(key);
     await commitParties(removeMember(partiesState(), party.guildId, outcome.discordUserId));
-    // The runner's own reasons are fragments; the token lookup's are full sentences. One period.
-    const reason = outcome.error ?? "their Spotify stopped responding";
+    // Some reasons are fragments (Premium, no player, a bare HTTP status), others full sentences
+    // (the token lookup's, the two scope messages). One period either way.
     const stop = reason.endsWith(".") ? "" : ".";
     await deps.notify(party, `<@${outcome.discordUserId}> has dropped out of the party: ${reason}${stop}`);
   }
