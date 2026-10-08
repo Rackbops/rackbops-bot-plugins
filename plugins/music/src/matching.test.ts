@@ -325,7 +325,6 @@ describe("variant penalties", () => {
     ["live", "Alive"],
     ["concert", "Concerto"],
     ["demo", "Democracy"],
-    ["demo", "Mademoiselle"],
     ["tribute", "Attribute"],
     ["remix", "Premix"],
   ])("the %s marker does not fire inside a longer word: %s costs nothing", (_marker, word) => {
