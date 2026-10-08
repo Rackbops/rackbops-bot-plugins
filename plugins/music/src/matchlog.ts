@@ -136,9 +136,10 @@ export async function initMatchLog(host: HostApi): Promise<void> {
 /**
  * Appends one run, persists it and logs its summary line. A failed write (a full disk, a
  * permissions error) is reported with `log.warn` rather than thrown, and the build that triggered
- * it carries on. A logger whose `info` throws is guarded separately and costs nothing: the summary
- * line is lost and the run is still saved. The `warn` in the failure path is not guarded; a logger
- * that throws there rejects this promise, and `commands.ts` (`recordBuild`) contains that.
+ * it carries on. Building and logging the summary line is guarded separately and costs nothing: a
+ * logger whose `info` throws loses the line, never the run, which is still saved. The `warn` in the
+ * failure path is not guarded; a logger that throws there rejects this promise, and `commands.ts`
+ * (`recordBuild`) contains that.
  *
  * The summary is logged BEFORE the write, so `docker logs` still shows the build when the write is
  * the thing that failed.
@@ -156,7 +157,7 @@ export async function recordRun(run: MatchRun): Promise<void> {
     try {
       log?.info(summarize(run));
     } catch {
-      // A logger that throws is the host's problem; the run is still saved.
+      // A logger that throws, or a summary that cannot be built, never costs the run its save.
     }
     await writer.save(current);
   } catch (err) {

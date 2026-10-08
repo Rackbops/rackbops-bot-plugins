@@ -30,10 +30,14 @@ describe("normalize", () => {
     // the acute accent, prime and fullwidth apostrophe setlist.fm titles carry ("Don´t Stop
     // Believin´"). Keyed by code point so a failure names the character that turned into a space.
     const apostrophes = ["'", "`", "‘", "’", "ʼ", "´", "′", "＇"];
+    // Two apostrophes of the same kind per title, both inside it, so a replace that stops at the
+    // first one (or one that leaves a trailing apostrophe for `trim` to hide) is caught too.
     const normalized = Object.fromEntries(
-      apostrophes.map((c) => [c.codePointAt(0)!.toString(16), normalize(`Don${c}t Stop`)]),
+      apostrophes.map((c) => [c.codePointAt(0)!.toString(16), normalize(`Don${c}t Won${c}t Stop`)]),
     );
-    expect(normalized).toEqual(Object.fromEntries(apostrophes.map((c) => [c.codePointAt(0)!.toString(16), "dont stop"])));
+    expect(normalized).toEqual(
+      Object.fromEntries(apostrophes.map((c) => [c.codePointAt(0)!.toString(16), "dont wont stop"])),
+    );
     // And the end to end shape of the bug: setlist.fm's spelling against Spotify's.
     expect(normalize("Don´t Stop Believin´")).toBe(normalize("Don't Stop Believin'"));
   });
@@ -343,14 +347,22 @@ describe("pickBestTrack", () => {
       }
     });
 
-    test("markers stack: two lesser ones stay eligible, enough of them to reach 100 do not", () => {
-      // The threshold is the total, not the kind of marker: instrumental (45) + remix (30) is 75,
-      // and adding live (25) makes 100.
-      const two = track("Let It Be (Instrumental Remix)", ["The Beatles"]);
-      expect(pickBestTrack(letItBe, [two])!.track).toBe(two);
-      const three = track("Let It Be (Instrumental Remix Live)", ["The Beatles"]);
-      expect(scoreCandidate(letItBe, three)).toBe(72 + 40 - 100);
-      expect(pickBestTrack(letItBe, [three])).toBeUndefined();
+    test("markers stack: a total below 100 stays eligible, one that reaches 100 does not", () => {
+      // The threshold is the TOTAL, not the kind of marker: instrumental (45) + remix (30) is 75,
+      // instrumental + sped up (50) is 95, and instrumental + remix + live (25) makes exactly 100.
+      // (Commentary is 60, so commentary + instrumental is 105 and is rejected like the rest.)
+      for (const [title, penalty] of [
+        ["Let It Be (Instrumental Remix)", 75],
+        ["Let It Be (Instrumental Sped Up)", 95],
+      ] as const) {
+        const below = track(title, ["The Beatles"]);
+        expect(explainCandidate(letItBe, below).penalty).toBe(penalty);
+        expect(pickBestTrack(letItBe, [below])!.track).toBe(below);
+      }
+      const reaches = track("Let It Be (Instrumental Remix Live)", ["The Beatles"]);
+      expect(explainCandidate(letItBe, reaches).penalty).toBe(100);
+      expect(scoreCandidate(letItBe, reaches)).toBe(72 + 40 - 100);
+      expect(pickBestTrack(letItBe, [reaches])).toBeUndefined();
     });
   });
 

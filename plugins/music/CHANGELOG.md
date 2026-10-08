@@ -294,10 +294,11 @@
 
 - `/setlist artist:<name> date:<date>` builds the playlist from the show on a particular night,
   rather than only the artist's most recent one. The date is accepted as `2026-09-08` or
-  `08-09-2026`, with `-`, `/` or `.` between the parts (mixed too: `2026/09-08`, `8.9.2026`), and
-  sent on in setlist.fm's own `dd-MM-yyyy`, which its search parameter requires -- an ISO date
-  there matches nothing, silently. A date that starts with a one- or two-digit group is always
-  read day-first, so `09/08/2026` is 9 August; there is no month-first spelling.
+  `08-09-2026`, with `-`, `/` or `.` between the parts (`2026/9/8`, `8.9.2026`, and mixed ones
+  such as `08.09/2026`), and sent on in setlist.fm's own `dd-MM-yyyy`, which its search parameter
+  requires -- an ISO date there matches nothing, silently. A date that starts with a one- or
+  two-digit group is always read day-first, so `09/08/2026` is 9 August; there is no month-first
+  spelling.
 
   A band can play a festival slot in the afternoon and a club show the same night, and setlist.fm
   also carries genuine duplicate entries for one gig, so an artist-and-date search can honestly

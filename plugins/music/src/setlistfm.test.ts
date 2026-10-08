@@ -412,6 +412,14 @@ describe("parseDateOption", () => {
     expect(parseDateOption("08.09.2026")).toBe("08-09-2026");
   });
 
+  test("the separators may be mixed, and a leading short group is always the day (#191)", () => {
+    expect(parseDateOption("08.09/2026")).toBe("08-09-2026");
+    expect(parseDateOption("2026/09-08")).toBe("08-09-2026");
+    // A US-style 09/08/2026 is 9 August, not 8 September: there is no month-first reading.
+    expect(parseDateOption("09/08/2026")).toBe("09-08-2026");
+    expect(parseDateOption("03/04/2026")).toBe("03-04-2026");
+  });
+
   test("surrounding whitespace is forgiven", () => {
     expect(parseDateOption("  2026-09-08 ")).toBe("08-09-2026");
   });
