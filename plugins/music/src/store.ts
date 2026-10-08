@@ -152,10 +152,20 @@ export async function commit(next: MusicState): Promise<void> {
   if (writer) await writer.save(current);
 }
 
-/** Loads (or creates) `setlist.json`. Runs in `activate()`, never in `createPlugin`. */
+/** Loads (or creates) `music.json`. Runs in `activate()`, never in `createPlugin`. */
 export async function initStore(host: HostApi): Promise<void> {
   const path = `${host.dataDir}/music.json`;
-  current = await host.storage.readJsonOrFresh<MusicState>(path, freshState, "music");
+  const loaded: unknown = await host.storage.readJsonOrFresh<MusicState>(path, freshState, "music");
+  // A file that parses to `null`, an array or a primitive is valid JSON, so the host's reader hands it
+  // back as-is rather than treating it as corrupt. It is not a state: `null` and primitives made the
+  // map guards below throw and take `activate()` down, and an array was kept as an array carrying the
+  // two maps, which serialises back as `[]`. Say so in the log -- the file is replaced on the next write.
+  if (typeof loaded === "object" && loaded !== null && !Array.isArray(loaded)) {
+    current = loaded as MusicState;
+  } else {
+    host.log.warn(`${path} holds JSON that is not an object -- starting from a fresh state (the file is overwritten on the next save)`);
+    current = freshState();
+  }
   // A file written by an older version, or one hand-edited into the wrong shape, must not make
   // every later access throw on a missing map.
   if (typeof current.connections !== "object" || current.connections === null) current.connections = {};
@@ -170,9 +180,11 @@ export function resetStoreForTest(state: MusicState, storage?: HostStorage, path
 }
 
 /**
- * A 32-byte URL-safe random token, used as the OAuth `state`. `crypto.randomUUID` would be too
- * short to be a CSRF token on its own, and this is the only thing standing between the callback
- * and an attacker-chosen Discord id.
+ * 32 random bytes as base64url (43 URL-safe characters; `store.test.ts` pins at least 43 and the
+ * character class), used as the OAuth `state`. This is the only thing standing between the callback
+ * and an attacker-chosen Discord id, so it is single-use and short-lived (see `redeemPendingAuth`).
+ * A v4 UUID's 122 random bits would also be unguessable, so the longer token is a margin, not a
+ * requirement; base64url keeps it URL-safe without escaping.
  */
 export function generateStateToken(): string {
   const bytes = new Uint8Array(32);

@@ -4,6 +4,11 @@ import type { TrustedProxy } from "../../../packages/net/clientIp.js";
 
 const PATH = "/spotify/callback";
 
+// `startCallbackServer` takes its `TrustedProxy` explicitly (no default), so every real-listener test
+// passes one of these two fixed fakes: never trust `CF-Connecting-IP` / always trust it.
+const TRUST_NONE: TrustedProxy = { isTrusted: () => false, refresh: async () => {} };
+const TRUST_ALL: TrustedProxy = { isTrusted: () => true, refresh: async () => {} };
+
 function makeDeps(overrides: Partial<CallbackDeps> = {}): CallbackDeps {
   return {
     callbackPath: PATH,
@@ -246,7 +251,7 @@ describe("startCallbackServer", () => {
       saveConnection: async (id, token) => {
         saved.push([id, token]);
       },
-    }));
+    }), TRUST_NONE);
     try {
       const response = await fetch(`http://127.0.0.1:${server.port}${PATH}?code=C&state=T`);
       expect(response.status).toBe(200);
@@ -257,7 +262,7 @@ describe("startCallbackServer", () => {
   });
 
   test("stop() closes the listener", async () => {
-    const server = startCallbackServer(0, makeDeps());
+    const server = startCallbackServer(0, makeDeps(), TRUST_NONE);
     const { port } = server;
     server.stop();
     await expect(fetch(`http://127.0.0.1:${port}${PATH}?code=C&state=T`)).rejects.toThrow();
@@ -274,7 +279,7 @@ describe("startCallbackServer", () => {
         },
       },
       log: { error: (m, e) => errors.push(`${m} | ${String(e)}`) },
-    }));
+    }), TRUST_NONE);
     try {
       const response = await fetch(`http://127.0.0.1:${server.port}${PATH}?code=C&state=T`);
       expect(response.status).toBe(500);
@@ -290,6 +295,17 @@ describe("startCallbackServer", () => {
     }
   });
 
+  test("the trusted proxy is a required argument (#189)", () => {
+    // Checked by `bun run check`, not at run time: if `proxy` ever grew a default again, the
+    // directive below would be an unused `@ts-expect-error` and the typecheck would fail. The
+    // function is never called, so no listener starts.
+    const never = () => {
+      // @ts-expect-error -- startCallbackServer takes its TrustedProxy explicitly
+      startCallbackServer(0, makeDeps());
+    };
+    expect(typeof never).toBe("function");
+  });
+
   test("the server's own error handler also answers when no logger is wired (#190)", async () => {
     const server = startCallbackServer(0, makeDeps({
       rateLimiter: {
@@ -297,7 +313,7 @@ describe("startCallbackServer", () => {
           throw new Error("limiter exploded");
         },
       },
-    }));
+    }), TRUST_NONE);
     try {
       const response = await fetch(`http://127.0.0.1:${server.port}${PATH}?code=C&state=T`);
       expect(response.status).toBe(500);
@@ -315,9 +331,6 @@ describe("startCallbackServer", () => {
  * process's own loopback peer address (which can be "127.0.0.1" or "::1" depending on the host).
  */
 describe("client-IP trust boundary (#69)", () => {
-  const TRUST_NONE: TrustedProxy = { isTrusted: () => false, refresh: async () => {} };
-  const TRUST_ALL: TrustedProxy = { isTrusted: () => true, refresh: async () => {} };
-
   function depsWithBudget(max: number): CallbackDeps {
     return makeDeps({ rateLimiter: createRateLimiter({ windowMs: 60_000, max }) });
   }
