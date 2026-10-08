@@ -35,7 +35,7 @@ export function betterMatch(a: Match, b: Match): Match {
 
 /** Spotify rejects a playlist name longer than this. */
 const MAX_NAME_LENGTH = 100;
-const MAX_DESCRIPTION_LENGTH = 300;
+export const MAX_DESCRIPTION_LENGTH = 300;
 
 export interface ResolvedSong {
   song: SetlistSong;
