@@ -13,6 +13,10 @@
   as a strike against the member. The runner also arms no timer once the plugin has been disposed: a
   track change or start that was still playing when it was disposed no longer schedules the next
   boundary afterwards (#147).
+- The reply after an add that starts an idle party, and the reply after `/party skip`, are now
+  clipped to Discord's 2000 characters as a whole. Before, the per-member outcome list was clipped
+  but the leading line ("<@user> queued ...", "Skipped to ...") was added on top, so with many
+  members failing at once the message was too long and Discord refused it (#240).
 - A party member's failure count now starts fresh with every party and every Join: a strike taken
   in an earlier party, or before leaving and rejoining, no longer follows them into the next one and
   turns a single blip into a drop (or, for the host, into closing the new party). The Join button
