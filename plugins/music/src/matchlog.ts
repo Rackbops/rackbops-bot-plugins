@@ -9,7 +9,9 @@
 // still escapes (a logger that itself throws, say).
 //
 // The log carries NO Discord user id and no token. It records what was searched and what came back,
-// never who asked.
+// never who asked. The one pointer into a user's Spotify library it holds is the URL of the playlist
+// a build made (`playlistUrl`, #192): a link to that private playlist, with no name or id of the
+// person who asked, kept so a half-filled playlist can be found from the log.
 
 import type { HostApi, HostStorage, PluginLog } from "../../../packages/api/contract.js";
 import type { BuildResult, SongTrace } from "./build.js";

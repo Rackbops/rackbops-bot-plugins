@@ -196,9 +196,11 @@ export interface SpotifyClient {
   exchangeCode(code: string): Promise<Result<{ accessToken: string; refreshToken: string; scopes?: string }>>;
   /** Trades a stored refresh token for a usable access token (and possibly a rotated refresh token). */
   refresh(refreshToken: string): Promise<Result<SpotifyTokens>>;
-  // The three calls a `/setlist` build makes. Each retries a rate limit or a server error a bounded
-  // number of times (#192), and takes an optional trailing `signal` that ends those retries (and
-  // cancels the request) once it fires.
+  // The three calls a `/setlist` build makes (`searchTracks` is also what `/party add` calls). They
+  // retry a bounded number of times (#192): `searchTracks` on a rate limit or a server error, the
+  // two POSTs (`createPlaylist`, `addTracks`) on a rate limit only, since repeating a POST that a
+  // server error followed could duplicate it. Each takes an optional trailing `signal` that ends
+  // the retries (and cancels the request) once it fires.
   searchTracks(accessToken: string, query: string, signal?: AbortSignal): Promise<Result<TrackCandidate[]>>;
   createPlaylist(
     accessToken: string,
@@ -320,15 +322,24 @@ export function createSpotifyClient(
    * quota pooled across every dev-mode app the developer owns, so a 429 mid-build would otherwise
    * throw away every song matched so far. The token calls and the four player calls do not: the
    * runner's sweep and a party's plays run under the host's bounds and must stay one request long,
-   * and the token refresh is the single flight shared with every command. A retry waits as
-   * `setlistfm.ts` does (`retry.ts`): a `Retry-After` wins, one past the cap ends the retries, and a
-   * transport failure (a timeout, DNS) is never retried. An aborted `signal` ends them too.
+   * and the token refresh is the single flight shared with every command.
+   *
+   * The two retry policies differ on purpose. A search is a read, safe to repeat on any retryable
+   * status ("any": a 429 or a 5xx). `createPlaylist` and `addTracks` are POSTs, which are NOT
+   * idempotent: a 5xx can follow a request Spotify DID apply, and repeating it would make a second
+   * playlist, or add a batch of tracks twice (Spotify allows duplicates). A 429 is refused before it
+   * is processed, so those retry on a 429 alone ("rate-limit"); any other failure is reported as it
+   * is, and the reply points at the playlist that was made (#192).
+   *
+   * A retry waits as `setlistfm.ts` does (`retry.ts`): a `Retry-After` wins, one past the cap ends
+   * the retries, and a transport failure (a timeout, DNS) is never retried. An aborted `signal` ends
+   * them too.
    */
   async function call(
     url: string,
     init: RequestInit,
     signal?: AbortSignal,
-    opts: { retry?: boolean } = {},
+    opts: { retry?: "any" | "rate-limit" } = {},
   ): Promise<Result<unknown>> {
     for (let attempt = 0; ; attempt += 1) {
       let response: Response;
@@ -346,7 +357,11 @@ export function createSpotifyClient(
       }
       if (!response.ok) {
         const failure = { ok: false as const, ...(await describeFailure(response)), status: response.status };
-        if (opts.retry !== true || !isRetryable(response.status) || attempt === MAX_RETRIES) return failure;
+        const retryable =
+          opts.retry === "any"
+            ? isRetryable(response.status)
+            : opts.retry === "rate-limit" && response.status === 429;
+        if (!retryable || attempt === MAX_RETRIES) return failure;
         const delay = retryDelay(attempt, parseRetryAfter(response.headers.get("Retry-After"), Date.now()));
         if (delay === undefined || signal?.aborted === true) return failure;
         await sleepImpl(delay);
@@ -410,7 +425,7 @@ export function createSpotifyClient(
         `${API_BASE}/search?${params.toString()}`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
         signal,
-        { retry: true },
+        { retry: "any" },
       );
       if (!result.ok) return result;
       return { ok: true, value: toTrackCandidates(result.value) };
@@ -427,7 +442,7 @@ export function createSpotifyClient(
           body: JSON.stringify({ name, description, public: false }),
         },
         signal,
-        { retry: true },
+        { retry: "rate-limit" },
       );
       if (!result.ok) return result;
       const created = result.value as { id?: unknown; external_urls?: { spotify?: unknown } };
@@ -450,7 +465,7 @@ export function createSpotifyClient(
             body: JSON.stringify({ uris: chunk }),
           },
           signal,
-          { retry: true },
+          { retry: "rate-limit" },
         );
         // A partial failure leaves the playlist half-filled on purpose: the tracks that DID land are
         // still useful, and the reply names how many made it rather than pretending nothing happened.

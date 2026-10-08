@@ -26,7 +26,7 @@ function json(body: unknown, status = 200): Response {
 
 /**
  * A sleep that returns at once, for tests that would otherwise really wait out a retry. It throws
- * after a handful of calls: a retry loop that lost its bound would otherwise spin forever on
+ * after 20 calls: a retry loop that lost its bound would otherwise spin forever on
  * microtasks (nothing here ever yields to a timer) and hang the run instead of failing the test.
  */
 function noSleep(): SleepLike {
@@ -591,19 +591,24 @@ describe("retrying the build calls", () => {
 
   /**
    * A client over a fetch that answers `script` in order (the last answer repeats), counting its
-   * calls, and a sleep that records the delays it was asked for instead of waiting. An `Error` in
-   * the script is thrown, as a transport failure is.
+   * calls, and a sleep that records the delays it was asked for instead of waiting (or, with
+   * `hooks.sleep`, waits on whatever that returns). An `Error` in the script is thrown, as a
+   * transport failure is. `hooks.onFetch` runs at the start of every fetch.
    */
-  function scripted(script: (Answer | Error)[], onFetch?: () => void) {
+  function scripted(
+    script: (Answer | Error)[],
+    hooks: { onFetch?: () => void; sleep?: (ms: number) => Promise<void> } = {},
+  ) {
     let calls = 0;
     const sleeps: number[] = [];
     const client = createSpotifyClient(
       CONFIG,
       async () => {
-        onFetch?.();
+        hooks.onFetch?.();
         // A retry loop with no bound would spin forever on microtasks (the fake sleep never yields
         // to a timer), so the run would hang instead of failing; a runaway ends as a transport
-        // failure, and the "bounded" test then fails on its call count.
+        // failure, and the "bounded" test then fails on its result (`couldn't reach Spotify`
+        // instead of the 503) before it gets to its call count.
         if (calls >= 25) throw new Error("runaway retries");
         const answer = script[Math.min(calls, script.length - 1)]!;
         calls += 1;
@@ -612,6 +617,7 @@ describe("retrying the build calls", () => {
       },
       async (ms) => {
         sleeps.push(ms);
+        await hooks.sleep?.(ms);
       },
     );
     return { client, sleeps, calls: () => calls };
@@ -700,7 +706,7 @@ describe("retrying the build calls", () => {
 
   test("an abort ends the retries", async () => {
     const controller = new AbortController();
-    const { client, sleeps, calls } = scripted([failure(429, "1"), found], () => controller.abort());
+    const { client, sleeps, calls } = scripted([failure(429, "1"), found], { onFetch: () => controller.abort() });
 
     const result = await client.searchTracks("AT", "q", controller.signal);
 
@@ -709,8 +715,58 @@ describe("retrying the build calls", () => {
     expect(sleeps).toEqual([]);
   });
 
-  test("createPlaylist is retried the same way", async () => {
-    const created: Answer = () => json({ id: "PL1" }, 201);
+  test("each wait finishes before the next attempt starts", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { client, sleeps, calls } = scripted([failure(429, "1"), found], { sleep: () => gate });
+
+    const pending = client.searchTracks("AT", "q");
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    // Asked to wait a second, and has not gone back to Spotify yet.
+    expect(sleeps).toEqual([1_000]);
+    expect(calls()).toBe(1);
+
+    release();
+    const result = await pending;
+    expect(result.ok).toBe(true);
+    expect(calls()).toBe(2);
+  });
+
+  test("a Retry-After given as an HTTP date is waited out from now", async () => {
+    const now = spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    try {
+      const { client, sleeps } = scripted([failure(429, new Date(1_700_000_002_000).toUTCString()), found]);
+
+      const result = await client.searchTracks("AT", "q");
+
+      expect(result.ok).toBe(true);
+      expect(sleeps).toEqual([2_000]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  test("each attempt gets its own 10 s bound", async () => {
+    const timeout = spyOn(AbortSignal, "timeout");
+    try {
+      const { client } = scripted([failure(503), found]);
+
+      await client.searchTracks("AT", "q");
+
+      expect(timeout).toHaveBeenCalledTimes(2);
+      expect(timeout).toHaveBeenCalledWith(10_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  const created: Answer = () => json({ id: "PL1" }, 201);
+  const added: Answer = () => json({ snapshot_id: "s" }, 201);
+
+  test("createPlaylist is retried on a 429", async () => {
     const { client, sleeps, calls } = scripted([failure(429, "1"), created]);
 
     const result = await client.createPlaylist("AT", "Name", "Desc");
@@ -720,8 +776,7 @@ describe("retrying the build calls", () => {
     expect(sleeps).toEqual([1_000]);
   });
 
-  test("addTracks is retried the same way, batch by batch", async () => {
-    const added: Answer = () => json({ snapshot_id: "s" }, 201);
+  test("addTracks is retried on a 429, batch by batch", async () => {
     const { client, sleeps, calls } = scripted([failure(429, "1"), added, added]);
     const uris = Array.from({ length: 150 }, (_, i) => `spotify:track:${i}`);
 
@@ -731,6 +786,63 @@ describe("retrying the build calls", () => {
     expect(calls()).toBe(3);
     expect(sleeps).toEqual([1_000]);
   });
+
+  // The two POSTs are not idempotent: a 5xx can follow a request Spotify DID apply, and repeating
+  // it would make a second playlist or add a batch of tracks twice. Only a 429 (refused before it
+  // is processed) is repeated; the build then fails and the reply points at the playlist it made.
+  const posts: [string, (c: ReturnType<typeof createSpotifyClient>, s?: AbortSignal) => Promise<{ ok: boolean }>, Answer][] = [
+    ["createPlaylist", (c, s) => c.createPlaylist("AT", "Name", "Desc", s), created],
+    ["addTracks", (c, s) => c.addTracks("AT", "PL1", ["spotify:track:a"], s), added],
+  ];
+
+  for (const [name, run, ok] of posts) {
+    test(`${name} is not retried on a 5xx, which may have been applied`, async () => {
+      const { client, sleeps, calls } = scripted([failure(503), ok]);
+
+      const result = await run(client);
+
+      expect(result.ok).toBe(false);
+      expect(calls()).toBe(1);
+      expect(sleeps).toEqual([]);
+    });
+
+    test(`${name} is not retried on a 500 either`, async () => {
+      const { client, sleeps, calls } = scripted([failure(500, "1"), ok]);
+
+      expect((await run(client)).ok).toBe(false);
+      expect(calls()).toBe(1);
+      expect(sleeps).toEqual([]);
+    });
+
+    test(`${name} stops retrying once the host's signal has fired`, async () => {
+      const controller = new AbortController();
+      const { client, sleeps, calls } = scripted([failure(429, "1"), ok], { onFetch: () => controller.abort() });
+
+      const result = await run(client, controller.signal);
+
+      expect(result.ok).toBe(false);
+      expect(calls()).toBe(1);
+      expect(sleeps).toEqual([]);
+    });
+  }
+
+  const everyBuildCall: [string, (c: ReturnType<typeof createSpotifyClient>, s: AbortSignal) => Promise<{ ok: boolean }>, Answer][] = [
+    ["searchTracks", (c, s) => c.searchTracks("AT", "q", s), found],
+    ["createPlaylist", (c, s) => c.createPlaylist("AT", "Name", "Desc", s), created],
+    ["addTracks", (c, s) => c.addTracks("AT", "PL1", ["spotify:track:a"], s), added],
+  ];
+
+  for (const [name, run, ok] of everyBuildCall) {
+    test(`${name}: a signal that has not fired does not stop the retries`, async () => {
+      const { client, sleeps, calls } = scripted([failure(429, "1"), ok]);
+
+      const result = await run(client, new AbortController().signal);
+
+      expect(result.ok).toBe(true);
+      expect(calls()).toBe(2);
+      expect(sleeps).toEqual([1_000]);
+    });
+  }
 });
 
 describe("a player call and the host's signal", () => {

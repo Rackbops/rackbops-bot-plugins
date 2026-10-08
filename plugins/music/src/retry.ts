@@ -1,6 +1,8 @@
 // The retry policy both HTTP clients share: setlist.fm's (every call) and Spotify's (the build
-// calls only -- see `spotify.ts`). Moved out of `setlistfm.ts` unchanged so there is one set of
-// numbers and one reading of `Retry-After`, not two that drift (#192).
+// calls only -- see `spotify.ts`). Moved out of `setlistfm.ts` with the same logic and numbers (the
+// constants and `defaultSleep` gained `export`, and `SleepLike`'s comment no longer points at
+// `FetchLike`) so there is one set of numbers and one reading of `Retry-After`, not two that drift
+// (#192).
 
 /** Injected so the retry tests don't actually wait. */
 export type SleepLike = (ms: number) => Promise<void>;
