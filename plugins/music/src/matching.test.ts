@@ -274,6 +274,80 @@ describe("explainCandidate", () => {
     const page = [noArtist, alsoNoArtist];
     expect(explainCandidate(song, noArtist, page).tieBreak).toBe(0);
   });
+
+  // #193: the sibling check inside the tieBreak loop scores the OTHER rows with the song's suite
+  // too, so a recording that only names the suite still counts as another edition of the same
+  // artist's work. Without the suite argument that sibling scores 0 on title and drops out of the
+  // count, which no other test notices: every other tieBreak case is a plain (non-suite) title.
+  test("the suite-aware sibling check counts a whole-suite recording as an edition", () => {
+    const suitePart = { name: "2112 Part II: The Temples of Syrinx", artist: "Rush" };
+    const exact = track("2112 Part II: The Temples of Syrinx", ["Rush"]);
+    const wholeSuite = track("2112: Overture / The Temples Of Syrinx / Discovery", ["Rush"]);
+
+    // The sibling reaches title > 0 only through the suite rule (60): its title does not contain
+    // the song's own, so the plain rules score it 0.
+    expect(explainCandidate(suitePart, wholeSuite).title).toBe(60);
+    expect(explainCandidate(suitePart, exact, [exact, wholeSuite]).tieBreak).toBe(0.01);
+  });
+});
+
+// #193: every row of VARIANT_PENALTIES, one case each. Most rows were removable, or their number
+// changeable, with the suite green: the cases above pin the karaoke and live rows, the
+// "in the style of" and "originally (performed) by" alternatives, and nothing else.
+describe("variant penalties", () => {
+  const song = { name: "Song", artist: "Band" };
+
+  test.each<[string, number]>([
+    ["commentary", 60],
+    ["instrumental", 45],
+    ["remix", 30],
+    ["rmx", 30],
+    ["live", 25],
+    ["concert", 25],
+    ["demo", 20],
+    ["rehearsal", 20],
+    ["sped up", 50],
+    ["slowed", 50],
+    ["nightcore", 50],
+    ["made popular by", 100],
+    ["in the style of", 100],
+    ["tribute", 100],
+    ["originally performed by", 100],
+    ["originally by", 100],
+    ["karaoke", 100],
+  ])("a %s marker in the candidate's title costs %d", (marker, penalty) => {
+    expect(explainCandidate(song, track(`Song (${marker})`, ["Band"])).penalty).toBe(penalty);
+  });
+
+  test("a marker in the song's own title costs nothing", () => {
+    const liveSong = { name: "Live and Let Die", artist: "Wings" };
+    expect(explainCandidate(liveSong, track("Live and Let Die", ["Wings"])).penalty).toBe(0);
+  });
+
+  test.each<[string, string[]]>([
+    ["first", ["Karaoke Kings", "Band", "Other"]],
+    ["in the middle", ["Band", "Karaoke Kings", "Other"]],
+    ["last", ["Band", "Other", "Karaoke Kings"]],
+  ])("a karaoke label credited %s among the artists costs 100 on its own", (_where, artists) => {
+    // The rule reads every credited artist, wherever the label sits in the list.
+    expect(explainCandidate(song, track("Song", artists)).penalty).toBe(100);
+  });
+
+  test("penalties add up: a live remix pays both rows, and a karaoke label's credit on top", () => {
+    expect(explainCandidate(song, track("Song (Live) (Remix)", ["Band"])).penalty).toBe(55);
+    expect(explainCandidate(song, track("Song (Live) (Remix)", ["Karaoke Kings"])).penalty).toBe(155);
+  });
+
+  // A marker is a whole word: a title word that merely contains one is not a variant of anything.
+  test.each<[string, string]>([
+    ["live", "Alive"],
+    ["concert", "Concerto"],
+    ["demo", "Democracy"],
+    ["tribute", "Attribute"],
+    ["remix", "Premix"],
+  ])("the %s marker does not fire inside a longer word: %s costs nothing", (_marker, word) => {
+    expect(explainCandidate(song, track(`Song (${word})`, ["Band"])).penalty).toBe(0);
+  });
 });
 
 describe("pickBestTrack", () => {

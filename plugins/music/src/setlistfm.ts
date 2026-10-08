@@ -14,7 +14,7 @@ import { defaultSleep, isRetryable, MAX_RETRIES, parseRetryAfter, retryDelay, ty
 export { isRetryable, parseRetryAfter, retryDelay, type SleepLike } from "./retry.js";
 
 /** How long any one setlist.fm request may take before it is abandoned. */
-const REQUEST_TIMEOUT_MS = 10_000;
+export const REQUEST_TIMEOUT_MS = 10_000;
 
 const API_BASE = "https://api.setlist.fm/rest/1.0";
 
