@@ -1,18 +1,30 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { ChatInputCommandInteraction, MessageComponentInteraction } from "discord.js";
 import {
   choiceFor,
   formatBuildReply,
+  formatJoinReply,
   formatNotConfigured,
   formatPickPrompt,
   initCommands,
   musicCommands,
   musicInteractions,
+  PARTY_JOIN_ID,
   parsePickerCustomId,
   pickerCustomId,
 } from "./commands.js";
+import {
+  commitParties,
+  freshParties,
+  getParty,
+  openParty,
+  partiesState,
+  removeMember,
+  resetPartiesForTest,
+} from "./party.js";
+import type { MemberOutcome, PartyRunner } from "./runner.js";
 import type { SetlistFmClient, SetlistFmResult, SetlistListResult } from "./setlistfm.js";
-import type { SpotifyClient } from "./spotify.js";
+import { PARTY_SCOPES, type SpotifyClient } from "./spotify.js";
 import { freshState, musicState, putConnection, resetStoreForTest } from "./store.js";
 import type { BuildOutcome } from "./build.js";
 import type { MatchRun } from "./matchlog.js";
@@ -832,6 +844,139 @@ describe("the show picker", () => {
     const run = fakePick(pickerCustomId("user-1"), ["bbb222"], "user-1");
     await musicInteractions(run.interaction);
     expect(run.edits[0]!.content).toContain("HTTP 503");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #234: the Join button's reply is read from the party AFTER the first sync
+// ---------------------------------------------------------------------------------------------------
+
+describe("formatJoinReply", () => {
+  const blocked: MemberOutcome = {
+    discordUserId: USER,
+    ok: false,
+    error: "no Spotify player is awake -- open Spotify and press play on anything once, then rejoin",
+  };
+
+  test("a member whose Spotify took the command is told they're in", () => {
+    const reply = formatJoinReply({ discordUserId: USER, ok: true }, true);
+    expect(reply).toContain("You're in");
+    expect(reply).not.toContain("Joined, but");
+    expect(reply).not.toContain("Couldn't join");
+  });
+
+  test("a member who is still in the party but whose player didn't answer is told they joined, but", () => {
+    const reply = formatJoinReply(blocked, true);
+    expect(reply).toContain("Joined, but");
+    expect(reply).toContain(blocked.error!);
+    expect(reply).not.toContain("Couldn't join");
+  });
+
+  test("a member the first sync dropped is told they couldn't join, not that they joined", () => {
+    const reply = formatJoinReply(blocked, false);
+    expect(reply).toContain("Couldn't join");
+    expect(reply).toContain(blocked.error!);
+    expect(reply).not.toContain("Joined, but");
+  });
+});
+
+/** A stand-in for the Join button's interaction, carrying only what `handlePartyJoin` touches. */
+function fakeButton(customId: string, userId: string, guildId: string | null) {
+  const replies: { content?: string }[] = [];
+  const deferred: unknown[] = [];
+  const edits: { content?: string }[] = [];
+  const interaction = {
+    customId,
+    guildId,
+    channelId: "C1",
+    client: {},
+    user: { id: userId },
+    reply: async (opts: { content?: string }) => {
+      replies.push(opts);
+    },
+    deferReply: async (opts: unknown) => {
+      deferred.push(opts);
+    },
+    editReply: async (opts: { content?: string }) => {
+      edits.push(opts);
+    },
+  };
+  return { interaction: interaction as unknown as MessageComponentInteraction, replies, deferred, edits };
+}
+
+/** A runner that does nothing but what the Join handler asks of it: sync the joiner. */
+function runnerWhoSyncs(syncMember: PartyRunner["syncMember"]): PartyRunner {
+  return {
+    playCurrent: async () => [],
+    start: async () => [],
+    skip: async () => [],
+    syncMember,
+    sweep: async () => {},
+    stopAll() {},
+    stop() {},
+  };
+}
+
+/** A party mid-track with one member, and a joiner whose Spotify is connected with the party scopes. */
+function wireJoin(syncMember: PartyRunner["syncMember"]): void {
+  logged = [];
+  resetStoreForTest(putConnection(freshState(), USER, "RT", 1, PARTY_SCOPES));
+  resetPartiesForTest(
+    openParty(freshParties(), {
+      guildId: "G1",
+      channelId: "C1",
+      hostId: "host",
+      members: ["host"],
+      queue: [{ uri: "spotify:track:one", name: "One", artist: "Band", durationMs: 180_000 }],
+      index: 0,
+      trackStartedAt: 1,
+    }),
+  );
+  initCommands({
+    config: { setlistFmKey: "KEY", missing: [] },
+    spotify: buildSpotify({
+      refresh: async () => ({ ok: true, value: { accessToken: "AT", scopes: PARTY_SCOPES } }),
+    }),
+    runner: runnerWhoSyncs(syncMember),
+    serverRunning: () => true,
+    log: captureLog,
+  });
+}
+
+describe("the Join button", () => {
+  afterEach(() => {
+    resetPartiesForTest(freshParties());
+  });
+
+  test("a first sync that dropped the joiner is answered with 'Couldn't join', never 'Joined, but'", async () => {
+    wireJoin(async (guildId, userId) => {
+      // What the runner does to a fatal outcome before it hands the outcome back.
+      await commitParties(removeMember(partiesState(), guildId, userId));
+      return { discordUserId: userId, ok: false, fatal: true, error: "Spotify Premium is required to control playback" };
+    });
+    const run = fakeButton(PARTY_JOIN_ID, USER, "G1");
+
+    await musicInteractions(run.interaction);
+
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]!.content).toContain("Couldn't join");
+    expect(run.edits[0]!.content).toContain("Spotify Premium is required to control playback");
+    expect(run.edits[0]!.content).not.toContain("Joined, but");
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
+  });
+
+  test("a first sync that left the joiner in is still answered with 'Joined, but'", async () => {
+    const error = "no Spotify player is awake -- open Spotify and press play on anything once, then rejoin";
+    wireJoin(async (_guildId, userId) => ({ discordUserId: userId, ok: false, error }));
+    const run = fakeButton(PARTY_JOIN_ID, USER, "G1");
+
+    await musicInteractions(run.interaction);
+
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]!.content).toContain("Joined, but");
+    expect(run.edits[0]!.content).toContain(error);
+    expect(run.edits[0]!.content).not.toContain("Couldn't join");
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host", USER]);
   });
 });
 

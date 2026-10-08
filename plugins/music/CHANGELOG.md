@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- A party member's failure count now starts fresh with every party and every Join: a strike taken
+  in an earlier party, or before leaving and rejoining, no longer follows them into the next one and
+  turns a single blip into a drop (or, for the host, into closing the new party). The Join button
+  says "Couldn't join the party" when its first sync already dropped the member (Premium, a missing
+  scope, a dead grant), instead of "Joined, but ..." for someone who is no longer in. A party sweep
+  no longer resyncs a member against a track that ended while it was checking: it skips that tick's
+  resync and looks again on the next one (#234).
 - One token refresh at a time per user: a second refresh for the same person while one is out (the
   party sweep and a track start, or a command during either) now joins it instead of racing it,
   which used to let the loser delete or overwrite a token Spotify had just rotated. A refresh also

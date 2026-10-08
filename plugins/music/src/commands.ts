@@ -643,6 +643,18 @@ export function formatOutcomes(outcomes: readonly MemberOutcome[]): string {
   return clip(`${head}\n${problems.join("\n")}`, MAX_REPLY_LENGTH);
 }
 
+/**
+ * The Join button's reply. `stillMember` is read from the party AFTER the first sync: a fatal
+ * outcome (Premium, a missing scope, a dead grant, a disconnect) has already removed the member
+ * by then, and "Joined, but ..." would tell them they are in when they are not (#234).
+ */
+export function formatJoinReply(outcome: MemberOutcome, stillMember: boolean): string {
+  if (outcome.ok) return "You're in. Your Spotify should be playing along.";
+  const reason = outcome.error ?? "unknown reason";
+  if (stillMember) return `Joined, but your Spotify didn't take the command: ${reason}`;
+  return `Couldn't join the party: ${reason}`;
+}
+
 export function formatPartyStatus(party: Party, now: number): string {
   const track = currentTrack(party);
   const members = party.members.map((id) => `<@${id}>`).join(", ");
@@ -860,11 +872,8 @@ async function handlePartyJoin(
   await commitParties(addMember(partiesState(), guildId, interaction.user.id));
   // Mid-track joiners are dropped in at the right position rather than at 0:00.
   const outcome = await access.runner.syncMember(guildId, interaction.user.id);
-  await interaction.editReply({
-    content: outcome.ok
-      ? "You're in. Your Spotify should be playing along."
-      : `Joined, but your Spotify didn't take the command: ${outcome.error ?? "unknown reason"}`,
-  });
+  const stillMember = getParty(partiesState(), guildId)?.members.includes(interaction.user.id) ?? false;
+  await interaction.editReply({ content: formatJoinReply(outcome, stillMember) });
 }
 
 /**
