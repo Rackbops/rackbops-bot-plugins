@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createSpotifyClient, PARTY_SCOPES, SPOTIFY_SCOPES } from "./spotify.js";
-import { freshState, musicState, putConnection, resetStoreForTest } from "./store.js";
+import { commit, freshState, musicState, putConnection, removeConnection, resetStoreForTest } from "./store.js";
 import { accessTokenFor } from "./tokens.js";
 
 // These drive a REAL client over a fake fetch rather than a fake `refresh`, so what is pinned is
@@ -131,5 +131,118 @@ describe("accessTokenFor", () => {
     expect(result).toMatchObject({ ok: false, kind: "not-connected" });
     expect(errorOf(result)).toContain("/spotify connect");
     expect(calls).toBe(0);
+  });
+});
+
+/**
+ * A fake fetch that counts its calls and holds every answer until `release()`, so a test can move
+ * the store while a refresh is out -- the window #146 is about. `answer` gets the call number.
+ */
+function parked(answer: (call: number) => Response) {
+  let calls = 0;
+  let release: () => void = () => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const spotify = createSpotifyClient(CONFIG, async () => {
+    calls += 1;
+    const call = calls;
+    await released;
+    return answer(call);
+  });
+  return { spotify, release, calls: () => calls };
+}
+
+describe("while a refresh is in flight", () => {
+  const OTHER = "200000000000000002";
+  const ROTATION = { access_token: "AT2", refresh_token: "RT2", scope: PARTY_SCOPES };
+  const DEAD = { error: "invalid_grant", error_description: "Refresh token revoked" };
+
+  test("two callers for one user share one refresh and one Spotify call", async () => {
+    const { spotify, release, calls } = parked(() => json(ROTATION));
+    const first = accessTokenFor(spotify, USER);
+    const second = accessTokenFor(spotify, USER);
+    release();
+    expect(await first).toEqual({ ok: true, accessToken: "AT2", scopes: PARTY_SCOPES });
+    expect(await second).toEqual({ ok: true, accessToken: "AT2", scopes: PARTY_SCOPES });
+    expect(calls()).toBe(1);
+    expect(musicState().connections[USER]).toEqual({ refreshToken: "RT2", connectedAt: CONNECTED_AT, scopes: PARTY_SCOPES });
+  });
+
+  test("the shared answer is the failure too", async () => {
+    const { spotify, release, calls } = parked(() => json(DEAD, 400));
+    const first = accessTokenFor(spotify, USER);
+    const second = accessTokenFor(spotify, USER);
+    release();
+    expect(await first).toMatchObject({ ok: false, kind: "revoked" });
+    expect(await second).toMatchObject({ ok: false, kind: "revoked" });
+    expect(calls()).toBe(1);
+    expect(musicState().connections[USER]).toBeUndefined();
+  });
+
+  test("callers for different users do not share", async () => {
+    resetStoreForTest(
+      putConnection(putConnection(freshState(), USER, "RT1", CONNECTED_AT, SPOTIFY_SCOPES), OTHER, "RT9", CONNECTED_AT, SPOTIFY_SCOPES),
+    );
+    const { spotify, release, calls } = parked(() => json({ access_token: "AT2" }));
+    const first = accessTokenFor(spotify, USER);
+    const second = accessTokenFor(spotify, OTHER);
+    release();
+    await Promise.all([first, second]);
+    expect(calls()).toBe(2);
+    expect(musicState().connections[OTHER]?.refreshToken).toBe("RT9");
+  });
+
+  test("a later call after the refresh has settled starts a new one", async () => {
+    const { spotify, release, calls } = parked((call) => json({ access_token: call === 1 ? "AT2" : "AT3" }));
+    release();
+    expect(await accessTokenFor(spotify, USER)).toMatchObject({ ok: true, accessToken: "AT2" });
+    expect(await accessTokenFor(spotify, USER)).toMatchObject({ ok: true, accessToken: "AT3" });
+    expect(calls()).toBe(2);
+  });
+
+  test("a disconnect meanwhile is not undone by the success path", async () => {
+    const { spotify, release } = parked(() => json(ROTATION));
+    const pending = accessTokenFor(spotify, USER);
+    // `/spotify disconnect` lands while the refresh is out.
+    await commit(removeConnection(musicState(), USER));
+    release();
+    expect(await pending).toMatchObject({ ok: false, kind: "not-connected" });
+    expect(musicState().connections[USER]).toBeUndefined();
+  });
+
+  test("a disconnect meanwhile is not undone by the failure path", async () => {
+    const { spotify, release } = parked(() => json(DEAD, 400));
+    const pending = accessTokenFor(spotify, USER);
+    await commit(removeConnection(musicState(), USER));
+    release();
+    expect(await pending).toMatchObject({ ok: false, kind: "not-connected" });
+    expect(musicState().connections[USER]).toBeUndefined();
+  });
+
+  const reconnectCases: Array<[string, Record<string, unknown>]> = [
+    ["a refresh without rotation", { access_token: "AT2", scope: SPOTIFY_SCOPES }],
+    ["a rotation of the old grant", { access_token: "AT2", refresh_token: "RT_ROT", scope: SPOTIFY_SCOPES }],
+  ];
+
+  for (const [name, body] of reconnectCases) {
+    test(`a reconnect meanwhile wins over ${name}`, async () => {
+      const { spotify, release } = parked(() => json(body));
+      const pending = accessTokenFor(spotify, USER);
+      // The `/spotify connect` callback lands while the refresh is out, with a fresh grant.
+      await commit(putConnection(musicState(), USER, "RT_NEW", 2_000, PARTY_SCOPES));
+      release();
+      expect(await pending).toMatchObject({ ok: true, accessToken: "AT2" });
+      expect(musicState().connections[USER]).toEqual({ refreshToken: "RT_NEW", connectedAt: 2_000, scopes: PARTY_SCOPES });
+    });
+  }
+
+  test("a dead old grant after a reconnect does not remove the fresh one", async () => {
+    const { spotify, release } = parked(() => json(DEAD, 400));
+    const pending = accessTokenFor(spotify, USER);
+    await commit(putConnection(musicState(), USER, "RT_NEW", 2_000, PARTY_SCOPES));
+    release();
+    expect(await pending).toMatchObject({ ok: false, kind: "unavailable" });
+    expect(musicState().connections[USER]).toEqual({ refreshToken: "RT_NEW", connectedAt: 2_000, scopes: PARTY_SCOPES });
   });
 });

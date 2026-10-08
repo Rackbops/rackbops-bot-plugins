@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- One token refresh at a time per user: a second refresh for the same person while one is out (the
+  party sweep and a track start, or a command during either) now joins it instead of racing it,
+  which used to let the loser delete or overwrite a token Spotify had just rotated. A refresh also
+  no longer writes against a snapshot taken before it left: a `/spotify disconnect` while it was
+  out stays disconnected (the bot answers "connect first" instead of quietly putting the token
+  back), and a `/spotify connect` while it was out keeps the fresh grant, whether the old refresh
+  rotated, succeeded or came back dead (#146).
 - A party member whose token refresh fails for any reason that is not a dead grant -- Spotify
   unreachable, slow, rate-limiting or erroring, the app's own credentials refused, an answer the bot
   cannot read -- is no longer dropped from the party on that first failure: the runner now treats it
