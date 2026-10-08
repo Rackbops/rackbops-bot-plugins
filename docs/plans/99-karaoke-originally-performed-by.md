@@ -8,7 +8,7 @@ Standalone XS (surfaced by Epic #43's exit run). Behaviour change: the three-rev
 
 - Two additions to the 100-point tier of `VARIANT_PENALTIES` in `plugins/music/src/matching.ts`:
   the title phrases `originally performed by` / `originally by`, and -- new kind of rule -- a
-  candidate whose **primary artist name** (`artistNames[0]`, after `normalize`) contains the word
+  candidate with **any artist name** (every entry of `artistNames`, after `normalize`) containing the word
   `karaoke` pays 100 whatever its title says. Both are applied inside `variantPenalty`, which
   gains the candidate's artist names as a parameter, so the match log's `penalty` part keeps
   carrying the whole reason a row sank.

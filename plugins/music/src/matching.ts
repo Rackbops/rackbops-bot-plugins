@@ -55,8 +55,12 @@ export function normalize(value: string): string {
     // Apostrophes are DELETED, not turned into a space like other punctuation: "Don't" and "Dont"
     // have to normalise identically, and replacing the quote with a space would split the word into
     // "don t" and lose the match against Spotify's own spelling. Covers the typographic apostrophe
-    // too, which is what a copy-paste from a web page actually carries.
-    .replace(/['\u2018\u2019\u02bc`]/g, "")
+    // too, which is what a copy-paste from a web page actually carries. Eight characters: the ASCII
+    // apostrophe, the backtick, U+2018 and U+2019 (curly quotes), U+02BC (modifier letter
+    // apostrophe), and three more that stand in for one when it is typed on a keyboard without an
+    // apostrophe: U+00B4 (acute accent -- setlist.fm has "Don´t Stop Believin´", #191),
+    // U+2032 (prime) and U+FF07 (fullwidth apostrophe). Written as escapes so each is legible.
+    .replace(/['\u2018\u2019\u02bc\u00b4\u2032\uff07`]/g, "")
     // "&" and "+" between two words read as "and": setlist.fm has "By-Tor & the Snow Dog", Spotify
     // "By-Tor And The Snow Dog", and turning the symbol into a space made them different titles.
     // Only between non-space characters, so a symbol on its own edge is still just punctuation.
@@ -331,7 +335,13 @@ export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandida
   let best: { track: TrackCandidate; score: number; tier: number } | undefined;
   for (const candidate of candidates) {
     const breakdown = explainCandidate(song, candidate, candidates);
-    if (breakdown.score <= 0) continue;
+    // Rejected outright, as the release notes say: a karaoke upload credited to the right artist
+    // would otherwise be the only candidate on a thin page. The score stays as computed (the match
+    // log records it). 100 is what each 100-point marker costs on its own -- karaoke, "in the style
+    // of", "made popular by", tribute, "originally (performed) by", and a karaoke-credited artist --
+    // and it is a threshold on the TOTAL, so a stack of lesser markers that reaches or passes it
+    // (instrumental 45 + remix 30 + live 25) is rejected too, while one below it stays eligible.
+    if (breakdown.score <= 0 || breakdown.penalty >= 100) continue;
     const tier = breakdown.artist > 0 ? 1 : 0;
     // Strictly greater on both counts, so the first candidate on a full tie (page order) is kept.
     if (best === undefined || tier > best.tier || (tier === best.tier && breakdown.score > best.score)) {
