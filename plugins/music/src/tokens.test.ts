@@ -145,6 +145,20 @@ describe("accessTokenFor", () => {
     expect(errorOf(result)).toContain("/spotify connect");
     expect(calls).toBe(0);
   });
+
+  test("a prototype key is not a connection: not-connected, and Spotify is never called (#247)", async () => {
+    resetStoreForTest(freshState());
+    for (const key of ["__proto__", "constructor", "toString", "hasOwnProperty", "valueOf", "__defineGetter__"]) {
+      let calls = 0;
+      const spotify = createSpotifyClient(CONFIG, async () => {
+        calls += 1;
+        return json({});
+      });
+      const result = await accessTokenFor(spotify, key);
+      expect(result).toMatchObject({ ok: false, kind: "not-connected" });
+      expect(calls).toBe(0);
+    }
+  });
 });
 
 /**

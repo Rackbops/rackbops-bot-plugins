@@ -59,6 +59,24 @@ describe("pending handshakes", () => {
     expect(redeemed.state.pending.MINE).toBeDefined();
   });
 
+  test("a prototype key is not a handshake", () => {
+    // `pending` is a plain object, so a bare index finds inherited keys; the token is whatever the
+    // callback URL carries, so none of these may redeem (#247). The first three are the issue's; the
+    // rest keep a fix honest about being an own-key check rather than a list of those three.
+    for (const key of ["__proto__", "constructor", "toString", "hasOwnProperty", "valueOf", "__defineGetter__"]) {
+      const empty = redeemPendingAuth(freshState(), key, NOW);
+      expect(empty).toMatchObject({ ok: false, reason: "unknown" });
+      expect(empty.state.pending).toEqual({});
+
+      const beside = redeemPendingAuth(beginPendingAuth(freshState(), "T", "user1", NOW), key, NOW);
+      expect(beside).toMatchObject({ ok: false, reason: "unknown" });
+      expect(beside.state.pending.T).toEqual({ discordUserId: "user1", expiresAt: NOW + PENDING_AUTH_TTL_MS });
+      // The real handshake beside it is untouched and still redeems.
+      const real = redeemPendingAuth(beside.state, "T", NOW);
+      expect(real.ok && real.discordUserId).toBe("user1");
+    }
+  });
+
   test("a second connect REPLACES the same user's earlier link, invalidating it", () => {
     const first = beginPendingAuth(freshState(), "T1", "user1", NOW);
     const second = beginPendingAuth(first, "T2", "user1", NOW + 1000);

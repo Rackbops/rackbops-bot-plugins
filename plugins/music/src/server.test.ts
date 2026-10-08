@@ -1,8 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { createRateLimiter, escapeHtml, handleCallback, startCallbackServer, type CallbackDeps } from "./server.js";
+import { freshState, redeemPendingAuth } from "./store.js";
 import type { TrustedProxy } from "../../../packages/net/clientIp.js";
 
 const PATH = "/spotify/callback";
+
+// Names every plain object inherits. The first three are the issue's; the rest keep a fix honest about
+// being an own-key check rather than a list of those three.
+const PROTOTYPE_KEYS = ["__proto__", "constructor", "toString", "hasOwnProperty", "valueOf", "__defineGetter__"];
 
 // `startCallbackServer` takes its `TrustedProxy` explicitly (no default), so every real-listener test
 // passes one of these two fixed fakes: never trust `CF-Connecting-IP` / always trust it.
@@ -137,6 +142,28 @@ describe("handleCallback", () => {
     const body = await response.text();
     expect(body).not.toContain("<script>");
     expect(body).toContain("&lt;script&gt;");
+  });
+
+  test("a prototype key sent as the state answers 'That link didn't work' and saves nothing (#247)", async () => {
+    for (const key of PROTOTYPE_KEYS) {
+      let saves = 0;
+      const response = await handleCallback(get(`?code=C&state=${key}`), "ip", makeDeps({
+        // The real store transition over an empty store, with the same answer shape `index.ts` gives
+        // an unknown token (the wording here is shorter; only the status and title are asserted).
+        redeemState: async (token) => {
+          const redeemed = redeemPendingAuth(freshState(), token, Date.now());
+          return redeemed.ok
+            ? { ok: true, discordUserId: redeemed.discordUserId }
+            : { ok: false, error: "That connect link isn't valid any more." };
+        },
+        saveConnection: async () => {
+          saves += 1;
+        },
+      }));
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain("didn&#39;t work");
+      expect(saves).toBe(0);
+    }
   });
 
   describe("a dependency that throws (#190)", () => {
