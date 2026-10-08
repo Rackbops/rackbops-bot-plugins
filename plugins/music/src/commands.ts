@@ -782,8 +782,8 @@ async function handlePartyAdd(interaction: ChatInputCommandInteraction, guildId:
     return;
   }
   // The same scorer `/setlist` uses for a title, so "the wrong live version" is wrong in exactly one
-  // place; a query typed as "title artist" or "artist title" (the option promises both) falls back to
-  // a split of the query against each candidate's title and artists (#155).
+  // place; a query typed as "title artist" or "artist title" (the option says "track and artist")
+  // falls back to a split of the query against each candidate's title and artists (#155).
   const match = pickTrackFromQuery(query, found.value);
   if (match === undefined) {
     await interaction.editReply({ content: `Nothing on Spotify matched "${query}".` });

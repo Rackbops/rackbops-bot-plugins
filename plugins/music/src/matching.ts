@@ -360,6 +360,17 @@ export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandida
 }
 
 /**
+ * `title` with a clean-edition suffix ("remastered 2011", "2013 remaster") taken off its end, or
+ * `undefined` when it has none -- the same suffixes `isExactTitle` treats as the same recording.
+ */
+function withoutEditionSuffix(title: string): string | undefined {
+  for (let space = title.indexOf(" "); space !== -1; space = title.indexOf(" ", space + 1)) {
+    if (CLEAN_EDITION_SUFFIX.test(title.slice(space + 1))) return title.slice(0, space);
+  }
+  return undefined;
+}
+
+/**
  * The best candidate for one free-text query -- the entry point for `/party add`, whose option takes
  * "Track name, or track and artist". Unlike a setlist entry there is no separate artist field, so the
  * query is first tried as a title (exactly what `pickBestTrack` does with `artist: ""`, and the answer
@@ -368,32 +379,50 @@ export function pickBestTrack(song: SongQuery, candidates: readonly TrackCandida
  * query and what is left over names one of its artists (`artistScore` above zero, so a partial artist
  * counts as it does everywhere else).
  *
+ * Three rules keep the reading from being looser than the title pass:
+ * - A candidate's title also counts with a clean-edition suffix taken off ("Bohemian Rhapsody -
+ *   Remastered 2011" answers "Bohemian Rhapsody Queen"), the same suffixes `isExactTitle` accepts; the
+ *   unsuffixed title wins a tie against a suffixed one, as it does by score in the title pass.
+ * - A candidate the title pass would penalise as a variant (a karaoke credit, a live or remix cut the
+ *   query did not ask for) is not a candidate here either.
+ * - An artist name that normalizes to nothing (a title in a script `normalize` cannot read, or pure
+ *   punctuation) is not an artist: `artistScore` treats the empty string as contained in anything.
+ *
  * Among split matches the higher artist score wins, then the longer title (it accounts for more of the
- * query), then page order. The result is shaped like `pickBestTrack`'s: `high` for an exact artist,
- * `medium` for a partial one, and a `score` of 100 (the title) plus the artist's points. The setlist
- * path never comes through here.
+ * query), then an unsuffixed title over a suffixed one, then page order. The result is shaped like
+ * `pickBestTrack`'s: `high` for an exact artist, `medium` for a partial one, and a `score` of 100 (the
+ * title) plus the artist's points. The setlist path never comes through here.
  */
 export function pickTrackFromQuery(query: string, candidates: readonly TrackCandidate[]): Match | undefined {
   const asTitle = pickBestTrack({ name: query, artist: "" }, candidates);
   if (asTitle !== undefined) return asTitle;
 
   const wanted = normalize(query);
-  let best: { track: TrackCandidate; artist: number; titleLength: number } | undefined;
+  let best: { track: TrackCandidate; artist: number; titleLength: number; viaEdition: boolean } | undefined;
   for (const candidate of candidates) {
     const title = normalize(candidate.name);
     if (title === "") continue;
-    const artists = candidate.artistNames.map(normalize);
-    // What is left of the query once the title is taken off its front ("title artist") or its back
-    // ("artist title"); either reading may apply, and the better-scoring one counts.
-    const rests: string[] = [];
-    if (wanted.startsWith(`${title} `)) rests.push(wanted.slice(title.length + 1));
-    if (wanted.endsWith(` ${title}`)) rests.push(wanted.slice(0, wanted.length - title.length - 1));
-    for (const rest of rests) {
-      const artist = artistScore(artists, rest);
-      if (artist <= 0) continue;
-      // Strictly greater on both counts, so the first candidate on a full tie (page order) is kept.
-      if (best === undefined || artist > best.artist || (artist === best.artist && title.length > best.titleLength)) {
-        best = { track: candidate, artist, titleLength: title.length };
+    const artists = candidate.artistNames.map(normalize).filter((artist) => artist !== "");
+    if (variantPenalty(title, wanted, artists) > 0) continue;
+    const base = withoutEditionSuffix(title);
+    const heads = [{ text: title, viaEdition: false }];
+    if (base !== undefined && base !== "") heads.push({ text: base, viaEdition: true });
+    for (const { text, viaEdition } of heads) {
+      // What is left of the query once the title is taken off its front ("title artist") or its back
+      // ("artist title"); either reading may apply, and the better-scoring one counts.
+      const rests: string[] = [];
+      if (wanted.startsWith(`${text} `)) rests.push(wanted.slice(text.length + 1));
+      if (wanted.endsWith(` ${text}`)) rests.push(wanted.slice(0, wanted.length - text.length - 1));
+      for (const rest of rests) {
+        const artist = artistScore(artists, rest);
+        if (artist <= 0) continue;
+        // Strictly better on every count, so the first candidate on a full tie (page order) is kept.
+        const beats =
+          best === undefined ||
+          artist > best.artist ||
+          (artist === best.artist &&
+            (text.length > best.titleLength || (text.length === best.titleLength && best.viaEdition && !viaEdition)));
+        if (beats) best = { track: candidate, artist, titleLength: text.length, viaEdition };
       }
     }
   }
