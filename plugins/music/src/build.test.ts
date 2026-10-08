@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { artistNamesFor, searchArtistsFor } from "./artists.js";
-import { betterMatch, buildPlaylist, findSong, isoDate, playlistDescription, playlistName } from "./build.js";
+import {
+  betterMatch,
+  buildPlaylist,
+  findSong,
+  isoDate,
+  MAX_DESCRIPTION_LENGTH,
+  playlistDescription,
+  playlistName,
+} from "./build.js";
 import type { Setlist, SetlistSong } from "./setlistfm.js";
 import type { SpotifyClient } from "./spotify.js";
 import type { Match, TrackCandidate } from "./matching.js";
@@ -100,6 +108,44 @@ describe("playlistDescription", () => {
 
   test("omits the tour when there isn't one", () => {
     expect(playlistDescription(setlist({ tourName: undefined }))).toStartWith("Setlist from ");
+  });
+
+  test("the description is clipped to the client's 300-character limit with an ellipsis", () => {
+    const description = playlistDescription(setlist({ tourName: "T".repeat(400) }));
+    // The limit this client clips to, pinned as a literal so the constant cannot drift while every
+    // assertion below follows it. Spotify's API docs state no description limit; community posts put
+    // the apps' cap at 300, so the number is the client's own choice, not a documented contract.
+    expect(MAX_DESCRIPTION_LENGTH).toBe(300);
+    // Exactly the limit, not just under it: the clip keeps limit - 1 characters and adds the
+    // ellipsis, so the result is as long as the limit allows and no shorter.
+    expect(description.length).toBe(MAX_DESCRIPTION_LENGTH);
+    expect(description.endsWith("…")).toBe(true);
+    expect(description.startsWith("T".repeat(MAX_DESCRIPTION_LENGTH - 1))).toBe(true);
+  });
+
+  test("a description of exactly the limit is left alone, one character more is clipped", () => {
+    // "<tour> - Setlist from <url>": size the tour so the whole line is the limit on the nose.
+    const bare = playlistDescription(setlist({ tourName: undefined })).length;
+    const atLimit = playlistDescription(setlist({ tourName: "T".repeat(MAX_DESCRIPTION_LENGTH - bare - 3) }));
+    expect(atLimit.length).toBe(MAX_DESCRIPTION_LENGTH);
+    expect(atLimit.endsWith("…")).toBe(false);
+    expect(atLimit.endsWith("/the-venue-abc123.html")).toBe(true);
+
+    const overLimit = playlistDescription(setlist({ tourName: "T".repeat(MAX_DESCRIPTION_LENGTH - bare - 2) }));
+    expect(overLimit.length).toBe(MAX_DESCRIPTION_LENGTH);
+    expect(overLimit.endsWith("…")).toBe(true);
+  });
+
+  test("a clip that lands on whitespace drops it before the ellipsis", () => {
+    // 298 T's, a space, then more: the cut keeps the first 299 characters, which end in that space.
+    const description = playlistDescription(setlist({ tourName: `${"T".repeat(298)} ${"U".repeat(100)}` }));
+    expect(description).toBe(`${"T".repeat(298)}…`);
+  });
+
+  test("a short description is untouched", () => {
+    const description = playlistDescription(setlist());
+    expect(description.length).toBeLessThan(MAX_DESCRIPTION_LENGTH);
+    expect(description.endsWith("…")).toBe(false);
   });
 });
 
