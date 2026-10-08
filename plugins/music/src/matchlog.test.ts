@@ -132,13 +132,68 @@ describe("toMatchRun", () => {
       ok: true,
       attempted: 2,
       added: 1,
+      playlistUrl: "https://open.spotify.com/playlist/PL1",
       songs,
     });
     // The exact key set: a new field -- above all a Discord user id -- has to be added here on purpose.
     expect(Object.keys(made).sort()).toEqual(
-      ["added", "artist", "at", "attempted", "city", "eventDate", "ok", "setlistId", "setlistUrl", "songs", "tour", "venue"],
+      [
+        "added",
+        "artist",
+        "at",
+        "attempted",
+        "city",
+        "eventDate",
+        "ok",
+        "playlistUrl",
+        "setlistId",
+        "setlistUrl",
+        "songs",
+        "tour",
+        "venue",
+      ],
     );
     expect(JSON.stringify(made)).not.toMatch(/discord|token/i);
+  });
+
+  test("a successful run records the playlist url", () => {
+    const result: BuildResult = {
+      ok: true,
+      outcome: {
+        playlistUrl: "https://open.spotify.com/playlist/PL9",
+        playlistName: "Band",
+        added: 1,
+        attempted: 1,
+        uncertain: [],
+        missing: [],
+        foundElsewhere: [],
+        folded: 0,
+      },
+      songs: [],
+    };
+    expect(toMatchRun(setlist(), result, AT).playlistUrl).toBe("https://open.spotify.com/playlist/PL9");
+  });
+
+  test("a failed add's run records the playlist url", () => {
+    const made = toMatchRun(
+      setlist(),
+      {
+        ok: false,
+        error: "Spotify returned HTTP 500 (after adding 100 of 250). The playlist was created ...",
+        songs: [],
+        playlistUrl: "https://open.spotify.com/playlist/PL1",
+      },
+      AT,
+    );
+    expect(made.playlistUrl).toBe("https://open.spotify.com/playlist/PL1");
+    expect(made.ok).toBe(false);
+    expect(made.added).toBe(0);
+    expect(made.error).toContain("HTTP 500");
+  });
+
+  test("a failure without a playlist records none", () => {
+    const made = toMatchRun(setlist(), { ok: false, error: "none of the songs could be found", songs: [] }, AT);
+    expect("playlistUrl" in made).toBe(false);
   });
 
   test("toMatchRun leaves out the venue, city and tour a setlist doesn't have", () => {

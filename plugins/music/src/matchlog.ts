@@ -38,6 +38,12 @@ export interface MatchRun {
    * first batch of 100 had landed; the error text says how many made it.
    */
   added: number;
+  /**
+   * The playlist this build made: always on a successful run, and on a failed one only when the
+   * playlist was created and adding tracks failed, so the half-filled playlist in the user's
+   * library can be found from the log (#192).
+   */
+  playlistUrl?: string;
   songs: SongTrace[];
 }
 
@@ -73,6 +79,8 @@ export function toMatchRun(setlist: Setlist, result: BuildResult, at: string): M
   if (setlist.cityName !== undefined && setlist.cityName !== "") run.city = setlist.cityName;
   if (setlist.tourName !== undefined && setlist.tourName !== "") run.tour = setlist.tourName;
   if (!result.ok) run.error = result.error;
+  const playlistUrl = result.ok ? result.outcome.playlistUrl : result.playlistUrl;
+  if (playlistUrl !== undefined) run.playlistUrl = playlistUrl;
   return run;
 }
 
