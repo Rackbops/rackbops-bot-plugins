@@ -6,6 +6,7 @@ import { SlashCommandBuilder, type ChatInputCommandInteraction } from "discord.j
 import { createPlugin } from "./index.js";
 import { recordRun, resetMatchLogForTest, type MatchLogFile } from "./matchlog.js";
 import { freshParties, openParty, resetPartiesForTest } from "./party.js";
+import { PARTY_SCOPES } from "./spotify.js";
 import { beginPendingAuth, commit, musicState, PENDING_AUTH_TTL_MS, putConnection, type MusicState } from "./store.js";
 import { makeFakeHost, makeRealStorage } from "../../../packages/testkit/index.js";
 
@@ -357,6 +358,93 @@ describe("the party-sweep tick", () => {
     } finally {
       globalThis.fetch = stubbed;
       restoreFetch();
+      resetPartiesForTest(freshParties());
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a party survives a restart (#195)", () => {
+  test("a party in parties.json is loaded and re-armed by the first sweep", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "music-restart-"));
+    const realFetch = globalThis.fetch;
+    // A party that was already playing when the bot went down: track one, started a minute ago, one
+    // connected member. Written BEFORE the plugin exists, so only a fresh activation can find it.
+    const startedAt = Date.now() - 60_000;
+    await Bun.write(
+      join(dir, "parties.json"),
+      JSON.stringify({
+        parties: {
+          G1: {
+            guildId: "G1",
+            channelId: "C1",
+            hostId: "user-1",
+            members: ["user-1"],
+            queue: [{ uri: "spotify:track:one", name: "One", artist: "Band", durationMs: 180_000 }],
+            index: 0,
+            trackStartedAt: startedAt,
+          },
+        },
+      }),
+    );
+    await Bun.write(
+      join(dir, "music.json"),
+      JSON.stringify({
+        connections: { "user-1": { refreshToken: "RT", connectedAt: 1, scopes: PARTY_SCOPES } },
+        pending: {},
+      }),
+    );
+    const playbackReads: string[] = [];
+    const strays: string[] = [];
+    // Installed before createPlugin: the Spotify client takes `fetch` as its default transport then.
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.startsWith("https://accounts.spotify.com/api/token")) {
+        return Response.json({ access_token: "AT", scope: PARTY_SCOPES });
+      }
+      if (url === "https://api.spotify.com/v1/me/player") {
+        playbackReads.push(url);
+        // In sync: exactly where the party says the member should be.
+        return Response.json({ is_playing: true, progress_ms: Date.now() - startedAt, item: { uri: "spotify:track:one" } });
+      }
+      strays.push(url);
+      return new Response(`unexpected request: ${url}`, { status: 500 });
+    }) as unknown as typeof fetch;
+    try {
+      const infos: string[] = [];
+      const host = makeFakeHost({ name: "music",
+        env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: undefined },
+        dataDir: dir,
+        storage: makeRealStorage(),
+        log: { info: (m) => infos.push(m), warn() {}, error() {} },
+      });
+      const plugin = createPlugin(host);
+      await plugin.activate?.();
+      try {
+        const tick = (plugin.ticks ?? []).find((t) => t.name === "party-sweep")!;
+        await tick.run(new AbortController().signal);
+
+        // The sweep found the loaded party, had no timer for it, armed one, and checked the member.
+        expect(infos).toContain("re-arming party in guild G1");
+        expect(playbackReads).toHaveLength(1);
+        // In sync, so it resynced nobody: no play, no devices, nothing else was asked of Spotify.
+        expect(strays).toEqual([]);
+
+        // A second sweep sees the timer the first one armed.
+        await tick.run(new AbortController().signal);
+        expect(infos.filter((m) => m === "re-arming party in guild G1")).toHaveLength(1);
+
+        // Disposing the plugin releases the runner's timers: the next sweep finds none and says it
+        // would re-arm (the runner then arms nothing, since it was stopped). If `dispose` left the
+        // timer in place, this sweep would see it and log nothing.
+        await plugin.dispose?.();
+        await tick.run(new AbortController().signal);
+        expect(infos.filter((m) => m === "re-arming party in guild G1")).toHaveLength(2);
+      } finally {
+        await plugin.dispose?.();
+      }
+    } finally {
+      globalThis.fetch = realFetch;
       resetPartiesForTest(freshParties());
       await rm(dir, { recursive: true, force: true });
     }
