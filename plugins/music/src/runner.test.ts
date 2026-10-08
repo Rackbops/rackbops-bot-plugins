@@ -107,6 +107,8 @@ function makeRunner(
   spotify: SpotifyClient,
   clock: ReturnType<typeof fakeClock>,
   token: (id: string) => TokenResult = () => ({ ok: true, accessToken: "AT", scopes: PARTY_SCOPES }),
+  /** Replaces the recording `notify`, e.g. with one that rejects. */
+  notifyOverride?: RunnerDeps["notify"],
 ) {
   const notices: string[] = [];
   // The third `notify` argument, index-aligned with `notices`: who a message may ping, or undefined.
@@ -120,10 +122,12 @@ function makeRunner(
     accessTokenFor: async (id) => token(id),
     now: clock.now,
     schedule: clock.schedule,
-    notify: async (_party, message, mention) => {
-      notices.push(message);
-      mentions.push(mention);
-    },
+    notify:
+      notifyOverride ??
+      (async (_party, message, mention) => {
+        notices.push(message);
+        mentions.push(mention);
+      }),
     log: {
       info(m) {
         infos.push(m);
@@ -736,6 +740,203 @@ describe("a host who drops (#194)", () => {
     // The party plays on: its timer is still armed.
     expect(clock.pendingCount()).toBe(1);
     runner.stopAll();
+  });
+});
+
+describe("failures across a boundary, stop and the no-device rescue (#195)", () => {
+  /** Settles what a fired timer leaves behind: `advanceTo` only waits two ticks, a boundary takes many. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  /**
+   * A token per member (so a play names who it was for). The friend's answers come from `answers` in
+   * order, the last one repeating; everyone else is always fine.
+   */
+  function perMemberToken(answers: TokenResult[]): (id: string) => TokenResult {
+    let calls = 0;
+    return (id) => {
+      if (id !== "friend") return { ok: true, accessToken: id, scopes: PARTY_SCOPES };
+      const answer = answers[Math.min(calls, answers.length - 1)] ?? GOOD;
+      calls += 1;
+      return answer;
+    };
+  }
+  const FRIEND_FINE: TokenResult = { ok: true, accessToken: "friend", scopes: PARTY_SCOPES };
+
+  test("a dead grant at a boundary drops the member at once", async () => {
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, notices, warnings } = makeRunner(client, clock, perMemberToken([FRIEND_FINE, REVOKED]));
+
+    await runner.start("G1");
+    expect(plays.map((p) => p.accessToken).sort()).toEqual(["friend", "host"]);
+    plays.length = 0;
+
+    await clock.advanceTo(NOW + TRACK_MS);
+    await settle();
+
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
+    // Dropped, not counted: a revoked grant is not a blip, so there is no "1 of 2" warning first.
+    expect(warnings).toEqual([]);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("<@friend> has dropped out of the party");
+    // Track two went to the host alone.
+    expect(plays).toEqual([{ accessToken: "host", uri: "spotify:track:two", positionMs: 0 }]);
+    runner.stopAll();
+  });
+
+  test("two transient failures across a boundary are the second strike", async () => {
+    const { client } = fakeSpotify({
+      play: async (accessToken) =>
+        accessToken === "friend"
+          ? { ok: false, error: "Spotify returned HTTP 502: Bad gateway", status: 502 }
+          : { ok: true, value: undefined },
+    });
+    const clock = fakeClock();
+    const { runner, notices, warnings } = makeRunner(client, clock, (id) => ({
+      ok: true,
+      accessToken: id,
+      scopes: PARTY_SCOPES,
+    }));
+
+    await runner.start("G1");
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host", "friend"]);
+    expect(warnings).toEqual([
+      `friend in guild G1 failed 1 of ${MAX_MEMBER_FAILURES}: Spotify returned HTTP 502: Bad gateway`,
+    ]);
+    expect(notices).toEqual([]);
+
+    await clock.advanceTo(NOW + TRACK_MS);
+    await settle();
+
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("<@friend> has dropped out of the party");
+    expect(notices[0]).toContain("Bad gateway");
+    runner.stopAll();
+  });
+
+  test("stop cancels an armed timer", async () => {
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    expect(clock.pendingCount()).toBe(1);
+    const playsAtStart = plays.length;
+
+    runner.stop("G1");
+    expect(clock.pendingCount()).toBe(0);
+    await clock.advanceTo(NOW + TRACK_MS);
+    await settle();
+
+    expect(plays).toHaveLength(playsAtStart);
+    expect(getParty(partiesState(), "G1")?.index).toBe(0);
+    runner.stopAll();
+  });
+
+  test("stop cancels only the named guild's timer", async () => {
+    resetPartiesForTest(
+      openParty(
+        openParty(freshParties(), party()),
+        party({ guildId: "G2", channelId: "C2", hostId: "host2", members: ["host2"] }),
+      ),
+    );
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner } = makeRunner(client, clock);
+
+    await runner.start("G1");
+    await runner.start("G2");
+    expect(clock.pendingCount()).toBe(2);
+
+    runner.stop("G1");
+
+    // G2's party plays on.
+    expect(clock.pendingCount()).toBe(1);
+    runner.stopAll();
+  });
+
+  test("a notify that rejects does not take the boundary down", async () => {
+    // `notify` promises never to throw (notify.ts), so a rejecting one is a fault the runner must
+    // survive: the boundary's own catch logs it with its cause and re-arms the party.
+    const boom = new Error("channel gone");
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, errors, errorCauses } = makeRunner(
+      client,
+      clock,
+      perMemberToken([FRIEND_FINE, REVOKED]),
+      async () => {
+        throw boom;
+      },
+    );
+
+    await runner.start("G1");
+    await clock.advanceTo(NOW + TRACK_MS);
+    await settle();
+
+    // The drop was committed before the notice was tried.
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
+    expect(errors).toEqual(["party in guild G1: advancing to the next track failed; re-arming"]);
+    expect(errorCauses).toEqual([boom]);
+    // And the party is armed for its next boundary.
+    expect(clock.pendingCount()).toBe(1);
+    runner.stopAll();
+  });
+
+  describe("the no-device rescue's own failures end in the awake-your-player outcome", () => {
+    const NO_DEVICE = { ok: false, error: "Player command failed: No active device found", status: 404 } as const;
+
+    /** A host whose `play` always answers 404, recording which device each attempt named. */
+    async function rescueOutcome(overrides: Partial<SpotifyClient>) {
+      const attempts: string[] = [];
+      const { client } = fakeSpotify({
+        play: async (_accessToken, _uri, _positionMs, deviceId) => {
+          attempts.push(deviceId ?? "active");
+          return NO_DEVICE;
+        },
+        ...overrides,
+      });
+      const { runner } = makeRunner(client, fakeClock());
+      const outcome = await runner.syncMember("G1", "host");
+      runner.stopAll();
+      return { outcome, attempts };
+    }
+
+    test("a devices read that fails", async () => {
+      const { outcome, attempts } = await rescueOutcome({
+        devices: async () => ({ ok: false, error: "Spotify returned HTTP 500" }),
+      });
+      expect(outcome.ok).toBe(false);
+      expect(outcome.error).toContain("no Spotify player is awake");
+      // An idle player is a blip, not a verdict: it must not drop the member on the first miss.
+      expect(outcome.fatal).toBeUndefined();
+      expect(attempts).toEqual(["active"]);
+    });
+
+    test("a transfer that fails", async () => {
+      const { outcome, attempts } = await rescueOutcome({
+        devices: async () => ({ ok: true, value: [{ id: "DEV1", name: "Phone", isActive: false }] }),
+        transfer: async () => ({ ok: false, error: "Spotify returned HTTP 502" }),
+      });
+      expect(outcome.ok).toBe(false);
+      expect(outcome.error).toContain("no Spotify player is awake");
+      expect(outcome.fatal).toBeUndefined();
+      // No retry once the transfer failed.
+      expect(attempts).toEqual(["active"]);
+    });
+
+    test("a retried play that fails", async () => {
+      const { outcome, attempts } = await rescueOutcome({
+        devices: async () => ({ ok: true, value: [{ id: "DEV1", name: "Phone", isActive: false }] }),
+        transfer: async () => ({ ok: true, value: undefined }),
+      });
+      expect(outcome.ok).toBe(false);
+      expect(outcome.error).toContain("no Spotify player is awake");
+      expect(outcome.fatal).toBeUndefined();
+      // The first attempt, then exactly one retry, on the device it woke.
+      expect(attempts).toEqual(["active", "DEV1"]);
+    });
   });
 });
 

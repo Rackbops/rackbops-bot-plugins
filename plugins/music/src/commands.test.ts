@@ -12,6 +12,7 @@ import {
   formatJoinReply,
   formatNotConfigured,
   formatOutcomes,
+  formatPartyStatus,
   formatPickPrompt,
   initCommands,
   musicCommands,
@@ -1506,6 +1507,31 @@ describe("the party's stop command (#194)", () => {
     expect(run.replies[0]?.content).toContain("Party over");
   });
 
+  test("no party is refused (#195)", async () => {
+    wireParty({ scopes: PARTY_SCOPES });
+    resetPartiesForTest(freshParties());
+    const run = fakePartyCommand("stop", {}, "host");
+    await handleParty()(run.interaction);
+
+    expect(run.calls).toEqual(["reply"]);
+    expect(run.replies[0]?.content).toContain("No party here");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+  });
+
+  test("the host's stop closes the party, cancels its timer and answers publicly (#195)", async () => {
+    const { calls } = wireParty({ scopes: PARTY_SCOPES });
+    const run = fakePartyCommand("stop", {}, "host", "G1", calls);
+    await handleParty()(run.interaction);
+
+    expect(getParty(partiesState(), "G1")).toBeUndefined();
+    // The runner was told to cancel the party's boundary timer, and only then was the reply sent.
+    expect(calls).toEqual(["stop:G1", "reply"]);
+    // Public: the channel hears the party is over, so the reply carries no ephemeral flag.
+    expect(run.replies).toHaveLength(1);
+    expect(run.replies[0]?.flags).toBeUndefined();
+    expect(run.replies[0]?.content).toContain("Party over");
+  });
+
   test("the subcommand's description says who may use it", () => {
     const builder = new SlashCommandBuilder().setName("party");
     musicCommands().find((c) => c.name === "party")!.build(builder);
@@ -1528,6 +1554,251 @@ describe("the party's add command needs membership (#194)", () => {
     expect(run.defers).toEqual([]);
     expect(getParty(partiesState(), "G1")?.queue).toEqual([]);
     expect(started).toEqual([]);
+  });
+});
+
+describe("the party's start command (#195)", () => {
+  afterEach(() => {
+    resetPartiesForTest(freshParties());
+    resetClientForTest();
+  });
+
+  test("a server that already has a party is refused before any defer", async () => {
+    const { calls } = wireParty({ scopes: PARTY_SCOPES });
+    const run = fakePartyCommand("start", {}, USER, "G1", calls);
+    await handleParty()(run.interaction);
+
+    // Not even a token refresh: the refusal needs nothing from Spotify.
+    expect(run.calls).toEqual(["reply"]);
+    expect(run.replies[0]?.content).toContain("already a party");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+    // The party that was there is the one that is still there.
+    expect(getParty(partiesState(), "G1")?.hostId).toBe("host");
+  });
+
+  test("a caller without party access is told privately and no party opens", async () => {
+    const { calls } = wireParty({ scopes: SPOTIFY_SCOPES });
+    resetPartiesForTest(freshParties());
+    const run = fakePartyCommand("start", {}, USER, "G1", calls);
+    await handleParty()(run.interaction);
+
+    // Acknowledged first, THEN Spotify is asked (the access check refreshes a token): Discord gives
+    // an interaction three seconds, and the refresh can take ten.
+    expect(run.calls).toEqual(["defer", "refresh", "edit"]);
+    expect(run.defers).toEqual([{ flags: MessageFlags.Ephemeral }]);
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain("Grant it here");
+    expect(run.followUps).toEqual([]);
+    expect(run.replies).toEqual([]);
+    expect(getParty(partiesState(), "G1")).toBeUndefined();
+  });
+
+  test("a start opens the party, confirms privately and posts the Join button publicly", async () => {
+    const { calls } = wireParty({ scopes: PARTY_SCOPES });
+    resetPartiesForTest(freshParties());
+    const run = fakePartyCommand("start", {}, USER, "G1", calls);
+    await handleParty()(run.interaction);
+
+    // Defer first, then the access check's token refresh, then the private edit, then the public post.
+    expect(run.calls).toEqual(["defer", "refresh", "edit", "followUp"]);
+    expect(run.defers).toEqual([{ flags: MessageFlags.Ephemeral }]);
+    expect(run.edits[0]?.content).toContain("Party started");
+    // The channel's message is public (no ephemeral flag) and carries the one row with the Join button.
+    expect(run.followUps).toHaveLength(1);
+    expect(run.followUps[0]?.flags).toBeUndefined();
+    expect(run.followUps[0]?.content).toContain(`<@${USER}>`);
+    expect(run.followUps[0]?.components).toHaveLength(1);
+    // The button in that row is the one `musicInteractions` routes to the Join handler.
+    const row = run.followUps[0]?.components?.[0] as { toJSON(): { components: { custom_id?: string }[] } };
+    expect(row.toJSON().components.map((button) => button.custom_id)).toEqual([PARTY_JOIN_ID]);
+    expect(getParty(partiesState(), "G1")).toMatchObject({
+      hostId: USER,
+      members: [USER],
+      channelId: "C1",
+      queue: [],
+      index: 0,
+    });
+  });
+});
+
+describe("the party's leave command (#195)", () => {
+  afterEach(() => {
+    resetPartiesForTest(freshParties());
+    resetClientForTest();
+  });
+
+  test("someone not in the party is refused", async () => {
+    const { calls } = wireParty({ scopes: PARTY_SCOPES, members: ["host"] });
+    const run = fakePartyCommand("leave", {}, USER, "G1", calls);
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["reply"]);
+    expect(run.replies[0]?.content).toContain("not in a party");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
+  });
+
+  test("with no party at all, leaving is refused the same way", async () => {
+    wireParty({ scopes: PARTY_SCOPES });
+    resetPartiesForTest(freshParties());
+    const run = fakePartyCommand("leave", {}, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.replies[0]?.content).toContain("not in a party");
+  });
+
+  test("a member's leave removes them and keeps the party", async () => {
+    const { calls } = wireParty({ scopes: PARTY_SCOPES });
+    const run = fakePartyCommand("leave", {}, USER, "G1", calls);
+    await handleParty()(run.interaction);
+
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
+    expect(run.replies[0]?.content).toContain("Left the party");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+    // The party plays on, so its timer is left alone.
+    expect(calls.some((call) => call.startsWith("stop:"))).toBe(false);
+  });
+
+  test("the host's leave ends the party and cancels its timer", async () => {
+    const { calls } = wireParty({ scopes: PARTY_SCOPES });
+    const run = fakePartyCommand("leave", {}, "host", "G1", calls);
+    await handleParty()(run.interaction);
+
+    expect(getParty(partiesState(), "G1")).toBeUndefined();
+    expect(calls).toContain("stop:G1");
+    expect(run.replies[0]?.content).toContain("leaving ended the party");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+  });
+});
+
+describe("the party's status (#195)", () => {
+  afterEach(() => {
+    resetPartiesForTest(freshParties());
+    resetClientForTest();
+  });
+
+  test("with no party", async () => {
+    wireParty({ scopes: PARTY_SCOPES });
+    resetPartiesForTest(freshParties());
+    const run = fakePartyCommand("status", {}, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.replies).toHaveLength(1);
+    expect(run.replies[0]?.content).toContain("No party here");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+  });
+
+  test("with a playing party it names the track and who is in it, privately", async () => {
+    wireParty({ scopes: PARTY_SCOPES });
+    const run = fakePartyCommand("status", {}, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.replies).toHaveLength(1);
+    expect(run.replies[0]?.content).toContain("**Zero**");
+    expect(run.replies[0]?.content).toContain("In the party: <@host>, <@" + USER + ">");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+  });
+
+  test("outside a server every subcommand is turned away", async () => {
+    for (const sub of ["start", "add", "skip", "leave", "stop", "status"]) {
+      wireParty({ scopes: PARTY_SCOPES });
+      const run = fakePartyCommand(sub, { query: "One" }, USER, null);
+      await handleParty()(run.interaction);
+
+      expect(run.calls).toEqual(["reply"]);
+      expect(run.replies[0]?.content).toContain("only makes sense in a server");
+      expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+    }
+  });
+});
+
+describe("formatPartyStatus (#195)", () => {
+  const base: Party = {
+    guildId: "G1",
+    channelId: "C1",
+    hostId: "host",
+    members: ["host", "u2"],
+    queue: [partyTrack("Zero"), partyTrack("One")],
+    index: 0,
+  };
+
+  test("an open party with nothing playing says so and counts the queue", () => {
+    expect(formatPartyStatus(base, 5_000)).toBe(
+      "The party is open but nothing is playing. 2 track(s) queued.\nIn the party: <@host>, <@u2>",
+    );
+  });
+
+  test("a playing party shows the track, the clock and how many are left", () => {
+    expect(formatPartyStatus({ ...base, trackStartedAt: 1_000 }, 1_000 + 75_000)).toBe(
+      "**Zero** -- Band\n1:15 / 3:00, 1 more queued\nIn the party: <@host>, <@u2>",
+    );
+  });
+});
+
+describe("/spotify status and disconnect (#195)", () => {
+  const CONNECTED_AT = 1_700_000_000_000;
+
+  function wireSpotifyCommands(connected: boolean): void {
+    resetStoreForTest(connected ? putConnection(freshState(), USER, "RT", CONNECTED_AT) : freshState());
+    initCommands({ config: { setlistFmKey: "KEY", missing: [] }, serverRunning: () => true, log: captureLog });
+  }
+
+  /** A `/spotify <sub>` interaction: a subcommand, and a recorder for the one reply it should make. */
+  function fakeSpotifyCommand(sub: string) {
+    const replies: { content?: string; flags?: unknown }[] = [];
+    const interaction = {
+      user: { id: USER },
+      deferred: false,
+      replied: false,
+      options: { getSubcommand: () => sub },
+      reply: async (opts: { content?: string; flags?: unknown }) => {
+        replies.push(opts);
+      },
+    } as unknown as ChatInputCommandInteraction;
+    return { interaction, replies };
+  }
+
+  const handleSpotify = () => musicCommands().find((c) => c.name === "spotify")!.handle;
+
+  test("status says when Spotify was connected, privately", async () => {
+    wireSpotifyCommands(true);
+    const run = fakeSpotifyCommand("status");
+    await handleSpotify()(run.interaction);
+
+    expect(run.replies).toHaveLength(1);
+    expect(run.replies[0]?.content).toBe("Spotify has been connected since <t:1700000000:D>.");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+  });
+
+  test("status for someone who is not connected points at /spotify connect", async () => {
+    wireSpotifyCommands(false);
+    const run = fakeSpotifyCommand("status");
+    await handleSpotify()(run.interaction);
+
+    expect(run.replies[0]?.content).toContain("isn't connected");
+    expect(run.replies[0]?.content).toContain("/spotify connect");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+  });
+
+  test("disconnect removes the stored connection and says so, privately", async () => {
+    wireSpotifyCommands(true);
+    const run = fakeSpotifyCommand("disconnect");
+    await handleSpotify()(run.interaction);
+
+    expect(musicState().connections[USER]).toBeUndefined();
+    expect(run.replies).toHaveLength(1);
+    expect(run.replies[0]?.content).toContain("Disconnected");
+    expect(run.replies[0]?.content).toContain("forgotten your Spotify token");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+  });
+
+  test("disconnect for someone who was not connected changes nothing", async () => {
+    wireSpotifyCommands(false);
+    const run = fakeSpotifyCommand("disconnect");
+    await handleSpotify()(run.interaction);
+
+    expect(run.replies[0]?.content).toContain("wasn't connected");
+    expect(musicState().connections).toEqual({});
   });
 });
 
@@ -1820,14 +2091,14 @@ function fakePartyCommand(
   sub: string,
   options: Record<string, string>,
   userId: string,
-  guildId = "G1",
+  guildId: string | null = "G1",
   calls: string[] = [],
   onDefer?: () => Promise<void>,
   { manageGuild = false }: { manageGuild?: boolean } = {},
 ) {
   const defers: { flags?: unknown }[] = [];
   const edits: { content?: string }[] = [];
-  const followUps: { content?: string; flags?: unknown }[] = [];
+  const followUps: { content?: string; flags?: unknown; components?: unknown[] }[] = [];
   const replies: { content?: string; flags?: unknown }[] = [];
   const interaction = {
     guildId,
@@ -1858,7 +2129,7 @@ function fakePartyCommand(
       calls.push("edit");
       edits.push(opts);
     },
-    followUp: async (opts: { content?: string; flags?: unknown }) => {
+    followUp: async (opts: { content?: string; flags?: unknown; components?: unknown[] }) => {
       calls.push("followUp");
       followUps.push(opts);
     },
@@ -1903,7 +2174,10 @@ function partyRunnerDouble(
     syncMember: async (_guildId, discordUserId): Promise<MemberOutcome> => ({ discordUserId, ok: true }),
     sweep: async () => {},
     stopAll() {},
-    stop() {},
+    // `stop:<guild>`: the runner was told to cancel that guild's boundary timer (leave by the host, stop).
+    stop(guildId) {
+      calls.push(`stop:${guildId}`);
+    },
   };
 }
 
