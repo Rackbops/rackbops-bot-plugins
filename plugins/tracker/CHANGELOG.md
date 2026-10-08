@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.23.0] - 2026-10-07
+
+### Added
+
+- **Link everyone to usr**, on the admin page while the usr link is on: one press starts a run in
+  the background that, for each person on the list with a Discord id and no usr link, checks they
+  are a member of the server as `/allow` does, allows them in usr as `tracker:member` with the
+  pressing admin as the one who allowed them, and links them. The admin page shows how far it has
+  got and then how it ended; a second press while it runs starts nothing. usr records each link
+  against `TRACKER_GUILD_ID`'s first server, so with no gate it refuses and says to `/allow` in the
+  server. Someone forgotten before their turn is never sent to usr. Only a 400 from usr about the
+  person's own details is theirs; any other refusal or failure stops the run, since it would fail everyone the same way.
+
+### Schema
+
+- No change.
+
 ## [0.22.0] - 2026-10-07
 
 ### Added

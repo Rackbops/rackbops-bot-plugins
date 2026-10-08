@@ -29,7 +29,7 @@ export type Route =
   | { kind: "tokens" }
   | { kind: "token-revoke"; id: string }
   | { kind: "admin-token-revoke"; id: string }
-  | { kind: "admin" | "admin-tasks" | "admin-deliveries" | "admin-usage" | "admin-allow" }
+  | { kind: "admin" | "admin-tasks" | "admin-deliveries" | "admin-usage" | "admin-allow" | "admin-usr-link" }
   | { kind: "admin-person"; id: string }
   | { kind: "admin-act"; id: string; action: PersonAction }
   | { kind: "admin-ceiling"; id: string }
@@ -65,6 +65,7 @@ export function route(path: string): Route | null {
   if (path === "/admin/deliveries") return { kind: "admin-deliveries" };
   if (path === "/admin/usage") return { kind: "admin-usage" };
   if (path === "/admin/allow") return { kind: "admin-allow" };
+  if (path === "/admin/usr-link") return { kind: "admin-usr-link" };
   const ceiling = PERSON_CEILING.exec(path);
   if (ceiling) return { kind: "admin-ceiling", id: segment(ceiling[1]) };
   const personAct = PERSON_ACTION.exec(path);
@@ -93,6 +94,7 @@ export function methodsOf(r: Route): "GET" | "POST" | "GET, POST" {
     r.kind === "logout" ||
     r.kind === "act" ||
     r.kind === "admin-allow" ||
+    r.kind === "admin-usr-link" ||
     r.kind === "admin-act" ||
     r.kind === "admin-ceiling" ||
     r.kind === "admin-lift" ||

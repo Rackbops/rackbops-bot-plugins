@@ -42,6 +42,14 @@ function flash(result: { ok: boolean; text: string } | null): Html | null {
 
 export type Result = { ok: boolean; text: string } | null;
 
+/** Where "Link everyone to usr" has got to (admin.ts `UsrLinkRun`). */
+export interface UsrLinkRunView {
+  running: boolean;
+  done: number;
+  total: number;
+  result: Result;
+}
+
 function hidden(v: Viewer): Html {
   return html`<input type="hidden" name="csrf" value="${v.csrf}">`;
 }
@@ -85,7 +93,7 @@ export interface AdminData {
 }
 
 /** `/admin`: everyone on the list, the decline blocks in force, and the allow form. */
-export function adminPage(v: Viewer, data: AdminData, o: { result?: Result; allow?: string; unlimited?: boolean } = {}): string {
+export function adminPage(v: Viewer, data: AdminData, o: { result?: Result; allow?: string; unlimited?: boolean; usrUnlinked?: number | null; usrRun?: UsrLinkRunView } = {}): string {
   const names = new Map(data.people.map((p) => [p.id, nameOf(p)]));
   const rows = data.people.map(
     (p) => html`<tr>
@@ -131,6 +139,22 @@ ${hidden(v)}
 <div><button class="rb-btn rb-btn--primary" type="submit">Allow</button></div>
 </form>
 </section>
+${
+  o.usrUnlinked === undefined || o.usrUnlinked === null
+    ? null
+    : html`<section>
+<h2>Link everyone to usr</h2>
+<p class="rb-muted">${o.usrUnlinked === 0 ? "Everyone on the list is linked to usr." : `${o.usrUnlinked} on the list ${o.usrUnlinked === 1 ? "is" : "are"} not linked to usr yet.`} Each one is checked as a member of the server and allowed in usr as a member, with you as the admin who allowed them, as <code>/allow</code> does in the server.</p>
+${
+  o.usrRun?.running
+    ? html`<p>Linking everyone to usr: ${String(o.usrRun.done)} of ${String(o.usrRun.total)} done. Reload this page to see how far it has got.</p>`
+    : o.usrRun?.result
+      ? html`<div class="rb-alert ${o.usrRun.result.ok ? "rb-alert--success" : "rb-alert--warning"}" role="status"><p>Last run: ${o.usrRun.result.text}</p></div>`
+      : null
+}
+${o.usrUnlinked === 0 || o.usrRun?.running ? null : html`<form method="post" action="${v.base}/admin/usr-link">${hidden(v)}<button class="rb-btn rb-btn--primary" type="submit">Link everyone to usr</button></form>`}
+</section>`
+}
 <section>
 <h2>Decline blocks</h2>
 ${blocks}
