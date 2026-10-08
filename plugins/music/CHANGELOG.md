@@ -235,8 +235,13 @@
 ### Known limits
 
 - The file is rewritten in full, pretty-printed, on every build. At the 50-run cap it is about
-  0.4 MiB when every song of a 25-song setlist matches confidently and about 10 MiB when every
-  song of every run is missing, since those keep their candidate lists.
+  0.4 MiB when every song of a 25-song setlist matches confidently on its first query, and a song
+  that does not keeps its candidate lists, so a run where every song is missing is far larger:
+  about 10 MiB across 50 runs while a song cost two queries. Since 1.6.0 a song is searched under
+  up to four artist names (up to eight queries), which makes that all-missing figure about 40 MiB
+  for a cover on a tribute set, and a confident song reached on its second query or under a
+  fallback name keeps its candidate lists too. These are hand estimates, not measurements, and
+  there is no byte cap: 50 limits the number of runs, not their size.
 
 ## [1.2.0] - 2026-09-20
 
@@ -289,8 +294,11 @@
 
 - `/setlist artist:<name> date:<date>` builds the playlist from the show on a particular night,
   rather than only the artist's most recent one. The date is accepted as `2026-09-08` or
-  `08-09-2026` and sent on in setlist.fm's own `dd-MM-yyyy`, which its search parameter requires
-  -- an ISO date there matches nothing, silently.
+  `08-09-2026`, with `-`, `/` or `.` between the parts (`2026/9/8`, `8.9.2026`, and mixed ones
+  such as `08.09/2026`), and sent on in setlist.fm's own `dd-MM-yyyy`, which its search parameter
+  requires -- an ISO date there matches nothing, silently. A date that starts with a one- or
+  two-digit group is always read day-first, so `09/08/2026` is 9 August; there is no month-first
+  spelling.
 
   A band can play a festival slot in the afternoon and a club show the same night, and setlist.fm
   also carries genuine duplicate entries for one gig, so an artist-and-date search can honestly

@@ -173,10 +173,11 @@ export function isPseudoArtist(name: string): boolean {
  * Flattens setlist.fm's nested `sets.set[].song[]` into one ordered list, in stage order (main set
  * first, then each encore), and resolves each song's search artist.
  *
- * Three kinds of entry are dropped, because none of them is a track anyone can add to a playlist:
- * a song with no name (setlist.fm allows a blank entry to mark "something was played here"), and a
- * `tape` song (counted separately -- see `Setlist.tapeCount`). `with` (a guest performer) is
- * deliberately ignored: the recording is still the main artist's.
+ * Two kinds of well-formed entry are dropped, because none of them is a track anyone can add to a
+ * playlist: a song with no name (setlist.fm allows a blank entry to mark "something was played
+ * here"), and a `tape` song (counted separately -- see `Setlist.tapeCount`). An entry or set that
+ * is not even an object is skipped without a word. `with` (a guest performer) is deliberately
+ * ignored: the recording is still the main artist's.
  *
  * One entry can yield more than one song: a medley is one setlist.fm entry but several tracks --
  * see `splitMedley`. Each part inherits the entry's cover credit, since the whole medley is
@@ -254,12 +255,16 @@ function pad2(value: number): string {
  * Normalises a date a user typed into the `dd-MM-yyyy` that setlist.fm's `date` search parameter
  * requires. That format is the API's, not a choice: `?date=2026-09-08` silently matches nothing.
  *
- * Two spellings are accepted and no others, because every other separator ordering is genuinely
- * ambiguous: `yyyy-MM-dd` (ISO, what most people type) and `dd-MM-yyyy` (what setlist.fm itself
- * prints on every setlist page, so it is what someone copying from the site will paste). A
- * four-digit leading group means the first is a year; anything else is read day-first. `03-04-2026`
- * is therefore always 3 April, matching the site -- there is no reading of it as 4 March, which is
- * why `MM-dd-yyyy` is not accepted at all rather than guessed at.
+ * Two orderings are accepted and no others: `yyyy-MM-dd` (ISO, what most people type) and
+ * `dd-MM-yyyy` (what setlist.fm itself prints on every setlist page, so it is what someone copying
+ * from the site will paste). Each may be written with `-`, `/` or `.` between its groups, and the
+ * separators may be mixed (`08.09/2026`). A four-digit leading group is the year; a leading
+ * one-or-two-digit group, with a four-digit year last, is always the day: `03-04-2026` and
+ * `03/04/2026` are both 3 April, matching the site. Anything else is unreadable, a two-digit year
+ * (`08-09-26`) included. There is no `MM-dd-yyyy` ordering: a US-style `09/08/2026` is read as
+ * 9 August, not 8 September, and nothing in the parse can tell the two apart. What softens it is
+ * that the replies name the date that was searched: a miss quotes it as `dd-MM-yyyy`, and a
+ * build's reply carries the show's own date in its head (#92).
  *
  * The result is round-tripped through a real calendar date, so `31-02-2026` is rejected instead of
  * rolling over into March. Returns `undefined` rather than throwing: an unreadable date is a normal
