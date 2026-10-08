@@ -4,14 +4,22 @@
 
 ### Fixed
 
+- A party member whose token refresh fails for any reason that is not a dead grant -- Spotify
+  unreachable, slow, rate-limiting or erroring, the app's own credentials refused, an answer the bot
+  cannot read -- is no longer dropped from the party on that first failure: the runner now treats it
+  like any other blip and drops them only on the second consecutive one, exactly as a transient play
+  failure already did, so one Spotify hiccup at a track boundary no longer empties a party (or
+  closes it, when the host's refresh was the one that hit it). A first strike is logged, since
+  nothing else records it. A recognised dead grant (HTTP 400 `invalid_grant`) or a disconnect still
+  drops the member at once. The drop-out line also no longer ends in two periods when the reason is
+  a full sentence (#154).
 - A token refresh that fails because Spotify is unreachable, slow, rate-limiting (429) or erroring
   (5xx), or because the app's own credentials are refused (`invalid_client`), no longer deletes the
   user's stored connection -- only a dead grant (HTTP 400 `invalid_grant`: the refresh token is
   invalid, expired or revoked) does, and a failure the bot cannot read (a 400 with no error code) is
   kept too. The reply says the link is still saved, to try again in a moment, and to run
   `/spotify connect` again if it keeps failing. A party member's token therefore survives a Spotify
-  blip instead of sending them back through consent (#133); the party runner still drops them from
-  a running party on any failed refresh (that half is #154), but rejoining no longer needs a new
+  blip instead of sending them back through consent (#133), so rejoining after a drop needs no new
   consent. A dead grant still gets "no longer valid ... reconnect", exactly as before.
 - A karaoke upload phrased "Originally Performed by <artist>" (or "Originally by <artist>") no
   longer survives on an instrumental penalty alone -- the phrase joins the same 100-point pattern
