@@ -6,7 +6,7 @@
 // in from outside the compose network is the opt-in `cloudflared` sidecar -- which is also what
 // makes SPOTIFY_REDIRECT_URI an HTTPS URL Spotify will accept as a registered redirect.
 
-import { clientIpFrom, createTrustedProxy, type TrustedProxy } from "../../../packages/net/clientIp.js";
+import { clientIpFrom, type TrustedProxy } from "../../../packages/net/clientIp.js";
 import type { Result } from "./spotify.js";
 
 /** A fixed-window limiter, per warbandeer's: enough to bound a hot loop within one process uptime. */
@@ -163,15 +163,14 @@ export async function handleCallback(req: Request, clientIp: string, deps: Callb
  * address that resolves to `proxy`'s configured `TRUSTED_PROXY_HOST` (#69) -- Cloudflare's edge
  * sets it for anything that genuinely transits its network, but nothing about a raw request proves
  * it came that way. Previously trusted unconditionally, same gap and same fix as warbandeer's --
- * see `clientIpFrom` (`packages/net/clientIp.ts`). `proxy` defaults to a `TrustedProxy` built from
- * `process.env.TRUSTED_PROXY_HOST` directly -- a test/fallback convenience only, never actually
- * exercised in production: `index.ts`'s `activate()` always constructs its own proxy from
- * `host.env` (the real declared-capability boundary this repo enforces) and passes it explicitly.
+ * see `clientIpFrom` (`packages/net/clientIp.ts`). `proxy` is required: `index.ts`'s `activate()`
+ * builds it from `host.env` (the host hands a plugin only the env keys its manifest declares), and
+ * a default that read `process.env` instead would bypass that boundary.
  */
 export function startCallbackServer(
   port: number,
   deps: CallbackDeps,
-  proxy: TrustedProxy = createTrustedProxy({ host: process.env.TRUSTED_PROXY_HOST }),
+  proxy: TrustedProxy,
 ): { stop: () => void; port: number } {
   const server = Bun.serve({
     port,

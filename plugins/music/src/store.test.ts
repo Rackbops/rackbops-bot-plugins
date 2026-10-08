@@ -146,6 +146,54 @@ describe("the host-backed singleton", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  test("a missing file and a valid state load without a warning", async () => {
+    for (const content of [undefined, JSON.stringify(freshState())]) {
+      const dir = await mkdtemp(join(tmpdir(), "music-store-"));
+      const warnings: string[] = [];
+      try {
+        if (content !== undefined) await Bun.write(join(dir, "music.json"), content);
+        await initStore(
+          makeFakeHost({
+            name: "music",
+            dataDir: dir,
+            storage: makeRealStorage(),
+            log: { info() {}, warn: (m) => warnings.push(m), error() {} },
+          }),
+        );
+        expect(musicState()).toEqual(freshState());
+        expect(warnings).toEqual([]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("a store file that is not an object is replaced by a fresh state", async () => {
+    // Valid JSON the host's reader hands back as-is: it parses, so it is never treated as corrupt.
+    for (const content of ["null", "[]", "42"]) {
+      const dir = await mkdtemp(join(tmpdir(), "music-store-"));
+      const warnings: string[] = [];
+      try {
+        await Bun.write(join(dir, "music.json"), content);
+        await initStore(
+          makeFakeHost({
+            name: "music",
+            dataDir: dir,
+            storage: makeRealStorage(),
+            log: { info() {}, warn: (m) => warnings.push(m), error() {} },
+          }),
+        );
+        expect(musicState()).toEqual(freshState());
+        // The replacement is announced, since the file is overwritten on the next write.
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("music.json");
+        expect(warnings[0]).toContain("not an object");
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+  });
 });
 
 describe("recorded scopes", () => {

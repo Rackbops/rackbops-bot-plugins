@@ -563,7 +563,7 @@ async function handleSpotify(interaction: ChatInputCommandInteraction): Promise<
   await replyEphemeral(
     interaction,
     `[Connect your Spotify account](${authorizeUrl(config.spotify, stateToken)})\n` +
-      "The link is good for 10 minutes and only for you. Asking again replaces it.",
+      "The link is good for 10 minutes. Don't share it: whoever finishes it attaches their Spotify to your Discord account. Asking again replaces it.",
   );
 }
 

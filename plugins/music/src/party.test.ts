@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   addMember,
   advance,
@@ -9,14 +12,17 @@ import {
   expectedPositionMs,
   freshParties,
   getParty,
+  initParties,
   markStarted,
   msUntilAdvance,
   openParty,
+  partiesState,
   removeMember,
   type Party,
   type PartiesState,
   type PartyTrack,
 } from "./party.js";
+import { makeFakeHost, makeRealStorage } from "../../../packages/testkit/index.js";
 
 const NOW = 1_700_000_000_000;
 
@@ -151,5 +157,55 @@ describe("decideSync", () => {
   test("a party with nothing playing asks nothing of anyone", () => {
     const { trackStartedAt: _unused, ...stopped } = party();
     expect(decideSync(stopped, { isPlaying: false, progressMs: 0 }, NOW)).toEqual({ action: "ok" });
+  });
+});
+
+describe("initParties", () => {
+  test("a missing file and a valid state load without a warning", async () => {
+    for (const content of [undefined, JSON.stringify(freshParties())]) {
+      const dir = await mkdtemp(join(tmpdir(), "music-parties-"));
+      const warnings: string[] = [];
+      try {
+        if (content !== undefined) await Bun.write(join(dir, "parties.json"), content);
+        await initParties(
+          makeFakeHost({
+            name: "music",
+            dataDir: dir,
+            storage: makeRealStorage(),
+            log: { info() {}, warn: (m) => warnings.push(m), error() {} },
+          }),
+        );
+        expect(partiesState()).toEqual(freshParties());
+        expect(warnings).toEqual([]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("a parties file that is not an object is replaced by a fresh state", async () => {
+    // Valid JSON the host's reader hands back as-is: it parses, so it is never treated as corrupt.
+    for (const content of ["null", "[]", "42"]) {
+      const dir = await mkdtemp(join(tmpdir(), "music-parties-"));
+      const warnings: string[] = [];
+      try {
+        await Bun.write(join(dir, "parties.json"), content);
+        await initParties(
+          makeFakeHost({
+            name: "music",
+            dataDir: dir,
+            storage: makeRealStorage(),
+            log: { info() {}, warn: (m) => warnings.push(m), error() {} },
+          }),
+        );
+        expect(partiesState()).toEqual(freshParties());
+        // The replacement is announced, since the file is overwritten on the next write.
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain("parties.json");
+        expect(warnings[0]).toContain("not an object");
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
   });
 });
