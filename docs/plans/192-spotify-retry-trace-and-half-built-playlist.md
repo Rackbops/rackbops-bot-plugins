@@ -1,0 +1,63 @@
+# #192 -- a rate-limited Spotify search is retried, a swallowed search failure stays in the trace, and a failed add points at the playlist it made
+
+Epic #237 child, S. Two findings (`music-setlist-4`, `music-setlist-5`), one PR. Behaviour change (how the build reacts to a 429 and to a failed add; what the trace and the reply carry): the three-reviewer gate applies.
+
+## Plan (execute as written)
+
+Written 2026-10-08 against `main` at `8c2a07d`, to land AFTER #147 (Subordinate 1's PR), which changes `call` in `spotify.ts` to `call(url, init, signal?)` and composes the host's abort signal with the client's own timeout. Build on that signature: do not start this branch before #147 is on `main`. Cites are to `8c2a07d`; re-find by function name.
+
+### What is wrong
+
+- `createSpotifyClient`'s `call` (`plugins/music/src/spotify.ts:294-310`) makes one attempt and reports any non-2xx as a failure. `findSong` (`build.ts:193-258`) runs the setlist's searches sequentially, up to 50 for an ordinary 25-song setlist, against a quota pooled across every dev-mode app the developer owns (`build.ts:265-267`), so a 429 on song 24 with no match in hand for that song returns `ok: false` (`:209-215`), `buildPlaylist` stops (`:296`), 23 songs' matching is discarded, and the rerun re-spends the same quota. `setlistfm.ts` already has a bounded, `Retry-After`-aware retry for exactly this (`:361-410`, `:432-467`); the Spotify client has none.
+- When a search fails AFTER a match exists for the song (`:217-218`), the failure is swallowed: the search stops, the best so far is kept, and the failed query is not pushed to `queries`. The match log then shows a `low`/`medium` pick with a complete-looking query list, so tuning cannot tell "nothing better exists" from "the fallback search 429'd". `build.test.ts:193-207` and `:754-767` pin the swallow and assert the shorter list.
+- `createPlaylist` succeeds and `addTracks` fails after a batch (`build.ts:324-333`; `spotify.ts`'s `addTracks` reports "after adding N of M"): `buildPlaylist` returns `{ ok: false, error, songs }` with no playlist on the failure arm (`:115-117`), `commands.ts:308` shows only the error text, and `toMatchRun` (`matchlog.ts:60-77`) records `ok: false, added: 0` with no url. The private playlist with the tracks that did land stays in the library unannounced, and a retry creates a second one.
+
+### Decisions
+
+- **One retry policy module, shared by both clients.** New `plugins/music/src/retry.ts` holding, moved verbatim from `setlistfm.ts`: `SleepLike`, `defaultSleep`, `isRetryable`, `parseRetryAfter`, `retryDelay` and the constants `MAX_RETRIES` (3), `BACKOFF_BASE_MS` (500), `MAX_BACKOFF_MS` (5000), with their comments. `setlistfm.ts` imports them and re-exports `SleepLike`, `isRetryable`, `parseRetryAfter` and `retryDelay` (`export { ... } from "./retry.js"`), so `setlistfm.test.ts` and every other importer are untouched.
+- **The Spotify client retries the BUILD calls only.** `createSpotifyClient(config, fetchImpl = fetch, sleepImpl: SleepLike = defaultSleep)`. `call` gains an option, `{ retry: true }`, that `searchTracks`, `createPlaylist` and `addTracks` pass; token calls and the four player calls do not (a party's play and the runner's sweep run under the host's bounds and must stay one request long; the token refresh is the single-flight shared with every command). With `retry` set, `call` loops like `setlistfm.ts`'s `get`: a retryable status (`isRetryable`: 429 or 5xx) with attempts left waits `retryDelay(attempt, parseRetryAfter(response.headers.get("Retry-After"), Date.now()))` through `sleepImpl` and tries again; a `Retry-After` past `MAX_BACKOFF_MS` ends the retries at once; a transport failure (timeout, DNS) is not retried; `signal?.aborted` (from #147) checked before each sleep ends the retries with the usual failure. The final failure is what `call` returns today (`describeFailure` plus `status`).
+- **A swallowed failure is recorded, and marked.** `QueryTrace` gains `error?: string` ("this query failed with this error and returned no candidates"). `findSong`'s fatal branch (`:210`) and its swallow branch (`:217-218`) both push `{ query, candidates: [], error: result.error }`; the swallow branch pushes BEFORE it breaks. Nothing else in `findSong` changes: a swallowed failure always follows at least one successful query, so `queries.length > 1` already keeps the trace on the song. The JSDoc at `:186-191` says the failed query is now the last entry of `queries`.
+- **A failed add carries the playlist.** `BuildResult`'s failure arm gains `playlistUrl?: string`; `buildPlaylist` returns `{ ok: false, error: \`${added.error}. The playlist was created and holds whatever landed before that: ${created.value.url}\`, songs, playlistUrl: created.value.url }` on a failed `addTracks`. `MatchRun` gains `playlistUrl?: string`, set by `toMatchRun` from `outcome.playlistUrl` on success and from the failure arm's `playlistUrl` when present. `commands.ts` needs no change: `built.error` already reaches the reply.
+- **No version bump.** The CHANGELOG bullet travels in the PR body (see the steps); `plugins.json` is unaffected.
+
+### Steps
+
+1. `plugins/music/src/retry.ts` as decided; `setlistfm.ts` imports from it and re-exports the four names; `createSetlistFmClient`'s own loop is unchanged.
+2. `plugins/music/src/spotify.ts`: the `sleepImpl` parameter, `call(url, init, signal?, opts?: { retry?: boolean })` with the loop as decided (one comment: which calls retry and why the others do not), `{ retry: true }` on `searchTracks`, `createPlaylist` and `addTracks`.
+3. `plugins/music/src/build.ts`: `QueryTrace.error?`, the two pushes in `findSong`, the failure arm's `playlistUrl` and the add-failure return. `plugins/music/src/matchlog.ts`: `MatchRun.playlistUrl?` and `toMatchRun` as decided.
+4. `plugins/music/src/spotify.test.ts`, `describe("retrying the build calls")`, with a fake fetch that answers a scripted list of responses in order and a `sleep` fake recording its delays (pass both to `createSpotifyClient`; read how the file builds a client and a `json(body, status)` response today):
+   - "a 429 with Retry-After is retried after that long": `[429 with Retry-After: 1, 200 with one track]` -> `searchTracks` is `ok` with the track, the fake fetch was called twice, `sleeps` equals `[1000]`.
+   - "a 5xx is retried on the client's own backoff": `[503, 503, 200]` -> `ok`, three calls, `sleeps` equals `[500, 1000]`.
+   - "the retries are bounded": four 503s -> `ok: false` with "HTTP 503", four calls, `sleeps` equals `[500, 1000, 2000]`.
+   - "a Retry-After longer than the cap ends the retries at once": `[429 with Retry-After: 60]` -> `ok: false`, one call, no sleep.
+   - "a 4xx other than 429 is not retried": `[400]` -> one call, no sleep.
+   - "a transport failure is not retried": the fake fetch rejects once -> "couldn't reach Spotify", one call, no sleep.
+   - "a player call is never retried": `[429, 200]` against `play` -> `ok: false`, one call, no sleep. The same for `refresh` (one call).
+   - "an abort ends the retries": `[429 with Retry-After: 1, 200]` with an `AbortController` aborted inside the first fetch fake (using #147's `signal` parameter) -> `ok: false`, one call, no sleep.
+   - `createPlaylist` and `addTracks` each: `[429 with Retry-After: 1, 2xx]` -> `ok`, two calls.
+5. `plugins/music/src/build.test.ts`:
+   - `:193-207`: `found.trace.queries` now has length 2, and the last entry equals `{ query: <the failed query>, candidates: [], error: "Spotify returned HTTP 429" }`; `hitQuery` still 0.
+   - `:754-767`: `found.trace.queries` has length 3 and its last entry carries `error: "Spotify returned HTTP 429"` with no candidates.
+   - "a fatal search failure's trace ends with the failed query, marked": the `:186-191` case -> `trace.queries` has one entry with `candidates: []` and `error` set.
+   - In `describe("buildPlaylist")`: "a failed add names the playlist that was created": `addTracks` answers `{ ok: false, error: "Spotify returned HTTP 500 (after adding 100 of 250)" }` -> `result.ok` is false, `result.playlistUrl` equals the fake's created url, `result.error` contains "HTTP 500" and that url; and a successful build's `playlistUrl` is unchanged.
+6. `plugins/music/src/matchlog.test.ts`: "a failed add's run records the playlist url": `toMatchRun(setlist, { ok: false, error: "...", songs: [], playlistUrl: "https://open.spotify.com/playlist/PL1" }, at)` -> `run.playlistUrl` equals it, `run.ok` false, `run.added` 0; "a successful run records the playlist url" -> from `outcome.playlistUrl`; "a failure without a playlist records none" -> `playlistUrl` absent.
+7. `plugins/music/src/commands.test.ts`, in `describe("recording a build")` (the `wireBuild` harness): "a failed add tells the user where the half-filled playlist is": `buildSpotify({ addTracks: async () => ({ ok: false, error: "Spotify returned HTTP 500 (after adding 100 of 250)" }) })` -> `shown(run)` contains "open.spotify.com/playlist/PL1" and "HTTP 500"; the recorded run has `ok: false` and `playlistUrl` set.
+8. The CHANGELOG bullet goes in the PR body under `## CHANGELOG bullet` (no edit to `plugins/music/CHANGELOG.md`; the orchestrator lands every bullet in one docs PR at the end of the epic). Its text: `/setlist` now retries a Spotify search, playlist creation or track add that was rate-limited or met a server error, honouring `Retry-After` up to a few seconds, instead of discarding every song matched so far; a search that failed after a match was already in hand is recorded in the match log as the failed query it was, so a `low` or `medium` pick no longer looks like the end of the road; and when adding tracks fails after the playlist was created, the reply and the match log say where that playlist is (#192).
+9. This file, committed as `docs/plans/192-spotify-retry-trace-and-half-built-playlist.md`.
+10. Checks: `bun run lint`, `bun run check`, `bun run build`, `bun run generate-index -- --check`, `bun run check-contract`, `bun test plugins/music`, and `bun test plugins/mcp plugins/music plugins/warbandeer plugins/wow packages scripts`; the tracker suite's #232 `EBUSY` set is the Windows baseline and CI is the arbiter for it. Paste the counts.
+11. Mutations from the table, each in a scratch worktree of your clone, never in the tree under test; name the red test per row in the PR.
+12. Review gate: you plus two read-only reviewers with different lenses (A: correctness and failure modes -- the loop against `setlistfm.ts`'s, every `call` site and whether its retry choice is right, the abort check against #147's composed signal, the worst-case time a retried build call can take behind the deferred reply, the swallow branch's push-then-break, the error text and url on the failure arm; B: claims-vs-code over this plan, the CHANGELOG bullet, the JSDoc and the comments, walking every coverage row and deriving mutation survivors). 2-of-3 on the major points; every evidenced finding fixed or declined in writing; a fix with behaviour re-runs the round; four rounds at most, then message the orchestrator.
+13. PR `fix(music): retry a rate-limited Spotify build call, keep a swallowed search failure in the trace, and point a failed add at its playlist (#192)`, body per `/work-on` plus the pasted checks, the mutation rows and the gate's rounds; `Closes #192`. Do not merge: the orchestrator merges.
+
+### Coverage
+
+| Outcome (the issue's Fix) | Step | Test | Mutation that must fail it |
+|---|---|---|---|
+| A rate-limited or 5xx build call is retried, honouring `Retry-After` | 1, 2, 4 | the 429 and 5xx retry tests | drop the loop -- one call; ignore the header -- `sleeps` |
+| The retries are bounded and a long `Retry-After` ends them | 1, 2, 4 | "the retries are bounded"; "longer than the cap" | retry forever / clamp the header -- the call counts |
+| Other failures, transport failures and the player and token calls are not retried | 2, 4 | the 400, transport, player and refresh tests | retry everything -- extra calls |
+| An abort ends the retries | 2, 4 | "an abort ends the retries" | drop the `signal?.aborted` check -- two calls |
+| A swallowed search failure is in the trace, marked | 3, 5 | the two updated swallow tests; the fatal-trace test | drop the push in the swallow branch -- the length; drop `error` -- the entry |
+| A failed add carries the playlist in the result, the reply and the log | 3, 5, 6, 7 | the build, matchlog and commands tests | drop `playlistUrl` from the failure arm / from `toMatchRun`; drop the url from the error text |
+
+Run each mutation in a scratch worktree, never in the tree under test; name the red test per row in the PR.
