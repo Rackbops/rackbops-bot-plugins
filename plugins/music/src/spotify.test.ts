@@ -5,6 +5,7 @@ import {
   classifyPlayerError,
   createSpotifyClient,
   hasScopes,
+  isDeadGrant,
   MAX_URIS_PER_ADD,
   PARTY_SCOPES,
   SPOTIFY_SCOPES,
@@ -150,6 +151,25 @@ describe("createSpotifyClient", () => {
     expect(result.ok === false && result.error).toContain("Refresh token revoked");
   });
 
+  test("refresh on a 400 invalid_grant surfaces the status and the machine-readable code", async () => {
+    const client = createSpotifyClient(CONFIG, async () =>
+      json({ error: "invalid_grant", error_description: "Refresh token revoked" }, 400),
+    );
+    const result = await client.refresh("dead");
+    expect(result).toEqual({
+      ok: false,
+      error: "Spotify returned HTTP 400: Refresh token revoked",
+      status: 400,
+      code: "invalid_grant",
+    });
+  });
+
+  test("a 503 with an HTML body surfaces the status and no code at all", async () => {
+    const client = createSpotifyClient(CONFIG, async () => new Response("<html>503</html>", { status: 503 }));
+    const result = await client.refresh("RT1");
+    expect(result).toEqual({ ok: false, error: "Spotify returned HTTP 503", status: 503 });
+  });
+
   test("a non-JSON error body still yields the status, not a crash", async () => {
     const client = createSpotifyClient(CONFIG, async () => new Response("<html>502</html>", { status: 502 }));
     const result = await client.searchTracks("AT", "q");
@@ -249,5 +269,22 @@ describe("classifyPlayerError", () => {
 
   test("a network failure, which carries no status, is nobody's fault in particular", () => {
     expect(classifyPlayerError(undefined, "couldn't reach Spotify")).toBe("other");
+  });
+});
+
+describe("isDeadGrant", () => {
+  test("only a 400 invalid_grant means the refresh token itself is dead", () => {
+    expect(isDeadGrant({ status: 400, code: "invalid_grant" })).toBe(true);
+  });
+
+  test("a 401 invalid_client is the app's own credentials, which reconnecting cannot fix", () => {
+    expect(isDeadGrant({ status: 401, code: "invalid_client" })).toBe(false);
+  });
+
+  test("a 400 with no readable code, a 5xx, a 429 and a timeout are not a dead grant", () => {
+    expect(isDeadGrant({ status: 400 })).toBe(false);
+    expect(isDeadGrant({ status: 503 })).toBe(false);
+    expect(isDeadGrant({ status: 429, code: "rate_limited" })).toBe(false);
+    expect(isDeadGrant({})).toBe(false);
   });
 });

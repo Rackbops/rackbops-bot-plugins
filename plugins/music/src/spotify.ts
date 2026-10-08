@@ -64,8 +64,11 @@ export interface SpotifyConfig {
  * `status` is the HTTP status when the failure came from Spotify rather than from the network, so
  * a caller can tell a missing scope (403) from an idle device (404) without re-parsing prose. It is
  * absent on a timeout or a connection failure, which is itself the signal that nothing was reached.
+ * `code` is Spotify's own machine-readable error code when the body carried one as a string -- the
+ * accounts host's `invalid_grant` / `invalid_client` -- so a caller never has to classify a failure
+ * by its prose (`error` prefers the human `error_description`, which is free to change).
  */
-export type Result<T> = { ok: true; value: T } | { ok: false; error: string; status?: number };
+export type Result<T> = { ok: true; value: T } | { ok: false; error: string; status?: number; code?: string };
 
 // ---------------------------------------------------------------------------------------------------
 // Pure helpers
@@ -236,13 +239,28 @@ export function classifyPlayerError(status: number | undefined, message: string)
 }
 
 /**
+ * Whether a failed token call means the GRANT is dead -- the refresh token invalid, expired or
+ * revoked -- as opposed to Spotify being unreachable, slow, rate-limiting or erroring, or the app's
+ * own credentials being refused. OAuth 2.0 (RFC 6749 section 5.2) names exactly one of those
+ * `invalid_grant`, always with HTTP 400; `invalid_client` comes back 401 and is the operator's
+ * client id or secret, which reconnecting cannot fix. A 400 whose body carried no readable code is
+ * not treated as dead either: dropping a stored token on ambiguity is the failure #133 is about.
+ */
+export function isDeadGrant(failure: { status?: number; code?: string }): boolean {
+  return failure.status === 400 && failure.code === "invalid_grant";
+}
+
+/**
  * Spotify's error bodies are `{ error: { message } }` on the API and `{ error, error_description }`
  * on the accounts host. Surfacing the real message matters more here than a tidy generic one --
  * "User not registered in the Developer Dashboard" is the dev-mode five-user ceiling, and an
- * operator who sees it knows exactly what to do.
+ * operator who sees it knows exactly what to do. The accounts host's `error` string is the
+ * machine-readable code and comes back separately as `code`, so `isDeadGrant` reads that and not
+ * the prose.
  */
-async function describeFailure(response: Response): Promise<string> {
+async function describeFailure(response: Response): Promise<{ error: string; code?: string }> {
   let detail = "";
+  let code: string | undefined;
   try {
     const body = (await response.json()) as {
       error?: unknown;
@@ -251,14 +269,17 @@ async function describeFailure(response: Response): Promise<string> {
     if (typeof body.error === "object" && body.error !== null) {
       const message = (body.error as { message?: unknown }).message;
       if (typeof message === "string") detail = message;
+    } else if (typeof body.error === "string") {
+      code = body.error;
+      detail = typeof body.error_description === "string" ? body.error_description : body.error;
     } else if (typeof body.error_description === "string") detail = body.error_description;
-    else if (typeof body.error === "string") detail = body.error;
   } catch {
     // A non-JSON error body (a proxy's HTML 502) leaves `detail` empty -- the status alone is then
     // the whole message, which is still actionable.
   }
   const status = `Spotify returned HTTP ${response.status}`;
-  return detail === "" ? status : `${status}: ${detail}`;
+  const error = detail === "" ? status : `${status}: ${detail}`;
+  return code === undefined ? { error } : { error, code };
 }
 
 export function createSpotifyClient(config: SpotifyConfig, fetchImpl: FetchLike = fetch): SpotifyClient {
@@ -272,7 +293,7 @@ export function createSpotifyClient(config: SpotifyConfig, fetchImpl: FetchLike 
       const timedOut = err instanceof Error && err.name === "TimeoutError";
       return { ok: false, error: timedOut ? "Spotify took too long to answer" : "couldn't reach Spotify" };
     }
-    if (!response.ok) return { ok: false, error: await describeFailure(response), status: response.status };
+    if (!response.ok) return { ok: false, ...(await describeFailure(response)), status: response.status };
     // 201/204 bodies: addTracks gets a snapshot object, but nothing reads it.
     if (response.status === 204) return { ok: true, value: undefined };
     try {
