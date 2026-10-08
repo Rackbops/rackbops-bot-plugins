@@ -16,6 +16,8 @@ import {
   PRIVATE_FAILURE_NOTE,
 } from "./commands.js";
 import {
+  advance,
+  closeParty,
   commitParties,
   freshParties,
   getParty,
@@ -1605,6 +1607,9 @@ function wireParty({
   queue,
   configured = true,
   skipOutcomes = [],
+  index = 0,
+  search,
+  noClock = false,
 }: {
   scopes: string;
   connected?: boolean;
@@ -1623,6 +1628,12 @@ function wireParty({
   configured?: boolean;
   /** What the runner double reports back from `skip`. */
   skipOutcomes?: MemberOutcome[];
+  /** The seeded party's `index`: the track it is on, or the queue's length once it has run off the end. */
+  index?: number;
+  /** Replaces the Spotify search fake, to run something while a `/party add` is waiting on it. */
+  search?: SpotifyClient["searchTracks"];
+  /** Leaves the wiring's clock out, as production does: a started party is stamped with the real time. */
+  noClock?: boolean;
 }): { started: string[]; calls: string[] } {
   const started: string[] = [];
   const calls: string[] = [];
@@ -1634,7 +1645,7 @@ function wireParty({
     hostId: "host",
     members,
     queue: queue ?? (party === "playing" ? [partyTrack("Zero")] : []),
-    index: 0,
+    index,
     ...(party === "playing" ? { trackStartedAt: 1 } : {}),
   };
   resetPartiesForTest(openParty(freshParties(), seeded));
@@ -1663,22 +1674,32 @@ function wireParty({
               calls.push("refresh");
               return { ok: true, value: { accessToken: "AT", scopes } };
             },
-            searchTracks: async () =>
-              searchError !== undefined
-                ? { ok: false, error: searchError }
-                : {
-                    ok: true,
-                    value: searchHit ? [noDuration ? track("One") : { ...track("One"), durationMs: 180_000 }] : [],
-                  },
+            searchTracks:
+              search ??
+              (async () =>
+                searchError !== undefined
+                  ? { ok: false, error: searchError }
+                  : {
+                      ok: true,
+                      value: searchHit ? [noDuration ? track("One") : { ...track("One"), durationMs: 180_000 }] : [],
+                    }),
           }),
           runner: partyRunnerDouble(started, outcomes, calls, skipOutcomes),
         }
       : {}),
     serverRunning: () => true,
+    // The clock a party an add starts is stamped with (a Date, as `Wiring.now` is).
+    ...(noClock ? {} : { now: () => new Date(PARTY_NOW) }),
     log: captureLog,
   });
   return { started, calls };
 }
+
+/** The instant `wireParty`'s clock reports, as a number: what a started party's `trackStartedAt` is. */
+const PARTY_NOW = 1_700_000_000_000;
+
+/** The one Spotify hit for "One", with the length a party needs. */
+const ONE_HIT = [{ ...track("One"), durationMs: 180_000 }];
 
 const handleParty = () => musicCommands().find((c) => c.name === "party")!.handle;
 
@@ -1730,6 +1751,9 @@ describe("the party's add command", () => {
       expect(text).not.toContain("Grant it here");
     }
     expect(getParty(partiesState(), "G1")?.queue.map((t) => t.name)).toEqual(["Zero", "One"]);
+    // A plain add to a playing party leaves its clock alone: re-stamping it would send the next
+    // sweep to resync every member to the top of a track that is already well under way.
+    expect(getParty(partiesState(), "G1")?.trackStartedAt).toBe(1);
   });
 
   test("adding to an idle party starts it and the channel hears who queued what", async () => {
@@ -1778,6 +1802,141 @@ describe("the party's add command", () => {
     expect(content.startsWith(`<@${USER}> queued **One** -- Band\nPlaying for 0 people.\n`)).toBe(true);
     expect(content).toContain("<@100000000000000000>:");
     expect(content.endsWith("...")).toBe(true);
+  });
+
+  // #152 (A) and (B): the decision to start is made from the party as it is after the search.
+
+  test("an add to a party that ran off the end starts it, index and all", async () => {
+    // The shape `advance` leaves when the queue runs out: index at the queue's length, nothing playing.
+    const { started } = wireParty({
+      scopes: PARTY_SCOPES,
+      party: "idle",
+      index: 1,
+      queue: [partyTrack("Zero")],
+    });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(started).toEqual(["G1"]);
+    expect(run.edits[0]?.content).toContain("Started the party with **One**");
+    const after = getParty(partiesState(), "G1");
+    expect(after?.index).toBe(1);
+    expect(after?.queue.map((t) => t.name)).toEqual(["Zero", "One"]);
+    expect(after?.trackStartedAt).toBe(PARTY_NOW);
+  });
+
+  test("a party left open but not playing, with a track still waiting, is started by the next add", async () => {
+    // The wedged shape an earlier late add left behind (and may have saved to parties.json): not
+    // playing, but `index` short of the queue's end, which the old test read as "something to play".
+    // The start plays the track it was stuck on ("Stuck"), the new one waits behind it; the reply
+    // still names the track just added, an oddity of this one-off recovery.
+    const { started } = wireParty({
+      scopes: PARTY_SCOPES,
+      party: "idle",
+      index: 1,
+      queue: [partyTrack("Zero"), partyTrack("Stuck")],
+    });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(started).toEqual(["G1"]);
+    expect(run.edits[0]?.content).toContain("Started the party with");
+    const after = getParty(partiesState(), "G1");
+    expect(after?.index).toBe(1);
+    expect(after?.queue.map((t) => t.name)).toEqual(["Zero", "Stuck", "One"]);
+    expect(after?.trackStartedAt).toBe(PARTY_NOW);
+  });
+
+  test("an add that lands while the last track ends starts the party instead of wedging it", async () => {
+    const { started } = wireParty({
+      scopes: PARTY_SCOPES,
+      // The boundary timer firing while the add waits on Spotify: the queue runs out, `index` is
+      // parked at its end and the party stops playing.
+      search: async () => {
+        await commitParties(advance(partiesState(), "G1", PARTY_NOW).state);
+        return { ok: true, value: ONE_HIT };
+      },
+    });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(started).toEqual(["G1"]);
+    expect(run.edits[0]?.content).toContain("Started the party with **One**");
+    const after = getParty(partiesState(), "G1");
+    expect(after?.index).toBe(1);
+    expect(after?.queue.map((t) => t.name)).toEqual(["Zero", "One"]);
+    expect(after?.trackStartedAt).toBe(PARTY_NOW);
+  });
+
+  test("two adds racing on an idle party start it once, and the second is told its track is queued", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let arrived = 0;
+    let bothArrived!: () => void;
+    const both = new Promise<void>((resolve) => {
+      bothArrived = resolve;
+    });
+    const { started } = wireParty({
+      scopes: PARTY_SCOPES,
+      party: "idle",
+      // Both adds park here, past their access checks, until the test has seen both arrive and lets
+      // them go together.
+      search: async () => {
+        arrived += 1;
+        if (arrived === 2) bothArrived();
+        await gate;
+        return { ok: true, value: ONE_HIT };
+      },
+    });
+    const first = fakePartyCommand("add", { query: "One" }, USER);
+    const second = fakePartyCommand("add", { query: "One" }, USER);
+    const pending = [handleParty()(first.interaction), handleParty()(second.interaction)];
+    await both;
+    expect(started).toEqual([]);
+    release();
+    await Promise.all(pending);
+
+    // One start; one add told it started the party and the other told its track was queued.
+    expect(started).toEqual(["G1"]);
+    const edits = [first.edits[0]?.content ?? "", second.edits[0]?.content ?? ""];
+    expect(edits.filter((e) => e.includes("Started the party with **One**"))).toHaveLength(1);
+    expect(edits.filter((e) => e.includes("Queued **One**"))).toHaveLength(1);
+    const queuedRun = first.edits[0]?.content?.includes("Queued") ? first : second;
+    expect(queuedRun.followUps).toHaveLength(1);
+    expect(queuedRun.followUps[0]?.content).not.toContain("Playing for");
+    expect(getParty(partiesState(), "G1")?.queue.map((t) => t.name)).toEqual(["One", "One"]);
+  });
+
+  test("without a wiring clock, as in production, the started party is stamped with the real time", async () => {
+    wireParty({ scopes: PARTY_SCOPES, party: "idle", noClock: true });
+    const before = Date.now();
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+    const after = Date.now();
+
+    const stamped = getParty(partiesState(), "G1")?.trackStartedAt;
+    expect(stamped).toBeGreaterThanOrEqual(before);
+    expect(stamped).toBeLessThanOrEqual(after);
+  });
+
+  test("an add whose party ended while it was searching says so", async () => {
+    const { started } = wireParty({
+      scopes: PARTY_SCOPES,
+      // `/party stop`, or a host dropping out, while the add waits on Spotify.
+      search: async () => {
+        await commitParties(closeParty(partiesState(), "G1"));
+        return { ok: true, value: ONE_HIT };
+      },
+    });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain("The party ended");
+    expect(run.followUps).toEqual([]);
+    expect(started).toEqual([]);
   });
 
   test("a track Spotify gave no length for stays with the invoker", async () => {
