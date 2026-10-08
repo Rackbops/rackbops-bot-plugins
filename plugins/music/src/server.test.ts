@@ -133,6 +133,74 @@ describe("handleCallback", () => {
     expect(body).not.toContain("<script>");
     expect(body).toContain("&lt;script&gt;");
   });
+
+  describe("a dependency that throws (#190)", () => {
+    // The state and the code are the secrets here: neither may reach the log or the page.
+    const REQUEST = "?code=SPENT-CODE-9&state=SECRET-STATE-7";
+
+    function logged() {
+      const errors: string[] = [];
+      return { errors, log: { error: (m: string, e?: unknown) => errors.push(`${m} | ${String(e)}`) } };
+    }
+
+    test("a dependency that throws while redeeming the state is answered with a plain page and logged without the token", async () => {
+      const { errors, log } = logged();
+      const response = await handleCallback(get(REQUEST), "ip", makeDeps({
+        log,
+        redeemState: async () => {
+          throw new Error("disk full");
+        },
+      }));
+      expect(response.status).toBe(500);
+      const body = await response.text();
+      expect(body).toContain("Something went wrong");
+      expect(body).toContain("/spotify connect");
+      expect(body).not.toContain("disk full");
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("redeeming the state");
+      expect(errors[0]).toContain("disk full");
+      for (const entry of errors) {
+        expect(entry).not.toContain("SECRET-STATE-7");
+        expect(entry).not.toContain("SPENT-CODE-9");
+      }
+    });
+
+    test("a throw while exchanging the code names that stage", async () => {
+      const { errors, log } = logged();
+      const response = await handleCallback(get(REQUEST), "ip", makeDeps({
+        log,
+        exchangeCode: async () => {
+          throw new Error("network down");
+        },
+      }));
+      expect(response.status).toBe(500);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("exchanging the code");
+    });
+
+    test("a throw while saving the connection names that stage", async () => {
+      const { errors, log } = logged();
+      const response = await handleCallback(get(REQUEST), "ip", makeDeps({
+        log,
+        saveConnection: async () => {
+          throw new Error("EACCES");
+        },
+      }));
+      expect(response.status).toBe(500);
+      expect(await response.text()).toContain("/spotify connect");
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("saving the connection");
+    });
+
+    test("a dependency that throws is contained even with no logger wired", async () => {
+      const response = await handleCallback(get(REQUEST), "ip", makeDeps({
+        saveConnection: async () => {
+          throw new Error("EACCES");
+        },
+      }));
+      expect(response.status).toBe(500);
+    });
+  });
 });
 
 describe("escapeHtml", () => {
@@ -193,6 +261,50 @@ describe("startCallbackServer", () => {
     const { port } = server;
     server.stop();
     await expect(fetch(`http://127.0.0.1:${port}${PATH}?code=C&state=T`)).rejects.toThrow();
+  });
+
+  test("an error outside the handler's own catch becomes the plain page, not Bun's (#190)", async () => {
+    const errors: string[] = [];
+    const server = startCallbackServer(0, makeDeps({
+      // The limiter runs before handleCallback's try, so this rejection can only be caught by the
+      // server's own `error` handler.
+      rateLimiter: {
+        allow: () => {
+          throw new Error("limiter exploded");
+        },
+      },
+      log: { error: (m, e) => errors.push(`${m} | ${String(e)}`) },
+    }));
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}${PATH}?code=C&state=T`);
+      expect(response.status).toBe(500);
+      const body = await response.text();
+      expect(body).toContain("Something went wrong");
+      expect(body).toContain("/spotify connect");
+      expect(body).not.toContain("limiter exploded");
+      expect(body).not.toContain("server.ts");
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain("callback server error");
+    } finally {
+      server.stop();
+    }
+  });
+
+  test("the server's own error handler also answers when no logger is wired (#190)", async () => {
+    const server = startCallbackServer(0, makeDeps({
+      rateLimiter: {
+        allow: () => {
+          throw new Error("limiter exploded");
+        },
+      },
+    }));
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}${PATH}?code=C&state=T`);
+      expect(response.status).toBe(500);
+      expect(await response.text()).toContain("Something went wrong");
+    } finally {
+      server.stop();
+    }
   });
 });
 

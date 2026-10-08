@@ -53,8 +53,9 @@ export interface RunnerDeps {
   now(): number;
   /** Defaults to setTimeout; tests pass a manual one so a party can be stepped through instantly. */
   schedule(ms: number, fn: () => void): TimerHandle;
-  /** Best-effort message into the party's channel. Never throws -- see the header. */
-  notify(party: Party, message: string): Promise<void>;
+  /** Best-effort message into the party's channel. Never throws -- see the header. `mention` is the
+   *  one Discord user id the message may ping; with none, nobody is pinged. */
+  notify(party: Party, message: string, mention?: string): Promise<void>;
   log: { info(m: string): void; warn(m: string): void; error(m: string, err?: unknown): void };
 }
 
@@ -254,7 +255,8 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     // Some reasons are fragments (Premium, no player, a bare HTTP status), others full sentences
     // (the token lookup's, the two scope messages). One period either way.
     const stop = reason.endsWith(".") ? "" : ".";
-    await deps.notify(party, `<@${outcome.discordUserId}> has dropped out of the party: ${reason}${stop}`);
+    // `reason` can be Spotify's own response text, so only the dropped member may be pinged.
+    await deps.notify(party, `<@${outcome.discordUserId}> has dropped out of the party: ${reason}${stop}`, outcome.discordUserId);
   }
 
   async function playCurrent(guildId: string): Promise<MemberOutcome[]> {
