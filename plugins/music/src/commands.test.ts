@@ -19,6 +19,7 @@ import {
   advance,
   closeParty,
   commitParties,
+  enqueue,
   freshParties,
   getParty,
   openParty,
@@ -1489,6 +1490,9 @@ describe("/setlist stop lines", () => {
  * the private reply's place instead of landing in the channel; and #153 is about what happens before
  * the defer. Pass the array `wireParty` returned and the token fake's refreshes and the runner's
  * skips land in the same sequence.
+ *
+ * `onDefer` runs inside `deferReply`, after the "defer" is recorded: what happens to the party during
+ * the round trip to Discord that a real defer is (#152).
  */
 function fakePartyCommand(
   sub: string,
@@ -1496,6 +1500,7 @@ function fakePartyCommand(
   userId: string,
   guildId = "G1",
   calls: string[] = [],
+  onDefer?: () => Promise<void>,
 ) {
   const defers: { flags?: unknown }[] = [];
   const edits: { content?: string }[] = [];
@@ -1518,6 +1523,7 @@ function fakePartyCommand(
     deferReply: async (opts: { flags?: unknown } = {}) => {
       calls.push("defer");
       defers.push(opts);
+      await onDefer?.();
     },
     editReply: async (opts: { content?: string }) => {
       calls.push("edit");
@@ -1544,13 +1550,15 @@ function fakePartyCommand(
 
 /**
  * A runner whose `start` records the guilds it was asked to start and answers with `outcomes`, and
- * whose `skip` records `skip:<guild>` on `calls` and answers with `skipOutcomes`.
+ * whose `skip` records `skip:<guild>:<fromIndex>` on `calls` and answers with `skipOutcomes` -- or
+ * `undefined`, a refusal, when `skipRefuses`.
  */
 function partyRunnerDouble(
   started: string[],
   outcomes: MemberOutcome[],
   calls: string[] = [],
   skipOutcomes: MemberOutcome[] = [],
+  skipRefuses = false,
 ): PartyRunner {
   return {
     playCurrent: async () => [],
@@ -1558,9 +1566,9 @@ function partyRunnerDouble(
       started.push(guildId);
       return outcomes;
     },
-    skip: async (guildId): Promise<MemberOutcome[]> => {
-      calls.push(`skip:${guildId}`);
-      return skipOutcomes;
+    skip: async (guildId, fromIndex): Promise<MemberOutcome[] | undefined> => {
+      calls.push(`skip:${guildId}:${fromIndex}`);
+      return skipRefuses ? undefined : skipOutcomes;
     },
     syncMember: async (_guildId, discordUserId): Promise<MemberOutcome> => ({ discordUserId, ok: true }),
     sweep: async () => {},
@@ -1607,6 +1615,7 @@ function wireParty({
   queue,
   configured = true,
   skipOutcomes = [],
+  skipRefuses = false,
   index = 0,
   search,
   noClock = false,
@@ -1628,6 +1637,8 @@ function wireParty({
   configured?: boolean;
   /** What the runner double reports back from `skip`. */
   skipOutcomes?: MemberOutcome[];
+  /** The runner double refuses every `skip` (answers `undefined`): the party had moved past it. */
+  skipRefuses?: boolean;
   /** The seeded party's `index`: the track it is on, or the queue's length once it has run off the end. */
   index?: number;
   /** Replaces the Spotify search fake, to run something while a `/party add` is waiting on it. */
@@ -1684,7 +1695,7 @@ function wireParty({
                       value: searchHit ? [noDuration ? track("One") : { ...track("One"), durationMs: 180_000 }] : [],
                     }),
           }),
-          runner: partyRunnerDouble(started, outcomes, calls, skipOutcomes),
+          runner: partyRunnerDouble(started, outcomes, calls, skipOutcomes, skipRefuses),
         }
       : {}),
     serverRunning: () => true,
@@ -1996,7 +2007,8 @@ describe("the party's skip command", () => {
     expect(calls).toEqual(["defer"]);
     await pending;
 
-    expect(calls).toEqual(["defer", "skip:G1", "edit"]);
+    // The runner is told which track this skip is for: the index the skipper saw.
+    expect(calls).toEqual(["defer", "skip:G1:0", "edit"]);
     // A public defer: the "Skipped to" line is for the channel.
     expect(run.defers).toEqual([{}]);
     expect(run.edits[0]?.content).toContain("Skipped to **Two** -- Band");
@@ -2067,6 +2079,82 @@ describe("the party's skip command", () => {
     expect(calls).toEqual(["reply"]);
     expect(run.replies[0]?.content).toContain("SPOTIFY_CLIENT_ID");
     expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+  });
+
+  // #152 (C): the party moves while the defer is in flight; the skip is decided from the party as it
+  // is after it, and the runner is told which track the skip was for.
+
+  test("a skip whose track changed during the defer is refused", async () => {
+    const { calls } = wireParty({
+      scopes: PARTY_SCOPES,
+      members: ["host", USER],
+      queue: [partyTrack("One"), partyTrack("Two"), partyTrack("Three")],
+    });
+    // The track ends on its own, or another member skips, while this skip's defer is out.
+    const run = fakePartyCommand("skip", {}, USER, "G1", calls, async () => {
+      await commitParties(advance(partiesState(), "G1", 2).state);
+    });
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["defer", "edit"]);
+    expect(run.edits[0]?.content).toContain("The track changed just now");
+    expect(run.edits[0]?.content).toContain("**Two**");
+    expect(run.edits[0]?.content).not.toContain("Skipped to");
+  });
+
+  test("a skip whose track ran out during the defer says nothing is playing", async () => {
+    const { calls } = wireParty({ scopes: PARTY_SCOPES, members: ["host", USER] });
+    // The party has one track, and it ends while the defer is out: the party is parked off the end.
+    const run = fakePartyCommand("skip", {}, USER, "G1", calls, async () => {
+      await commitParties(advance(partiesState(), "G1", 2).state);
+    });
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["defer", "edit"]);
+    expect(run.edits[0]?.content).toContain("The track changed just now");
+    expect(run.edits[0]?.content).toContain("nothing playing");
+  });
+
+  test("a track queued during the defer is skipped to", async () => {
+    const { calls } = wireParty({ scopes: PARTY_SCOPES, members: ["host", USER], queue: [partyTrack("One")] });
+    const run = fakePartyCommand("skip", {}, USER, "G1", calls, async () => {
+      await commitParties(enqueue(partiesState(), "G1", [partyTrack("Two")]));
+    });
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["defer", "skip:G1:0", "edit"]);
+    expect(run.edits[0]?.content).toContain("Skipped to **Two**");
+  });
+
+  test("a skip whose party ended during the defer says so", async () => {
+    const { calls } = wireParty({
+      scopes: PARTY_SCOPES,
+      members: ["host", USER],
+      queue: [partyTrack("One"), partyTrack("Two")],
+    });
+    const run = fakePartyCommand("skip", {}, USER, "G1", calls, async () => {
+      await commitParties(closeParty(partiesState(), "G1"));
+    });
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["defer", "edit"]);
+    expect(run.edits[0]?.content).toContain("The party ended just now");
+  });
+
+  test("a skip the runner refused is answered with the current track", async () => {
+    const { calls } = wireParty({
+      scopes: PARTY_SCOPES,
+      members: ["host", USER],
+      queue: [partyTrack("One"), partyTrack("Two")],
+      skipRefuses: true,
+    });
+    const run = fakePartyCommand("skip", {}, USER, "G1", calls);
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["defer", "skip:G1:0", "edit"]);
+    expect(run.edits[0]?.content).toContain("The track changed just now");
+    expect(run.edits[0]?.content).toContain("**One**");
+    expect(run.edits[0]?.content).not.toContain("Skipped to");
   });
 });
 

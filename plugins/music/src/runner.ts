@@ -77,8 +77,13 @@ export interface PartyRunner {
   playCurrent(guildId: string): Promise<MemberOutcome[]>;
   /** Starts the party at its current track and keeps it going to the end of the queue. */
   start(guildId: string): Promise<MemberOutcome[]>;
-  /** Moves to the next track now. The same transition a track ending naturally makes. */
-  skip(guildId: string): Promise<MemberOutcome[]>;
+  /**
+   * Moves to the next track now. The same transition a track ending naturally makes -- and, like it,
+   * made only from the track the caller saw: `fromIndex` is the party's `index` when the caller
+   * decided to skip. `undefined` means the party has since moved on (another skip, or the track
+   * ending on its own, got there first) or is gone; nothing was changed, and no timer was touched.
+   */
+  skip(guildId: string, fromIndex: number): Promise<MemberOutcome[] | undefined>;
   /** One member only -- used by Join, so someone arriving mid-track lands in the right place. */
   syncMember(guildId: string, discordUserId: string): Promise<MemberOutcome>;
   /**
@@ -131,6 +136,10 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     if (party === undefined) return;
     const delay = msUntilAdvance(party, deps.now());
     if (delay === undefined) return;
+    // The track this timer is for. The boundary advances from it and from no other track: if the
+    // party has moved on by the time the timer fires (a skip got there first, or anything else moved
+    // it), the timer does nothing instead of advancing it a second time.
+    const armedFor = party.index;
     timers.set(
       guildId,
       deps.schedule(delay, () => {
@@ -145,7 +154,7 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
         // are not played the new track (and a last-track notice is not sent), so their players stay
         // idle until the next boundary plays them again; the sweep leaves an idle player alone by
         // design (#151).
-        advanceParty(guildId).catch((err: unknown) => {
+        advanceParty(guildId, armedFor).catch((err: unknown) => {
           deps.log.error(`party in guild ${guildId}: advancing to the next track failed; re-arming`, err);
           arm(guildId);
         });
@@ -153,7 +162,16 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     );
   }
 
-  async function advanceParty(guildId: string): Promise<MemberOutcome[]> {
+  /**
+   * Moves the party on from `fromIndex`, the track the caller saw (a skip) or the track the timer was
+   * armed for (a boundary). If the party is no longer on it, or is gone, nothing happens and the answer
+   * is `undefined`: two skips for one track, or a skip and a boundary, advance once.
+   */
+  async function advanceParty(guildId: string, fromIndex: number): Promise<MemberOutcome[] | undefined> {
+    // Checked synchronously and before anything else, the timer cancel included: a refused advance
+    // must not cancel the timer the advance that won has armed since.
+    const before = getParty(partiesState(), guildId);
+    if (before === undefined || before.index !== fromIndex) return undefined;
     timers.get(guildId)?.cancel();
     timers.delete(guildId);
     const result = advance(partiesState(), guildId, deps.now());
@@ -295,8 +313,8 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
       return outcomes;
     },
 
-    async skip(guildId) {
-      return advanceParty(guildId);
+    async skip(guildId, fromIndex) {
+      return advanceParty(guildId, fromIndex);
     },
 
     async syncMember(guildId, discordUserId) {
