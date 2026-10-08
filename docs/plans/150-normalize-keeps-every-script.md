@@ -1,0 +1,51 @@
+# #150 -- normalize keeps the letters of every script, so a non-Latin title or artist compares as itself and never as ""
+
+Epic #237 child, S. Behaviour change (what `normalize` returns for non-Latin, Latin-extended and punctuation-only text, and everything that compares its results): the three-reviewer gate applies. Lands AFTER #191 (it edits the adjacent apostrophe line of `normalize`; conflicts otherwise), on the same lane.
+
+## Plan (execute as written)
+
+Written 2026-10-08 against `main` at `9de5f29`. Cites are to that tree; re-find by function name.
+
+### What is wrong
+
+`normalize` (`plugins/music/src/matching.ts:50-66`) ends with `.replace(/[^a-z0-9]+/g, " ")`, the only character class in the pipeline, so every non-Latin title or name becomes `""`. YOASOBI's "夜に駆ける" normalises to `""`; every other all-kanji candidate by YOASOBI then scores title 100 (`titleScore`, `:165`, `candidate === song`) plus artist 40, is `exactTitle && exactArtist` (`pickBestTrack`, `:347-348`), and the page-order first is added as `high` with no flag, wrong whenever the right track is not first. For a non-Latin performer (Кино) with a non-Latin title, `exactArtist` is true for any non-Latin-named artist. `artistScore` (`:226-234`) gives any candidate with a non-Latin (so empty) artist name a spurious 22 against any wanted artist, because `"queen".includes("")` is true. The set-level helpers treat all non-Latin names as equal: `preferExactArtist` (`setlistfm.ts:303-307`), `creditedArtist` and `searchArtistsFor` (`artists.ts:39-57`, `:78-90`, which de-duplicates by `normalize`, so two different non-Latin names collapse to one), and the nearest-match warning (`commands.ts:137`). Nothing in the tests or the replay corpus carries a non-Latin string.
+
+### Decisions
+
+- **Letters and digits of any script survive.** The class becomes `/[^\p{L}\p{N}]+/gu`. NFD plus the combining-mark strip and `toLowerCase()` still fold accented Latin to its base letter and case, so every Latin result is unchanged except that a letter with no decomposition (`ø`, `ß`, `æ`, `ł`) is now kept instead of becoming a space: "Bjørk" is `bjørk`, not `bj rk`. That is a correction, not a regression (two spellings that differed before still differ), and the plan doc and the bullet say it.
+- **A result that would be empty is the input itself, trimmed and lower-cased,** so two punctuation-only titles ("???", "...") are not equal; the comment says why.
+- **An empty candidate artist scores nothing.** `artistScore` skips `""` before the `includes` checks (a punctuation-only artist name is now its own text, so this is the belt for the empty case that remains: a candidate with no artist names at all, or one that is whitespace).
+- **Nothing else changes.** `titleScore`'s length floors count characters, which is right for CJK too (one character is one syllable or word); `withinOneEdit` and `MIN_TYPO_TITLE_LENGTH` likewise. The set-level helpers are fixed by `normalize` itself.
+- **No version bump.** The CHANGELOG bullet travels in the PR body (see the steps).
+
+### Steps
+
+1. `plugins/music/src/matching.ts`: the class, the empty-result fallback, the `artistScore` guard, and the comment on `normalize` saying which scripts it keeps and why the fallback exists.
+2. `plugins/music/src/matching.test.ts`:
+   - "a non-Latin title is kept and compared as itself": `normalize("夜に駆ける")` equals `"夜に駆ける"`; `normalize("群青")` differs from it; `normalize("Кино")` equals `"кино"`.
+   - "a Latin letter with no decomposition is kept": `normalize("Bjørk")` equals `"bjørk"`; `normalize("Motörhead")` still equals `"motorhead"`.
+   - "a punctuation-only title is itself, not empty": `normalize("???")` equals `"???"` and differs from `normalize("...")`; `normalize("  ")` equals `""`.
+   - "a kanji title picks the right kanji track, not the first on the page": `pickBestTrack({ name: "夜に駆ける", artist: "YOASOBI" }, [群青 by YOASOBI, 夜に駆ける by YOASOBI])` -> the second, confidence "high"; and with only `群青` on the page -> `undefined`.
+   - "a Cyrillic performer matches only itself": `pickBestTrack({ name: "Группа крови", artist: "Кино" }, [Группа крови by Любэ])` -> not "high" (the artist differs); by Кино -> "high".
+   - "a candidate with a non-Latin artist earns no partial score against a Latin one": `scoreCandidate({ name: "Song", artist: "Queen" }, { name: "Song", artistNames: ["Кино"] })` has `artist` 0 in its breakdown (`explainCandidate`); a candidate with `artistNames: [""]` likewise.
+3. `plugins/music/src/setlistfm.test.ts`, in `describe("preferExactArtist")`: "two non-Latin artists are told apart": setlists by "Кино" and "Любэ", wanted "Кино" -> only Кино's.
+4. `plugins/music/src/artists.test.ts` (read how the file builds songs and names): "two different non-Latin names are two search names": performer "Кино", a song credited to "Любэ" -> `searchArtistsFor` returns both; and `creditedArtist` over covers credited to "Любэ" with performer "Кино" returns "Любэ".
+5. `plugins/music/src/commands.test.ts`, in `describe("naming the artist used")`: "a non-Latin nearest match is named": `askedArtist` "Кино" against a setlist by "Любэ" -> the reply contains "nearest match"; asked "Кино" against "Кино" -> it does not.
+6. The CHANGELOG bullet goes in the PR body under `## CHANGELOG bullet` (no edit to `plugins/music/CHANGELOG.md`; the orchestrator lands every bullet in one docs PR at the end of the epic). Its text: titles and artist names in any script now match as themselves: a Japanese, Cyrillic or other non-Latin title used to compare equal to every other, so the first track on the page could be added as a confident match and a non-Latin performer matched any non-Latin act; a Latin letter with no accent decomposition (`ø`, `ß`, `æ`, `ł`) is now kept instead of dropped, and a title that is only punctuation no longer matches every other such title (#150).
+7. This file, committed as `docs/plans/150-normalize-keeps-every-script.md`.
+8. Checks: `bun run lint`, `bun run check`, `bun run build`, `bun run generate-index -- --check`, `bun run check-contract`, `bun test plugins/music`, and `bun test plugins/mcp plugins/music plugins/warbandeer plugins/wow packages scripts`; the tracker suite's #232 `EBUSY` set is the Windows baseline and CI is the arbiter for it. Paste the counts. `replay.test.ts` must stay green: if the Latin-extended change moves a corpus baseline, that is a finding to report, not a baseline to edit.
+9. Mutations from the table, each in a scratch worktree of your clone, never in the tree under test; name the red test per row in the PR.
+10. Review gate: you plus two read-only reviewers with different lenses (A: correctness and failure modes -- every caller of `normalize` (`matching.ts`, `artists.ts`, `setlistfm.ts`, `commands.ts`, `build.ts`'s suite parsing), the `u` flag and `\p{}` support in this Bun and TypeScript target, the corpus replay, what the empty-result fallback does to `parseSuitePart` and `isExactTitle`, and the Latin-extended consequence; B: claims-vs-code over this plan, the CHANGELOG bullet and the comment, walking every coverage row and deriving mutation survivors). 2-of-3 on the major points; every evidenced finding fixed or declined in writing; a fix with behaviour re-runs the round; four rounds at most, then message the orchestrator.
+11. PR `fix(music): keep the letters of every script in normalize, so a non-Latin title or artist compares as itself (#150)`, body per `/work-on` plus the pasted checks, the mutation rows and the gate's rounds; `Closes #150`. Do not merge: the orchestrator merges.
+
+### Coverage
+
+| Outcome (the issue's Fix) | Step | Test | Mutation that must fail it |
+|---|---|---|---|
+| Non-Latin text survives `normalize` and compares as itself | 1, 2 | "a non-Latin title is kept ..."; "a kanji title picks the right kanji track ..." | restore `[^a-z0-9]` -- `""` and the page-order pick |
+| A Latin letter with no decomposition is kept | 1, 2 | "a Latin letter with no decomposition is kept" | the same mutation |
+| A punctuation-only string is not empty | 1, 2 | "a punctuation-only title is itself, not empty" | drop the fallback |
+| An empty candidate artist scores nothing | 1, 2 | "... earns no partial score ..." | drop the guard -- 22 |
+| A non-Latin performer matches only itself, in the matcher and the set helpers | 1, 2, 3, 4, 5 | the Cyrillic tests across the four files | restore `[^a-z0-9]` -- every one |
+
+Run each mutation in a scratch worktree, never in the tree under test; name the red test per row in the PR.

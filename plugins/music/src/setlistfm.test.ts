@@ -287,6 +287,13 @@ describe("preferExactArtist", () => {
     const other = setlist("ccc333", "A Totally Different Act");
     expect(preferExactArtist([tribute, other], "Band")).toEqual([tribute, other]);
   });
+
+  test("two non-Latin artists are told apart", () => {
+    const kino = setlist("aaa111", "Кино");
+    const lyube = setlist("bbb222", "Любэ");
+    // Listed Любэ first, so a name that normalised to "" for both would keep both, in this order.
+    expect(preferExactArtist([lyube, kino], "Кино")).toEqual([kino]);
+  });
 });
 
 describe("createSetlistFmClient", () => {

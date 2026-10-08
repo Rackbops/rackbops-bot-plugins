@@ -902,6 +902,21 @@ describe("naming the artist used", () => {
     await handleSetlist()(run.interaction);
     expect(shown(run)).not.toContain("no exact");
   });
+
+  test("a non-Latin nearest match is named", async () => {
+    wireBuild(async () => {}, buildSpotify(), { artistName: "Любэ" });
+    const run = fakeCommand({ artist: "Кино" });
+    await handleSetlist()(run.interaction);
+    expect(shown(run)).toContain('no exact "Кино"');
+    expect(shown(run)).toContain("nearest match, Любэ");
+  });
+
+  test("a non-Latin artist that matches itself adds no note", async () => {
+    wireBuild(async () => {}, buildSpotify(), { artistName: "Кино" });
+    const run = fakeCommand({ artist: "Кино" });
+    await handleSetlist()(run.interaction);
+    expect(shown(run)).not.toContain("nearest match");
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------

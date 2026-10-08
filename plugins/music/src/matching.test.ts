@@ -757,15 +757,24 @@ describe("pickTrackFromQuery", () => {
   });
 
   test("an artist that normalizes to nothing is not an artist", () => {
-    // Neither name survives `normalize`, and `artistScore` counts the empty string as contained in
+    // Only a blank name normalizes to nothing (#150 keeps the letters of every script, and gives
+    // punctuation-only text back as itself), and `artistScore` counts the empty string as contained in
     // anything: without the guard these would answer any title-then-anything query.
-    expect(normalize("米津玄師")).toBe("");
-    expect(pickTrackFromQuery("Lemon Tree Fools Garden", [track("Lemon", ["米津玄師"])])).toBeUndefined();
-    expect(pickTrackFromQuery("Heart of Glass Blondie", [track("Heart of Glass", ["!!!"])])).toBeUndefined();
-    expect(pickTrackFromQuery("Blondie Heart of Glass", [track("Heart of Glass", ["米津玄師"])])).toBeUndefined();
+    expect(normalize("  ")).toBe("");
+    expect(pickTrackFromQuery("Lemon Tree Fools Garden", [track("Lemon", [""])])).toBeUndefined();
+    expect(pickTrackFromQuery("Heart of Glass Blondie", [track("Heart of Glass", ["   "])])).toBeUndefined();
+    expect(pickTrackFromQuery("Blondie Heart of Glass", [track("Heart of Glass", [""])])).toBeUndefined();
     // A track credited to such an artist AND a real one still matches on the real one.
-    const duet = track("Lemon", ["米津玄師", "Kenshi"]);
+    const duet = track("Lemon", ["", "Kenshi"]);
     expect(pickTrackFromQuery("Lemon Kenshi", [duet])!.track).toBe(duet);
+  });
+
+  test("a non-Latin artist is a real artist, matched only by itself (#150)", () => {
+    const lemon = track("Lemon", ["米津玄師"]);
+    expect(pickTrackFromQuery("Lemon 米津玄師", [lemon])!.track).toBe(lemon);
+    expect(pickTrackFromQuery("米津玄師 Lemon", [lemon])!.track).toBe(lemon);
+    // Another name in the same script does not answer it, which it did while both read as "".
+    expect(pickTrackFromQuery("Lemon 宇多田ヒカル", [lemon])).toBeUndefined();
   });
 
   test("the longer title wins when two candidates both fit", () => {
@@ -821,5 +830,64 @@ describe("buildQueries", () => {
 
   test("with no artist there is only the bare title query", () => {
     expect(buildQueries({ name: "Untitled", artist: "" })).toEqual(["Untitled"]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #150: normalize keeps the letters of every script
+// ---------------------------------------------------------------------------------------------------
+
+describe("non-Latin text (#150)", () => {
+  /** A candidate with an explicit uri: `track()` derives one from ASCII word characters only, which
+   *  is "" for a kanji or Cyrillic name, so two such tracks would share a uri. */
+  function candidate(uri: string, name: string, artistNames: string[]): TrackCandidate {
+    return { uri: `spotify:track:${uri}`, name, artistNames, popularity: 0 };
+  }
+
+  test("a non-Latin title is kept and compared as itself", () => {
+    expect(normalize("夜に駆ける")).toBe("夜に駆ける");
+    expect(normalize("群青")).not.toBe(normalize("夜に駆ける"));
+    expect(normalize("Кино")).toBe("кино");
+  });
+
+  test("a Latin letter with no decomposition is kept", () => {
+    expect(normalize("Bjørk")).toBe("bjørk");
+    // An accent that DOES decompose still folds to its base letter.
+    expect(normalize("Motörhead")).toBe("motorhead");
+  });
+
+  test("a punctuation-only title is itself, not empty", () => {
+    expect(normalize("???")).toBe("???");
+    expect(normalize("???")).not.toBe(normalize("..."));
+    expect(normalize("  ")).toBe("");
+  });
+
+  test("a kanji title picks the right kanji track, not the first on the page", () => {
+    const song = { name: "夜に駆ける", artist: "YOASOBI" };
+    const wrong = candidate("gunjo", "群青", ["YOASOBI"]);
+    const right = candidate("yoru", "夜に駆ける", ["YOASOBI"]);
+
+    const best = pickBestTrack(song, [wrong, right]);
+    expect(best?.track.uri).toBe(right.uri);
+    expect(best?.confidence).toBe("high");
+
+    // With the right track absent there is nothing to add: the other kanji title is not a match.
+    expect(pickBestTrack(song, [wrong])).toBeUndefined();
+  });
+
+  test("a Cyrillic performer matches only itself", () => {
+    const song = { name: "Группа крови", artist: "Кино" };
+
+    // The title is the song's exactly, but the artist is someone else's: a cover, not the recording.
+    expect(pickBestTrack(song, [candidate("lyube", "Группа крови", ["Любэ"])])?.confidence).toBe("low");
+    expect(pickBestTrack(song, [candidate("kino", "Группа крови", ["Кино"])])?.confidence).toBe("high");
+  });
+
+  test("a candidate with a non-Latin artist earns no partial score against a Latin one", () => {
+    const song = { name: "Song", artist: "Queen" };
+    expect(explainCandidate(song, candidate("a", "Song", ["Кино"])).artist).toBe(0);
+    // A blank artist name is contained in every name, so without a guard it would score the partial 22.
+    expect(explainCandidate(song, candidate("b", "Song", [""])).artist).toBe(0);
+    expect(explainCandidate(song, candidate("c", "Song", ["   "])).artist).toBe(0);
   });
 });
