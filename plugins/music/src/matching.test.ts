@@ -1012,7 +1012,9 @@ describe("non-Latin text (#150)", () => {
 
   test("titles that differ only in a voiced mark are different titles, and a mark opens no gap", () => {
     expect(pickBestTrack({ name: "バンド", artist: "X" }, [candidate("a", "バント", ["X"])])).toBeUndefined();
-    // "ロード" is not a prefix of "ロードショー" (Latin "road" scores 0 against "roadshow" the same way).
+    // "ロード" is not a prefix of "ロードショー". With the mark read as a space it was one (title 72,
+    // `medium`); it is now one word of three characters, under the contains rule's four-character
+    // floor, so there is no title match at all.
     expect(pickBestTrack({ name: "ロード", artist: "X" }, [candidate("b", "ロードショー", ["X"])])).toBeUndefined();
     // A one-syllable Hangul title is one character, under the prefix rule's three-character floor.
     expect(pickBestTrack({ name: "눈", artist: "X" }, [candidate("c", "눈 (Live)", ["X"])])).toBeUndefined();
@@ -1028,11 +1030,13 @@ describe("non-Latin text (#150)", () => {
   });
 
   test("a non-Latin primary artist's other editions count for the tie-break", () => {
-    const song = { name: "夜に駆ける", artist: "YOASOBI" };
-    const first = candidate("one", "夜に駆ける", ["YOASOBI"]);
-    const second = candidate("two", "夜に駆ける", ["YOASOBI"]);
-    // Both primary artists used to normalise to "", which the tie-break reads as "no artist".
-    expect(explainCandidate(song, first, [first, second]).tieBreak).toBe(0.01);
+    const song = { name: "Группа крови", artist: "Кино" };
+    const first = candidate("one", "Группа крови", ["Кино"]);
+    const second = candidate("two", "Группа крови - Remastered 2011", ["Кино"]);
+    const other = candidate("three", "Группа крови", ["Любэ"]);
+    // "Кино" used to normalise to "", which the tie-break reads as "no artist": no editions counted.
+    // Now the other edition by the same primary artist counts, and the cover by another act does not.
+    expect(explainCandidate(song, first, [first, second, other]).tieBreak).toBe(0.01);
   });
 
   test("a Cyrillic performer matches only itself", () => {
