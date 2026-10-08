@@ -508,7 +508,7 @@ function fakePick(
   userId: string,
   isSelect = true,
 ) {
-  const replies: { content?: string }[] = [];
+  const replies: { content?: string; flags?: unknown }[] = [];
   const updates: { content?: string; components?: unknown[] }[] = [];
   const edits: { content?: string }[] = [];
   const followUps: { content?: string; flags?: unknown }[] = [];
@@ -519,7 +519,7 @@ function fakePick(
     values,
     user: { id: userId },
     isStringSelectMenu: () => isSelect,
-    reply: async (opts: { content?: string }) => {
+    reply: async (opts: { content?: string; flags?: unknown }) => {
       calls.push("reply");
       replies.push(opts);
     },
@@ -928,6 +928,11 @@ describe("a failed Spotify refresh during /setlist stays with the caller", () =>
     expect(run.followUps).toEqual([]);
     expect(run.calls).toEqual(["defer", "edit"]);
   });
+
+  test("the public note says nothing about the caller's connection", () => {
+    // It is the one thing the channel reads on a token failure; the reason is in the private note.
+    expect(PRIVATE_FAILURE_NOTE).not.toMatch(/connect|valid|saved|refresh|spotify/i);
+  });
 });
 
 describe("the show picker", () => {
@@ -940,6 +945,7 @@ describe("the show picker", () => {
     const run = fakePick(pickerCustomId("user-1"), ["abc123"], "user-2");
     await musicInteractions(run.interaction);
     expect(run.replies[0]!.content).toContain("belongs to whoever ran the command");
+    expect(run.replies[0]!.flags).toBe(MessageFlags.Ephemeral);
     expect(run.updates).toEqual([]);
     expect(fetched).toBe(false);
   });
@@ -949,6 +955,7 @@ describe("the show picker", () => {
     const run = fakePick("music:something-retired", ["abc123"], "user-1");
     await musicInteractions(run.interaction);
     expect(run.replies[0]!.content).toContain("older version of the bot");
+    expect(run.replies[0]!.flags).toBe(MessageFlags.Ephemeral);
   });
 
   test("the owner's pick takes the menu away before the build starts, so it can't be clicked twice", async () => {
@@ -1013,6 +1020,31 @@ describe("the show picker", () => {
     expect(run.edits[0]?.content).toContain("Added 1 of 2 songs.");
     expect(run.followUps).toEqual([]);
     expect(run.calls).toEqual(["update", "edit"]);
+  });
+
+  test("an unconfigured Spotify is still answered in the channel, with no private note", async () => {
+    // Configuration, not the caller's own state: the note-and-whisper treatment is for a connection
+    // problem. (Only the picker reaches this: /setlist itself refuses first, before it defers.)
+    logged = [];
+    resetStoreForTest(freshState());
+    initCommands({
+      config: { setlistFmKey: "KEY", missing: ["SPOTIFY_CLIENT_ID"] },
+      setlistFm: {
+        getSetlist: async (): Promise<SetlistFmResult> => ({ ok: true, setlist: setlist() }),
+        latestForArtist: async (): Promise<SetlistFmResult> => ({ ok: false, error: "not used here" }),
+        showsOn: async (): Promise<SetlistListResult> => ({ ok: true, setlists: [] }),
+      },
+      serverRunning: () => true,
+      log: captureLog,
+    });
+    const run = fakePick(pickerCustomId("user-1"), ["abc123"], "user-1");
+    await musicInteractions(run.interaction);
+
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain("SPOTIFY_CLIENT_ID");
+    expect(run.followUps).toEqual([]);
+    expect(run.calls).toEqual(["update", "edit"]);
+    expectOneStop("not-configured");
   });
 });
 

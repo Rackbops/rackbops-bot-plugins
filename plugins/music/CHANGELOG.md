@@ -4,9 +4,10 @@
 
 ### Fixed
 
-- `/setlist` and its show picker now answer a failed Spotify refresh in a note only the caller can
-  see, instead of editing "haven't connected" / "no longer valid" into the public reply; the public
-  reply says the playlist could not be built (#239).
+- `/setlist` and its show picker now answer a problem with the caller's own Spotify connection (not
+  connected, no longer valid, or a refresh Spotify couldn't do right now) in a note only the caller
+  can see, instead of editing "haven't connected" / "no longer valid" into the public reply; the
+  public reply says the playlist could not be built (#239).
 - The reply after an add that starts an idle party, and the reply after `/party skip`, are now
   clipped to Discord's 2000 characters as a whole. Before, the per-member outcome list was clipped
   but the leading line ("<@user> queued ...", "Skipped to ...") was added on top, so with many

@@ -288,8 +288,10 @@ interface BuildOutput {
 
 /**
  * Searches, creates and fills the playlist, reporting each failure through `out.edit` rather than
- * throwing. Shared by the slash command and the picker: both arrive here with a resolved setlist
- * and an already-open (deferred or updated) Discord response to write into.
+ * throwing -- except that a token failure's reason, being the caller's own connection state, goes
+ * through `out.whisper` after a neutral `out.edit`. Shared by the slash command and the picker: both
+ * arrive here with a resolved setlist and an already-open (deferred or updated) Discord response to
+ * write into.
  *
  * A build that ran is recorded whether it succeeded or came back as a failure -- and even when
  * sending the reply throws, since that is precisely when the log is the only account of what was
@@ -315,8 +317,10 @@ async function buildInto(
     // The text names the caller's own connection state ("haven't connected", "no longer valid"), and
     // the reply `out.edit` writes to is public: the deferred `/setlist` reply, or the picker message.
     // So the reason goes in an ephemeral follow-up. The public reply still has to be resolved, hence
-    // the neutral edit first -- a follow-up sent before it would take that reply's place instead of
-    // arriving as its own message.
+    // the neutral edit first. On the deferred `/setlist` reply the order is not optional: Discord
+    // treats a follow-up sent straight after a defer as an edit of that deferred reply and ignores
+    // its ephemeral flag, which would put the reason in the channel after all. The picker's `update`
+    // is a finished response, so there the order is not forced; it is kept the same.
     await out.edit(PRIVATE_FAILURE_NOTE);
     await out.whisper(token.error);
     return;
