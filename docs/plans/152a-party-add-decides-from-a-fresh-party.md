@@ -1,0 +1,51 @@
+# #152, part 1 of 2 -- /party add decides from the party as it is after its awaits, and marks the start before a racing add can
+
+Epic #237 child #152 (M), split into two S-sized PRs by the orchestrator. This part is (A) and (B) of the issue: the late add that wedges a finished party, and two adds that both start it. Part 2 is (C), the skip. Behaviour change: the three-reviewer gate applies. This PR says `Part of #152` -- never `Closes #152`; part 2 closes it.
+
+## Plan (execute as written)
+
+Written 2026-10-08 against `main` at `b7fd15f` with #240 assumed merged (it changes the idle follow-up line in `handlePartyAdd` to `formatOutcomes(outcomes, lead)`; build on that). Cites are to `b7fd15f`; re-find by function name.
+
+### What is wrong
+
+`handlePartyAdd` (`plugins/music/src/commands.ts:702-765`) reads `party` once at the top, before its awaits (the ephemeral defer, `requirePartyAccess`, `searchTracks`), and after `commitParties(enqueue(...))` (`:746`) decides `idle` from that stale object: `party.trackStartedAt === undefined && party.index >= party.queue.length` (`:750`).
+
+- (A) If the last track ends during the awaits, the boundary timer runs the party off the end (`advance`, `party.ts:124-127`: `index` becomes `queue.length`, `trackStartedAt` is removed). The add enqueues at that index but sees the stale `trackStartedAt` and says only "Queued". From then on every later add reads a fresh party with `trackStartedAt` undefined but `index < queue.length` (the clause meant "nothing left to play"), so `idle` is false forever, nothing starts it, and `/party skip` finds no next: the party is wedged until `/party stop` and a new one. A party already in that state in `parties.json` stays wedged across restarts.
+- (B) Two near-simultaneous adds to an idle party both see `idle` and both call `runner.start`: everyone's player is restarted on track 1 twice, and the second caller is told their track started when it was queued behind the first.
+- A party closed during the awaits (`/party stop`, or a fatal host drop) is not noticed: `enqueue` on a missing party returns the state unchanged (`party.ts:91-95`) and the caller is told "Queued".
+
+### Decisions
+
+- **"Idle" means nothing is playing, read fresh, decided synchronously next to the commit.** After the last await (the duration check), `const fresh = getParty(partiesState(), guildId)`. If `fresh` is `undefined`: `editReply` "The party ended while I was looking that up. `/party start` opens a new one." and return. Otherwise `const starting = fresh.trackStartedAt === undefined` -- the `index >= queue.length` clause goes, because a party that is not playing must be startable whatever its index (that is exactly the wedged state, and `advance` already parks `index` at `queue.length` when the queue runs out, so the next add's track IS the current track).
+- **The start is claimed in the same synchronous step as the enqueue.** `await commitParties(starting ? markStarted(enqueue(partiesState(), guildId, [track]), guildId, now()) : enqueue(partiesState(), guildId, [track]))`, where `now` is the wiring's optional clock (`Wiring.now`, `Date.now` by default; `wireBuild` already passes one). `commitParties` sets the in-memory state before it awaits the file write, so a second add that resumes after this line re-reads a party that is already playing and takes the "Queued" branch; there is no await between the fresh read and the commit, so nothing can change the party in between. `runner.start` still runs `markStarted` itself (a few milliseconds later; harmless) and is otherwise unchanged -- `runner.test.ts` calls `start` on a fixture party that is already marked playing, so `start` keeps that contract.
+- **The replies are unchanged below that:** "Queued **X** -- Artist." plus the public follow-up when the party was playing; "Started the party with **X** -- Artist." plus the public outcomes follow-up (`formatOutcomes(outcomes, lead)` after #240) when this add started it.
+- **No version bump.** The CHANGELOG bullet travels in the PR body (see the steps); `plugins.json` is unaffected.
+
+### Steps
+
+1. `plugins/music/src/commands.ts`, `handlePartyAdd`: keep the top-of-handler read for the "No party here yet" refusal; after the duration check, the fresh read, the ended-party reply, `starting`, and the combined commit as decided; the `idle` line is gone; the rest branches on `starting`. Import `markStarted` from `./party.js`. A comment: why the decision is made from a fresh read and in the same synchronous step as the commit (the boundary timer and a second add both run between this handler's awaits), and why "not playing" is the whole test.
+2. `plugins/music/src/commands.test.ts`, in the `/party` harness:
+   - `wireParty` gains `index` (default 0; the seeded party's `index`), `search` (an optional `SpotifyClient["searchTracks"]` that replaces the default search fake when given) and passes `now: () => 1_700_000_000_000` to `initCommands`. Existing callers pass nothing new.
+   - In `describe("the party's add command")`:
+     - "an add to a party that ran off the end starts it, index and all": `wireParty({ scopes: PARTY_SCOPES, party: "idle", index: 1, queue: [partyTrack("Zero")] })` (the shape `advance` leaves: index equal to the queue length, nothing playing) -> `started` equals `["G1"]`, the edit contains "Started the party with **One**", and `getParty(partiesState(), "G1")` has `index` 1, `queue` names `["Zero", "One"]` and a defined `trackStartedAt`.
+     - "an add that lands while the last track ends starts the party instead of wedging it": `wireParty({ scopes: PARTY_SCOPES })` (playing `Zero`), with `search` a fake that first runs `await commitParties(advance(partiesState(), "G1", 1_700_000_000_000).state)` (the boundary firing during the search) and then answers the usual hit -> `started` equals `["G1"]`, the edit contains "Started the party with **One**", the party's `index` is 1 and `trackStartedAt` is defined. Run against the pre-fix `commands.ts`, this test must fail with "Queued" (paste it).
+     - "two adds racing on an idle party start it once, and the second is told its track is queued": `wireParty({ scopes: PARTY_SCOPES, party: "idle" })` with `search` a parked fake: it returns a promise the test releases (`let release: () => void; const gate = new Promise<void>((r) => { release = r; })`; the fake awaits `gate` then answers the hit). Run `handleParty()` twice (two `fakePartyCommand("add", { query: "One" }, USER)` runs, started with `void`/kept as promises), then `release()`, then await both -> `started` equals `["G1"]` (one start), the first run's edit contains "Started the party with **One**", the second run's edit contains "Queued **One**" and its follow-up has no "Playing for" line, and the party's queue names `["One", "One"]`.
+     - "an add whose party ended while it was searching says so": `search` a fake that runs `await commitParties(closeParty(partiesState(), "G1"))` before answering -> the edit contains "The party ended", no follow-up, `started` is empty.
+3. The CHANGELOG bullet goes in the PR body under `## CHANGELOG bullet` (no edit to `plugins/music/CHANGELOG.md`; the orchestrator lands every bullet in one docs PR at the end of the epic). Its text: `/party add` now decides whether it starts the party from the party as it is after the search, not from before: a track added just as the last one ends starts the party instead of leaving it stuck "open but not playing" for good (a party already stuck that way is started by the next add); two people adding to an idle party at the same moment start it once, and the second is told their track is queued (#152, part 1).
+4. This file, committed as `docs/plans/152a-party-add-decides-from-a-fresh-party.md`.
+5. Checks: `bun run lint`, `bun run check`, `bun run build`, `bun run generate-index -- --check`, `bun run check-contract`, `bun test plugins/music`, and `bun test plugins/mcp plugins/music plugins/warbandeer plugins/wow packages scripts`; the tracker suite's #232 `EBUSY` set is the Windows baseline and CI is the arbiter for it. Paste the counts.
+6. Mutations from the table, each in a scratch worktree of your clone, never in the tree under test; name the red test per row in the PR.
+7. Review gate: you plus two read-only reviewers with different lenses (A: correctness and failure modes -- every await in `handlePartyAdd` and what the boundary timer, a second add, a Join, `/party stop` and a host drop can do inside each; whether any await sits between the fresh read and the commit; what `runner.start`'s own `markStarted` and #234's `forgetGuild` do after the command's mark; the stuck-on-disk shape; B: claims-vs-code over this plan, the CHANGELOG bullet and the comment, walking every coverage row and deriving mutation survivors). 2-of-3 on the major points; every evidenced finding fixed or declined in writing; a fix with behaviour re-runs the round; four rounds at most, then message the orchestrator.
+8. PR `fix(music): decide a /party add from the party as it is after the search, and claim the start before a racing add can (#152)`, body per `/work-on` plus the pasted checks, the mutation rows and the gate's rounds; `Part of #152` (NOT `Closes`). Do not merge: the orchestrator merges.
+
+### Coverage
+
+| Outcome (the issue's Fix, (A) and (B)) | Step | Test | Mutation that must fail it |
+|---|---|---|---|
+| A late add to a party that just finished starts it | 1, 2 | "an add that lands while the last track ends ..." | decide from the top-of-handler snapshot again -- "Queued" |
+| A party stuck "open but not playing" is started by the next add | 1, 2 | "an add to a party that ran off the end ..." | restore the `index >= queue.length` clause -- no start |
+| Two racing adds start the party once | 1, 2 | "two adds racing on an idle party ..." | drop `markStarted` from the command's commit -- two starts |
+| An add to a party that ended says so | 1, 2 | "an add whose party ended while it was searching ..." | drop the `fresh === undefined` check -- "Queued" |
+| A plain add to a playing party, and an add that starts an idle party, read as before | 1 | the existing add tests | (unchanged behaviour; they are the regression guard) |
+
+Run each mutation in a scratch worktree, never in the tree under test; name the red test per row in the PR.

@@ -30,6 +30,7 @@ import {
   currentTrack,
   enqueue,
   getParty,
+  markStarted,
   openParty,
   partiesState,
   removeMember,
@@ -65,7 +66,7 @@ interface Wiring {
   runner?: PartyRunner;
   /** Where a finished build is written for later tuning. Absent = nothing is recorded. */
   matchLog?: { record: (run: MatchRun) => Promise<void> };
-  /** The clock stamped on a recorded run; a test seam, `new Date()` when absent. */
+  /** The clock stamped on a recorded run and on a party an add starts; a test seam, `new Date()` when absent. */
   now?: () => Date;
   /** The plugin's logger; absent only in tests that don't read it. */
   log?: PluginLog;
@@ -798,12 +799,31 @@ async function handlePartyAdd(interaction: ChatInputCommandInteraction, guildId:
     artist: match.track.artistNames[0] ?? "Unknown artist",
     durationMs: match.track.durationMs,
   };
-  await commitParties(enqueue(partiesState(), guildId, [track]));
 
-  // The first track added to an idle party starts it -- otherwise "start" and "add" both look like
-  // the thing that begins the music, and people run them in the wrong order.
-  const idle = party.trackStartedAt === undefined && party.index >= party.queue.length;
-  if (!idle) {
+  // The first track added to a party that is not playing starts it -- otherwise "start" and "add"
+  // both look like the thing that begins the music, and people run them in the wrong order.
+  //
+  // That is decided from the party as it is NOW, not from the read at the top: the awaits above are
+  // long enough for the last track to end (the boundary timer parks `index` at the end of the queue
+  // and clears `trackStartedAt`), for a second add to start the party, or for the party to close.
+  // And there is no await between this read and the commit below, so nothing can change it in
+  // between. "Not playing" is the whole test: a party that ran off the end is startable whatever its
+  // index, because the track added here is then its current one.
+  const fresh = getParty(partiesState(), guildId);
+  if (fresh === undefined) {
+    await interaction.editReply({
+      content: "The party ended while I was looking that up. `/party start` opens a new one.",
+    });
+    return;
+  }
+  const starting = fresh.trackStartedAt === undefined;
+  const queued = enqueue(partiesState(), guildId, [track]);
+  // The start is claimed in the same step as the enqueue. `commitParties` sets the in-memory state
+  // before it awaits the file write, so a second add that resumes after this line reads a party that
+  // is already playing and takes the "Queued" branch, instead of starting it again.
+  await commitParties(starting ? markStarted(queued, guildId, (required().now?.() ?? new Date()).getTime()) : queued);
+
+  if (!starting) {
     await interaction.editReply({ content: `Queued **${track.name}** -- ${track.artist}.` });
     await interaction.followUp({
       content: `<@${interaction.user.id}> queued **${track.name}** -- ${track.artist}.`,
