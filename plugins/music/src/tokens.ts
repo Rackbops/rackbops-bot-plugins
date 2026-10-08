@@ -7,7 +7,8 @@ import { isDeadGrant, type SpotifyClient } from "./spotify.js";
 /**
  * Why no token could be had. `revoked` is the only kind that changed stored state (the dead
  * connection is gone); `unavailable` left the connection exactly as it was, so the next call may
- * well succeed; `not-connected` never had one.
+ * well succeed; `not-connected` never had one, or had it removed by `/spotify disconnect` while the
+ * refresh was out.
  */
 export type TokenFailureKind = "not-connected" | "revoked" | "unavailable";
 

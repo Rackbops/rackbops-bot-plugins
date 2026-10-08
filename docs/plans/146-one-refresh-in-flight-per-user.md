@@ -59,9 +59,32 @@ Written 2026-10-08 against `main` at `b14824c` (`plugins/music` at 1.6.0 + Unrel
 | Two overlapping refreshes for one user make one Spotify call and get the same answer, success or failure | 1, 2 | "two callers for one user share"; "the shared answer is the failure too" | bypass the map (always start a new refresh) -- two calls |
 | Overlapping refreshes for different users do not share | 1, 2 | "callers for different users do not share" | key the map by a constant -- one call, the second user gets the first's token |
 | The in-flight entry is released when the refresh settles | 1, 2 | "a later call after the refresh has settled starts a new one" | never delete the entry -- the second call gets the first's stale answer |
-| A disconnect during the refresh is not undone, on either path | 1, 2 | the two "a disconnect meanwhile" tests | drop the `stored === undefined` branch -- the success path resurrects the connection, the failure path throws |
-| A reconnect during the refresh wins, with or without a rotation of the old grant | 1, 2 | the two "a reconnect meanwhile wins" tests | write when `!unchanged` too -- `RT1` or `RT_ROT` overwrite `RT_NEW` |
+| A disconnect during the refresh is not undone, on either path | 1, 2 | the two "a disconnect meanwhile" tests | drop the `stored === undefined` branch -- both paths then read `stored.refreshToken` on `undefined` and throw |
+| A reconnect during the refresh wins, with or without a rotation of the old grant, and even at the same connect time | 1, 2 | the three "a reconnect meanwhile wins" tests | write when `!unchanged` too -- the stale answer's scopes (`SPOTIFY_SCOPES`) or `RT_ROT` land over the fresh grant; compute `unchanged` from `connectedAt` -- the same-time case writes |
+| A reconnect success answers with the refresh's own scopes, not the fresh grant's | 1, 2 | the three "a reconnect meanwhile wins" tests' result assertion | swap the `??` operands of the scopes fallback |
+| The write uses the connection as stored now, not the snapshot | 1, 2 | "a reconnect that re-issued the same token" | write `connection.connectedAt` instead of `stored.connectedAt` |
 | A dead old grant after a reconnect never removes the fresh one | 1, 2 | "a dead old grant after a reconnect" | remove when `!unchanged` too -- the store is emptied |
+| The entry is released when the refresh rejects, and the rejection reaches every joined caller | 1, 2 | "a refresh whose store write fails" | delete the entry only on resolve (a value-preserving `.then`) -- the next call gets the rejected promise |
+| One user's refresh settling releases only that user's entry | 1, 2 | "one user's refresh settling does not release another's entry" | `delete(id)` -> `clear()` -- the parked user's next caller starts a second refresh |
+| An unchanged refresh persists scopes without a rotation, and a rotation without scopes | 1 | "a refresh that reports scopes but no rotation"; "a rotation that reports no scopes" | the write guard's `\|\|` -> `&&` -- neither writes |
 | The unchanged path behaves exactly as before | 1 | the existing revoked, kept, rotation and no-rotation tests | #133's mutations (`isDeadGrant` -> `false`; the rotation commit skipped) |
 
+Equivalent mutant, declined: `stored.refreshToken` -> `connection.refreshToken` in the write, which the `unchanged` guard makes identical.
+
 Run each mutation in a scratch worktree, never in the tree under test; name the red test per row in the PR.
+
+### Gate round 1 (2026-10-08) -- what it added to the plan above
+
+A (correctness, concurrency): SOUND. B (claims-vs-code, coverage walk): SOUND. Both named the same blocking gap, and every evidenced finding is fixed or declined below. No fix changed what the code does -- tests, comments and a doc string only -- so no second round was run.
+
+- **The rejection arm of the single-flight lifecycle was unpinned** (A F1 / B S1, Medium): a cleanup that only ran on resolve survived the suite, and in production would leave a rejected promise answering every later call for that user until a restart (the host writer's `save` can reject). *Fixed*: a test with a storage writer whose `save` rejects; both joined callers reject, and the next call after a reset starts a new refresh.
+- **The write guard's `||` could become `&&` unnoticed** (B S4, Medium): no test gave an unchanged connection exactly one of a rotation or scopes. *Fixed*: a scopes-only and a rotation-only case.
+- **"Refreshed every time, with no cache" in the runner overstated** (A F3 / B 1, Medium as a stale claim): a call landing inside an in-flight refresh shares it and can see scopes one refresh old, for at most the flight. *Fixed* in the comment. The behavioural alternative -- an entry keyed by user plus the refresh token it sent, so a caller arriving after a reconnect starts its own -- is *declined*: the window is the flight (sub-second typically, ten seconds worst case), it self-heals on the next call, and it is new logic for a case human timing makes near-unreachable.
+- **The scopes reported on a reconnect success were unpinned, and the fallback reads the new grant** (A F4 / B S5, Low): *pinned* (the result asserts the refresh's own scopes). The fallback is reached only when a refresh omits `scope`, which Spotify does not do; *declined* as a logic change.
+- **`delete(id)` could become `clear()` unnoticed** (A F2 / B S6, Low-Medium): *fixed*, a test settles one user while another is parked.
+- **`unchanged` from `connectedAt`, and the write's `connectedAt` from the snapshot, survived** (B S2, S3, Low): *fixed*, a same-time reconnect case and a same-token case. Adding `connectedAt` to the compare (A F6, for a hypothetical identical re-issued token) is *declined* as logic for a case Spotify does not produce.
+- **Coverage-table prose for the disconnect and reconnect rows was wrong** (B 6, Low): the success path throws rather than resurrects without the gone check, and the plain reconnect case is discriminated by scopes, not by `RT1`. *Fixed* above, and the fixture carries a comment.
+- **The issue's "skip the write when nothing changed" was neither done nor declined** (B 7, Low): *declined here*. Every real refresh reports `scope`, so the write persists narrowed scopes; skipping it when nothing differs from the store is an optimisation with its own guard and test, outside the race this issue is about.
+- **`TokenFailureKind` said `not-connected` "never had one"** (A F5 / B 8, Low): *fixed*; it is also the answer for a connection removed mid-refresh.
+- **A test name overclaimed** (B 9, Low): "not undone by the failure path" renamed to what it asserts.
+- **Equivalent mutant** (B E1): recorded above.

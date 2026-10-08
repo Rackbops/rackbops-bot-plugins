@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { createSpotifyClient, PARTY_SCOPES, SPOTIFY_SCOPES } from "./spotify.js";
 import { commit, freshState, musicState, putConnection, removeConnection, resetStoreForTest } from "./store.js";
 import { accessTokenFor } from "./tokens.js";
+import { makeRealStorage } from "../../../packages/testkit/index.js";
 
 // These drive a REAL client over a fake fetch rather than a fake `refresh`, so what is pinned is
 // the whole boundary #133 is about: the answer's shape on the wire, how spotify.ts classifies it,
@@ -121,6 +122,18 @@ describe("accessTokenFor", () => {
     expect(musicState().connections[USER]?.refreshToken).toBe("RT1");
   });
 
+  test("a refresh that reports scopes but no rotation persists the scopes and keeps the token", async () => {
+    const result = await accessTokenFor(spotifyAnswering(() => json({ access_token: "AT2", scope: PARTY_SCOPES })), USER);
+    expect(result).toEqual({ ok: true, accessToken: "AT2", scopes: PARTY_SCOPES });
+    expect(musicState().connections[USER]).toEqual({ refreshToken: "RT1", connectedAt: CONNECTED_AT, scopes: PARTY_SCOPES });
+  });
+
+  test("a rotation that reports no scopes stores the new token and keeps the recorded scopes", async () => {
+    const result = await accessTokenFor(spotifyAnswering(() => json({ access_token: "AT2", refresh_token: "RT2" })), USER);
+    expect(result).toEqual({ ok: true, accessToken: "AT2", scopes: SPOTIFY_SCOPES });
+    expect(musicState().connections[USER]).toEqual({ refreshToken: "RT2", connectedAt: CONNECTED_AT, scopes: SPOTIFY_SCOPES });
+  });
+
   test("nobody connected: says connect first and never calls Spotify", async () => {
     let calls = 0;
     const spotify = createSpotifyClient(CONFIG, async () => {
@@ -211,7 +224,7 @@ describe("while a refresh is in flight", () => {
     expect(musicState().connections[USER]).toBeUndefined();
   });
 
-  test("a disconnect meanwhile is not undone by the failure path", async () => {
+  test("a disconnect meanwhile answers connect-first on the failure path too, and removes nothing", async () => {
     const { spotify, release } = parked(() => json(DEAD, 400));
     const pending = accessTokenFor(spotify, USER);
     await commit(removeConnection(musicState(), USER));
@@ -220,22 +233,80 @@ describe("while a refresh is in flight", () => {
     expect(musicState().connections[USER]).toBeUndefined();
   });
 
-  const reconnectCases: Array<[string, Record<string, unknown>]> = [
-    ["a refresh without rotation", { access_token: "AT2", scope: SPOTIFY_SCOPES }],
-    ["a rotation of the old grant", { access_token: "AT2", refresh_token: "RT_ROT", scope: SPOTIFY_SCOPES }],
+  // The `/spotify connect` callback lands while the refresh is out, with a fresh grant. The
+  // refresh's own `scope` (SPOTIFY_SCOPES) differs from the fresh grant's (PARTY_SCOPES) on purpose:
+  // it is what tells a write of the stale answer apart from an untouched store, with or without a
+  // rotation, and whether or not the reconnect happened to carry the same connect time.
+  const reconnectCases: Array<[string, Record<string, unknown>, number]> = [
+    ["a refresh without rotation", { access_token: "AT2", scope: SPOTIFY_SCOPES }, 2_000],
+    ["a rotation of the old grant", { access_token: "AT2", refresh_token: "RT_ROT", scope: SPOTIFY_SCOPES }, 2_000],
+    ["a refresh without rotation, at the same connect time", { access_token: "AT2", scope: SPOTIFY_SCOPES }, CONNECTED_AT],
   ];
 
-  for (const [name, body] of reconnectCases) {
+  for (const [name, body, at] of reconnectCases) {
     test(`a reconnect meanwhile wins over ${name}`, async () => {
       const { spotify, release } = parked(() => json(body));
       const pending = accessTokenFor(spotify, USER);
-      // The `/spotify connect` callback lands while the refresh is out, with a fresh grant.
-      await commit(putConnection(musicState(), USER, "RT_NEW", 2_000, PARTY_SCOPES));
+      await commit(putConnection(musicState(), USER, "RT_NEW", at, PARTY_SCOPES));
       release();
-      expect(await pending).toMatchObject({ ok: true, accessToken: "AT2" });
-      expect(musicState().connections[USER]).toEqual({ refreshToken: "RT_NEW", connectedAt: 2_000, scopes: PARTY_SCOPES });
+      expect(await pending).toEqual({ ok: true, accessToken: "AT2", scopes: SPOTIFY_SCOPES });
+      expect(musicState().connections[USER]).toEqual({ refreshToken: "RT_NEW", connectedAt: at, scopes: PARTY_SCOPES });
     });
   }
+
+  test("a reconnect that re-issued the same token reads as unchanged: its connect time is kept, the scopes are the refresh's", async () => {
+    // Spotify issues a new refresh token per authorization, so this is hypothetical; it pins that
+    // the write uses the connection as stored NOW (its connect time), not the pre-await snapshot.
+    const { spotify, release } = parked(() => json({ access_token: "AT2", scope: SPOTIFY_SCOPES }));
+    const pending = accessTokenFor(spotify, USER);
+    await commit(putConnection(musicState(), USER, "RT1", 2_000, PARTY_SCOPES));
+    release();
+    expect(await pending).toEqual({ ok: true, accessToken: "AT2", scopes: SPOTIFY_SCOPES });
+    expect(musicState().connections[USER]).toEqual({ refreshToken: "RT1", connectedAt: 2_000, scopes: SPOTIFY_SCOPES });
+  });
+
+  test("one user's refresh settling does not release another's entry", async () => {
+    resetStoreForTest(
+      putConnection(putConnection(freshState(), USER, "RT1", CONNECTED_AT, SPOTIFY_SCOPES), OTHER, "RT9", CONNECTED_AT, SPOTIFY_SCOPES),
+    );
+    const a = parked(() => json(ROTATION));
+    const b = parked(() => json({ access_token: "ATB" }));
+    const a1 = accessTokenFor(a.spotify, USER);
+    const b1 = accessTokenFor(b.spotify, OTHER);
+    b.release();
+    await b1;
+    const a2 = accessTokenFor(a.spotify, USER); // joins a1, which is still out
+    expect(a.calls()).toBe(1);
+    a.release();
+    expect(await a1).toEqual({ ok: true, accessToken: "AT2", scopes: PARTY_SCOPES });
+    expect(await a2).toEqual({ ok: true, accessToken: "AT2", scopes: PARTY_SCOPES });
+  });
+
+  test("a refresh whose store write fails rejects every joined caller and is released for the next", async () => {
+    // The host's writer can reject (a failed atomic write). The entry must go either way, or the
+    // rejected promise would answer every later call for this user until a restart.
+    const failing = {
+      ...makeRealStorage(),
+      createJsonWriter: () => ({
+        save: async (): Promise<void> => {
+          throw new Error("disk full");
+        },
+      }),
+    };
+    resetStoreForTest(putConnection(freshState(), USER, "RT1", CONNECTED_AT, SPOTIFY_SCOPES), failing, "unused.json");
+    const { spotify, release, calls } = parked(() => json(ROTATION));
+    const first = accessTokenFor(spotify, USER);
+    const second = accessTokenFor(spotify, USER);
+    release();
+    const outcomes = await Promise.allSettled([first, second]);
+    expect(outcomes.map((o) => (o.status === "rejected" ? String(o.reason) : "resolved"))).toEqual([
+      "Error: disk full",
+      "Error: disk full",
+    ]);
+    resetStoreForTest(putConnection(freshState(), USER, "RT1", CONNECTED_AT, SPOTIFY_SCOPES));
+    expect(await accessTokenFor(spotify, USER)).toEqual({ ok: true, accessToken: "AT2", scopes: PARTY_SCOPES });
+    expect(calls()).toBe(2);
+  });
 
   test("a dead old grant after a reconnect does not remove the fresh one", async () => {
     const { spotify, release } = parked(() => json(DEAD, 400));
