@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.1] - 2026-10-08
+
+### Fixed
+
+- The `/agent register` reply and the not-registered `pair` refusal name the command the user actually invoked (`/<prefix>agent ...`) instead of a hardcoded `/agent`, so a prefixed instance is told the right command (Rackbops/rackbops-bot-plugins#129, found on rackbops-discord-bot's `pip` instance).
+
 ## [0.3.0] - 2026-09-25
 
 ### Added

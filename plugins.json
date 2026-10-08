@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-07T23:29:01.487Z",
+  "generatedAt": "2026-10-08T12:07:00.825Z",
   "plugins": [
     {
       "name": "mcp",
       "package": "@rackbops/plugin-mcp",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "description": "Bridge plugin for the Discord delivery MCP (Rackbops/discord-mcp): the service side of docs/bridge-protocol.md, plus /agent registration and pairing",
       "hostApiVersion": 1,
       "intents": [],
@@ -40,6 +40,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "0.3.1",
+          "publishedAt": "2026-10-08T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/mcp-v0.3.1",
+          "notes": "### Fixed\n\n- The `/agent register` reply and the not-registered `pair` refusal name the command the user actually invoked (`/<prefix>agent ...`) instead of a hardcoded `/agent`, so a prefixed instance is told the right command (Rackbops/rackbops-bot-plugins#129, found on rackbops-discord-bot's `pip` instance)."
+        },
         {
           "version": "0.3.0",
           "publishedAt": "2026-09-25T00:00:00.000Z",

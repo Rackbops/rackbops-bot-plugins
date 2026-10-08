@@ -2,13 +2,21 @@
 // local storage work only -- no network call on the reply path -- so every reply lands well inside
 // Discord's 3s window, and every reply is ephemeral (decision 1). Reply texts for the no-op/refusal
 // paths are the plan's own literal wording; the two success messages (register, pair) are this
-// module's own composition where the plan left them open, kept in the same tone.
+// module's own composition where the plan left them open, kept in the same tone. Reply texts name
+// the command the user actually invoked, because the host prefixes every plugin command per
+// instance (`/pipagent` on a bot with COMMAND_PREFIX=pip), so a hardcoded `/agent` would be wrong.
 import { MessageFlags, type ChatInputCommandInteraction, type SlashCommandBuilder } from "discord.js";
 import type { PluginCommand } from "../../../packages/api/contract.js";
 import type { RegistryStore } from "./registry.js";
 
 async function replyEphemeral(interaction: ChatInputCommandInteraction, content: string): Promise<void> {
   await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+}
+
+/** `interaction.commandName` is the registered, already-prefixed command name (`agent`, `ragent`,
+ *  `pipagent`), so this names the command as this instance's users actually type it. */
+function subcommandRef(interaction: ChatInputCommandInteraction, sub: string): string {
+  return `\`/${interaction.commandName} ${sub}\``;
 }
 
 /** Decision 2: `displayName` is `globalName ?? username`, captured at register AND pair time. */
@@ -22,13 +30,13 @@ async function handleRegister(interaction: ChatInputCommandInteraction, store: R
     await replyEphemeral(interaction, "Already registered — nothing changed.");
     return;
   }
-  await replyEphemeral(interaction, "Registered. Run `/agent pair` to generate a pairing code for your agent.");
+  await replyEphemeral(interaction, `Registered. Run ${subcommandRef(interaction, "pair")} to generate a pairing code for your agent.`);
 }
 
 async function handlePair(interaction: ChatInputCommandInteraction, store: RegistryStore): Promise<void> {
   const outcome = await store.pair(interaction.user.id, displayNameOf(interaction), () => new Date());
   if (!outcome.ok) {
-    await replyEphemeral(interaction, "Run `register` first.");
+    await replyEphemeral(interaction, `Run ${subcommandRef(interaction, "register")} first.`);
     return;
   }
   await replyEphemeral(
