@@ -1,17 +1,18 @@
 // The retry policy both HTTP clients share: setlist.fm's (every call) and Spotify's (the build
-// calls only -- see `spotify.ts`). Moved out of `setlistfm.ts` with the same logic and numbers (the
-// constants and `defaultSleep` gained `export`, and `SleepLike`'s comment no longer points at
-// `FetchLike`) so there is one set of numbers and one reading of `Retry-After`, not two that drift
-// (#192).
+// calls only -- see `spotify.ts`). Moved out of `setlistfm.ts` with the same logic and numbers
+// (`MAX_RETRIES` and `defaultSleep` gained `export` for the Spotify client, and `SleepLike`'s
+// comment no longer points at `FetchLike`) so there is one set of numbers and one reading of
+// `Retry-After`, not two that drift (#192).
 
 /** Injected so the retry tests don't actually wait. */
 export type SleepLike = (ms: number) => Promise<void>;
 
 /**
- * Whether a status is worth trying again. 429 is setlist.fm's documented rate limit (the free
- * tier is a small number of requests per second, and one `/setlist` can fire two calls back to
- * back), and a 5xx is the server having a moment. Every other 4xx is a statement about the
- * REQUEST -- a bad key, a missing id -- and repeating it unchanged only wastes the user's time.
+ * Whether a status is worth trying again. 429 is a rate limit (setlist.fm's free tier is a small
+ * number of requests per second, and one `/setlist` can fire two calls back to back; Spotify's
+ * quota is pooled across a developer's apps), and a 5xx is the server having a moment. Every other
+ * 4xx is a statement about the REQUEST -- a bad key, a missing id -- and repeating it unchanged
+ * only wastes the user's time.
  */
 export function isRetryable(status: number): boolean {
   return status === 429 || status >= 500;
@@ -36,14 +37,15 @@ export function parseRetryAfter(value: string | null, now: number): number | und
 /** Attempts AFTER the first one, for a retryable status. */
 export const MAX_RETRIES = 3;
 /** The first backoff step; each retry after that doubles it. */
-export const BACKOFF_BASE_MS = 500;
+const BACKOFF_BASE_MS = 500;
 /**
  * The longest this will sit on any one retry. A `/setlist` runs behind a deferred Discord reply,
- * so a long sleep is not a crash -- but it is an unexplained silence, and setlist.fm answers a
- * sustained rate-limit with a `Retry-After` in whole minutes. Past this, giving up immediately and
- * telling the user to try again in a minute beats making them watch a spinner for it.
+ * so a long sleep is not a crash -- but it is an unexplained silence, and a sustained rate-limit
+ * can come with a `Retry-After` of a minute or more (setlist.fm sends whole minutes). Past this,
+ * giving up immediately and telling the user to try again in a minute beats making them watch a
+ * spinner for it.
  */
-export const MAX_BACKOFF_MS = 5_000;
+const MAX_BACKOFF_MS = 5_000;
 
 /**
  * How long to wait before retry number `attempt` (0-based), or `undefined` to stop retrying now.

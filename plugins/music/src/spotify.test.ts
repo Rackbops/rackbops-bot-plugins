@@ -756,10 +756,32 @@ describe("retrying the build calls", () => {
 
       await client.searchTracks("AT", "q");
 
-      expect(timeout).toHaveBeenCalledTimes(2);
-      expect(timeout).toHaveBeenCalledWith(10_000);
+      // Exactly one bound per attempt, and the same 10 s each time.
+      expect(timeout.mock.calls).toEqual([[10_000], [10_000]]);
     } finally {
       timeout.mockRestore();
+    }
+  });
+
+  test("the client's own sleep really waits: a zero Retry-After still sets a timer and still retries", async () => {
+    // No sleep injected, so `defaultSleep` runs. `Retry-After: 0` makes the wait zero, so the test
+    // does not slow down, but a timer must still be requested (a no-op default would retry
+    // back to back and ignore the header), and a zero wait is a wait, not a reason to stop.
+    const timer = spyOn(globalThis, "setTimeout");
+    try {
+      let calls = 0;
+      const client = createSpotifyClient(CONFIG, async () => {
+        calls += 1;
+        return calls === 1 ? failure(429, "0")() : found();
+      });
+
+      const result = await client.searchTracks("AT", "q");
+
+      expect(result.ok).toBe(true);
+      expect(calls).toBe(2);
+      expect(timer.mock.calls.some((call) => call[1] === 0)).toBe(true);
+    } finally {
+      timer.mockRestore();
     }
   });
 

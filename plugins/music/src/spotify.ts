@@ -199,8 +199,8 @@ export interface SpotifyClient {
   // The three calls a `/setlist` build makes (`searchTracks` is also what `/party add` calls). They
   // retry a bounded number of times (#192): `searchTracks` on a rate limit or a server error, the
   // two POSTs (`createPlaylist`, `addTracks`) on a rate limit only, since repeating a POST that a
-  // server error followed could duplicate it. Each takes an optional trailing `signal` that ends
-  // the retries (and cancels the request) once it fires.
+  // server error followed could duplicate it. Each takes an optional trailing `signal`: once it
+  // fires it cancels the request and ends the retries before the next wait.
   searchTracks(accessToken: string, query: string, signal?: AbortSignal): Promise<Result<TrackCandidate[]>>;
   createPlaylist(
     accessToken: string,
@@ -318,8 +318,9 @@ export function createSpotifyClient(
 
   /**
    * One request, or with `opts.retry` a bounded run of them. Only the three BUILD calls retry
-   * (`searchTracks`, `createPlaylist`, `addTracks`): a `/setlist` runs up to ~50 searches against a
-   * quota pooled across every dev-mode app the developer owns, so a 429 mid-build would otherwise
+   * (`searchTracks`, `createPlaylist`, `addTracks`): a `/setlist` runs from ~50 searches (more for a
+   * set of covers) against a quota pooled across every dev-mode app the developer owns, so a 429
+   * mid-build would otherwise
    * throw away every song matched so far. The token calls and the four player calls do not: the
    * runner's sweep and a party's plays run under the host's bounds and must stay one request long,
    * and the token refresh is the single flight shared with every command.
@@ -327,13 +328,17 @@ export function createSpotifyClient(
    * The two retry policies differ on purpose. A search is a read, safe to repeat on any retryable
    * status ("any": a 429 or a 5xx). `createPlaylist` and `addTracks` are POSTs, which are NOT
    * idempotent: a 5xx can follow a request Spotify DID apply, and repeating it would make a second
-   * playlist, or add a batch of tracks twice (Spotify allows duplicates). A 429 is refused before it
-   * is processed, so those retry on a 429 alone ("rate-limit"); any other failure is reported as it
-   * is, and the reply points at the playlist that was made (#192).
+   * playlist, or add a batch of tracks twice (Spotify allows duplicates). A 429 is a rate limit,
+   * which a client is expected to back off from and retry (RFC 6585; Spotify's guidance), so those
+   * retry on a 429 alone ("rate-limit"), on the assumption that a rate-limited request was not
+   * processed. Any other failure is reported as it is; for a failed `addTracks` the reply then
+   * points at the playlist that was made (#192), while a `createPlaylist` that Spotify applied but
+   * answered with a 5xx or a timeout leaves a playlist nothing can point at.
    *
    * A retry waits as `setlistfm.ts` does (`retry.ts`): a `Retry-After` wins, one past the cap ends
-   * the retries, and a transport failure (a timeout, DNS) is never retried. An aborted `signal` ends
-   * them too.
+   * the retries, and a transport failure (a timeout, DNS) is never retried. A `signal` that has
+   * already fired ends them before the next wait; one that fires DURING a wait (up to the cap) does
+   * not cut it short, and the next attempt then fails at once on the combined signal.
    */
   async function call(
     url: string,

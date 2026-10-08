@@ -76,7 +76,7 @@ export interface QueryTrace {
   candidates: CandidateTrace[];
   /**
    * Present when this query FAILED (after the client's own retries): `candidates` is empty because
-   * Spotify returned none, not because nothing matched. Without it a failure swallowed after a
+   * no answer came back, not because nothing matched. Without it a failure swallowed after a
    * match was already in hand left a complete-looking query list behind a `low` or `medium` pick,
    * and tuning could not tell "nothing better exists" from "the fallback search was rate-limited"
    * (#192).
