@@ -76,7 +76,7 @@ export function createPlugin(host: HostApi): Plugin {
         : [
             {
               name: "party-sweep",
-              run: () => activeRunner.sweep(),
+              run: (signal) => activeRunner.sweep(signal),
             },
           ],
 

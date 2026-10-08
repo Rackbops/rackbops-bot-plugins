@@ -11,6 +11,15 @@
   inheriting the host client's default: it pings nobody, except that the drop-out notice pings the
   member it is about, so Spotify's error text in it can never ping @everyone, @here or a role
   whatever the host's default is (#190).
+- The party sweep now honours the abort signal the host gives every tick: it stops between steps
+  (before each party, before its per-member checks, before each resync) once the host's 30 s bound
+  passes or the bot shuts down, instead of carrying on issuing play commands and writing the party
+  file after the host has given up on it, and its player calls to Spotify (the playback read, play,
+  devices, transfer) are cancelled with the signal; the token refresh, which is shared with commands
+  and must not lose a rotated token, is left to finish. A resync cancelled that way is not counted
+  as a strike against the member. The runner also arms no timer once the plugin has been disposed: a
+  track change or start that was still playing when it was disposed no longer schedules the next
+  boundary afterwards (#147).
 - The reply after an add that starts an idle party, and the reply after `/party skip`, are now
   clipped to Discord's 2000 characters as a whole. Before, the per-member outcome list was clipped
   but the leading line ("<@user> queued ...", "Skipped to ...") was added on top, so with many
