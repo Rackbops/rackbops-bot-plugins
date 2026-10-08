@@ -48,3 +48,13 @@ Written 2026-10-08 against `main` at `14df9e6` (#147 merged: `call` takes the ho
 | The duration guard is pinned | 3 | "a duration is kept only when ..." | drop `Number.isFinite`; drop `> 0`; drop the `typeof` check |
 
 Run each mutation in a scratch worktree, never in the tree under test; name the red test per row in the PR.
+
+## Deviations as implemented
+
+Recorded by the implementer after the audit; the plan above is left as handed down. The audit record and the mutation table are in the PR.
+
+1. **`Infinity` is in the duration case list.** The plan's list (`180000`, `0`, `-1`, `NaN`, `"180000"`, absent) cannot make "drop `Number.isFinite`" red: `NaN > 0` is already false, so only `Infinity` tells `Number.isFinite` apart from `> 0`.
+2. **"Drop the `typeof` check" is an equivalent mutant, not a mutation a test can fail.** `Number.isFinite` does not coerce (`Number.isFinite("180000")` is `false`), so the guard rejects strings, `undefined` and `null` with or without the `typeof` clause, which is there so `tsc` accepts `unknown > 0`. The numeric-string case stays in the test as a guard against a rewrite that coerces (global `isFinite`, `Number(x)`); its comment says so. Reported in the PR instead of changing `spotify.ts`, as the plan asks.
+3. **Audit round 1 (NOT SOUND on two test gaps, fixed here):** a failed `playbackState`, `devices` or `transfer` call was not pinned (only `play`'s failure was), so swallowing it into "nothing playing" / "no devices" / success, or dropping its `status`, survived; the failure test now runs over all four methods and also checks `classifyPlayerError` on the result. And `Math.round` -> `Math.ceil` survived because the only fractional position was `.6`; a `.4` position was added. Optional hardening taken: `devices` entries that are `null`, not objects, have an absent or a non-string id, and a `devices` call with no body; `playbackState` fields present with the wrong type.
+4. **The plan's line cites are stale at HEAD** (the scope assignment is at `spotify.ts:338`, not `:327`; the signal tests are at `describe("a player call and the host's signal")`, which drives all four methods, not only `play` and `playbackState`), and the plan says nothing fails when the scope assignment is deleted: `tokens.test.ts` already persists the scopes a refresh reports through the real client, so `tokenCall`'s assignment was already guarded on the refresh path. Only `exchangeCode`'s copy of the scopes (`spotify.ts:357`) was unguarded; the new test covers both.
+5. **Tests beyond the plan's:** `Content-Type` and the full header sets are pinned, not just `Authorization`; the scope tests also cover a non-string `scope`; the request-shape tests use `toStrictEqual` so an undefined-valued key cannot hide.
