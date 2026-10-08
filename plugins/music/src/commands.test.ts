@@ -1,5 +1,11 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { MessageFlags, type ChatInputCommandInteraction, type MessageComponentInteraction } from "discord.js";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import {
+  MessageFlags,
+  PermissionFlagsBits,
+  SlashCommandBuilder,
+  type ChatInputCommandInteraction,
+  type MessageComponentInteraction,
+} from "discord.js";
 import {
   choiceFor,
   formatBuildReply,
@@ -30,6 +36,7 @@ import {
   type PartyTrack,
 } from "./party.js";
 import { resetClientForTest } from "./notify.js";
+import type { HostStorage } from "../../../packages/api/contract.js";
 import type { MemberOutcome, PartyRunner } from "./runner.js";
 import type { SetlistFmClient, SetlistFmResult, SetlistListResult } from "./setlistfm.js";
 import { PARTY_SCOPES, SPOTIFY_SCOPES, type SpotifyClient } from "./spotify.js";
@@ -44,12 +51,16 @@ import type { Setlist } from "./setlistfm.js";
 // ---------------------------------------------------------------------------------------------------
 
 let logged: string[] = [];
+/** Every `error` line (message and cause) the wiring logged. Not reset by `wire*`: clear it in the test that reads it. */
+const loggedErrors: { message: string; cause: unknown }[] = [];
 const captureLog = {
   info: (m: string) => {
     logged.push(m);
   },
   warn() {},
-  error() {},
+  error: (message: string, cause?: unknown) => {
+    loggedErrors.push({ message, cause });
+  },
 };
 
 /** A Discord id that would be tempting to log -- every stop-line test below checks it never is. */
@@ -521,14 +532,19 @@ function fakePick(
     customId,
     values,
     user: { id: userId },
+    // Set by the recorders below, as discord.js does: an `update` or a `reply` acknowledges.
+    deferred: false,
+    replied: false,
     isStringSelectMenu: () => isSelect,
     reply: async (opts: { content?: string; flags?: unknown }) => {
       calls.push("reply");
       replies.push(opts);
+      interaction.replied = true;
     },
     update: async (opts: { content?: string; components?: unknown[] }) => {
       calls.push("update");
       updates.push(opts);
+      interaction.replied = true;
     },
     editReply: async (opts: { content?: string }) => {
       calls.push("edit");
@@ -733,9 +749,18 @@ describe("recording a build", () => {
     (run.interaction as unknown as { editReply: () => Promise<void> }).editReply = async () => {
       throw new Error("Unknown interaction");
     };
-    // The failure still propagates as it always did -- only the record is added.
-    await expect(handleSetlist()(run.interaction)).rejects.toThrow("Unknown interaction");
+    loggedErrors.length = 0;
+    // The reply is the step that failed, after the defer: the handler's wrapper (#194) logs it and
+    // tries one failure line (which fails the same way here), so nothing escapes the handler. The
+    // record is still made.
+    await handleSetlist()(run.interaction);
     expect(recorded).toHaveLength(1);
+    expect(loggedErrors.map((e) => e.message)).toEqual([
+      "a music command failed after it was acknowledged",
+      "...and the failure reply could not be sent",
+    ]);
+    // Each line carries its own error, so the log says what failed twice.
+    expect(loggedErrors.map((e) => (e.cause as Error).message)).toEqual(["Unknown interaction", "Unknown interaction"]);
   });
 
   test("the reply goes out before the record is written, so a slow recorder cannot delay it", async () => {
@@ -1123,11 +1148,16 @@ function fakeButton(customId: string, userId: string, guildId: string | null) {
     channelId: "C1",
     client: {},
     user: { id: userId },
+    // Set by the recorders below, as discord.js does.
+    deferred: false,
+    replied: false,
     reply: async (opts: { content?: string }) => {
       replies.push(opts);
+      interaction.replied = true;
     },
     deferReply: async (opts: unknown) => {
       deferred.push(opts);
+      interaction.deferred = true;
     },
     editReply: async (opts: { content?: string }) => {
       edits.push(opts);
@@ -1272,6 +1302,217 @@ describe("the Join button", () => {
     expect(run.edits).toHaveLength(1);
     expect(run.edits[0]!.content).toContain("Couldn't join");
     expect(run.edits[0]!.content).not.toContain("Joined, but");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #194: a handler that fails after it acknowledged the command
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * What a person must be left with when a step throws after the bot acknowledged their command:
+ * exactly one edit, the short failure line, none of the error's text anywhere they could read it, and
+ * the error in the log.
+ */
+function expectAnsweredLate(
+  shown: {
+    edits: { content?: string }[];
+    replies?: { content?: string }[];
+    followUps?: { content?: string }[];
+    updates?: { content?: string }[];
+  },
+  secret: string,
+): void {
+  expect(shown.edits).toHaveLength(1);
+  expect(shown.edits[0]?.content).toBe("Something went wrong on the bot's side. Try again in a moment.");
+  const everything = JSON.stringify([shown.edits, shown.replies ?? [], shown.followUps ?? [], shown.updates ?? []]);
+  expect(everything).not.toContain(secret);
+  expect(loggedErrors).toHaveLength(1);
+  expect(loggedErrors[0]?.message).toContain("after it was acknowledged");
+  expect((loggedErrors[0]?.cause as Error).message).toBe(secret);
+}
+
+describe("a handler that fails after it acknowledged the command (#194)", () => {
+  beforeEach(() => {
+    loggedErrors.length = 0;
+  });
+  afterEach(() => {
+    resetPartiesForTest(freshParties());
+    resetClientForTest();
+  });
+
+  test("/party add: a throw after the defer is answered with a short failure line, not a spinner", async () => {
+    wireParty({
+      scopes: PARTY_SCOPES,
+      party: "idle",
+      runnerOverrides: {
+        start: async () => {
+          throw new Error("start boom");
+        },
+      },
+    });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+    expectAnsweredLate(run, "start boom");
+  });
+
+  test("/party skip: a throw after the defer is answered with a short failure line, not a spinner", async () => {
+    wireParty({
+      scopes: PARTY_SCOPES,
+      queue: [partyTrack("Zero"), partyTrack("One")],
+      runnerOverrides: {
+        skip: async () => {
+          throw new Error("skip boom");
+        },
+      },
+    });
+    const run = fakePartyCommand("skip", {}, USER);
+    await handleParty()(run.interaction);
+    expectAnsweredLate(run, "skip boom");
+  });
+
+  test("/party start: a throw after the defer is answered with a short failure line, not a spinner", async () => {
+    wireParty({ scopes: PARTY_SCOPES });
+    // No party yet, and a parties file whose writer fails the way a full disk does.
+    resetPartiesForTest(
+      freshParties(),
+      {
+        createJsonWriter: () => ({
+          save: async () => {
+            throw new Error("disk full");
+          },
+        }),
+      } as unknown as HostStorage,
+      "/parties.json",
+    );
+    const run = fakePartyCommand("start", {}, USER);
+    await handleParty()(run.interaction);
+    expectAnsweredLate(run, "disk full");
+  });
+
+  test("the Join button: a throw after the defer is answered with a short failure line, not a spinner", async () => {
+    wireJoin(async () => {
+      throw new Error("sync boom");
+    });
+    const run = fakeButton(PARTY_JOIN_ID, USER, "G1");
+    await musicInteractions(run.interaction);
+    expectAnsweredLate(run, "sync boom");
+  });
+
+  test("/setlist: a throw after the defer is answered with a short failure line, not a spinner", async () => {
+    wireBuild(
+      async () => {},
+      buildSpotify({
+        createPlaylist: async () => {
+          throw new Error("playlist boom");
+        },
+      }),
+    );
+    const run = fakeCommand({ artist: "Band" });
+    await handleSetlist()(run.interaction);
+    expectAnsweredLate(run, "playlist boom");
+  });
+
+  test("the show picker: a throw after the menu was taken away is answered with a short failure line", async () => {
+    wirePicker(
+      async () => ({
+        ok: true,
+        setlist: setlist({ songs: [{ name: "One", searchArtist: "Band", isCover: false }] }),
+      }),
+      {
+        connected: true,
+        spotify: buildSpotify({
+          createPlaylist: async () => {
+            throw new Error("playlist boom");
+          },
+        }),
+      },
+    );
+    const run = fakePick(pickerCustomId("user-1"), ["abc123"], "user-1");
+    await musicInteractions(run.interaction);
+    // The menu was already replaced by "Building the playlist..."; the failure line edits that.
+    expect(run.updates[0]?.content).toBe("Building the playlist...");
+    expectAnsweredLate(run, "playlist boom");
+  });
+
+  test("a throw before any acknowledgement is left to the host", async () => {
+    wireParty({ scopes: PARTY_SCOPES });
+    const run = fakePartyCommand("status", {}, USER);
+    // The status reply is the first thing this handler sends; make it fail.
+    const boom = new Error("reply boom");
+    (run.interaction as unknown as { reply: () => Promise<void> }).reply = async () => {
+      throw boom;
+    };
+    // Nothing was acknowledged, so the handler lets the error out untouched: no failure line, nothing
+    // logged here. The host logs it (for a slash command that is all it does; for a component it
+    // also answers "Something went wrong").
+    // The very same error object, not a copy of it.
+    await expect(handleParty()(run.interaction)).rejects.toBe(boom);
+    expect(run.edits).toEqual([]);
+    expect(loggedErrors).toEqual([]);
+  });
+});
+
+describe("the party's stop command (#194)", () => {
+  afterEach(() => {
+    resetPartiesForTest(freshParties());
+    resetClientForTest();
+  });
+
+  test("a member who can manage the server can stop a party they did not start", async () => {
+    wireParty({ scopes: PARTY_SCOPES });
+    const run = fakePartyCommand("stop", {}, USER, "G1", [], undefined, { manageGuild: true });
+    await handleParty()(run.interaction);
+
+    expect(getParty(partiesState(), "G1")).toBeUndefined();
+    expect(run.replies).toHaveLength(1);
+    expect(run.replies[0]?.content).toContain("Party over");
+  });
+
+  test("anyone else who is not the host is refused, and the party stays", async () => {
+    wireParty({ scopes: PARTY_SCOPES });
+    const run = fakePartyCommand("stop", {}, USER);
+    await handleParty()(run.interaction);
+
+    expect(getParty(partiesState(), "G1")).toBeDefined();
+    expect(run.replies).toHaveLength(1);
+    expect(run.replies[0]?.content).toBe(
+      "Only whoever started the party, or someone who can manage this server, can stop it.",
+    );
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+  });
+
+  test("the host can stop their own party without the permission", async () => {
+    wireParty({ scopes: PARTY_SCOPES });
+    const run = fakePartyCommand("stop", {}, "host");
+    await handleParty()(run.interaction);
+
+    expect(getParty(partiesState(), "G1")).toBeUndefined();
+    expect(run.replies[0]?.content).toContain("Party over");
+  });
+
+  test("the subcommand's description says who may use it", () => {
+    const builder = new SlashCommandBuilder().setName("party");
+    musicCommands().find((c) => c.name === "party")!.build(builder);
+    const stop = builder.toJSON().options?.find((option) => option.name === "stop");
+    expect(stop?.description).toBe("End the party (whoever started it, or a server manager)");
+  });
+});
+
+describe("the party's add command needs membership (#194)", () => {
+  test("a non-member cannot add: refused before the defer, nothing queued, nothing started", async () => {
+    const { started, calls } = wireParty({ scopes: PARTY_SCOPES, party: "idle", members: ["host"] });
+    const run = fakePartyCommand("add", { query: "One" }, USER, "G1", calls);
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["reply"]);
+    expect(run.replies[0]?.content).toBe(
+      "Only people in the party can add tracks -- press Join on the party message first.",
+    );
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+    expect(run.defers).toEqual([]);
+    expect(getParty(partiesState(), "G1")?.queue).toEqual([]);
+    expect(started).toEqual([]);
   });
 });
 
@@ -1567,6 +1808,7 @@ function fakePartyCommand(
   guildId = "G1",
   calls: string[] = [],
   onDefer?: () => Promise<void>,
+  { manageGuild = false }: { manageGuild?: boolean } = {},
 ) {
   const defers: { flags?: unknown }[] = [];
   const edits: { content?: string }[] = [];
@@ -1577,6 +1819,11 @@ function fakePartyCommand(
     channelId: "C1",
     client: {},
     user: { id: userId },
+    // Whether the caller can manage the server (what `/party stop` asks for besides being the host).
+    memberPermissions: { has: (bit: bigint) => manageGuild && bit === PermissionFlagsBits.ManageGuild },
+    // Set by the recorders below, as discord.js does: the handler's containment reads them.
+    deferred: false,
+    replied: false,
     options: {
       getSubcommand: () => sub,
       getString: (name: string, required?: boolean) => {
@@ -1589,6 +1836,7 @@ function fakePartyCommand(
     deferReply: async (opts: { flags?: unknown } = {}) => {
       calls.push("defer");
       defers.push(opts);
+      interaction.deferred = true;
       await onDefer?.();
     },
     editReply: async (opts: { content?: string }) => {
@@ -1602,6 +1850,7 @@ function fakePartyCommand(
     reply: async (opts: { content?: string; flags?: unknown }) => {
       calls.push("reply");
       replies.push(opts);
+      interaction.replied = true;
     },
   };
   return {
@@ -1677,7 +1926,7 @@ function wireParty({
   noDuration = false,
   party = "playing",
   outcomes = [{ discordUserId: USER, ok: true }],
-  members = ["host"],
+  members = ["host", USER],
   queue,
   configured = true,
   skipOutcomes = [],
@@ -1685,6 +1934,7 @@ function wireParty({
   index = 0,
   search,
   noClock = false,
+  runnerOverrides = {},
 }: {
   scopes: string;
   connected?: boolean;
@@ -1695,7 +1945,7 @@ function wireParty({
   party?: "playing" | "idle";
   /** What the runner double reports back from `start`. */
   outcomes?: MemberOutcome[];
-  /** Who is in the party; the host is "host". */
+  /** Who is in the party; the host is "host". USER is a member unless a test says otherwise. */
   members?: string[];
   /** The party's queue; by default one track when playing and none when idle. */
   queue?: PartyTrack[];
@@ -1711,6 +1961,8 @@ function wireParty({
   search?: SpotifyClient["searchTracks"];
   /** Leaves the wiring's clock out, as production does: a started party is stamped with the real time. */
   noClock?: boolean;
+  /** Replaces parts of the runner double, e.g. a `start` or `skip` that throws. */
+  runnerOverrides?: Partial<PartyRunner>;
 }): { started: string[]; calls: string[] } {
   const started: string[] = [];
   const calls: string[] = [];
@@ -1761,7 +2013,7 @@ function wireParty({
                       value: searchHit ? [noDuration ? track("One") : { ...track("One"), durationMs: 180_000 }] : [],
                     }),
           }),
-          runner: partyRunnerDouble(started, outcomes, calls, skipOutcomes, skipRefuses),
+          runner: { ...partyRunnerDouble(started, outcomes, calls, skipOutcomes, skipRefuses), ...runnerOverrides },
         }
       : {}),
     serverRunning: () => true,
