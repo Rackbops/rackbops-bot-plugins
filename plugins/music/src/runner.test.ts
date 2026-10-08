@@ -702,6 +702,26 @@ describe("a host who drops (#194)", () => {
     runner.stopAll();
   });
 
+  test("a member dropped by the sweep's resync leaves the party's timer armed", async () => {
+    // The sweep arms the party's timer, then resyncs both drifted members; the friend's grant is dead
+    // by the resync. Only a HOST drop takes the timer with it.
+    const { client } = fakeSpotify({
+      playbackState: async () => ({ ok: true, value: { isPlaying: true, progressMs: 0, trackUri: "spotify:track:one" } }),
+    });
+    const clock = fakeClock();
+    const { runner, notices } = makeRunner(client, clock, tokenSequence("friend", [GOOD, REVOKED]));
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep();
+
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("<@friend> has dropped out of the party");
+    expect(notices[0]).not.toContain("The party has ended");
+    expect(clock.pendingCount()).toBe(1);
+    runner.stopAll();
+  });
+
   test("a member who is not the host drops without ending anything", async () => {
     const { client } = fakeSpotify();
     const clock = fakeClock();

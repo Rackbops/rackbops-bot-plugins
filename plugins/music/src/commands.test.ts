@@ -759,6 +759,8 @@ describe("recording a build", () => {
       "a music command failed after it was acknowledged",
       "...and the failure reply could not be sent",
     ]);
+    // Each line carries its own error, so the log says what failed twice.
+    expect(loggedErrors.map((e) => (e.cause as Error).message)).toEqual(["Unknown interaction", "Unknown interaction"]);
   });
 
   test("the reply goes out before the record is written, so a slow recorder cannot delay it", async () => {
@@ -1322,7 +1324,7 @@ function expectAnsweredLate(
   secret: string,
 ): void {
   expect(shown.edits).toHaveLength(1);
-  expect(shown.edits[0]?.content).toContain("Something went wrong on the bot's side");
+  expect(shown.edits[0]?.content).toBe("Something went wrong on the bot's side. Try again in a moment.");
   const everything = JSON.stringify([shown.edits, shown.replies ?? [], shown.followUps ?? [], shown.updates ?? []]);
   expect(everything).not.toContain(secret);
   expect(loggedErrors).toHaveLength(1);
@@ -1437,13 +1439,15 @@ describe("a handler that fails after it acknowledged the command (#194)", () => 
     wireParty({ scopes: PARTY_SCOPES });
     const run = fakePartyCommand("status", {}, USER);
     // The status reply is the first thing this handler sends; make it fail.
+    const boom = new Error("reply boom");
     (run.interaction as unknown as { reply: () => Promise<void> }).reply = async () => {
-      throw new Error("reply boom");
+      throw boom;
     };
     // Nothing was acknowledged, so the handler lets the error out untouched: no failure line, nothing
     // logged here. The host logs it (for a slash command that is all it does; for a component it
     // also answers "Something went wrong").
-    await expect(handleParty()(run.interaction)).rejects.toThrow("reply boom");
+    // The very same error object, not a copy of it.
+    await expect(handleParty()(run.interaction)).rejects.toBe(boom);
     expect(run.edits).toEqual([]);
     expect(loggedErrors).toEqual([]);
   });
@@ -1472,7 +1476,9 @@ describe("the party's stop command (#194)", () => {
 
     expect(getParty(partiesState(), "G1")).toBeDefined();
     expect(run.replies).toHaveLength(1);
-    expect(run.replies[0]?.content).toContain("manage this server");
+    expect(run.replies[0]?.content).toBe(
+      "Only whoever started the party, or someone who can manage this server, can stop it.",
+    );
     expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
   });
 
@@ -1489,7 +1495,7 @@ describe("the party's stop command (#194)", () => {
     const builder = new SlashCommandBuilder().setName("party");
     musicCommands().find((c) => c.name === "party")!.build(builder);
     const stop = builder.toJSON().options?.find((option) => option.name === "stop");
-    expect(stop?.description).toContain("server manager");
+    expect(stop?.description).toBe("End the party (whoever started it, or a server manager)");
   });
 });
 
@@ -1500,7 +1506,9 @@ describe("the party's add command needs membership (#194)", () => {
     await handleParty()(run.interaction);
 
     expect(calls).toEqual(["reply"]);
-    expect(run.replies[0]?.content).toContain("press Join");
+    expect(run.replies[0]?.content).toBe(
+      "Only people in the party can add tracks -- press Join on the party message first.",
+    );
     expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
     expect(run.defers).toEqual([]);
     expect(getParty(partiesState(), "G1")?.queue).toEqual([]);

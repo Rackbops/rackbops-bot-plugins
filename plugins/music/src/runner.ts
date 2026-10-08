@@ -301,11 +301,13 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
       return;
     }
     failures.delete(key);
-    // The host going closes the whole party (`removeMember`), so its boundary timer goes with it:
-    // left armed, it would fire into a party that no longer exists. The notice says so as well, or the
-    // channel is left with a Join button that now answers "That party has ended". Decided from the
-    // party as it is now, not the snapshot: a stop and a new party under another host may have landed
-    // while the plays were in flight, and that party's timer is not this drop's to cancel.
+    // The host going closes the whole party (`removeMember`), so its boundary timer goes with it: the
+    // sweep may have armed one for this party, and a handle left for a party that no longer exists
+    // would only sit in the map until it fired to do nothing (`advanceParty` refuses it). The notice
+    // says the party ended as well, or the channel is left with a Join button that now answers "That
+    // party has ended". Decided from the party as it is now, not the snapshot: a stop and a new party
+    // under another host may have landed while the plays were in flight, and that party's timer is
+    // not this drop's to cancel.
     const endsParty = outcome.discordUserId === live.hostId;
     if (endsParty) {
       timers.get(party.guildId)?.cancel();

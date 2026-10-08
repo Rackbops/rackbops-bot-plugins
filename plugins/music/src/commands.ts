@@ -268,15 +268,18 @@ const FAILED_LATE = "Something went wrong on the bot's side. Try again in a mome
  * reply, a component update) is answered instead of left as a spinner. The host never answers one:
  * for a component or modal interaction it replies "Something went wrong" only when the interaction is
  * neither replied nor deferred, and for a slash command it only logs, so past the acknowledgement the
- * person is left on "thinking..." until Discord expires it. A throw before any acknowledgement is
- * re-thrown untouched, exactly as before, for the host to log (and, for a component, answer). The
- * error goes to the log, never into the reply.
+ * person is left on "thinking..." (or, for the picker, on "Building the playlist...") until Discord
+ * expires it. A throw before any acknowledgement is re-thrown untouched, exactly as before, for the
+ * host to log (and, for a component, answer). The error goes to the log, never into the reply.
  *
  * What the failure line replaces is the acknowledgement, which can be a success message: a step that
  * threw after its work was done (the follow-up announcing a queued track, say) leaves "Something went
- * wrong" over work that took effect. The line says to try again in a moment, so for those the log is
- * the truth; the memory-versus-disk divergence behind a failed commit is a store design question, not
- * this wrapper's (#190).
+ * wrong" over work that took effect, and "try again" would then repeat it (a track queued twice, a
+ * second skip). For those the log has what actually failed; the memory-versus-disk divergence behind
+ * a failed commit is a store design question, not this wrapper's (#190).
+ *
+ * The host's per-interaction line for a contained failure reads "answered", not "error", because the
+ * handler returned; this wrapper's own log line is then the only record of it.
  */
 async function contained(
   interaction: { deferred: boolean; replied: boolean; editReply(options: { content: string }): Promise<unknown> },
@@ -797,9 +800,10 @@ async function handlePartyAdd(interaction: ChatInputCommandInteraction, guildId:
     await replyEphemeral(interaction, "No party here yet -- `/party start` opens one.");
     return;
   }
-  // Like skip, and answered before the defer for the same reason: being in the party is what lets
-  // someone steer it. An add can start playback on every member's player, so a connected stranger
-  // must not be able to do it (#194).
+  // Like skip: being in the party is what lets someone steer it. An add can start playback on every
+  // member's player, so a connected stranger must not be able to do it. It is answered before the
+  // defer so that a non-member never reaches the access check below, which refreshes a token and can
+  // mint an authorize link (#194).
   if (!party.members.includes(interaction.user.id)) {
     await replyEphemeral(interaction, "Only people in the party can add tracks -- press Join on the party message first.");
     return;
