@@ -4,10 +4,6 @@
 
 ### Fixed
 
-- A disk write that fails at a track boundary (a full or read-only disk) is now logged and the party
-  re-armed for the next track, instead of surfacing as an unhandled rejection from the party's own
-  timer, which could end the whole bot. The party has already moved on in memory by then, so a
-  persistent failure retries once per track rather than in a loop (#151).
 - The party sweep now honours the abort signal the host gives every tick: it stops between steps
   (before each party, before its per-member checks, before each resync) once the host's 30 s bound
   passes or the bot shuts down, instead of carrying on issuing play commands and writing the party

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   createPartyRunner,
   MAX_MEMBER_FAILURES,
@@ -1105,14 +1105,24 @@ describe("a boundary whose disk write fails", () => {
   /** One macrotask: the rejection path has more awaits than `advanceTo`'s two microtask turns. */
   const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-  /** A storage whose parties writer rejects on every save, as a full or read-only disk does. */
-  function failingStorage(onSave: () => void = () => {}) {
+  // Several tests here install a rejecting writer in the parties singleton; leave it clean.
+  afterEach(() => {
+    resetPartiesForTest(freshParties());
+  });
+
+  /**
+   * A storage whose parties writer rejects on every save after the first `okSaves`, as a full or
+   * read-only disk does. `onSave` runs inside each save, before it settles.
+   */
+  function failingStorage(onSave: () => void = () => {}, okSaves = 0) {
+    let saves = 0;
     return {
       ...makeRealStorage(),
       createJsonWriter: () => ({
         save: async (): Promise<void> => {
+          saves += 1;
           onSave();
-          throw new Error("disk full");
+          if (saves > okSaves) throw new Error("disk full");
         },
       }),
     };
@@ -1143,9 +1153,97 @@ describe("a boundary whose disk write fails", () => {
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("advancing to the next track failed");
     expect(errors[0]).toContain("G1");
-    expect(String(errorCauses[0])).toContain("disk full");
+    // The error itself reaches the logger, not just its text, so the host keeps the stack.
+    expect(errorCauses[0]).toBeInstanceOf(Error);
+    expect((errorCauses[0] as Error).message).toBe("disk full");
     // The in-memory state moved on before the write failed, and the next boundary has a timer.
     expect(getParty(partiesState(), "G1")?.index).toBe(1);
+    expect(clock.pendingCount()).toBe(1);
+    runner.stopAll();
+  });
+
+  test("a persistent failure is logged once per boundary, never in a loop", async () => {
+    resetPartiesForTest(openParty(freshParties(), party()), failingStorage(), "unused.json");
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, errors } = makeRunner(client, clock);
+
+    await runner.sweep();
+    await clock.advanceTo(NOW + TRACK_MS);
+    await flush();
+    expect(errors).toHaveLength(1);
+
+    // Nothing retries the failed boundary on its own: no further error, no play, until the next one.
+    await flush();
+    await flush();
+    await clock.advanceTo(NOW + TRACK_MS + 1_000);
+    await flush();
+    expect(errors).toHaveLength(1);
+    expect(plays).toEqual([]);
+    expect(clock.pendingCount()).toBe(1);
+
+    // The next boundary is the last track's end: it fails too, once, and the queue is spent.
+    await clock.advanceTo(NOW + 2 * TRACK_MS);
+    await flush();
+    expect(errors).toHaveLength(2);
+    expect(getParty(partiesState(), "G1")?.index).toBe(2);
+    expect(clock.pendingCount()).toBe(0);
+    runner.stopAll();
+  });
+
+  test("a boundary that succeeds logs no error", async () => {
+    // The default parties store has no writer, so nothing rejects.
+    const { client, plays } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, errors } = makeRunner(client, clock);
+
+    await runner.sweep();
+    await clock.advanceTo(NOW + TRACK_MS);
+    await flush();
+
+    expect(errors).toEqual([]);
+    expect(getParty(partiesState(), "G1")?.index).toBe(1);
+    expect(plays.length).toBeGreaterThan(0);
+    expect(clock.pendingCount()).toBe(1);
+    runner.stopAll();
+  });
+
+  test("a token refresh that cannot save at the boundary is caught the same way", async () => {
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    let refusing = false;
+    const { runner, errors, errorCauses } = makeRunner(client, clock, () => {
+      if (refusing) throw new Error("disk full");
+      return GOOD;
+    });
+
+    await runner.sweep();
+    refusing = true;
+    await clock.advanceTo(NOW + TRACK_MS);
+    await flush();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("G1");
+    expect((errorCauses[0] as Error).message).toBe("disk full");
+    expect(getParty(partiesState(), "G1")?.index).toBe(1);
+    expect(clock.pendingCount()).toBe(1);
+    runner.stopAll();
+  });
+
+  test("a member's removal that cannot save at the boundary is caught the same way", async () => {
+    // The boundary's own write lands; the drop-out's write is the one that fails.
+    resetPartiesForTest(openParty(freshParties(), party()), failingStorage(() => {}, 1), "unused.json");
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, errors, errorCauses } = makeRunner(client, clock, tokenSequence("friend", [REVOKED]));
+
+    await runner.sweep();
+    await clock.advanceTo(NOW + TRACK_MS);
+    await flush();
+
+    expect(errors).toHaveLength(1);
+    expect((errorCauses[0] as Error).message).toBe("disk full");
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
     expect(clock.pendingCount()).toBe(1);
     runner.stopAll();
   });
