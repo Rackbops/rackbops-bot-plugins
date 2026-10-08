@@ -25,6 +25,19 @@ describe("normalize", () => {
     expect(normalize("Don't Stop Me Now")).toBe(normalize("Dont Stop Me Now"));
   });
 
+  test("every apostrophe spelling is deleted, not spaced", () => {
+    // The ASCII apostrophe and backtick, the two curly quotes, the modifier letter apostrophe, and
+    // the acute accent, prime and fullwidth apostrophe setlist.fm titles carry ("Don´t Stop
+    // Believin´"). Keyed by code point so a failure names the character that turned into a space.
+    const apostrophes = ["'", "`", "‘", "’", "ʼ", "´", "′", "＇"];
+    const normalized = Object.fromEntries(
+      apostrophes.map((c) => [c.codePointAt(0)!.toString(16), normalize(`Don${c}t Stop`)]),
+    );
+    expect(normalized).toEqual(Object.fromEntries(apostrophes.map((c) => [c.codePointAt(0)!.toString(16), "dont stop"])));
+    // And the end to end shape of the bug: setlist.fm's spelling against Spotify's.
+    expect(normalize("Don´t Stop Believin´")).toBe(normalize("Don't Stop Believin'"));
+  });
+
   test("collapses whitespace and case", () => {
     expect(normalize("  HEY   Jude  ")).toBe("hey jude");
   });
@@ -282,6 +295,63 @@ describe("pickBestTrack", () => {
     // that's still only a low-confidence pick, exactly what the reply should flag to the listener.
     expect(best!.track.artistNames).toEqual(["Debbie Harry"]);
     expect(best!.confidence).toBe("low");
+  });
+
+  // #191: the release notes say karaoke and "in the style of" uploads are "rejected outright". A
+  // penalty alone only sinks the score, and a score above zero is still a candidate -- so an upload
+  // credited to the RIGHT artist (whose title and artist points outweigh the 100) used to survive.
+  describe("a penalty of 100 or more rejects the candidate outright", () => {
+    const letItBe = { name: "Let It Be", artist: "The Beatles" };
+
+    test("a karaoke upload credited to the original artist is rejected outright", () => {
+      // 72 (prefix title) + 40 (exact artist) - 100 = 12: above zero, so it used to be a `low` pick.
+      const upload = track("Let It Be (Karaoke Version)", ["The Beatles"]);
+      expect(scoreCandidate(letItBe, upload)).toBe(12);
+      expect(pickBestTrack(letItBe, [upload])).toBeUndefined();
+    });
+
+    test("an exact title with a karaoke label among the artists is rejected, not high", () => {
+      // 100 + 40 - 100 = 40, with an exact title and an exact artist: it used to be `high`.
+      const upload = track("Let It Be", ["The Beatles", "Karaoke Kings"]);
+      expect(scoreCandidate(letItBe, upload)).toBe(40);
+      expect(pickBestTrack(letItBe, [upload])).toBeUndefined();
+    });
+
+    test("the genuine recording still wins a page that also holds a karaoke upload", () => {
+      const genuine = track("Let It Be", ["The Beatles"]);
+      const upload = track("Let It Be", ["The Beatles", "Karaoke Kings"]);
+      expect(pickBestTrack(letItBe, [upload, genuine])!.track).toBe(genuine);
+      expect(pickBestTrack(letItBe, [genuine, upload])!.track).toBe(genuine);
+    });
+
+    test("a live cut by the right artist is still eligible", () => {
+      const live = track("Let It Be (Live)", ["The Beatles"]);
+      expect(pickBestTrack(letItBe, [live])!.track).toBe(live);
+    });
+
+    test("every single marker short of karaoke leaves the candidate eligible", () => {
+      for (const title of [
+        "Let It Be (Live)",
+        "Let It Be (Remix)",
+        "Let It Be (Demo)",
+        "Let It Be (Instrumental)",
+        "Let It Be (Sped Up)",
+        "Let It Be (Commentary)",
+      ]) {
+        const variant = track(title, ["The Beatles"]);
+        expect(pickBestTrack(letItBe, [variant])?.track).toBe(variant);
+      }
+    });
+
+    test("markers stack: two lesser ones stay eligible, enough of them to reach 100 do not", () => {
+      // The threshold is the total, not the kind of marker: instrumental (45) + remix (30) is 75,
+      // and adding live (25) makes 100.
+      const two = track("Let It Be (Instrumental Remix)", ["The Beatles"]);
+      expect(pickBestTrack(letItBe, [two])!.track).toBe(two);
+      const three = track("Let It Be (Instrumental Remix Live)", ["The Beatles"]);
+      expect(scoreCandidate(letItBe, three)).toBe(72 + 40 - 100);
+      expect(pickBestTrack(letItBe, [three])).toBeUndefined();
+    });
   });
 
   test("returns undefined when nothing on the page is credible", () => {
@@ -680,6 +750,20 @@ describe("pickTrackFromQuery", () => {
     // ...and the genuine track beside it still wins, whichever comes first.
     expect(pickTrackFromQuery("Bohemian Rhapsody Queen", [karaoke, queen])!.track).toBe(queen);
     expect(pickTrackFromQuery("Bohemian Rhapsody Queen", [queen, karaoke])!.track).toBe(queen);
+  });
+
+  test("a title-only query does not queue a karaoke upload either (#191)", () => {
+    // The title pass is `pickBestTrack`, so its outright rejection of a penalty of 100 reaches
+    // `/party add`. With no artist in the query the exact title's 100 is cancelled by the 100
+    // penalty, and what survives is the 0.01 tie-break for one same-artist sibling on the page: a
+    // positive score, which used to make this upload the answer (as a `low` pick, queued unflagged).
+    const upload = track("Let It Be", ["The Beatles", "Karaoke Kings"]);
+    const sibling = track("Let It Be (Karaoke Version)", ["The Beatles"]);
+    expect(scoreCandidate({ name: "Let It Be", artist: "" }, upload, [upload, sibling])).toBeGreaterThan(0);
+    expect(pickTrackFromQuery("Let It Be", [upload, sibling])).toBeUndefined();
+    // The genuine recording on the same page is still found.
+    const genuine = track("Let It Be", ["The Beatles"]);
+    expect(pickTrackFromQuery("Let It Be", [upload, sibling, genuine])!.track).toBe(genuine);
   });
 
   test("an artist that normalizes to nothing is not an artist", () => {

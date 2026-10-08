@@ -309,6 +309,25 @@ describe("recordRun", () => {
     expect(infos).toHaveLength(1);
   });
 
+  test("a logger that throws does not cost the run its save", async () => {
+    await inTmpDir(async (dir) => {
+      const warns: string[] = [];
+      const log: PluginLog = {
+        info: () => {
+          throw new Error("logger is down");
+        },
+        warn: (m) => warns.push(m),
+        error() {},
+      };
+      await initMatchLog(makeFakeHost({ name: "music", dataDir: dir, storage: makeRealStorage(), log }));
+      await expect(recordRun(run({ setlistId: "kept" }))).resolves.toBeUndefined();
+      // The summary line is lost, but the run is on disk and nothing was reported as a write failure.
+      const onDisk = (await Bun.file(join(dir, "music-match-log.json")).json()) as MatchLogFile;
+      expect(onDisk.runs.map((r) => r.setlistId)).toEqual(["kept"]);
+      expect(warns).toEqual([]);
+    });
+  });
+
   test("a writer that throws synchronously is contained too", async () => {
     const { log, warns } = capturingLog();
     const failing = makeRealStorage();

@@ -67,8 +67,10 @@ function servePages(song: CorpusSong): SpotifyClient {
   };
 }
 
-test("the corpus is the 27 non-high songs of the 2026-09-25 logs", () => {
+test("the corpus is the 27 songs the 2026-09-25 logs left below high, 3 of them high under today's matcher", () => {
   expect(corpus.length).toBe(27);
+  const nowHigh = corpus.filter((entry) => entry.baseline !== "missing" && entry.baseline.confidence === "high");
+  expect(nowHigh.length).toBe(3);
 });
 
 // A guard that no fixture entry carries a key outside the shape the plan defines, so setlist
