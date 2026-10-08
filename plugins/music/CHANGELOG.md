@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- The reply after an add that starts an idle party, and the reply after `/party skip`, are now
+  clipped to Discord's 2000 characters as a whole. Before, the per-member outcome list was clipped
+  but the leading line ("<@user> queued ...", "Skipped to ...") was added on top, so with many
+  members failing at once the message was too long and Discord refused it (#240).
 - `/party skip` now acknowledges Discord before it does anything else, so a slow Spotify no longer
   makes it "not respond". It no longer refreshes the skipper's token ahead of that -- being in the
   party is the authorisation; the runner refreshes every member's token when it plays the next track,
