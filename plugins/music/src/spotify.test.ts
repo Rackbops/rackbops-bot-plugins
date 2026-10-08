@@ -591,6 +591,10 @@ describe("retrying the build calls", () => {
       CONFIG,
       async () => {
         onFetch?.();
+        // A retry loop with no bound would spin forever on microtasks (the fake sleep never yields
+        // to a timer), so the run would hang instead of failing; a runaway ends as a transport
+        // failure, and the "bounded" test then fails on its call count.
+        if (calls >= 25) throw new Error("runaway retries");
         const answer = script[Math.min(calls, script.length - 1)]!;
         calls += 1;
         if (answer instanceof Error) throw answer;
