@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- `/party skip` now acknowledges Discord before it does anything else, so a slow Spotify no longer
+  makes it "not respond". It no longer refreshes the skipper's token ahead of that -- being in the
+  party is the authorisation; the runner refreshes every member's token when it plays the next track,
+  the skipper's included, now after the reply is deferred -- and a skipper whose own Spotify can't
+  play is handled like any other member (named in the reply and, for a permanent problem, dropped
+  from the party) instead of being refused privately (#153).
 - `/party add` now checks the caller's Spotify access under an ephemeral reply, so the authorize link
   (which carries a single-use sign-in token) and "not connected" / "no longer valid" answers go only
   to the person who ran it; the channel still hears who queued what, through a separate public

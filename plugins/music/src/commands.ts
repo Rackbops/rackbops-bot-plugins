@@ -774,9 +774,15 @@ async function handlePartySkip(interaction: ChatInputCommandInteraction, guildId
     await replyEphemeral(interaction, "Only people in the party can skip.");
     return;
   }
-  const access = await requirePartyAccess(interaction.user.id);
-  if (!access.ok) {
-    await replyEphemeral(interaction, access.message);
+  // Being in the party is the authorisation, so there is no access check here. There used to be one:
+  // a refresh of the skipper's own token, up to ten seconds, ahead of the defer below -- and Discord
+  // gives an interaction three seconds before it expires. The skipper's token is still refreshed,
+  // by the runner and as a member, when it plays the next track; but that is after the
+  // acknowledgement and in parallel with everyone else's, and a skipper whose Spotify can't play
+  // shows up in the outcomes like any other member instead of blocking the skip.
+  const { config, runner } = required();
+  if (runner === undefined) {
+    await replyEphemeral(interaction, formatNotConfigured(config.missing));
     return;
   }
   await interaction.deferReply();
@@ -787,7 +793,7 @@ async function handlePartySkip(interaction: ChatInputCommandInteraction, guildId
   }
   // A skip and a track ending naturally are the same transition, so both go through the runner's
   // one advance path -- there is no second place that decides what "next" means.
-  const outcomes = await access.runner.skip(guildId);
+  const outcomes = await runner.skip(guildId);
   await interaction.editReply({ content: `Skipped to **${next.name}** -- ${next.artist}\n${formatOutcomes(outcomes)}` });
 }
 

@@ -12,7 +12,15 @@ import {
   pickerCustomId,
 } from "./commands.js";
 import type { SetlistFmClient, SetlistFmResult, SetlistListResult } from "./setlistfm.js";
-import { freshParties, getParty, openParty, partiesState, resetPartiesForTest, type Party } from "./party.js";
+import {
+  freshParties,
+  getParty,
+  openParty,
+  partiesState,
+  resetPartiesForTest,
+  type Party,
+  type PartyTrack,
+} from "./party.js";
 import type { MemberOutcome, PartyRunner } from "./runner.js";
 import { PARTY_SCOPES, SPOTIFY_SCOPES, type SpotifyClient } from "./spotify.js";
 import { freshState, musicState, putConnection, resetStoreForTest } from "./store.js";
@@ -1112,16 +1120,24 @@ describe("/setlist stop lines", () => {
  * the whole point of #134 is WHICH replies are public: `defers` keeps the flags it deferred with (an
  * ephemeral defer makes the edit private), `edits` is the deferred reply, `followUps` are separate
  * messages (public unless they carry their own ephemeral flag), `replies` are direct answers.
+ *
+ * `calls` is every call in the order it happened. Order matters: Discord resolves a deferred reply
+ * with the first message sent after the defer, so a follow-up sent BEFORE the edit would take over
+ * the private reply's place instead of landing in the channel; and #153 is about what happens before
+ * the defer. Pass the array `wireParty` returned and the token fake's refreshes and the runner's
+ * skips land in the same sequence.
  */
-function fakePartyCommand(sub: string, options: Record<string, string>, userId: string, guildId = "G1") {
+function fakePartyCommand(
+  sub: string,
+  options: Record<string, string>,
+  userId: string,
+  guildId = "G1",
+  calls: string[] = [],
+) {
   const defers: { flags?: unknown }[] = [];
   const edits: { content?: string }[] = [];
   const followUps: { content?: string; flags?: unknown }[] = [];
-  const replies: { content?: string }[] = [];
-  // Every call in the order it happened. Order matters: Discord resolves a deferred reply with the
-  // first message sent after the defer, so a follow-up sent BEFORE the edit would take over the
-  // private reply's place instead of landing in the channel.
-  const calls: string[] = [];
+  const replies: { content?: string; flags?: unknown }[] = [];
   const interaction = {
     guildId,
     channelId: "C1",
@@ -1148,7 +1164,7 @@ function fakePartyCommand(sub: string, options: Record<string, string>, userId: 
       calls.push("followUp");
       followUps.push(opts);
     },
-    reply: async (opts: { content?: string }) => {
+    reply: async (opts: { content?: string; flags?: unknown }) => {
       calls.push("reply");
       replies.push(opts);
     },
@@ -1163,15 +1179,21 @@ function fakePartyCommand(sub: string, options: Record<string, string>, userId: 
   };
 }
 
-/** A runner whose `start` records the guilds it was asked to start and answers with `outcomes`. */
-function partyRunnerDouble(started: string[], outcomes: MemberOutcome[]): PartyRunner {
+/**
+ * A runner whose `start` records the guilds it was asked to start and answers with `outcomes`, and
+ * whose `skip` records `skip:<guild>` on `calls`.
+ */
+function partyRunnerDouble(started: string[], outcomes: MemberOutcome[], calls: string[] = []): PartyRunner {
   return {
     playCurrent: async () => [],
     start: async (guildId): Promise<MemberOutcome[]> => {
       started.push(guildId);
       return outcomes;
     },
-    skip: async () => [],
+    skip: async (guildId): Promise<MemberOutcome[]> => {
+      calls.push(`skip:${guildId}`);
+      return [];
+    },
     syncMember: async (_guildId, discordUserId): Promise<MemberOutcome> => ({ discordUserId, ok: true }),
     sweep: async () => {},
     stopAll() {},
@@ -1179,7 +1201,18 @@ function partyRunnerDouble(started: string[], outcomes: MemberOutcome[]): PartyR
   };
 }
 
-/** Wires `/party add` for USER in guild G1, with a party that is playing (default) or idle. */
+/** A queued track for the party fixtures below. */
+function partyTrack(name: string): PartyTrack {
+  return { uri: `spotify:track:${name.toLowerCase()}`, name, artist: "Band", durationMs: 180_000 };
+}
+
+/**
+ * Wires `/party` for USER in guild G1, with a party that is playing (default) or idle.
+ *
+ * Returns `calls`, one array in which the token fake's refreshes ("refresh") and the runner's skips
+ * ("skip:<guild>") are recorded as they happen; hand it to `fakePartyCommand` and the interaction's
+ * own calls join them, so a test can assert the exact order of everything the handler did.
+ */
 function wireParty({
   scopes,
   connected = true,
@@ -1188,6 +1221,9 @@ function wireParty({
   noDuration = false,
   party = "playing",
   outcomes = [{ discordUserId: USER, ok: true }],
+  members = ["host"],
+  queue,
+  configured = true,
 }: {
   scopes: string;
   connected?: boolean;
@@ -1198,48 +1234,67 @@ function wireParty({
   party?: "playing" | "idle";
   /** What the runner double reports back from `start`. */
   outcomes?: MemberOutcome[];
-}): { started: string[] } {
+  /** Who is in the party; the host is "host". */
+  members?: string[];
+  /** The party's queue; by default one track when playing and none when idle. */
+  queue?: PartyTrack[];
+  /** False wires a bot with no Spotify app configured: no client, no runner. */
+  configured?: boolean;
+}): { started: string[]; calls: string[] } {
   const started: string[] = [];
+  const calls: string[] = [];
   logged = [];
   resetStoreForTest(connected ? putConnection(freshState(), USER, "RT", 1, scopes) : freshState());
   const seeded: Party = {
     guildId: "G1",
     channelId: "C1",
     hostId: "host",
-    members: ["host"],
-    queue: party === "playing" ? [{ uri: "spotify:track:zero", name: "Zero", artist: "Band", durationMs: 180_000 }] : [],
+    members,
+    queue: queue ?? (party === "playing" ? [partyTrack("Zero")] : []),
     index: 0,
     ...(party === "playing" ? { trackStartedAt: 1 } : {}),
   };
   resetPartiesForTest(openParty(freshParties(), seeded));
   initCommands({
-    config: {
-      setlistFmKey: "KEY",
-      missing: [],
-      spotify: {
-        clientId: "cid",
-        clientSecret: "csecret",
-        redirectUri: "https://bot.example.com/spotify/callback",
-        callbackPath: "/spotify/callback",
-      },
-    },
+    config: configured
+      ? {
+          setlistFmKey: "KEY",
+          missing: [],
+          spotify: {
+            clientId: "cid",
+            clientSecret: "csecret",
+            redirectUri: "https://bot.example.com/spotify/callback",
+            callbackPath: "/spotify/callback",
+          },
+        }
+      : { setlistFmKey: "KEY", missing: ["SPOTIFY_CLIENT_ID"] },
     setlistFm: {
       getSetlist: async (): Promise<SetlistFmResult> => ({ ok: false, error: "not used here" }),
       latestForArtist: async (): Promise<SetlistFmResult> => ({ ok: false, error: "not used here" }),
       showsOn: async (): Promise<SetlistListResult> => ({ ok: true, setlists: [] }),
     },
-    spotify: buildSpotify({
-      refresh: async () => ({ ok: true, value: { accessToken: "AT", scopes } }),
-      searchTracks: async () =>
-        searchError !== undefined
-          ? { ok: false, error: searchError }
-          : { ok: true, value: searchHit ? [noDuration ? track("One") : { ...track("One"), durationMs: 180_000 }] : [] },
-    }),
-    runner: partyRunnerDouble(started, outcomes),
+    ...(configured
+      ? {
+          spotify: buildSpotify({
+            refresh: async () => {
+              calls.push("refresh");
+              return { ok: true, value: { accessToken: "AT", scopes } };
+            },
+            searchTracks: async () =>
+              searchError !== undefined
+                ? { ok: false, error: searchError }
+                : {
+                    ok: true,
+                    value: searchHit ? [noDuration ? track("One") : { ...track("One"), durationMs: 180_000 }] : [],
+                  },
+          }),
+          runner: partyRunnerDouble(started, outcomes, calls),
+        }
+      : {}),
     serverRunning: () => true,
     log: captureLog,
   });
-  return { started };
+  return { started, calls };
 }
 
 const handleParty = () => musicCommands().find((c) => c.name === "party")!.handle;
@@ -1361,5 +1416,82 @@ describe("the party's add command", () => {
     expect(run.edits).toHaveLength(1);
     expect(run.edits[0]?.content).toContain("Nothing on Spotify matched");
     expect(run.followUps).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #153: /party skip acknowledges Discord first and needs none of the skipper's own Spotify
+// ---------------------------------------------------------------------------------------------------
+
+describe("the party's skip command", () => {
+  test("a member's skip is acknowledged before anything is awaited, with no refresh of their token ahead of it", async () => {
+    // USER is connected with the party scopes, so the old access check WOULD have refreshed their
+    // token ahead of the defer. The runner here is a double that refreshes nothing, so "refresh"
+    // appearing anywhere in the sequence would mean the command layer did it.
+    const { calls } = wireParty({
+      scopes: PARTY_SCOPES,
+      members: ["host", USER],
+      queue: [partyTrack("One"), partyTrack("Two")],
+    });
+    const run = fakePartyCommand("skip", {}, USER, "G1", calls);
+    const pending = handleParty()(run.interaction);
+    // Synchronously, before the first microtask turn: the defer is already out. An await of anything
+    // -- a refresh, a store commit, a bare Promise.resolve() -- ahead of it would leave `calls` empty.
+    expect(calls).toEqual(["defer"]);
+    await pending;
+
+    expect(calls).toEqual(["defer", "skip:G1", "edit"]);
+    // A public defer: the "Skipped to" line is for the channel.
+    expect(run.defers).toEqual([{}]);
+    expect(run.edits[0]?.content).toContain("Skipped to **Two** -- Band");
+  });
+
+  test("a skip in a server with no party is refused without a defer", async () => {
+    const { calls } = wireParty({ scopes: PARTY_SCOPES, members: ["host", USER] });
+    // The party is in G1; this interaction comes from G2.
+    const run = fakePartyCommand("skip", {}, USER, "G2", calls);
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["reply"]);
+    expect(run.replies[0]?.content).toContain("No party here");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+  });
+
+  test("a non-member is refused without a defer", async () => {
+    const { calls } = wireParty({
+      scopes: PARTY_SCOPES,
+      members: ["host"],
+      queue: [partyTrack("One"), partyTrack("Two")],
+    });
+    const run = fakePartyCommand("skip", {}, USER, "G1", calls);
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["reply"]);
+    expect(run.replies[0]?.content).toContain("Only people in the party can skip");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+  });
+
+  test("the last track answers after the defer and does not advance", async () => {
+    const { calls } = wireParty({ scopes: PARTY_SCOPES, members: ["host", USER] });
+    const run = fakePartyCommand("skip", {}, USER, "G1", calls);
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["defer", "edit"]);
+    expect(run.edits[0]?.content).toContain("last track");
+  });
+
+  test("a skip when the feature is not configured is refused ephemerally", async () => {
+    const { calls } = wireParty({
+      scopes: PARTY_SCOPES,
+      configured: false,
+      members: ["host", USER],
+      queue: [partyTrack("One"), partyTrack("Two")],
+    });
+    const run = fakePartyCommand("skip", {}, USER, "G1", calls);
+    await handleParty()(run.interaction);
+
+    expect(calls).toEqual(["reply"]);
+    expect(run.replies[0]?.content).toContain("SPOTIFY_CLIENT_ID");
+    expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
   });
 });
