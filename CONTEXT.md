@@ -2,7 +2,7 @@
 
 The running record of what has actually been confirmed about this repo's toolchain and its one
 external dependency (the host<->plugin contract vendored from `rackbops-discord-bot`). See **The
-CONTEXT.md Ledger** discipline in `CLAUDE.md`. A fact is paid for once, written down in the same
+CONTEXT.md Ledger** discipline in `AGENTS.md`. A fact is paid for once, written down in the same
 change that used it, and read from here before going back to the source.
 
 ---
@@ -33,7 +33,7 @@ pin only needs to change in one place.
 ## Toolchain gotchas
 
 - **`packages/api/contract.d.ts` is type-only, despite containing a real value export.** See
-  `CLAUDE.md`'s Key gotchas -- `.d.ts` files never emit JS, so `HOST_API_VERSION`'s value has no
+  `AGENTS.md`'s Key gotchas -- `.d.ts` files never emit JS, so `HOST_API_VERSION`'s value has no
   runtime existence in this repo. Only `import type` from this file; a runtime `import` will
   fail to resolve when actually executed (Bun/Node look for a `.ts`/`.js` twin that doesn't
   exist).
