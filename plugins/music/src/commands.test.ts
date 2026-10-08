@@ -5,6 +5,7 @@ import {
   formatBuildReply,
   formatJoinReply,
   formatNotConfigured,
+  formatOutcomes,
   formatPickPrompt,
   initCommands,
   musicCommands,
@@ -1344,9 +1345,14 @@ function fakePartyCommand(
 
 /**
  * A runner whose `start` records the guilds it was asked to start and answers with `outcomes`, and
- * whose `skip` records `skip:<guild>` on `calls`.
+ * whose `skip` records `skip:<guild>` on `calls` and answers with `skipOutcomes`.
  */
-function partyRunnerDouble(started: string[], outcomes: MemberOutcome[], calls: string[] = []): PartyRunner {
+function partyRunnerDouble(
+  started: string[],
+  outcomes: MemberOutcome[],
+  calls: string[] = [],
+  skipOutcomes: MemberOutcome[] = [],
+): PartyRunner {
   return {
     playCurrent: async () => [],
     start: async (guildId): Promise<MemberOutcome[]> => {
@@ -1355,7 +1361,7 @@ function partyRunnerDouble(started: string[], outcomes: MemberOutcome[], calls: 
     },
     skip: async (guildId): Promise<MemberOutcome[]> => {
       calls.push(`skip:${guildId}`);
-      return [];
+      return skipOutcomes;
     },
     syncMember: async (_guildId, discordUserId): Promise<MemberOutcome> => ({ discordUserId, ok: true }),
     sweep: async () => {},
@@ -1367,6 +1373,20 @@ function partyRunnerDouble(started: string[], outcomes: MemberOutcome[], calls: 
 /** A queued track for the party fixtures below. */
 function partyTrack(name: string): PartyTrack {
   return { uri: `spotify:track:${name.toLowerCase()}`, name, artist: "Band", durationMs: 180_000 };
+}
+
+/**
+ * `n` members the runner could not play for, each with an error sentence. A line is 88 characters
+ * (89 with its newline), so 40 of them are about 3580 -- far past Discord's 2000, whatever line leads
+ * them; 23 lines are enough on their own. The ids are built as strings: a number this size is past
+ * 2^53, where neighbouring integers are the same double.
+ */
+function failures(n: number): MemberOutcome[] {
+  return Array.from({ length: n }, (_, i) => ({
+    discordUserId: `1000000000000000${String(i).padStart(2, "0")}`,
+    ok: false,
+    error: "their Spotify didn't take the command: no active device was found",
+  }));
 }
 
 /**
@@ -1387,6 +1407,7 @@ function wireParty({
   members = ["host"],
   queue,
   configured = true,
+  skipOutcomes = [],
 }: {
   scopes: string;
   connected?: boolean;
@@ -1403,6 +1424,8 @@ function wireParty({
   queue?: PartyTrack[];
   /** False wires a bot with no Spotify app configured: no client, no runner. */
   configured?: boolean;
+  /** What the runner double reports back from `skip`. */
+  skipOutcomes?: MemberOutcome[];
 }): { started: string[]; calls: string[] } {
   const started: string[] = [];
   const calls: string[] = [];
@@ -1451,7 +1474,7 @@ function wireParty({
                     value: searchHit ? [noDuration ? track("One") : { ...track("One"), durationMs: 180_000 }] : [],
                   },
           }),
-          runner: partyRunnerDouble(started, outcomes, calls),
+          runner: partyRunnerDouble(started, outcomes, calls, skipOutcomes),
         }
       : {}),
     serverRunning: () => true,
@@ -1546,6 +1569,20 @@ describe("the party's add command", () => {
     expect(run.edits[0]?.content).not.toContain("friend");
   });
 
+  test("an idle add's announcement fits Discord's limit when many members fail", async () => {
+    wireParty({ scopes: PARTY_SCOPES, party: "idle", outcomes: failures(40) });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.followUps).toHaveLength(1);
+    const content = run.followUps[0]?.content ?? "";
+    expect(content.length).toBeLessThanOrEqual(2000);
+    // The lead survives the cut, and so does the start of the member list; the tail is what goes.
+    expect(content.startsWith(`<@${USER}> queued **One** -- Band\nPlaying for 0 people.\n`)).toBe(true);
+    expect(content).toContain("<@100000000000000000>:");
+    expect(content.endsWith("...")).toBe(true);
+  });
+
   test("a track Spotify gave no length for stays with the invoker", async () => {
     const { started } = wireParty({ scopes: PARTY_SCOPES, party: "idle", noDuration: true });
     const run = fakePartyCommand("add", { query: "One" }, USER);
@@ -1609,6 +1646,24 @@ describe("the party's skip command", () => {
     expect(run.edits[0]?.content).toContain("Skipped to **Two** -- Band");
   });
 
+  test("a skip's reply fits Discord's limit when many members fail", async () => {
+    const { calls } = wireParty({
+      scopes: PARTY_SCOPES,
+      members: ["host", USER],
+      queue: [partyTrack("One"), partyTrack("Two")],
+      skipOutcomes: failures(40),
+    });
+    const run = fakePartyCommand("skip", {}, USER, "G1", calls);
+    await handleParty()(run.interaction);
+
+    expect(run.edits).toHaveLength(1);
+    const content = run.edits[0]?.content ?? "";
+    expect(content.length).toBeLessThanOrEqual(2000);
+    expect(content.startsWith("Skipped to **Two** -- Band\nPlaying for 0 people.\n")).toBe(true);
+    expect(content).toContain("<@100000000000000000>:");
+    expect(content.endsWith("...")).toBe(true);
+  });
+
   test("a skip in a server with no party is refused without a defer", async () => {
     const { calls } = wireParty({ scopes: PARTY_SCOPES, members: ["host", USER] });
     // The party is in G1; this interaction comes from G2.
@@ -1656,5 +1711,53 @@ describe("the party's skip command", () => {
     expect(calls).toEqual(["reply"]);
     expect(run.replies[0]?.content).toContain("SPOTIFY_CLIENT_ID");
     expect(run.replies[0]?.flags).toBe(MessageFlags.Ephemeral);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #240: formatOutcomes clips the whole reply, the caller's lead line included
+// ---------------------------------------------------------------------------------------------------
+
+describe("formatOutcomes with a leading line", () => {
+  const ONE_PLAYED = [{ discordUserId: USER, ok: true }];
+
+  test("the whole message, lead included, fits Discord's limit", () => {
+    const lead = "<@1> queued **One** -- Band";
+    // The fixture really is 40 different members, not 40 copies of a few.
+    expect(new Set(failures(40).map((o) => o.discordUserId)).size).toBe(40);
+    const text = formatOutcomes(failures(40), lead);
+
+    expect(text.length).toBeLessThanOrEqual(2000);
+    expect(text.startsWith(`${lead}\nPlaying for 0 people.\n`)).toBe(true);
+    expect(text.endsWith("...")).toBe(true);
+  });
+
+  test("a message that fits is untouched", () => {
+    expect(formatOutcomes(ONE_PLAYED, "Skipped to **Two** -- Band")).toBe(
+      "Skipped to **Two** -- Band\nPlaying for 1 person.",
+    );
+  });
+
+  test("without a lead it reads as before", () => {
+    expect(formatOutcomes(ONE_PLAYED)).toBe("Playing for 1 person.");
+  });
+
+  test("a message of exactly 2000 characters is untouched, and one more is cut to 2000", () => {
+    // lead + "\n" + "Playing for 1 person." (21 characters)
+    const fits = "x".repeat(2000 - 1 - 21);
+    expect(formatOutcomes(ONE_PLAYED, fits)).toBe(`${fits}\nPlaying for 1 person.`);
+    expect(formatOutcomes(ONE_PLAYED, fits).length).toBe(2000);
+
+    const over = formatOutcomes(ONE_PLAYED, `${fits}x`);
+    expect(over.length).toBe(2000);
+    expect(over.endsWith("...")).toBe(true);
+    expect(over.startsWith(`${fits}x`)).toBe(true);
+  });
+
+  test("a lead too long to fit on its own is cut with the rest, never sent over the limit", () => {
+    const text = formatOutcomes(ONE_PLAYED, "x".repeat(2500));
+
+    expect(text.length).toBe(2000);
+    expect(text).toBe(`${"x".repeat(1997)}...`);
   });
 });

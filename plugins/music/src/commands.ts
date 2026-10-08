@@ -632,15 +632,23 @@ async function requirePartyAccess(
   return { ok: true, spotify, runner, accessToken: token.accessToken };
 }
 
-/** The reply after a play attempt: who it reached, and what each of the others should do. */
-export function formatOutcomes(outcomes: readonly MemberOutcome[]): string {
+/**
+ * The reply after a play attempt: who it reached, and what each of the others should do.
+ *
+ * `lead` is the line the caller wants in front ("Skipped to ...", "<@user> queued ..."). It is
+ * clipped together with the rest, once, so the WHOLE reply fits Discord's limit: a caller that put
+ * its own line in front of an already-clipped body went over it as soon as enough members failed at
+ * once, and Discord refuses a message that long. The cut falls on the end, so the lead survives as
+ * long as it fits on its own; a lead near the limit is cut too, which keeps the length guarantee.
+ */
+export function formatOutcomes(outcomes: readonly MemberOutcome[], lead?: string): string {
   const played = outcomes.filter((o) => o.ok).length;
   const head = played === 1 ? "Playing for 1 person." : `Playing for ${played} people.`;
   const problems = outcomes
     .filter((o) => !o.ok)
     .map((o) => `<@${o.discordUserId}>: ${o.error ?? "their Spotify didn't take the command"}`);
-  if (problems.length === 0) return head;
-  return clip(`${head}\n${problems.join("\n")}`, MAX_REPLY_LENGTH);
+  const body = problems.length === 0 ? head : `${head}\n${problems.join("\n")}`;
+  return clip(lead === undefined ? body : `${lead}\n${body}`, MAX_REPLY_LENGTH);
 }
 
 /**
@@ -775,7 +783,7 @@ async function handlePartyAdd(interaction: ChatInputCommandInteraction, guildId:
   // The per-member problems were public before this change too: they name what each person in the
   // party should do about their own player.
   await interaction.followUp({
-    content: `<@${interaction.user.id}> queued **${track.name}** -- ${track.artist}\n${formatOutcomes(outcomes)}`,
+    content: formatOutcomes(outcomes, `<@${interaction.user.id}> queued **${track.name}** -- ${track.artist}`),
   });
 }
 
@@ -809,7 +817,7 @@ async function handlePartySkip(interaction: ChatInputCommandInteraction, guildId
   // A skip and a track ending naturally are the same transition, so both go through the runner's
   // one advance path -- there is no second place that decides what "next" means.
   const outcomes = await runner.skip(guildId);
-  await interaction.editReply({ content: `Skipped to **${next.name}** -- ${next.artist}\n${formatOutcomes(outcomes)}` });
+  await interaction.editReply({ content: formatOutcomes(outcomes, `Skipped to **${next.name}** -- ${next.artist}`) });
 }
 
 async function handlePartyLeave(interaction: ChatInputCommandInteraction, guildId: string): Promise<void> {
