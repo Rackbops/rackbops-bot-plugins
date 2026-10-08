@@ -379,13 +379,15 @@ function withoutEditionSuffix(title: string): string | undefined {
  * query and what is left over names one of its artists (`artistScore` above zero, so a partial artist
  * counts as it does everywhere else).
  *
- * Three rules keep the reading from being looser than the title pass:
+ * Three rules shape the reading relative to the title pass:
  * - A candidate's title also counts with a clean-edition suffix taken off ("Bohemian Rhapsody -
  *   Remastered 2011" answers "Bohemian Rhapsody Queen"), the same suffixes `isExactTitle` accepts; the
- *   unsuffixed title wins a tie against a suffixed one, as it does by score in the title pass.
- * - A candidate the title pass would penalise as a variant (a karaoke credit, a live or remix cut the
- *   query did not ask for) is not a candidate here either.
- * - An artist name that normalizes to nothing (a title in a script `normalize` cannot read, or pure
+ *   unsuffixed title wins a tie against a suffixed one, as it does by score in the title pass. Any other
+ *   decoration ("(feat. X)", "- Radio Edit") is not stripped: such a title matches only as a whole.
+ * - A candidate the title pass would penalise as a variant is not a candidate here either. In the
+ *   split only a karaoke credit on an artist can fire: a title that heads or ends the query already
+ *   shares its marker words (live, remix, ...) with it.
+ * - An artist name that normalizes to nothing (a name in a script `normalize` cannot read, or pure
  *   punctuation) is not an artist: `artistScore` treats the empty string as contained in anything.
  *
  * Among split matches the higher artist score wins, then the longer title (it accounts for more of the

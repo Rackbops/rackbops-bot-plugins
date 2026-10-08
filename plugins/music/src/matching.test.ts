@@ -572,6 +572,18 @@ describe("pickTrackFromQuery", () => {
     expect(pickTrackFromQuery("Band Heyday", [track("Day", ["Band Hey"])])).toBeUndefined();
   });
 
+  test("each reading is tried: the tail can match where the head does not", () => {
+    // "Hey Jude Hey": the track 'Hey' by 'Hey Jude'. Read as 'title artist' the rest is 'jude hey',
+    // which names nobody; read as 'artist title' it is 'hey jude', the exact artist.
+    const hey = track("Hey", ["Hey Jude"]);
+
+    const best = pickTrackFromQuery("Hey Jude Hey", [dust, hey]);
+
+    expect(best!.track).toBe(hey);
+    expect(best!.confidence).toBe("high");
+    expect(best!.score).toBe(140);
+  });
+
   test("a candidate whose title both heads and ends the query still matches", () => {
     // "Queen Queen": the track 'Queen' by Queen, read either way round.
     const selfTitled = track("Queen", ["Queen"]);
@@ -632,6 +644,18 @@ describe("pickTrackFromQuery", () => {
     }
   });
 
+  test("a clean-edition title with a one-word base answers too", () => {
+    // The base is cut at the FIRST space whose remainder is a clean-edition suffix: here the only one.
+    const yesterday = track("Yesterday - Remastered 2009", ["The Beatles"]);
+    const help = track("Help! - Remastered 2009", ["The Beatles"]);
+
+    const best = pickTrackFromQuery("Yesterday Beatles", [dust, yesterday]);
+
+    expect(best!.track).toBe(yesterday);
+    expect(best!.confidence).toBe("medium");
+    expect(pickTrackFromQuery("The Beatles Help!", [dust, help])!.track).toBe(help);
+  });
+
   test("the plain title wins a tie against a clean-edition one, whatever the page order", () => {
     const remaster = track("Bohemian Rhapsody - Remastered 2011", ["Queen"]);
 
@@ -640,7 +664,9 @@ describe("pickTrackFromQuery", () => {
   });
 
   test("an edition that is a different recording is not a clean-edition title", () => {
-    // A live cut, a single version and a remix are not the same master; none heads the query.
+    // A live cut, a single version and a remix are not the same master, so none of them reads as the
+    // plain title with a harmless suffix (and a live or remix title would be turned away as a variant
+    // too); only 'single version' depends on the clean-edition pattern being as narrow as it is.
     for (const name of ["Bohemian Rhapsody - Live", "Bohemian Rhapsody - Single Version", "Bohemian Rhapsody - Remix"]) {
       expect(pickTrackFromQuery("Bohemian Rhapsody Queen", [track(name, ["Queen"])])).toBeUndefined();
     }
