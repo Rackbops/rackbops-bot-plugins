@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- A party member whose token refresh fails because Spotify is unreachable, slow, rate-limiting or
+  erroring is no longer dropped from the party on that first failure: the runner now treats it like
+  any other blip and drops them only on the second consecutive one, exactly as a failed play call
+  already did, so one Spotify hiccup at a track boundary no longer empties a party (or closes it,
+  when the host's refresh was the one that hit it). A dead grant or a disconnect still drops the
+  member at once. The drop-out line also no longer ends in two periods when the reason is a full
+  sentence (#154).
 - A token refresh that fails because Spotify is unreachable, slow, rate-limiting (429) or erroring
   (5xx), or because the app's own credentials are refused (`invalid_client`), no longer deletes the
   user's stored connection -- only a dead grant (HTTP 400 `invalid_grant`: the refresh token is

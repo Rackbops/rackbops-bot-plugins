@@ -30,13 +30,14 @@ import {
   type Party,
 } from "./party.js";
 import { classifyPlayerError, hasScopes, PARTY_SCOPES, type SpotifyClient } from "./spotify.js";
+import type { TokenResult } from "./tokens.js";
 
 /** How many consecutive failures a member gets before the party stops calling their player. */
 export const MAX_MEMBER_FAILURES = 2;
 
-export type TokenResult =
-  | { ok: true; accessToken: string; scopes?: string }
-  | { ok: false; error: string };
+// The token lookup's real contract, re-exported for the tests' fakes: its failure `kind` is what
+// decides below whether a refresh that failed is worth one more attempt.
+export type { TokenResult };
 
 export interface TimerHandle {
   cancel(): void;
@@ -59,7 +60,11 @@ export interface MemberOutcome {
   ok: boolean;
   /** Why it failed, already phrased for a person. */
   error?: string;
-  /** True when the reason is one more attempt will not fix -- a missing scope, no Premium. */
+  /**
+   * True when the reason is one more attempt will not fix -- a missing scope, no Premium, a dead
+   * grant, a member who disconnected. A refresh Spotify could not do right now is NOT one: it
+   * counts like any other blip (#154).
+   */
   fatal?: boolean;
 }
 
@@ -134,7 +139,14 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     // until the cache aged out -- the exact failure this feature exists to avoid. It is one call,
     // it runs in parallel with every other member's, and it is nowhere near Spotify's limits.
     const token = await deps.accessTokenFor(discordUserId);
-    if (!token.ok) return { discordUserId, ok: false, error: token.error, fatal: true };
+    if (!token.ok) {
+      // A refresh Spotify could not do right now (unreachable, slow, 429, 5xx) is the same kind of
+      // blip as a failed play call and gets the same two-strike treatment below; a dead grant or a
+      // disconnect is something another attempt cannot fix, so those drop the member at once (#154).
+      const outcome: MemberOutcome = { discordUserId, ok: false, error: token.error };
+      if (token.kind !== "unavailable") outcome.fatal = true;
+      return outcome;
+    }
 
     // Checked BEFORE the call, not after a 403: a connection made before the party existed simply
     // does not carry the playback scopes, and "reconnect" is a far better answer than an HTTP code.
@@ -197,10 +209,10 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     if (!outcome.fatal && count < MAX_MEMBER_FAILURES) return;
     failures.delete(key);
     await commitParties(removeMember(partiesState(), party.guildId, outcome.discordUserId));
-    await deps.notify(
-      party,
-      `<@${outcome.discordUserId}> has dropped out of the party: ${outcome.error ?? "their Spotify stopped responding"}.`,
-    );
+    // The runner's own reasons are fragments; the token lookup's are full sentences. One period.
+    const reason = outcome.error ?? "their Spotify stopped responding";
+    const stop = reason.endsWith(".") ? "" : ".";
+    await deps.notify(party, `<@${outcome.discordUserId}> has dropped out of the party: ${reason}${stop}`);
   }
 
   async function playCurrent(guildId: string): Promise<MemberOutcome[]> {
