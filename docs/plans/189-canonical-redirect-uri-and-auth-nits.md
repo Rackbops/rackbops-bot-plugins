@@ -1,0 +1,56 @@
+# #189 -- the auth config refuses a non-canonical redirect URI, parses its port and proxy host strictly, and its comments say what the code does
+
+Epic #237 child, S. Three findings (`music-auth-7`, `music-auth-8`, `music-auth-11`), one PR. Behaviour change (what `resolveConfig` accepts; what a blank `TRUSTED_PROXY_HOST` means; what a malformed store file does at activation): the three-reviewer gate applies.
+
+## Plan (execute as written)
+
+Written 2026-10-08 against `main` at `8c2a07d`, to land after #190 (it edits `startCallbackServer` too). Cites are to `8c2a07d`; re-find by function name.
+
+### What is wrong
+
+- `package.json:47` says `SPOTIFY_REDIRECT_URI` is "registered verbatim as a Redirect URI", but `resolveConfig` stores `redirectUri.toString()` (`config.ts:79`), which `authorizeUrl` and `exchangeCode` send. `new URL` lower-cases the host, drops a default `:443` and adds `/` to a host-only URL, so an operator who registered `https://Bot.Example.com/cb`, `https://bot.example.com:443/cb` or `https://bot.example.com` is sent a different string and gets Spotify's "invalid redirect URI" at the consent screen, with the two values differing invisibly. The manifest regex (`package.json:44`) also admits `user:pass@` and `#fragment` forms Spotify will not register. `config.test.ts` covers only an already-canonical URL.
+- The `/spotify connect` reply (`commands.ts:566`) says the link is "only for you", but nothing binds the `state` token to a browser or a Discord session (`spotify.ts:75-78`, `server.ts:95-133`): whoever completes consent on a forwarded link attaches THEIR Spotify to the requester's Discord id. The honest sentence is "don't share it".
+- Comment and robustness drift (`music-auth-11`): `store.ts:155` says it loads `setlist.json` (the file is `music.json`); `store.ts:172-176` says a UUID would be too short for a CSRF token (a v4 UUID carries 122 random bits, which is plenty; the 32-byte base64url token is kept for other reasons); `initStore` (`store.ts:156-164`) guards the two maps but a `music.json` that parses to `null` or an array makes `activate()` throw on the member access (`party.ts:200-205` has the same shape for `parties.json`); `startCallbackServer`'s `proxy` default (`server.ts:150`) reads `process.env.TRUSTED_PROXY_HOST`, bypassing `host.env`, and is dead in production (`index.ts:142` always passes one); `index.ts:102` reads `TRUSTED_PROXY_HOST` raw while every other key goes through `present()`, so a blank or whitespace value counts as configured, never trusts anyone, and skips the "not set" warning; `config.ts:59-63` uses `Number()`, so `0x1F90`, `1e3`, `+80` and `8787.` pass the code while the manifest regex (`package.json:51`) rejects them.
+
+### Decisions
+
+- **A redirect URI is accepted only in the form Spotify is sent.** After the existing `https:` check: throw `SPOTIFY_REDIRECT_URI must not carry credentials or a #fragment, got "<raw>"` when `username`, `password` or `hash` is non-empty; then throw `SPOTIFY_REDIRECT_URI must be written exactly as it is sent to Spotify: use "<redirectUri.toString()>" (got "<raw>")` when `redirectUri.toString() !== redirectUriRaw`. What is stored and sent stays `redirectUri.toString()`, now identical to the configured value, so "registered verbatim" becomes true. The manifest's `format` loses `#` and `@` from its character class, and its description says the value must be canonical (lower-case host, no default port, a path of at least `/`) and that anything else is refused at startup with the form to use. An operator whose current value is non-canonical sees the plugin skipped at the next start with the exact string to paste: that is the deliberate fail-loud, and the CHANGELOG bullet says so.
+- **The connect reply says not to share the link.** `commands.ts:566` becomes "The link is good for 10 minutes. Don't share it: whoever finishes it attaches their Spotify to your Discord account. Asking again replaces it."
+- **The nits, each as the issue's Fix says:** the two `store.ts` comments corrected (the token one: 32 random bytes in base64url, a shape the callback's tests pin; a v4 UUID's 122 random bits would also be enough); `initStore` and `initParties` replace a loaded value that is not a plain object (`null`, an array, a primitive) with a fresh state before their map guards; `startCallbackServer(port, deps, proxy)` with `proxy` required and the `process.env` default gone; `index.ts` reads `TRUSTED_PROXY_HOST` through config's `present` (export it); `resolveConfig` requires `/^[0-9]+$/` on the port before `Number`.
+- **No version bump.** The CHANGELOG bullet travels in the PR body (see the steps); `plugins.json` is regenerated only if the manifest edit makes `generate-index -- --check` report it stale (`bun run generate-index`, commit the result as generated; never hand-edit it).
+
+### Steps
+
+1. `plugins/music/src/config.ts`: the two new redirect checks and the port regex; `export function present`. `plugins/music/package.json`: the `format` and `description` of `SPOTIFY_REDIRECT_URI`.
+2. `plugins/music/src/commands.ts:566`: the new sentence.
+3. `plugins/music/src/store.ts`: the two comments and the `initStore` guard; `plugins/music/src/party.ts` `initParties`: the same guard. `plugins/music/src/server.ts`: `proxy` required, the default and its JSDoc sentence (`:142-145`) gone. `plugins/music/src/index.ts:102`: `present(host.env.TRUSTED_PROXY_HOST)`.
+4. `plugins/music/src/config.test.ts`, in `describe("resolveConfig")`:
+   - "a canonical redirect URI is stored as given": `FULL`'s value -> `config.spotify.redirectUri` equals it exactly.
+   - "a non-canonical redirect URI is refused with the form to use": `https://Bot.Example.com/spotify/callback` -> throws, the message containing `use "https://bot.example.com/spotify/callback"`; `https://bot.example.com:443/spotify/callback` -> throws naming `https://bot.example.com/spotify/callback`; `https://bot.example.com` -> throws naming `https://bot.example.com/`.
+   - "a redirect URI with credentials or a fragment is refused": `https://u:p@bot.example.com/cb` and `https://bot.example.com/cb#x` -> throw matching /credentials or a #fragment/.
+   - "a port is plain digits or nothing": `0x1F90`, `1e3`, `+80`, `8787.` -> each throws /MUSIC_CALLBACK_PORT/; `8787` still resolves.
+5. `plugins/music/src/index.test.ts`, in `describe("activate / dispose")`: "a blank TRUSTED_PROXY_HOST counts as unset": `env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: String(freePort()), TRUSTED_PROXY_HOST: "   " }` -> the fake host's log carries the "TRUSTED_PROXY_HOST is not set" line (read how the file captures `host.log.info`; the `:95-110` tests show the shape), and dispose cleans up as the neighbouring tests do.
+6. `plugins/music/src/store.test.ts` (and the parties equivalent in `party.test.ts`): "a store file that is not an object is replaced by a fresh state": drive `initStore` with a host whose `dataDir` holds a `music.json` containing `null`, then one containing `[]` (write the file with the testkit storage the file already uses, or a temp dir) -> no throw, `musicState()` equals `freshState()`; the same for `initParties` and `parties.json`.
+7. `plugins/music/src/commands.test.ts`: the `/spotify connect` reply test (grep `spotify connect` / `handleSpotify` in the file; add one through `fakeCommand` if none drives it) asserts the reply contains "Don't share it" and not "only for you".
+8. `plugins/music/src/server.test.ts`: `startCallbackServer(0, ..., TRUST_NONE)` at `:177` and `:192` (hoist `TRUST_NONE`/`TRUST_ALL` above `describe("startCallbackServer")`).
+9. The CHANGELOG bullet goes in the PR body under `## CHANGELOG bullet` (no edit to `plugins/music/CHANGELOG.md`; the orchestrator lands every bullet in one docs PR at the end of the epic). Its text: `SPOTIFY_REDIRECT_URI` must now be written exactly as the bot sends it to Spotify (lower-case host, no default port, a path, no credentials or fragment); a value that differs is refused at startup with the form to use, instead of failing at Spotify's consent screen with two values that look the same. `MUSIC_CALLBACK_PORT` accepts plain digits only, a blank `TRUSTED_PROXY_HOST` counts as unset, a `music.json` or `parties.json` that is not an object is replaced instead of crashing activation, the `/spotify connect` reply says not to share the link, and the auth comments say what the code does (#189).
+10. This file, committed as `docs/plans/189-canonical-redirect-uri-and-auth-nits.md`.
+11. Checks: `bun run lint`, `bun run check`, `bun run build`, `bun run generate-index -- --check` (regenerate as decided if stale), `bun run check-contract`, `bun test plugins/music`, and `bun test plugins/mcp plugins/music plugins/warbandeer plugins/wow packages scripts`; the tracker suite's #232 `EBUSY` set is the Windows baseline and CI is the arbiter for it. Paste the counts.
+12. Mutations from the table, each in a scratch worktree of your clone, never in the tree under test; name the red test per row in the PR.
+13. Review gate: you plus two read-only reviewers with different lenses (A: correctness and failure modes -- `new URL`'s canonicalisation cases (IDN hosts, percent-encoding, a trailing `?`), what the host does with a plugin whose `createPlugin` throws, the manifest `format` against the host's validation, the store guard against the testkit's `readJsonOrFresh`, every caller of `startCallbackServer`; B: claims-vs-code over this plan, the CHANGELOG bullet, the manifest description and every corrected comment, walking every coverage row and deriving mutation survivors). 2-of-3 on the major points; every evidenced finding fixed or declined in writing; a fix with behaviour re-runs the round; four rounds at most, then message the orchestrator.
+14. PR `fix(music): refuse a non-canonical SPOTIFY_REDIRECT_URI at startup, tighten the port and proxy-host parsing, and correct the auth comments (#189)`, body per `/work-on` plus the pasted checks, the mutation rows and the gate's rounds; `Closes #189`. Do not merge: the orchestrator merges.
+
+### Coverage
+
+| Outcome (the issue's Fix) | Step | Test | Mutation that must fail it |
+|---|---|---|---|
+| A non-canonical redirect URI is refused, naming the canonical form | 1, 4 | "a non-canonical redirect URI is refused with the form to use" | drop the equality check -- no throw; drop the canonical form from the message |
+| Credentials and fragments are refused | 1, 4 | "with credentials or a fragment is refused" | drop that check |
+| A canonical value is stored and sent unchanged | 1, 4 | "a canonical redirect URI is stored as given" | (regression guard for the existing behaviour) |
+| The port is plain digits | 1, 4 | "a port is plain digits or nothing" | drop the regex -- `0x1F90` accepted |
+| A blank proxy host is unset | 3, 5 | "a blank TRUSTED_PROXY_HOST counts as unset" | read the raw value -- no "not set" line |
+| A malformed store file does not crash activation | 3, 6 | the two "not an object" tests | drop the guard -- a throw |
+| The connect reply says not to share the link | 2, 7 | the reply test | restore the old sentence |
+| The comments say what the code does | 3 | (claims-vs-code audit by reviewer B; no behaviour) | -- |
+
+Run each mutation in a scratch worktree, never in the tree under test; name the red test per row in the PR.

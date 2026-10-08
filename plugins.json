@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-08T12:07:00.825Z",
+  "generatedAt": "2026-10-08T20:05:28.872Z",
   "plugins": [
     {
       "name": "mcp",
@@ -102,8 +102,8 @@
         },
         {
           "key": "SPOTIFY_REDIRECT_URI",
-          "format": "^https://[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]+$",
-          "description": "The public HTTPS callback URL, reachable through the Cloudflare Tunnel, registered verbatim as a Redirect URI on the Spotify app. Its path is what the callback server answers on.",
+          "format": "^https://[A-Za-z0-9._~:/?!$&'()*+,;=%-]+$",
+          "description": "The public HTTPS callback URL, reachable through the Cloudflare Tunnel, registered verbatim as a Redirect URI on the Spotify app. It must be written in canonical form: a lower-case host, no default port (:443), a path of at least /, and no credentials or #fragment. The settings panel rejects `@` and `#` anywhere in the value. The bot sends Spotify exactly this value, so one that is not canonical, or that carries credentials or a #fragment, stops the music plugin from loading at startup (the bot log names the form to use for a non-canonical one). Its path is what the callback server answers on.",
           "required": false,
           "secret": false
         },

@@ -105,6 +105,30 @@ describe("activate / dispose", () => {
     }
   });
 
+  test("a blank TRUSTED_PROXY_HOST counts as unset", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
+    const infos: string[] = [];
+    try {
+      const host = makeFakeHost({ name: "music",
+        env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: String(freePort()), TRUSTED_PROXY_HOST: "   " },
+        dataDir: dir,
+        storage: makeRealStorage(),
+        log: { info: (m) => infos.push(m), warn() {}, error() {} },
+      });
+      const plugin = createPlugin(host);
+      await plugin.activate?.();
+      try {
+        // Every other key goes through `present()`; a whitespace value used to count as configured,
+        // trust nobody, and skip this line.
+        expect(infos.some((m) => m.includes("TRUSTED_PROXY_HOST is not set"))).toBe(true);
+      } finally {
+        await plugin.dispose?.();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("activate binds the callback server and dispose closes it", async () => {
     const dir = await mkdtemp(join(tmpdir(), "music-activate-"));
     try {

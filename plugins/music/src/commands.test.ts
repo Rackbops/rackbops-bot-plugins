@@ -1127,6 +1127,50 @@ function runnerWhoSyncs(syncMember: PartyRunner["syncMember"]): PartyRunner {
   };
 }
 
+// ---------------------------------------------------------------------------------------------------
+// #189: /spotify connect
+// ---------------------------------------------------------------------------------------------------
+
+describe("/spotify connect", () => {
+  test("the reply says not to share the link, and no longer claims it is only for the requester", async () => {
+    resetStoreForTest(freshState());
+    initCommands({
+      config: {
+        spotify: {
+          clientId: "cid",
+          clientSecret: "csecret",
+          redirectUri: "https://bot.example.com/spotify/callback",
+          callbackPath: "/spotify/callback",
+        },
+        missing: [],
+      },
+      serverRunning: () => true,
+      log: captureLog,
+    });
+    const replies: { content?: string }[] = [];
+    const interaction = {
+      user: { id: USER },
+      deferred: false,
+      replied: false,
+      options: { getSubcommand: () => "connect" },
+      reply: async (opts: { content?: string }) => {
+        replies.push(opts);
+      },
+    } as unknown as ChatInputCommandInteraction;
+
+    await musicCommands().find((c) => c.name === "spotify")!.handle(interaction);
+
+    expect(replies).toHaveLength(1);
+    const content = replies[0]?.content ?? "";
+    expect(content).toContain("[Connect your Spotify account](");
+    expect(content).toContain("Don't share it");
+    expect(content).toContain("whoever finishes it attaches their Spotify to your Discord account");
+    expect(content).toContain("10 minutes");
+    expect(content).toContain("Asking again replaces it");
+    expect(content).not.toContain("only for you");
+  });
+});
+
 /** A party mid-track with one member, and a joiner whose Spotify is connected with the party scopes. */
 function wireJoin(syncMember: PartyRunner["syncMember"]): void {
   logged = [];

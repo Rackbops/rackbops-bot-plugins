@@ -1,8 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { createRateLimiter, escapeHtml, handleCallback, startCallbackServer, type CallbackDeps } from "./server.js";
+import { freshState, redeemPendingAuth } from "./store.js";
 import type { TrustedProxy } from "../../../packages/net/clientIp.js";
 
 const PATH = "/spotify/callback";
+
+// Names every plain object inherits. The first three are the issue's; the rest keep a fix honest about
+// being an own-key check rather than a list of those three.
+const PROTOTYPE_KEYS = ["__proto__", "constructor", "toString", "hasOwnProperty", "valueOf", "__defineGetter__"];
+
+// `startCallbackServer` takes its `TrustedProxy` explicitly (no default), so every real-listener test
+// passes one of these two fixed fakes: never trust `CF-Connecting-IP` / always trust it.
+const TRUST_NONE: TrustedProxy = { isTrusted: () => false, refresh: async () => {} };
+const TRUST_ALL: TrustedProxy = { isTrusted: () => true, refresh: async () => {} };
 
 function makeDeps(overrides: Partial<CallbackDeps> = {}): CallbackDeps {
   return {
@@ -134,6 +144,28 @@ describe("handleCallback", () => {
     expect(body).toContain("&lt;script&gt;");
   });
 
+  test("a prototype key sent as the state answers 'That link didn't work' and saves nothing (#247)", async () => {
+    for (const key of PROTOTYPE_KEYS) {
+      let saves = 0;
+      const response = await handleCallback(get(`?code=C&state=${key}`), "ip", makeDeps({
+        // The real store transition over an empty store, with the same answer shape `index.ts` gives
+        // an unknown token (the wording here is shorter; only the status and title are asserted).
+        redeemState: async (token) => {
+          const redeemed = redeemPendingAuth(freshState(), token, Date.now());
+          return redeemed.ok
+            ? { ok: true, discordUserId: redeemed.discordUserId }
+            : { ok: false, error: "That connect link isn't valid any more." };
+        },
+        saveConnection: async () => {
+          saves += 1;
+        },
+      }));
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain("didn&#39;t work");
+      expect(saves).toBe(0);
+    }
+  });
+
   describe("a dependency that throws (#190)", () => {
     // The state and the code are the secrets here: neither may reach the log or the page.
     const REQUEST = "?code=SPENT-CODE-9&state=SECRET-STATE-7";
@@ -246,7 +278,7 @@ describe("startCallbackServer", () => {
       saveConnection: async (id, token) => {
         saved.push([id, token]);
       },
-    }));
+    }), TRUST_NONE);
     try {
       const response = await fetch(`http://127.0.0.1:${server.port}${PATH}?code=C&state=T`);
       expect(response.status).toBe(200);
@@ -257,7 +289,7 @@ describe("startCallbackServer", () => {
   });
 
   test("stop() closes the listener", async () => {
-    const server = startCallbackServer(0, makeDeps());
+    const server = startCallbackServer(0, makeDeps(), TRUST_NONE);
     const { port } = server;
     server.stop();
     await expect(fetch(`http://127.0.0.1:${port}${PATH}?code=C&state=T`)).rejects.toThrow();
@@ -274,7 +306,7 @@ describe("startCallbackServer", () => {
         },
       },
       log: { error: (m, e) => errors.push(`${m} | ${String(e)}`) },
-    }));
+    }), TRUST_NONE);
     try {
       const response = await fetch(`http://127.0.0.1:${server.port}${PATH}?code=C&state=T`);
       expect(response.status).toBe(500);
@@ -290,6 +322,17 @@ describe("startCallbackServer", () => {
     }
   });
 
+  test("the trusted proxy is a required argument (#189)", () => {
+    // Checked by `bun run check`, not at run time: if `proxy` ever grew a default again, the
+    // directive below would be an unused `@ts-expect-error` and the typecheck would fail. The
+    // function is never called, so no listener starts.
+    const never = () => {
+      // @ts-expect-error -- startCallbackServer takes its TrustedProxy explicitly
+      startCallbackServer(0, makeDeps());
+    };
+    expect(typeof never).toBe("function");
+  });
+
   test("the server's own error handler also answers when no logger is wired (#190)", async () => {
     const server = startCallbackServer(0, makeDeps({
       rateLimiter: {
@@ -297,7 +340,7 @@ describe("startCallbackServer", () => {
           throw new Error("limiter exploded");
         },
       },
-    }));
+    }), TRUST_NONE);
     try {
       const response = await fetch(`http://127.0.0.1:${server.port}${PATH}?code=C&state=T`);
       expect(response.status).toBe(500);
@@ -315,9 +358,6 @@ describe("startCallbackServer", () => {
  * process's own loopback peer address (which can be "127.0.0.1" or "::1" depending on the host).
  */
 describe("client-IP trust boundary (#69)", () => {
-  const TRUST_NONE: TrustedProxy = { isTrusted: () => false, refresh: async () => {} };
-  const TRUST_ALL: TrustedProxy = { isTrusted: () => true, refresh: async () => {} };
-
   function depsWithBudget(max: number): CallbackDeps {
     return makeDeps({ rateLimiter: createRateLimiter({ windowMs: 60_000, max }) });
   }

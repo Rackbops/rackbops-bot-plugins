@@ -199,7 +199,14 @@ export async function commitParties(next: PartiesState): Promise<void> {
 
 export async function initParties(host: HostApi): Promise<void> {
   const path = `${host.dataDir}/parties.json`;
-  current = await host.storage.readJsonOrFresh<PartiesState>(path, freshParties, "music:parties");
+  const loaded: unknown = await host.storage.readJsonOrFresh<PartiesState>(path, freshParties, "music:parties");
+  // As in `initStore`: valid JSON that is not an object (`null`, an array, a primitive) is not a state.
+  if (typeof loaded === "object" && loaded !== null && !Array.isArray(loaded)) {
+    current = loaded as PartiesState;
+  } else {
+    host.log.warn(`${path} holds JSON that is not an object -- starting from a fresh state (the file is overwritten on the next save)`);
+    current = freshParties();
+  }
   if (typeof current.parties !== "object" || current.parties === null) current.parties = {};
   writer = host.storage.createJsonWriter<PartiesState>(path);
 }
