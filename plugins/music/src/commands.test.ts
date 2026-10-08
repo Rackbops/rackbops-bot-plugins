@@ -878,6 +878,12 @@ describe("formatJoinReply", () => {
     expect(reply).toContain(blocked.error!);
     expect(reply).not.toContain("Joined, but");
   });
+
+  test("an outcome with no reason still says something, in both failure texts", () => {
+    const silent: MemberOutcome = { discordUserId: USER, ok: false };
+    expect(formatJoinReply(silent, true)).toContain("unknown reason");
+    expect(formatJoinReply(silent, false)).toContain("unknown reason");
+  });
 });
 
 /** A stand-in for the Join button's interaction, carrying only what `handlePartyJoin` touches. */
@@ -920,7 +926,9 @@ function runnerWhoSyncs(syncMember: PartyRunner["syncMember"]): PartyRunner {
 /** A party mid-track with one member, and a joiner whose Spotify is connected with the party scopes. */
 function wireJoin(syncMember: PartyRunner["syncMember"]): void {
   logged = [];
-  resetStoreForTest(putConnection(freshState(), USER, "RT", 1, PARTY_SCOPES));
+  resetStoreForTest(
+    putConnection(putConnection(freshState(), USER, "RT", 1, PARTY_SCOPES), "host", "RT", 1, PARTY_SCOPES),
+  );
   resetPartiesForTest(
     openParty(freshParties(), {
       guildId: "G1",
@@ -977,6 +985,22 @@ describe("the Join button", () => {
     expect(run.edits[0]!.content).toContain(error);
     expect(run.edits[0]!.content).not.toContain("Couldn't join");
     expect(getParty(partiesState(), "G1")?.members).toEqual(["host", USER]);
+  });
+
+  test("the host dropped by their own Join, which closes the party, is told they couldn't join", async () => {
+    wireJoin(async (guildId, userId) => {
+      // Removing the host closes the party rather than orphaning it, so there is no party left to read.
+      await commitParties(removeMember(partiesState(), guildId, userId));
+      return { discordUserId: userId, ok: false, fatal: true, error: "Spotify Premium is required to control playback" };
+    });
+    const run = fakeButton(PARTY_JOIN_ID, "host", "G1");
+
+    await musicInteractions(run.interaction);
+
+    expect(getParty(partiesState(), "G1")).toBeUndefined();
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]!.content).toContain("Couldn't join");
+    expect(run.edits[0]!.content).not.toContain("Joined, but");
   });
 });
 
