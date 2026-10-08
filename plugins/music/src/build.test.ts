@@ -112,6 +112,9 @@ describe("playlistDescription", () => {
 
   test("the description is clipped to Spotify's limit with an ellipsis", () => {
     const description = playlistDescription(setlist({ tourName: "T".repeat(400) }));
+    // Spotify's own cap on a playlist description, pinned as a literal so the constant cannot drift
+    // while every assertion below follows it.
+    expect(MAX_DESCRIPTION_LENGTH).toBe(300);
     // Exactly the limit, not just under it: the clip keeps limit - 1 characters and adds the
     // ellipsis, so the result is as long as Spotify allows and no shorter.
     expect(description.length).toBe(MAX_DESCRIPTION_LENGTH);
