@@ -4,6 +4,73 @@
 
 ### Fixed
 
+- Titles and artist names in any script now match as themselves: a Japanese, Cyrillic or other
+  non-Latin title used to compare equal to every other, so the first track on the page could be
+  added as a confident match and a non-Latin performer matched any non-Latin act. Combining marks
+  stay with their letter (a kana with a voiced mark, Indic vowel signs, Thai tone marks), so words
+  that differ only in such a mark no longer collapse into each other; accents still fold in every
+  script, as before. A Latin letter with no accent decomposition (`ø`, `ß`, `æ`, `ł`) is now kept
+  instead of turning into a gap in the word, and a title that is only punctuation no longer matches
+  every other such title. A title or name written in two scripts must now match in both to count as
+  an exact match (#150).
+- The setlist matcher now treats the acute accent, the prime and the fullwidth apostrophe as
+  apostrophes too, so a setlist.fm title spelled "Don´t Stop Believin´" matches Spotify's spelling
+  (`/party add` too); a candidate carrying a 100-point marker -- karaoke, "in the style of", "made
+  popular by", tribute, "originally performed by", or a karaoke-labelled artist, and any stack of
+  lesser variant markers whose total reaches 100 -- is rejected outright even when it is credited to
+  the original artist, as the release notes always said (`/party add`'s title match too; a title
+  marker the song's own title carries does not count); a match-log summary line that cannot be built
+  or logged no longer costs the run its save; and the date, match-log size and setlist-flattening
+  notes say what the code does (#191).
+- When the host's Spotify drops them from the party, the channel notice now says the party has
+  ended, and a member who fails after the host is no longer reported once the party is gone. A
+  `/party`, `/setlist`, picker or Join-button step that fails after the bot has acknowledged the
+  command now answers with a short failure line instead of leaving the spinner. A member who can
+  manage the server can stop any party, so a party whose host left the server is no longer stuck.
+  `/party add` now needs membership, like `/party skip`, so someone outside the party cannot start
+  playback on the members' players (#194).
+- `/party add` now finds a track typed as "title artist" or "artist title" (its option says "track
+  and artist"); a title typed on its own is tried first, exactly as before (#155).
+- `/setlist` (and `/party add`'s search) now retries a Spotify search that was rate-limited or met a
+  server error, and a playlist creation or track add that was rate-limited, honouring `Retry-After`
+  up to a few seconds, instead of discarding every song matched so far; a search that failed after a
+  match was already in hand is recorded in the match log as the failed query it was, so a `low` or
+  `medium` pick no longer looks like the end of the road; and when adding tracks fails after the
+  playlist was created, the reply and the match log say where that playlist is (#192).
+- `/party skip` now advances only from the track the skipper was looking at: two people skipping at
+  once, or a skip landing just as the track ends on its own, move the party on once instead of
+  twice, and the loser is told the track changed (or that the party ended); the next track is read
+  after the acknowledgement, so a skip that looked to be on the last track goes to a track queued
+  while it was being acknowledged (#152, part 2).
+- A Spotify connect callback whose state token is a JavaScript prototype key (`__proto__`,
+  `constructor`, `toString`, and any other name every object inherits) is now refused as unknown,
+  instead of being redeemed for no user and storing a connection under the key "undefined" (#247).
+- `SPOTIFY_REDIRECT_URI` must now be written exactly as the bot sends it to Spotify (lower-case
+  host, no default port, a path, no credentials or fragment). A non-canonical value is refused at
+  startup with the form to use, and credentials or a fragment are refused outright; because a
+  refusal makes the host skip the whole music plugin (all of `/setlist`, `/spotify` and `/party`)
+  until the value is corrected, an install whose env value is non-canonical but whose registered
+  redirect is the canonical form stops working until it is fixed. The settings panel also now
+  rejects `#` and `@` in this value. `MUSIC_CALLBACK_PORT` accepts plain digits only, a blank
+  `TRUSTED_PROXY_HOST` counts as unset, a `music.json` or `parties.json` that is not an object
+  (`null` and primitives used to crash activation; an array was kept as an array) is replaced with a
+  fresh state and a warning is logged, the `/spotify connect` reply says not to share the link, and
+  the auth comments say what the code does (#189).
+- `/party add` now decides whether it starts the party from the party as it is after the search, not
+  from before: a track added just as the last one ends starts the party instead of leaving it stuck
+  "open but not playing" with no add able to start it (a party already stuck that way is started by
+  the next add); two people adding to an idle party at the same moment start it once, and the second
+  is told their track is queued; an add to a party that ended while it was searching says so instead
+  of reporting "Queued" (#152, part 1).
+- A disk write that fails at a track boundary is now logged and the party re-armed for the next
+  track, instead of surfacing as an unhandled rejection from the party's own timer, which could end
+  the whole bot. Nothing retries the boundary that failed: when the write is what moves the party,
+  its members are not played the new track and their players stay idle until the next boundary
+  (#151).
+- `/setlist` and its show picker now answer a problem with the caller's own Spotify connection (not
+  connected, no longer valid, or a refresh Spotify couldn't do right now) in a note only the caller
+  can see, instead of editing "haven't connected" / "no longer valid" into the public reply; the
+  public reply says the playlist could not be built (#239).
 - The Spotify connect callback now answers "Something went wrong" and logs which stage failed
   (never the token or the code) when something in the handshake throws (the bot's own store failing
   to write, say), instead of leaving the browser on Bun's error response, and the callback server
