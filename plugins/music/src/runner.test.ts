@@ -1,6 +1,23 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { createPartyRunner, MAX_MEMBER_FAILURES, type RunnerDeps, type TimerHandle, type TokenResult } from "./runner.js";
-import { freshParties, getParty, openParty, partiesState, resetPartiesForTest, type Party } from "./party.js";
+import {
+  createPartyRunner,
+  MAX_MEMBER_FAILURES,
+  type PartyRunner,
+  type RunnerDeps,
+  type TimerHandle,
+  type TokenResult,
+} from "./runner.js";
+import {
+  addMember,
+  commitParties,
+  freshParties,
+  getParty,
+  openParty,
+  partiesState,
+  removeMember,
+  resetPartiesForTest,
+  type Party,
+} from "./party.js";
 import { PARTY_SCOPES, SPOTIFY_SCOPES, type SpotifyClient } from "./spotify.js";
 
 const NOW = 1_700_000_000_000;
@@ -312,7 +329,9 @@ describe("members who can't play", () => {
     // The first strike is visible in the log, since nothing else records it.
     expect(warnings).toEqual([`friend in guild G1 failed 1 of ${MAX_MEMBER_FAILURES}: Spotify returned HTTP 502: Bad gateway. Try later`]);
 
-    await runner.syncMember("G1", "friend");
+    // The second strike has to come from the party, not from another Join: a Join is a fresh start
+    // for that member (#234), so a second syncMember would be a first strike again.
+    await runner.skip("G1");
     expect(getParty(partiesState(), "G1")?.members).not.toContain("friend");
     expect(notices[0]?.endsWith("Try later.")).toBe(true);
     runner.stopAll();
@@ -433,6 +452,52 @@ describe("a refresh Spotify couldn't do right now", () => {
   });
 });
 
+describe("a member's failure count", () => {
+  test("a strike does not survive the party being stopped and started again", async () => {
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    // "friend" is unavailable on every call, so each start is exactly one strike for them.
+    const { runner, notices, warnings } = makeRunner(client, clock, tokenSequence("friend", [UNAVAILABLE]));
+
+    await runner.start("G1");
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host", "friend"]);
+    expect(warnings).toHaveLength(1);
+
+    runner.stop("G1");
+    // A new, unstarted party with the same members -- what `/party start` opens after a `/party stop`.
+    const { trackStartedAt: _started, ...unstarted } = party();
+    resetPartiesForTest(openParty(freshParties(), unstarted));
+
+    await runner.start("G1");
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host", "friend"]);
+    expect(notices).toEqual([]);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[1]).toContain(`friend in guild G1 failed 1 of ${MAX_MEMBER_FAILURES}`);
+    runner.stopAll();
+  });
+
+  test("pressing Join again starts a member's count afresh", async () => {
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, notices, warnings } = makeRunner(client, clock, tokenSequence("friend", [UNAVAILABLE]));
+
+    await runner.start("G1");
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host", "friend"]);
+
+    // They leave, then press Join: the same code path as a first join.
+    await commitParties(removeMember(partiesState(), "G1", "friend"));
+    await commitParties(addMember(partiesState(), "G1", "friend"));
+    const outcome = await runner.syncMember("G1", "friend");
+
+    expect(outcome.ok).toBe(false);
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host", "friend"]);
+    expect(notices).toEqual([]);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[1]).toContain(`friend in guild G1 failed 1 of ${MAX_MEMBER_FAILURES}`);
+    runner.stopAll();
+  });
+});
+
 describe("the tick", () => {
   test("re-arms a party whose timer was lost to a restart", async () => {
     const { client, plays } = fakeSpotify();
@@ -468,6 +533,30 @@ describe("the tick", () => {
 
     expect(plays).toHaveLength(1);
     expect(plays[0]?.positionMs).toBe(30_000);
+    runner.stopAll();
+  });
+
+  test("a boundary that fires during the sweep's checks cancels that tick's resync", async () => {
+    resetPartiesForTest(openParty(freshParties(), party({ members: ["host"] })));
+    const clock = fakeClock();
+    // The first (and only) playback check lets the track boundary land, then reports the member as
+    // still on track one -- drift against the snapshot the sweep took before it started awaiting.
+    let runner: PartyRunner;
+    const { client, plays } = fakeSpotify({
+      playbackState: async () => {
+        await runner.skip("G1");
+        return { ok: true, value: { isPlaying: true, progressMs: 0, trackUri: "spotify:track:one" } };
+      },
+    });
+    const made = makeRunner(client, clock);
+    runner = made.runner;
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep();
+
+    expect(getParty(partiesState(), "G1")?.index).toBe(1);
+    expect(plays).toEqual([{ accessToken: "AT", uri: "spotify:track:two", positionMs: 0 }]);
+    expect(made.warnings).toEqual([]);
     runner.stopAll();
   });
 });

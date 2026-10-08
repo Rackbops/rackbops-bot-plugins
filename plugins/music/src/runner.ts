@@ -95,6 +95,14 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     return `${guildId}:${userId}`;
   }
 
+  /** A party's counts start fresh: a strike taken in an earlier party must not follow a member (#234). */
+  function forgetGuild(guildId: string): void {
+    const prefix = `${guildId}:`;
+    for (const key of [...failures.keys()]) {
+      if (key.startsWith(prefix)) failures.delete(key);
+    }
+  }
+
   function arm(guildId: string): void {
     timers.get(guildId)?.cancel();
     timers.delete(guildId);
@@ -239,6 +247,7 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     playCurrent,
 
     async start(guildId) {
+      forgetGuild(guildId);
       await commitParties(markStarted(partiesState(), guildId, deps.now()));
       const outcomes = await playCurrent(guildId);
       arm(guildId);
@@ -250,6 +259,9 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     },
 
     async syncMember(guildId, discordUserId) {
+      // Pressing Join is a fresh start for that member, and Join is idempotent: an earlier strike
+      // (from a previous stint in this party, or an earlier party) must not make this attempt their second.
+      failures.delete(failureKey(guildId, discordUserId));
       const party = getParty(partiesState(), guildId);
       if (party === undefined) return { discordUserId, ok: false, error: "there's no party here" };
       if (party.trackStartedAt === undefined) return { discordUserId, ok: true };
@@ -285,6 +297,17 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
             return verdict.action === "resync" ? { discordUserId, positionMs: verdict.positionMs } : undefined;
           }),
         );
+
+        // The checks above are network awaits, and the track boundary rides on its own timer: it can
+        // fire inside that window and play everyone the next track. `party` is the snapshot from
+        // before the awaits, so resyncing against it would put a member back on the track that just
+        // ended, at a position past its end. If the party moved (or closed), this tick's verdicts
+        // are stale -- drop them; the next sweep checks again.
+        const current = getParty(partiesState(), party.guildId);
+        if (current === undefined || current.index !== party.index || current.trackStartedAt !== party.trackStartedAt) {
+          deps.log.info(`party in guild ${party.guildId} moved during the sweep; skipping resync`);
+          continue;
+        }
 
         for (const entry of drifted) {
           if (entry === undefined) continue;
