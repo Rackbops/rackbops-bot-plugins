@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- A party member's failure count now starts fresh with every party and every Join: a strike taken
+  in an earlier party, or before leaving and rejoining, no longer follows them into the next one and
+  turns a single blip into a drop (or, for the host, into closing the new party). The Join button
+  says "Couldn't join the party" when its first sync already dropped the member (a free Spotify
+  account, or Spotify refusing the command), instead of "Joined, but ..." for someone who is no
+  longer in. A party sweep no longer resyncs a member against a track that ended while it was
+  checking or resyncing the members before them: it drops the resyncs it has left and looks again on
+  the next sweep. A track ending inside the one member's resync already in flight (its token
+  refresh and play call) can still slip through, and the next sweep corrects it (#234).
 - `/party skip` now acknowledges Discord before it does anything else, so a slow Spotify no longer
   makes it "not respond". It no longer refreshes the skipper's token ahead of that -- being in the
   party is the authorisation; the runner refreshes every member's token when it plays the next track,
