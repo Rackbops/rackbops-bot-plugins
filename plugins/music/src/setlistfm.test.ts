@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
   createSetlistFmClient,
   flattenSetlist,
@@ -8,6 +8,7 @@ import {
   parseRetryAfter,
   parseSetlistUrl,
   preferExactArtist,
+  REQUEST_TIMEOUT_MS,
   retryDelay,
   splitMedley,
   toSetlist,
@@ -302,6 +303,33 @@ describe("createSetlistFmClient", () => {
     expect(seen!.url).toBe("https://api.setlist.fm/rest/1.0/setlist/63de4613");
   });
 
+  test("every request carries the client's own timeout signal, built from the ten-second bound", async () => {
+    const timeout = spyOn(AbortSignal, "timeout");
+    try {
+      const signals: Array<AbortSignal | null | undefined> = [];
+      const client = createSetlistFmClient("KEY", async (_url, init) => {
+        signals.push(init?.signal);
+        return json({ setlist: [] });
+      });
+
+      await client.getSetlist("63de4613");
+      await client.latestForArtist("Band");
+
+      expect(signals).toHaveLength(2);
+      for (const signal of signals) {
+        // Not just "some signal": a real one that has not fired, so the request is abortable and not
+        // already dead on arrival.
+        expect(signal).toBeInstanceOf(AbortSignal);
+        expect(signal?.aborted).toBe(false);
+      }
+      // Each call builds its own bound, from the constant the release notes state.
+      expect(REQUEST_TIMEOUT_MS).toBe(10_000);
+      expect(timeout.mock.calls).toEqual([[10_000], [10_000]]);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   test("404 becomes a sentence a user can act on, not a status code", async () => {
     const client = createSetlistFmClient("KEY", async () => json({}, 404));
     const result = await client.getSetlist("nope");
@@ -537,6 +565,41 @@ describe("createSetlistFmClient retries", () => {
     expect(result.ok === false && result.error).toContain("rate-limiting");
     expect(calls()).toBe(1);
     expect(slept).toEqual([]);
+  });
+
+  test("a Retry-After of exactly the ceiling is still waited for, one second more is not", async () => {
+    const atCeiling = new Response("{}", { status: 429, headers: { "Retry-After": "5" } });
+    const waited = scripted([atCeiling, json(BEATLES)]);
+    expect((await waited.client.getSetlist("63de4613")).ok).toBe(true);
+    expect(waited.slept).toEqual([5000]);
+    expect(waited.calls()).toBe(2);
+
+    const pastCeiling = new Response("{}", { status: 429, headers: { "Retry-After": "6" } });
+    const refused = scripted([pastCeiling, json(BEATLES)]);
+    const result = await refused.client.getSetlist("63de4613");
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toContain("rate-limiting");
+    expect(refused.calls()).toBe(1);
+    expect(refused.slept).toEqual([]);
+  });
+
+  test("an HTTP-date Retry-After is measured from now", async () => {
+    // `Date.now` is pinned so the header's one-second resolution cannot make the wait vary: the
+    // client must read the clock itself, or a date header would be measured from the epoch (a wait
+    // of decades, which gives up) instead of from the moment the 429 arrived.
+    const now = spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    try {
+      const limited = new Response("{}", {
+        status: 429,
+        headers: { "Retry-After": new Date(1_700_000_002_000).toUTCString() },
+      });
+      const { client, slept } = scripted([limited, json(BEATLES)]);
+
+      expect((await client.getSetlist("63de4613")).ok).toBe(true);
+      expect(slept).toEqual([2000]);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   test("a 5xx is retried, and running out of attempts reports the status", async () => {

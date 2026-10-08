@@ -2,6 +2,11 @@
 // serving each query's exact logged candidate page. It exists to pin down what today's code picks
 // for these 27 songs so a later tuning PR can name what it changed instead of quietly re-breaking
 // one of the causes #43 already diagnosed.
+//
+// What this does NOT replay (#193): the fallback-name chain. `findSong` is called without
+// `artists`, so only the first artist name's queries run; the corpus holds no performer names (its
+// shape test below forbids extra keys) and the 2026-09-25 logs hold no fallback-query pages. A
+// replay of that chain would need a new corpus, which is its own piece of work if it is ever wanted.
 import { afterAll, describe, expect, test } from "bun:test";
 import corpusData from "./replay/corpus.json" with { type: "json" };
 import { findSong } from "./build.js";
@@ -31,8 +36,25 @@ interface CorpusSong {
 
 const corpus = corpusData as CorpusSong[];
 
-/** Queries `findSong` issued that no logged page covers -- printed, never guessed at. */
+/**
+ * Queries `findSong` issued that no logged page covers -- printed, never guessed at. Each song's
+ * test also asserts that it added none: a query string that changed would otherwise leave every
+ * page unserved (an empty answer) and still pass any song whose baseline is "missing".
+ */
 const unserved: string[] = [];
+
+/**
+ * The queries a song's logged pages do NOT cover, pinned exactly rather than waived. The logs are
+ * from 2026-09-25; #61 (2026-09-29, "keep searching past a non-confident first query") made
+ * `findSong` run a second, loose query after a first query that picked something short of `high`,
+ * and for these two songs the logs hold only the first query's page. The replay answers the loose
+ * query with an empty page, so each pick is still the logged query's -- which is what the log
+ * recorded. Anything else a song leaves unserved, these two included, fails its test.
+ */
+const EXPECTED_UNSERVED: Readonly<Record<string, readonly string[]>> = {
+  "You Better Run": ["You Better Run The Rascals"],
+  Heartbreaker: ["Heartbreaker Pat Benatar & Neil Giraldo"],
+};
 
 /**
  * A `SpotifyClient` keyed by the exact query string a song's page was logged under. Candidates
@@ -91,11 +113,16 @@ const tally = { right: 0, wrong: 0, missing: 0 };
 describe.each(corpus.map((entry) => [entry.name, entry] as const))("replay: %s", (_name, entry) => {
   test("picks the baseline", async () => {
     const client = servePages(entry);
+    const unservedBefore = unserved.length;
     const found = await findSong(client, "TEST_TOKEN", {
       name: entry.name,
       searchArtist: entry.searchArtist,
       isCover: entry.isCover,
     });
+    // Every query `findSong` issued for this song was a page the logs carry (bar the pinned
+    // exceptions above), so the pick below is the pick from real candidates and not from an empty
+    // answer to a query nobody logged.
+    expect(unserved.slice(unservedBefore)).toEqual([...(EXPECTED_UNSERVED[entry.name] ?? [])]);
     expect(found.ok).toBe(true);
     const match = found.ok ? found.match : undefined;
 
@@ -116,10 +143,8 @@ describe.each(corpus.map((entry) => [entry.name, entry] as const))("replay: %s",
   });
 });
 
-afterAll(() => {
-  console.log(`replay: right ${tally.right}, wrong ${tally.wrong}, missing ${tally.missing}`);
-  console.log(`replay: ${unserved.length} queries had no logged page`);
-  for (const q of unserved) console.log(`  unserved: ${q}`);
+// Declared after every `describe.each` block above, so it runs once they have all filled the tally.
+test("the tally is what the baselines say", () => {
   // #57: normalize() now reads "&"/"+" as "and", so By-Tor & the Snow Dog's studio cut is matched
   // at high instead of a live recording at low -- 12/5/10 -> 13/4/10.
   // #58: artist agreement is now a tier above title score, so Blondie's own remaster of Rip Her to
@@ -131,4 +156,10 @@ afterAll(() => {
   // moves from missing to a right pick (Blondie's own "Detroit 442 - Remastered") -- 17/3/7 ->
   // 18/3/6, no other entry moved.
   expect(tally).toEqual({ right: 18, wrong: 3, missing: 6 });
+});
+
+afterAll(() => {
+  console.log(`replay: right ${tally.right}, wrong ${tally.wrong}, missing ${tally.missing}`);
+  console.log(`replay: ${unserved.length} queries had no logged page`);
+  for (const q of unserved) console.log(`  unserved: ${q}`);
 });
