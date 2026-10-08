@@ -46,9 +46,31 @@ export interface Match {
  * difference between "Dont Stop Me Now" (setlist.fm, typed by a human at a gig) and "Don't Stop Me
  * Now" (Spotify) must not cost a match, and neither must "Mötley" vs "Motley", nor "By-Tor & the
  * Snow Dog" (setlist.fm) vs "By-Tor And The Snow Dog" (Spotify).
+ *
+ * The letters and digits of EVERY script survive (#150): a Japanese, Cyrillic or Hangul title
+ * compares as itself. Keeping only a-z0-9 turned each of those into "", and every empty string
+ * equals every other, so an all-kanji candidate by the right artist matched an all-kanji song as an
+ * exact title whatever either said. A Latin letter with no accent decomposition (ø, ß, æ, ł) is
+ * kept as itself for the same reason, instead of becoming a gap in the word.
+ *
+ * A word is a letter or digit followed by any run of letters, digits and combining marks. The marks
+ * matter outside Latin: NFD splits a kana with a voiced mark (ガ = カ + U+3099), and Indic vowel
+ * signs and Thai tone marks are marks too, so treating them as punctuation made バンド and バント
+ * (or ไม่ and ไม้) the same word and put a gap inside the word. A mark with no letter before it
+ * (an emoji's variation selector) belongs to nothing and goes with the punctuation. The result is
+ * recomposed (NFC) so a Hangul syllable or a voiced kana counts as the one character it is, which
+ * `titleScore`'s length floors rely on.
+ *
+ * Text with no letter or digit at all ("???", "...") would still come out empty and equal every
+ * other such text, so it falls back to the input itself, trimmed and lower-cased. Only text that
+ * is blank to begin with normalises to "".
+ *
+ * NOT done, deliberately: compatibility forms stay as they are (full-width ＢＴＳ, the ﬁ ligature,
+ * Ⅳ and ² are not folded to BTS, fi, IV and 2), and the accent fold applies to every script (й
+ * folds to и, ё to е, as é folds to e). Both are choices for a later change, not oversights.
  */
 export function normalize(value: string): string {
-  return value
+  const words = value
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "") // combining marks left behind by NFD
     .toLowerCase()
@@ -65,8 +87,9 @@ export function normalize(value: string): string {
     // "By-Tor And The Snow Dog", and turning the symbol into a space made them different titles.
     // Only between non-space characters, so a symbol on its own edge is still just punctuation.
     .replace(/(?<=\S)\s*[&+]\s*(?=\S)/g, " and ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
+    .match(/[\p{L}\p{N}][\p{L}\p{N}\p{M}]*/gu);
+  const folded = words === null ? "" : words.join(" ").normalize("NFC");
+  return folded === "" ? value.trim().toLowerCase() : folded;
 }
 
 /**
@@ -226,11 +249,16 @@ function hasTypoPrefix(candidate: string, song: string): boolean {
   return false;
 }
 
-/** How well any of the candidate's artists matches the one we searched for, 0-40. */
+/**
+ * How well any of the candidate's artists matches the one we searched for, 0-40. A blank candidate
+ * artist (no name at all, or whitespace) scores nothing: the empty string is contained in every
+ * `wanted`, so it would otherwise earn the partial score against any artist (#150).
+ */
 function artistScore(candidateArtists: string[], wanted: string): number {
   if (wanted === "") return 0;
   let best = 0;
   for (const artist of candidateArtists) {
+    if (artist === "") continue;
     if (artist === wanted) return 40;
     if (artist.includes(wanted) || wanted.includes(artist)) best = Math.max(best, 22);
   }
@@ -397,8 +425,9 @@ function withoutEditionSuffix(title: string): string | undefined {
  * - A candidate the title pass would penalise as a variant is not a candidate here either. In the
  *   split only a karaoke credit on an artist can fire: a title that heads or ends the query already
  *   shares its marker words (live, remix, ...) with it.
- * - An artist name that normalizes to nothing (a name in a script `normalize` cannot read, or pure
- *   punctuation) is not an artist: `artistScore` treats the empty string as contained in anything.
+ * - An artist name that normalizes to nothing (a blank one: `normalize` keeps the letters of every
+ *   script, and falls back to the text itself when it has no letter or digit) is not an artist, and is
+ *   dropped before scoring.
  *
  * Among split matches the higher artist score wins, then the longer title (it accounts for more of the
  * query), then an unsuffixed title over a suffixed one, then page order. The result is shaped like
