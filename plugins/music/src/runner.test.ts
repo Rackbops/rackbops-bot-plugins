@@ -675,13 +675,13 @@ describe("the tick", () => {
   });
 
   test("a boundary that fires during one member's resync cancels the resyncs after it", async () => {
-    resetPartiesForTest(openParty(freshParties(), party({ members: ["host", "friend"] })));
+    resetPartiesForTest(openParty(freshParties(), party({ members: ["host", "friend", "third"] })));
     const clock = fakeClock();
     const calls: { accessToken: string; uri: string; positionMs: number }[] = [];
     let runner: PartyRunner;
     let fired = false;
     const { client } = fakeSpotify({
-      // Both members report track one at 0:00, so both are drifted against the sweep's snapshot.
+      // Every member reports track one at 0:00, so all are drifted against the sweep's snapshot.
       playbackState: async () => ({ ok: true, value: { isPlaying: true, progressMs: 0, trackUri: "spotify:track:one" } }),
       // The first play is the host's resync; the boundary lands while it is in flight.
       play: async (accessToken, uri, positionMs) => {
@@ -701,11 +701,13 @@ describe("the tick", () => {
     runner.stopAll();
 
     // The host's resync (stale by the time the boundary lands), then the boundary's own plays for
-    // both members -- and nothing that puts the friend back on track one.
+    // every member -- and nothing that puts the friend or the third member back on track one. One
+    // log line for the whole abandoned run of resyncs, not one per member left.
     expect(calls).toEqual([
       { accessToken: "host", uri: "spotify:track:one", positionMs: 30_000 },
       { accessToken: "host", uri: "spotify:track:two", positionMs: 0 },
       { accessToken: "friend", uri: "spotify:track:two", positionMs: 0 },
+      { accessToken: "third", uri: "spotify:track:two", positionMs: 0 },
     ]);
     expect(made.infos.filter((m) => m.includes("moved during the sweep"))).toHaveLength(1);
   });
