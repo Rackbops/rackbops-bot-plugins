@@ -8,18 +8,20 @@
   non-Latin title used to compare equal to every other, so the first track on the page could be
   added as a confident match and a non-Latin performer matched any non-Latin act. Combining marks
   stay with their letter (a kana with a voiced mark, Indic vowel signs, Thai tone marks), so words
-  that differ only in a mark no longer collapse into each other. A Latin letter with no accent
-  decomposition (`ø`, `ß`, `æ`, `ł`) is now kept instead of dropped, and a title that is only
-  punctuation no longer matches every other such title. A title or name written in two scripts must
-  now match in both (#150).
+  that differ only in such a mark no longer collapse into each other; accents still fold in every
+  script, as before. A Latin letter with no accent decomposition (`ø`, `ß`, `æ`, `ł`) is now kept
+  instead of turning into a gap in the word, and a title that is only punctuation no longer matches
+  every other such title. A title or name written in two scripts must now match in both to count as
+  an exact match (#150).
 - The setlist matcher now treats the acute accent, the prime and the fullwidth apostrophe as
   apostrophes too, so a setlist.fm title spelled "Don´t Stop Believin´" matches Spotify's spelling
   (`/party add` too); a candidate carrying a 100-point marker -- karaoke, "in the style of", "made
   popular by", tribute, "originally performed by", or a karaoke-labelled artist, and any stack of
-  lesser variant markers that adds up to 100 -- is rejected outright even when it is credited to the
-  original artist, as the release notes always said (`/party add`'s title match too); a match-log
-  summary line that cannot be built or logged no longer costs the run its save; and the date,
-  match-log size and setlist-flattening notes say what the code does (#191).
+  lesser variant markers whose total reaches 100 -- is rejected outright even when it is credited to
+  the original artist, as the release notes always said (`/party add`'s title match too; a title
+  marker the song's own title carries does not count); a match-log summary line that cannot be built
+  or logged no longer costs the run its save; and the date, match-log size and setlist-flattening
+  notes say what the code does (#191).
 - When the host's Spotify drops them from the party, the channel notice now says the party has
   ended, and a member who fails after the host is no longer reported once the party is gone. A
   `/party`, `/setlist`, picker or Join-button step that fails after the bot has acknowledged the
@@ -37,8 +39,9 @@
   playlist was created, the reply and the match log say where that playlist is (#192).
 - `/party skip` now advances only from the track the skipper was looking at: two people skipping at
   once, or a skip landing just as the track ends on its own, move the party on once instead of
-  twice, and the loser is told the track changed (or that the party ended); a track queued while the
-  skip was being acknowledged is the one skipped to (#152).
+  twice, and the loser is told the track changed (or that the party ended); the next track is read
+  after the acknowledgement, so a skip that looked to be on the last track goes to a track queued
+  while it was being acknowledged (#152, part 2).
 - A Spotify connect callback whose state token is a JavaScript prototype key (`__proto__`,
   `constructor`, `toString`, and any other name every object inherits) is now refused as unknown,
   instead of being redeemed for no user and storing a connection under the key "undefined" (#247).
@@ -61,7 +64,9 @@
   of reporting "Queued" (#152, part 1).
 - A disk write that fails at a track boundary is now logged and the party re-armed for the next
   track, instead of surfacing as an unhandled rejection from the party's own timer, which could end
-  the whole bot (#151).
+  the whole bot. Nothing retries the boundary that failed: when the write is what moves the party,
+  its members are not played the new track and their players stay idle until the next boundary
+  (#151).
 - `/setlist` and its show picker now answer a problem with the caller's own Spotify connection (not
   connected, no longer valid, or a refresh Spotify couldn't do right now) in a note only the caller
   can see, instead of editing "haven't connected" / "no longer valid" into the public reply; the
