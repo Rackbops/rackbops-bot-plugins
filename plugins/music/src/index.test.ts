@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SlashCommandBuilder, type ChatInputCommandInteraction } from "discord.js";
 import { createPlugin } from "./index.js";
 import { recordRun, resetMatchLogForTest, type MatchLogFile } from "./matchlog.js";
 import { freshParties, openParty, resetPartiesForTest } from "./party.js";
+import { beginPendingAuth, commit, musicState, PENDING_AUTH_TTL_MS, putConnection, type MusicState } from "./store.js";
 import { makeFakeHost, makeRealStorage } from "../../../packages/testkit/index.js";
 
 /**
@@ -455,5 +456,195 @@ describe("client-IP trust boundary via activate() (#69 gate finding)", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * Stubs the Spotify token endpoint (and nothing else): records each request's form body and answers
+ * `answer`. A request to a loopback URL (the test's own listener) passes through to the real `fetch`,
+ * and any other URL answers 500 "unexpected request", so a stray call fails loudly. `createSpotifyClient`
+ * binds `fetch` when `createPlugin` builds it, so this must be installed BEFORE `createPlugin`.
+ */
+function stubTokenExchange(answer: Record<string, unknown>): {
+  calls: { url: string; body: URLSearchParams }[];
+  restore: () => void;
+} {
+  const real = globalThis.fetch;
+  const calls: { url: string; body: URLSearchParams }[] = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.startsWith("https://accounts.spotify.com/api/token")) {
+      calls.push({ url, body: new URLSearchParams(String(init?.body ?? "")) });
+      return Response.json(answer);
+    }
+    if (url.startsWith("http://127.0.0.1:")) return real(input, init);
+    return new Response(`unexpected request: ${url}`, { status: 500 });
+  }) as unknown as typeof fetch;
+  return {
+    calls,
+    restore: () => {
+      globalThis.fetch = real;
+    },
+  };
+}
+
+/** The Discord user the seeded handshake belongs to, and the scopes its connect link asked for. */
+const HANDSHAKE_USER = "424242";
+const ASKED_SCOPES = "playlist-modify-private";
+
+/**
+ * One real activation on a free port with a pending handshake `T` seeded AFTER `activate()` (its
+ * `initStore` replaces the in-memory state from the file, so an earlier seed would be lost), and the
+ * token endpoint stubbed. `seededAt` is the clock the handshake is minted at.
+ */
+async function withHandshake(
+  tokenAnswer: Record<string, unknown>,
+  seededAt: number,
+  run: (ctx: {
+    callback: (query: string) => Promise<Response>;
+    dir: string;
+    infos: string[];
+    stub: ReturnType<typeof stubTokenExchange>;
+  }) => Promise<void>,
+): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "music-handshake-"));
+  const stub = stubTokenExchange(tokenAnswer);
+  try {
+    const port = freePort();
+    const infos: string[] = [];
+    const host = makeFakeHost({ name: "music",
+      env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: String(port) },
+      dataDir: dir,
+      storage: makeRealStorage(),
+      log: { info: (m) => infos.push(m), warn() {}, error() {} },
+    });
+    const plugin = createPlugin(host);
+    await plugin.activate?.();
+    try {
+      await commit(beginPendingAuth(musicState(), "T", HANDSHAKE_USER, seededAt, ASKED_SCOPES));
+      // The seed really is there, in memory and in the file, so a later "T is gone" cannot pass
+      // for want of it ever having been written.
+      expect(Object.keys(musicState().pending)).toContain("T");
+      expect(Object.keys((await storeOnDisk(dir)).pending)).toContain("T");
+      await run({
+        callback: (query) => fetch(`http://127.0.0.1:${port}/spotify/callback?${query}`),
+        dir,
+        infos,
+        stub,
+      });
+    } finally {
+      await plugin.dispose?.();
+    }
+  } finally {
+    stub.restore();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * What `music.json` holds right now, read back from disk. Read with `readFile`, not `Bun.file`: a
+ * lingering Bun reader handle can make the next atomic write's rename fail on Windows (see the
+ * retry in `packages/testkit`), and the callbacks under test write again straight after.
+ */
+async function storeOnDisk(dir: string): Promise<MusicState> {
+  return JSON.parse(await readFile(join(dir, "music.json"), "utf8")) as MusicState;
+}
+
+describe("the connect handshake through activate() (#148)", () => {
+  // The closures under test are the ones `activate()` builds for the callback server: `redeemState`
+  // (run `redeemPendingAuth`, commit the pruned state whether or not the token was valid) and
+  // `saveConnection` (commit `putConnection(..., scopes)`, log the user id). The unit tests pin the
+  // pure functions and `handleCallback` over fake deps, and the #190 test above reaches `redeemState`
+  // only to see that a failing commit is contained and logged; none of them checks WHAT these
+  // closures persist, which scopes the connection carries, or that a replayed link is refused.
+  test("a real handshake consumes the token, stores the connection with Spotify's scopes in memory and on disk, and refuses a replay", async () => {
+    const granted = "playlist-modify-private user-modify-playback-state";
+    await withHandshake(
+      { access_token: "AT", refresh_token: "RT1", scope: granted },
+      Date.now(),
+      async ({ callback, dir, infos, stub }) => {
+        // Another user's connection, already stored: the handshake must leave it alone.
+        await commit(putConnection(musicState(), "333", "RT-OTHER", 1));
+        const bystander = musicState().connections["333"];
+        expect(bystander).toBeDefined();
+
+        const startedAt = Date.now();
+        const first = await callback("code=C&state=T");
+        expect(first.status).toBe(200);
+        expect(await first.text()).toContain("Spotify connected");
+
+        // The code went to the token endpoint once, with the registered redirect.
+        expect(stub.calls).toHaveLength(1);
+        expect(stub.calls[0]?.body.get("grant_type")).toBe("authorization_code");
+        expect(stub.calls[0]?.body.get("code")).toBe("C");
+        expect(stub.calls[0]?.body.get("redirect_uri")).toBe(FULL_ENV.SPOTIFY_REDIRECT_URI);
+
+        // Spotify's own scope string (not the scopes the link asked for) lands on the connection,
+        // and the token is gone, in memory and in the file.
+        const stored = musicState().connections[HANDSHAKE_USER];
+        expect(stored).toMatchObject({ refreshToken: "RT1", scopes: granted });
+        expect(stored?.connectedAt).toBeGreaterThanOrEqual(startedAt);
+        expect(Object.keys(musicState().pending)).not.toContain("T");
+        const onDisk = await storeOnDisk(dir);
+        expect(onDisk.connections[HANDSHAKE_USER]).toEqual(stored);
+        expect(Object.keys(onDisk.pending)).not.toContain("T");
+        expect(musicState().connections["333"]).toEqual(bystander);
+        expect(onDisk.connections["333"]).toEqual(bystander);
+        expect(infos).toContain(`connected Spotify for discord user ${HANDSHAKE_USER}`);
+        // The user id is logged; the refresh token never is.
+        expect(infos.join("\n")).not.toContain("RT1");
+
+        // The same link again: refused, no second exchange, the connection untouched.
+        const replay = await callback("code=C2&state=T");
+        expect(replay.status).toBe(400);
+        const replayBody = await replay.text();
+        expect(replayBody).toContain("didn&#39;t work");
+        // A token that is simply gone reads as unknown, not as expired.
+        expect(replayBody).toContain("isn&#39;t valid any more");
+        expect(replayBody).not.toContain("expired");
+        expect(stub.calls).toHaveLength(1);
+        expect(musicState().connections[HANDSHAKE_USER]).toEqual(stored);
+      },
+    );
+  });
+
+  test("a token response with no scope keeps the scopes the handshake asked for", async () => {
+    await withHandshake({ access_token: "AT", refresh_token: "RT1" }, Date.now(), async ({ callback, dir }) => {
+      expect((await callback("code=C&state=T")).status).toBe(200);
+      expect(musicState().connections[HANDSHAKE_USER]?.scopes).toBe(ASKED_SCOPES);
+      expect((await storeOnDisk(dir)).connections[HANDSHAKE_USER]?.scopes).toBe(ASKED_SCOPES);
+    });
+  });
+
+  test("an expired handshake is refused with the expired text, and is consumed", async () => {
+    // Minted far enough back that its ten minutes are already up.
+    const seededAt = Date.now() - PENDING_AUTH_TTL_MS - 60_000;
+    await withHandshake({ access_token: "AT", refresh_token: "RT1" }, seededAt, async ({ callback, dir, stub }) => {
+      // Two bystanders beside the expired `T`: another expired handshake, which redeeming prunes, and
+      // a live one, which it must leave alone. (Written straight into the state: `beginPendingAuth`
+      // would prune the expired `T` as it went.)
+      const now = Date.now();
+      await commit({
+        ...musicState(),
+        pending: {
+          ...musicState().pending,
+          OLD: { discordUserId: "111", expiresAt: now - 1_000 },
+          LIVE: { discordUserId: "222", expiresAt: now + PENDING_AUTH_TTL_MS },
+        },
+      });
+
+      const response = await callback("code=C&state=T");
+      expect(response.status).toBe(400);
+      const body = await response.text();
+      expect(body).toContain("expired");
+      expect(body).not.toContain("isn&#39;t valid any more");
+
+      expect(stub.calls).toHaveLength(0);
+      // `T` is consumed and `OLD` is pruned, in memory and in the file; `LIVE` is untouched.
+      expect(Object.keys(musicState().pending)).toEqual(["LIVE"]);
+      expect(Object.keys((await storeOnDisk(dir)).pending)).toEqual(["LIVE"]);
+      expect(musicState().connections[HANDSHAKE_USER]).toBeUndefined();
+      expect((await storeOnDisk(dir)).connections[HANDSHAKE_USER]).toBeUndefined();
+    });
   });
 });
