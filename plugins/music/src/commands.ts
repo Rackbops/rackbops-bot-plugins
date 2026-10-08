@@ -705,7 +705,13 @@ async function handlePartyAdd(interaction: ChatInputCommandInteraction, guildId:
     await replyEphemeral(interaction, "No party here yet -- `/party start` opens one.");
     return;
   }
-  await interaction.deferReply();
+  // Ephemeral until the add has actually worked. The access check can answer with a fresh authorize
+  // link whose single-use `state` token is the only thing tying the callback to this caller's Discord
+  // account -- whoever else in the channel completes consent on it attaches their Spotify to the
+  // caller -- and with the caller's own connection state ("haven't connected", "no longer valid").
+  // Neither may reach the channel, so every failure below edits this private reply, and the channel
+  // hears about a queued track through a separate public `followUp`, as `/party start` does.
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const access = await requirePartyAccess(interaction.user.id);
   if (!access.ok) {
     await interaction.editReply({ content: access.message });
@@ -744,10 +750,18 @@ async function handlePartyAdd(interaction: ChatInputCommandInteraction, guildId:
   const idle = party.trackStartedAt === undefined && party.index >= party.queue.length;
   if (!idle) {
     await interaction.editReply({ content: `Queued **${track.name}** -- ${track.artist}.` });
+    await interaction.followUp({
+      content: `<@${interaction.user.id}> queued **${track.name}** -- ${track.artist}.`,
+    });
     return;
   }
   const outcomes = await access.runner.start(guildId);
-  await interaction.editReply({ content: `**${track.name}** -- ${track.artist}\n${formatOutcomes(outcomes)}` });
+  await interaction.editReply({ content: `Started the party with **${track.name}** -- ${track.artist}.` });
+  // The per-member problems were public before this change too: they name what each person in the
+  // party should do about their own player.
+  await interaction.followUp({
+    content: `<@${interaction.user.id}> queued **${track.name}** -- ${track.artist}\n${formatOutcomes(outcomes)}`,
+  });
 }
 
 async function handlePartySkip(interaction: ChatInputCommandInteraction, guildId: string): Promise<void> {
