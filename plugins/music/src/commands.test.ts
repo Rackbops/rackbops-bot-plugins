@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import type { ChatInputCommandInteraction, MessageComponentInteraction } from "discord.js";
+import { MessageFlags, type ChatInputCommandInteraction, type MessageComponentInteraction } from "discord.js";
 import {
   choiceFor,
   formatBuildReply,
@@ -12,7 +12,9 @@ import {
   pickerCustomId,
 } from "./commands.js";
 import type { SetlistFmClient, SetlistFmResult, SetlistListResult } from "./setlistfm.js";
-import type { SpotifyClient } from "./spotify.js";
+import { freshParties, getParty, openParty, partiesState, resetPartiesForTest, type Party } from "./party.js";
+import type { MemberOutcome, PartyRunner } from "./runner.js";
+import { PARTY_SCOPES, SPOTIFY_SCOPES, type SpotifyClient } from "./spotify.js";
 import { freshState, musicState, putConnection, resetStoreForTest } from "./store.js";
 import type { BuildOutcome } from "./build.js";
 import type { MatchRun } from "./matchlog.js";
@@ -1098,5 +1100,266 @@ describe("/setlist stop lines", () => {
     await handleSetlist()(failed.interaction);
     expect(stops()).toEqual([]);
     expect(recorded).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// #134: /party add checks access under an ephemeral reply; only the queue result is public
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * A stand-in for a `/party <sub>` interaction. Records what the handler does with the reply, because
+ * the whole point of #134 is WHICH replies are public: `defers` keeps the flags it deferred with (an
+ * ephemeral defer makes the edit private), `edits` is the deferred reply, `followUps` are separate
+ * messages (public unless they carry their own ephemeral flag), `replies` are direct answers.
+ */
+function fakePartyCommand(sub: string, options: Record<string, string>, userId: string, guildId = "G1") {
+  const defers: { flags?: unknown }[] = [];
+  const edits: { content?: string }[] = [];
+  const followUps: { content?: string; flags?: unknown }[] = [];
+  const replies: { content?: string }[] = [];
+  // Every call in the order it happened. Order matters: Discord resolves a deferred reply with the
+  // first message sent after the defer, so a follow-up sent BEFORE the edit would take over the
+  // private reply's place instead of landing in the channel.
+  const calls: string[] = [];
+  const interaction = {
+    guildId,
+    channelId: "C1",
+    client: {},
+    user: { id: userId },
+    options: {
+      getSubcommand: () => sub,
+      getString: (name: string, required?: boolean) => {
+        const value = options[name];
+        if (value !== undefined) return value;
+        if (required) throw new Error(`missing required option ${name}`);
+        return null;
+      },
+    },
+    deferReply: async (opts: { flags?: unknown } = {}) => {
+      calls.push("defer");
+      defers.push(opts);
+    },
+    editReply: async (opts: { content?: string }) => {
+      calls.push("edit");
+      edits.push(opts);
+    },
+    followUp: async (opts: { content?: string; flags?: unknown }) => {
+      calls.push("followUp");
+      followUps.push(opts);
+    },
+    reply: async (opts: { content?: string }) => {
+      calls.push("reply");
+      replies.push(opts);
+    },
+  };
+  return {
+    interaction: interaction as unknown as ChatInputCommandInteraction,
+    defers,
+    edits,
+    followUps,
+    replies,
+    calls,
+  };
+}
+
+/** A runner whose `start` records the guilds it was asked to start and answers with `outcomes`. */
+function partyRunnerDouble(started: string[], outcomes: MemberOutcome[]): PartyRunner {
+  return {
+    playCurrent: async () => [],
+    start: async (guildId): Promise<MemberOutcome[]> => {
+      started.push(guildId);
+      return outcomes;
+    },
+    skip: async () => [],
+    syncMember: async (_guildId, discordUserId): Promise<MemberOutcome> => ({ discordUserId, ok: true }),
+    sweep: async () => {},
+    stopAll() {},
+    stop() {},
+  };
+}
+
+/** Wires `/party add` for USER in guild G1, with a party that is playing (default) or idle. */
+function wireParty({
+  scopes,
+  connected = true,
+  searchHit = true,
+  searchError,
+  noDuration = false,
+  party = "playing",
+  outcomes = [{ discordUserId: USER, ok: true }],
+}: {
+  scopes: string;
+  connected?: boolean;
+  searchHit?: boolean;
+  searchError?: string;
+  /** The one hit has no `durationMs`: Spotify didn't say how long the track is. */
+  noDuration?: boolean;
+  party?: "playing" | "idle";
+  /** What the runner double reports back from `start`. */
+  outcomes?: MemberOutcome[];
+}): { started: string[] } {
+  const started: string[] = [];
+  logged = [];
+  resetStoreForTest(connected ? putConnection(freshState(), USER, "RT", 1, scopes) : freshState());
+  const seeded: Party = {
+    guildId: "G1",
+    channelId: "C1",
+    hostId: "host",
+    members: ["host"],
+    queue: party === "playing" ? [{ uri: "spotify:track:zero", name: "Zero", artist: "Band", durationMs: 180_000 }] : [],
+    index: 0,
+    ...(party === "playing" ? { trackStartedAt: 1 } : {}),
+  };
+  resetPartiesForTest(openParty(freshParties(), seeded));
+  initCommands({
+    config: {
+      setlistFmKey: "KEY",
+      missing: [],
+      spotify: {
+        clientId: "cid",
+        clientSecret: "csecret",
+        redirectUri: "https://bot.example.com/spotify/callback",
+        callbackPath: "/spotify/callback",
+      },
+    },
+    setlistFm: {
+      getSetlist: async (): Promise<SetlistFmResult> => ({ ok: false, error: "not used here" }),
+      latestForArtist: async (): Promise<SetlistFmResult> => ({ ok: false, error: "not used here" }),
+      showsOn: async (): Promise<SetlistListResult> => ({ ok: true, setlists: [] }),
+    },
+    spotify: buildSpotify({
+      refresh: async () => ({ ok: true, value: { accessToken: "AT", scopes } }),
+      searchTracks: async () =>
+        searchError !== undefined
+          ? { ok: false, error: searchError }
+          : { ok: true, value: searchHit ? [noDuration ? track("One") : { ...track("One"), durationMs: 180_000 }] : [] },
+    }),
+    runner: partyRunnerDouble(started, outcomes),
+    serverRunning: () => true,
+    log: captureLog,
+  });
+  return { started };
+}
+
+const handleParty = () => musicCommands().find((c) => c.name === "party")!.handle;
+
+describe("the party's add command", () => {
+  test("a caller without the party scopes gets the authorize link ephemerally and the channel sees nothing", async () => {
+    wireParty({ scopes: SPOTIFY_SCOPES });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.defers).toEqual([{ flags: MessageFlags.Ephemeral }]);
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain("Grant it here");
+    // The link is the real one: it carries the single-use state token that was just minted for USER.
+    const tokens = Object.keys(musicState().pending);
+    expect(tokens).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain(`state=${tokens[0]}`);
+    expect(run.followUps).toEqual([]);
+    expect(run.replies).toEqual([]);
+  });
+
+  test("a caller who hasn't connected is told so ephemerally", async () => {
+    wireParty({ scopes: PARTY_SCOPES, connected: false });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.defers).toEqual([{ flags: MessageFlags.Ephemeral }]);
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain("/spotify connect");
+    expect(run.followUps).toEqual([]);
+    expect(run.replies).toEqual([]);
+  });
+
+  test("a queued track is announced to the channel without any link", async () => {
+    wireParty({ scopes: PARTY_SCOPES });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.defers).toEqual([{ flags: MessageFlags.Ephemeral }]);
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain("Queued **One**");
+    expect(run.followUps).toHaveLength(1);
+    expect(run.followUps[0]?.content).toContain(`<@${USER}> queued **One**`);
+    // A follow-up with no flags of its own is a public message; one flagged ephemeral would hide the
+    // announcement from the channel.
+    expect(run.followUps[0]?.flags).toBeUndefined();
+    expect(run.calls).toEqual(["defer", "edit", "followUp"]);
+    for (const text of [run.edits[0]?.content, run.followUps[0]?.content]) {
+      expect(text).not.toContain("authorize");
+      expect(text).not.toContain("Grant it here");
+    }
+    expect(getParty(partiesState(), "G1")?.queue.map((t) => t.name)).toEqual(["Zero", "One"]);
+  });
+
+  test("adding to an idle party starts it and the channel hears who queued what", async () => {
+    const { started } = wireParty({ scopes: PARTY_SCOPES, party: "idle" });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(started).toEqual(["G1"]);
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain("Started the party with **One**");
+    expect(run.followUps).toHaveLength(1);
+    expect(run.followUps[0]?.content).toContain(`<@${USER}> queued **One**`);
+    expect(run.followUps[0]?.content).toContain("Playing for 1 person.");
+    expect(run.followUps[0]?.flags).toBeUndefined();
+    expect(run.calls).toEqual(["defer", "edit", "followUp"]);
+  });
+
+  test("the channel is told which party members the start could not reach", async () => {
+    wireParty({
+      scopes: PARTY_SCOPES,
+      party: "idle",
+      outcomes: [
+        { discordUserId: USER, ok: true },
+        { discordUserId: "friend", ok: false, error: "they need Spotify Premium" },
+      ],
+    });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.followUps).toHaveLength(1);
+    expect(run.followUps[0]?.content).toContain("Playing for 1 person.");
+    expect(run.followUps[0]?.content).toContain("<@friend>: they need Spotify Premium");
+    // The private confirmation carries no member problems -- those belong to the channel.
+    expect(run.edits[0]?.content).not.toContain("friend");
+  });
+
+  test("a track Spotify gave no length for stays with the invoker", async () => {
+    const { started } = wireParty({ scopes: PARTY_SCOPES, party: "idle", noDuration: true });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.defers).toEqual([{ flags: MessageFlags.Ephemeral }]);
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain("didn't say how long");
+    expect(run.followUps).toEqual([]);
+    expect(started).toEqual([]);
+    expect(getParty(partiesState(), "G1")?.queue).toEqual([]);
+  });
+
+  test("a search failure stays with the invoker", async () => {
+    wireParty({ scopes: PARTY_SCOPES, searchError: "Spotify returned HTTP 503" });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.defers).toEqual([{ flags: MessageFlags.Ephemeral }]);
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain("search failed");
+    expect(run.followUps).toEqual([]);
+  });
+
+  test("a query nothing matched stays with the invoker", async () => {
+    wireParty({ scopes: PARTY_SCOPES, searchHit: false });
+    const run = fakePartyCommand("add", { query: "One" }, USER);
+    await handleParty()(run.interaction);
+
+    expect(run.defers).toEqual([{ flags: MessageFlags.Ephemeral }]);
+    expect(run.edits).toHaveLength(1);
+    expect(run.edits[0]?.content).toContain("Nothing on Spotify matched");
+    expect(run.followUps).toEqual([]);
   });
 });
