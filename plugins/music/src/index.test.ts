@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { SlashCommandBuilder, type ChatInputCommandInteraction } from "discord.js";
 import { createPlugin } from "./index.js";
 import { recordRun, resetMatchLogForTest, type MatchLogFile } from "./matchlog.js";
+import { freshParties, openParty, resetPartiesForTest } from "./party.js";
 import { makeFakeHost, makeRealStorage } from "../../../packages/testkit/index.js";
 
 /**
@@ -240,6 +241,62 @@ describe("activate / dispose", () => {
     } finally {
       restoreFetch();
       resetMatchLogForTest({ v: 1, runs: [] });
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the party-sweep tick", () => {
+  test("hands the host's signal to the sweep", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "music-tick-"));
+    const restoreFetch = stubFetch();
+    const stubbed = globalThis.fetch;
+    let fetchCalls = 0;
+    // Installed before createPlugin: the Spotify client takes `fetch` as its default transport then.
+    globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
+      fetchCalls += 1;
+      return stubbed(...args);
+    }) as typeof fetch;
+    try {
+      const infos: string[] = [];
+      const host = makeFakeHost({ name: "music",
+        env: { ...FULL_ENV, MUSIC_CALLBACK_PORT: undefined },
+        dataDir: dir,
+        storage: makeRealStorage(),
+        log: { info: (m) => infos.push(m), warn() {}, error() {} },
+      });
+      const plugin = createPlugin(host);
+      await plugin.activate?.();
+      const { commit, putConnection, musicState } = await import("./store.js");
+      await commit(putConnection(musicState(), "user-1", "RT", 1));
+      // After activate(), which loads parties from disk: a playing party with one stored member.
+      resetPartiesForTest(
+        openParty(freshParties(), {
+          guildId: "G1",
+          channelId: "C1",
+          hostId: "user-1",
+          members: ["user-1"],
+          queue: [{ uri: "spotify:track:one", name: "One", artist: "Band", durationMs: 180_000 }],
+          index: 0,
+          trackStartedAt: Date.now(),
+        }),
+      );
+      const tick = (plugin.ticks ?? []).find((t) => t.name === "party-sweep")!;
+
+      // Control: a sweep that is not aborted does reach for a token, through the stubbed fetch.
+      await tick.run(new AbortController().signal);
+      expect(fetchCalls).toBeGreaterThan(0);
+
+      fetchCalls = 0;
+      await tick.run(AbortSignal.abort());
+
+      expect(fetchCalls).toBe(0);
+      expect(infos.some((m) => m.includes("party sweep aborted by the host"))).toBe(true);
+      await plugin.dispose?.();
+    } finally {
+      globalThis.fetch = stubbed;
+      restoreFetch();
+      resetPartiesForTest(freshParties());
       await rm(dir, { recursive: true, force: true });
     }
   });

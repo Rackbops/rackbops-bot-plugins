@@ -255,6 +255,65 @@ describe("createSpotifyClient", () => {
   });
 });
 
+describe("a player call and the host's signal", () => {
+  /** Runs one player call against a fetch that records the signal it was handed, then settles. */
+  function player(): {
+    client: ReturnType<typeof createSpotifyClient>;
+    seen: (AbortSignal | undefined)[];
+  } {
+    const seen: (AbortSignal | undefined)[] = [];
+    const client = createSpotifyClient(CONFIG, async (_url, init) => {
+      seen.push(init?.signal ?? undefined);
+      return new Response(null, { status: 204 });
+    });
+    return { client, seen };
+  }
+
+  const calls: [string, (c: ReturnType<typeof createSpotifyClient>, s?: AbortSignal) => Promise<unknown>][] = [
+    ["playbackState", (c, s) => c.playbackState("AT", s)],
+    ["play", (c, s) => c.play("AT", "spotify:track:one", 0, undefined, s)],
+    ["devices", (c, s) => c.devices("AT", s)],
+    ["transfer", (c, s) => c.transfer("AT", "d1", s)],
+  ];
+
+  for (const [name, run] of calls) {
+    test(`${name} given the host's signal is aborted with it`, async () => {
+      const { client, seen } = player();
+      const controller = new AbortController();
+
+      await run(client, controller.signal);
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.aborted).toBe(false);
+      controller.abort();
+      expect(seen[0]?.aborted).toBe(true);
+    });
+
+    test(`${name} without a signal is bounded only by the client's own timeout`, async () => {
+      const { client, seen } = player();
+      const unrelated = new AbortController();
+
+      await run(client);
+      unrelated.abort();
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toBeDefined();
+      expect(seen[0]?.aborted).toBe(false);
+    });
+  }
+
+  test("a call aborted by the host reports that Spotify could not be reached", async () => {
+    const client = createSpotifyClient(CONFIG, async (_url, init) => {
+      if (init?.signal?.aborted) throw init.signal.reason;
+      return new Response(null, { status: 204 });
+    });
+
+    const result = await client.playbackState("AT", AbortSignal.abort());
+
+    expect(result).toEqual({ ok: false, error: "couldn't reach Spotify" });
+  });
+});
+
 describe("scopes", () => {
   test("a connection that recorded no scopes is treated as playlist-only, never as party-capable", () => {
     expect(hasScopes(undefined, SPOTIFY_SCOPES)).toBe(true);
