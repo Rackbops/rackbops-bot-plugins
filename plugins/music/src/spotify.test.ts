@@ -10,6 +10,7 @@ import {
   PARTY_SCOPES,
   SPOTIFY_SCOPES,
   toTrackCandidates,
+  type PlaybackState,
 } from "./spotify.js";
 
 const CONFIG = {
@@ -86,7 +87,8 @@ describe("toTrackCandidates", () => {
     // Infinity, and a mutated guard could. `NaN > 0` is already false, so only Infinity tells
     // `Number.isFinite` apart from `> 0`. `Number.isFinite` does not coerce either, so the numeric
     // string is rejected even without the `typeof` clause (which is there for tsc): that case guards
-    // a rewrite that coerces (global `isFinite`, `Number(x)`), not the `typeof` line itself.
+    // a rewrite that coerces AND drops the `typeof` clause (`Number(x)`, or global `isFinite` with it
+    // gone), not the `typeof` line itself; with `typeof` kept, global `isFinite` is equivalent.
     const durations: [string, unknown][] = [
       ["valid", 180_000],
       ["zero", 0],
@@ -94,6 +96,7 @@ describe("toTrackCandidates", () => {
       ["NaN", Number.NaN],
       ["Infinity", Number.POSITIVE_INFINITY],
       ["a numeric string", "180000"],
+      ["a fraction of a millisecond", 0.5],
     ];
     const items = [
       ...durations.map(([label, duration]) => ({
@@ -110,6 +113,8 @@ describe("toTrackCandidates", () => {
     expect(candidates.map((c) => c.name)).toEqual([...durations.map(([label]) => label), "absent"]);
     const byName = Object.fromEntries(candidates.map((c) => [c.name, c]));
     expect(byName.valid?.durationMs).toBe(180_000);
+    // Positive is all that is asked of it: a sub-millisecond fraction is kept, not rounded away.
+    expect(byName["a fraction of a millisecond"]?.durationMs).toBe(0.5);
     for (const label of ["zero", "negative", "NaN", "Infinity", "a numeric string", "absent"]) {
       // The key itself is absent, not just undefined.
       expect(Object.keys(byName[label] ?? {})).not.toContain("durationMs");
@@ -168,6 +173,28 @@ describe("createSpotifyClient", () => {
     const client = createSpotifyClient(CONFIG, async () => json({ access_token: "AT2" }));
     const result = await client.refresh("RT1");
     expect(result.ok === true && result.value).toEqual({ accessToken: "AT2" });
+  });
+
+  test("refresh posts the refresh_token grant with Basic auth", async () => {
+    let seen: { url: string; init?: RequestInit } | undefined;
+    const client = createSpotifyClient(CONFIG, async (url, init) => {
+      seen = { url, init };
+      return json({ access_token: "AT2" });
+    });
+
+    await client.refresh("RT1");
+
+    expect(seen!.url).toBe("https://accounts.spotify.com/api/token");
+    expect(seen!.init!.method).toBe("POST");
+    expect(seen!.init!.headers).toStrictEqual({
+      Authorization: `Basic ${Buffer.from("cid:csecret").toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    });
+    const body = new URLSearchParams(seen!.init!.body as string);
+    expect(body.get("grant_type")).toBe("refresh_token");
+    expect(body.get("refresh_token")).toBe("RT1");
+    // Nothing else rides along: no code, no redirect.
+    expect([...body.keys()].sort()).toEqual(["grant_type", "refresh_token"]);
   });
 
   test("exchangeCode records the granted scopes when Spotify reports them, and none when it does not", async () => {
@@ -365,7 +392,7 @@ describe("the player calls", () => {
     expect(requests).toHaveLength(3);
     expect(requests[0]!.method).toBe("PUT");
     expect(requests[0]!.url).toBe(`${API}/me/player/play`);
-    expect(requests[0]!.headers).toEqual({ Authorization: "Bearer AT", "Content-Type": "application/json" });
+    expect(requests[0]!.headers).toStrictEqual({ Authorization: "Bearer AT", "Content-Type": "application/json" });
     // Rounded to the nearest millisecond, not just made whole: .6 goes up and .4 goes down.
     expect(JSON.parse(requests[0]!.body!)).toEqual({ uris: ["spotify:track:one"], position_ms: 12_346 });
     expect(JSON.parse(requests[1]!.body!)).toEqual({ uris: ["spotify:track:one"], position_ms: 0 });
@@ -395,7 +422,8 @@ describe("the player calls", () => {
     expect(full.requests).toHaveLength(1);
     expect(full.requests[0]!.method ?? "GET").toBe("GET");
     expect(full.requests[0]!.url).toBe(`${API}/me/player`);
-    expect(full.requests[0]!.headers).toEqual({ Authorization: "Bearer AT" });
+    expect(full.requests[0]!.headers).toStrictEqual({ Authorization: "Bearer AT" });
+    expect(full.requests[0]!.body).toBeUndefined();
     expect(shaped).toStrictEqual({
       ok: true,
       value: {
@@ -422,6 +450,24 @@ describe("the player calls", () => {
       ok: true,
       value: { isPlaying: false, progressMs: 0 },
     });
+
+    // Each optional field stands on its own: the item without a device, the device without an item,
+    // an item with a duration and no uri.
+    const partials: [unknown, PlaybackState][] = [
+      [
+        { is_playing: true, progress_ms: 1_000, item: { uri: "spotify:track:one" } },
+        { isPlaying: true, progressMs: 1_000, trackUri: "spotify:track:one" },
+      ],
+      [
+        { is_playing: false, progress_ms: 5, device: { id: "d9" } },
+        { isPlaying: false, progressMs: 5, deviceId: "d9" },
+      ],
+      [{ item: { duration_ms: 1_234 } }, { isPlaying: false, progressMs: 0, durationMs: 1_234 }],
+    ];
+    for (const [body, expected] of partials) {
+      const partial = recording(() => json(body));
+      expect(await partial.client.playbackState("AT")).toStrictEqual({ ok: true, value: expected });
+    }
   });
 
   test("playbackState treats 204 as nothing playing, not a failure", async () => {
@@ -431,7 +477,9 @@ describe("the player calls", () => {
   });
 
   test("devices GETs /me/player/devices and drops a device with no id", async () => {
-    // Besides the null id: an absent id, a non-string id and entries that are not objects at all.
+    // Besides the null id: an absent id, a non-string id and `null` / string entries. A name that is
+    // an empty string stays (it is a string); one that is not a string falls back; `is_active` counts
+    // only when it is exactly true.
     const listed = recording(() =>
       json({
         devices: [
@@ -442,6 +490,8 @@ describe("the player calls", () => {
           null,
           "not a device",
           { id: "d2" },
+          { id: "d3", name: "", is_active: "true" },
+          { id: "d4", name: 5, is_active: 1 },
         ],
       }),
     );
@@ -451,12 +501,15 @@ describe("the player calls", () => {
     expect(listed.requests).toHaveLength(1);
     expect(listed.requests[0]!.method ?? "GET").toBe("GET");
     expect(listed.requests[0]!.url).toBe(`${API}/me/player/devices`);
-    expect(listed.requests[0]!.headers).toEqual({ Authorization: "Bearer AT" });
+    expect(listed.requests[0]!.headers).toStrictEqual({ Authorization: "Bearer AT" });
+    expect(listed.requests[0]!.body).toBeUndefined();
     expect(result).toStrictEqual({
       ok: true,
       value: [
         { id: "d1", name: "Phone", isActive: true },
         { id: "d2", name: "Unnamed device", isActive: false },
+        { id: "d3", name: "", isActive: false },
+        { id: "d4", name: "Unnamed device", isActive: false },
       ],
     });
 
@@ -476,7 +529,7 @@ describe("the player calls", () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]!.method).toBe("PUT");
     expect(requests[0]!.url).toBe(`${API}/me/player`);
-    expect(requests[0]!.headers).toEqual({ Authorization: "Bearer AT", "Content-Type": "application/json" });
+    expect(requests[0]!.headers).toStrictEqual({ Authorization: "Bearer AT", "Content-Type": "application/json" });
     expect(JSON.parse(requests[0]!.body!)).toEqual({ device_ids: ["d1"], play: false });
   });
 
