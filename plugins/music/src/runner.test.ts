@@ -470,8 +470,9 @@ describe("a member's failure count", () => {
     expect(warnings).toHaveLength(1);
 
     runner.stop("G1");
-    // A new, unstarted party in the same guild, as `/party stop` then `/party start` leave behind. It
-    // keeps the same members so the stale strike belongs to someone who is still in it.
+    // A new, unstarted party in the same guild, with the same members: the unit-level shape of a stale
+    // strike meeting a new party. (In production `/party start` opens a party with the host alone and
+    // `start` is reached through `/party add`; the host's case is the next test but one.)
     const { trackStartedAt: _started, ...unstarted } = party();
     resetPartiesForTest(openParty(freshParties(), unstarted));
 
