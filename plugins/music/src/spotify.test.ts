@@ -12,6 +12,7 @@ import {
   toTrackCandidates,
   type PlaybackState,
 } from "./spotify.js";
+import type { SleepLike } from "./retry.js";
 
 const CONFIG = {
   clientId: "cid",
@@ -22,6 +23,9 @@ const CONFIG = {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
+
+/** A sleep that returns at once, for tests that would otherwise really wait out a retry. */
+const noSleep: SleepLike = async () => {};
 
 describe("authorizeUrl", () => {
   test("carries the client id, redirect, state and only the two playlist scopes", () => {
@@ -285,7 +289,8 @@ describe("createSpotifyClient", () => {
   });
 
   test("a non-JSON error body still yields the status, not a crash", async () => {
-    const client = createSpotifyClient(CONFIG, async () => new Response("<html>502</html>", { status: 502 }));
+    // A 502 is retried on the build calls (#192); the no-op sleep keeps the test from really waiting.
+    const client = createSpotifyClient(CONFIG, async () => new Response("<html>502</html>", { status: 502 }), noSleep);
     const result = await client.searchTracks("AT", "q");
     expect(result).toEqual({ ok: false, error: "Spotify returned HTTP 502", status: 502 });
   });
@@ -331,10 +336,15 @@ describe("createSpotifyClient", () => {
 
   test("a failed second batch reports how many tracks DID land", async () => {
     let call = 0;
-    const client = createSpotifyClient(CONFIG, async () => {
-      call += 1;
-      return call === 1 ? json({}, 201) : json({ error: { message: "Rate limited" } }, 429);
-    });
+    // The 429 is retried (#192) and keeps failing; the no-op sleep keeps the test from really waiting.
+    const client = createSpotifyClient(
+      CONFIG,
+      async () => {
+        call += 1;
+        return call === 1 ? json({}, 201) : json({ error: { message: "Rate limited" } }, 429);
+      },
+      noSleep,
+    );
     const uris = Array.from({ length: 150 }, (_, i) => `spotify:track:${i}`);
     const result = await client.addTracks("AT", "PL1", uris);
     expect(result.ok).toBe(false);
@@ -555,6 +565,158 @@ describe("the player calls", () => {
       expect(classifyPlayerError(result.status, result.error ?? "")).toBe("no-device");
     });
   }
+});
+
+describe("retrying the build calls", () => {
+  type Answer = () => Response;
+
+  /** A response with an optional Retry-After, as a fresh object each time (a body is read once). */
+  const failure = (status: number, retryAfter?: string): Answer => () =>
+    new Response(JSON.stringify({ error: { message: "nope" } }), {
+      status,
+      headers: { "Content-Type": "application/json", ...(retryAfter === undefined ? {} : { "Retry-After": retryAfter }) },
+    });
+  const found: Answer = () =>
+    json({ tracks: { items: [{ uri: "spotify:track:one", name: "One", popularity: 50, artists: [{ name: "Band" }] }] } });
+
+  /**
+   * A client over a fetch that answers `script` in order (the last answer repeats), counting its
+   * calls, and a sleep that records the delays it was asked for instead of waiting. An `Error` in
+   * the script is thrown, as a transport failure is.
+   */
+  function scripted(script: (Answer | Error)[], onFetch?: () => void) {
+    let calls = 0;
+    const sleeps: number[] = [];
+    const client = createSpotifyClient(
+      CONFIG,
+      async () => {
+        onFetch?.();
+        const answer = script[Math.min(calls, script.length - 1)]!;
+        calls += 1;
+        if (answer instanceof Error) throw answer;
+        return answer();
+      },
+      async (ms) => {
+        sleeps.push(ms);
+      },
+    );
+    return { client, sleeps, calls: () => calls };
+  }
+
+  test("a 429 with Retry-After is retried after that long", async () => {
+    const { client, sleeps, calls } = scripted([failure(429, "1"), found]);
+
+    const result = await client.searchTracks("AT", "q");
+
+    expect(result.ok && result.value.map((t) => t.uri)).toEqual(["spotify:track:one"]);
+    expect(calls()).toBe(2);
+    expect(sleeps).toEqual([1_000]);
+  });
+
+  test("a 5xx is retried on the client's own backoff", async () => {
+    const { client, sleeps, calls } = scripted([failure(503), failure(503), found]);
+
+    const result = await client.searchTracks("AT", "q");
+
+    expect(result.ok).toBe(true);
+    expect(calls()).toBe(3);
+    expect(sleeps).toEqual([500, 1_000]);
+  });
+
+  test("the retries are bounded", async () => {
+    const { client, sleeps, calls } = scripted([failure(503)]);
+
+    const result = await client.searchTracks("AT", "q");
+
+    expect(result).toStrictEqual({ ok: false, error: "Spotify returned HTTP 503: nope", status: 503 });
+    expect(calls()).toBe(4);
+    expect(sleeps).toEqual([500, 1_000, 2_000]);
+  });
+
+  test("a Retry-After longer than the cap ends the retries at once", async () => {
+    const { client, sleeps, calls } = scripted([failure(429, "60"), found]);
+
+    const result = await client.searchTracks("AT", "q");
+
+    expect(result).toStrictEqual({ ok: false, error: "Spotify returned HTTP 429: nope", status: 429 });
+    expect(calls()).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  test("a 4xx other than 429 is not retried", async () => {
+    const { client, sleeps, calls } = scripted([failure(400), found]);
+
+    const result = await client.searchTracks("AT", "q");
+
+    expect(result.ok).toBe(false);
+    expect(calls()).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  test("a transport failure is not retried", async () => {
+    const { client, sleeps, calls } = scripted([new Error("connection reset"), found]);
+
+    const result = await client.searchTracks("AT", "q");
+
+    expect(result).toStrictEqual({ ok: false, error: "couldn't reach Spotify" });
+    expect(calls()).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  const neverRetried: [string, (c: ReturnType<typeof createSpotifyClient>) => Promise<{ ok: boolean }>][] = [
+    ["play", (c) => c.play("AT", "spotify:track:one", 0)],
+    ["playbackState", (c) => c.playbackState("AT")],
+    ["devices", (c) => c.devices("AT")],
+    ["transfer", (c) => c.transfer("AT", "d1")],
+    ["refresh", (c) => c.refresh("RT1")],
+    ["exchangeCode", (c) => c.exchangeCode("CODE")],
+  ];
+
+  for (const [name, run] of neverRetried) {
+    test(`${name} is never retried`, async () => {
+      const { client, sleeps, calls } = scripted([failure(429, "1"), found]);
+
+      const result = await run(client);
+
+      expect(result.ok).toBe(false);
+      expect(calls()).toBe(1);
+      expect(sleeps).toEqual([]);
+    });
+  }
+
+  test("an abort ends the retries", async () => {
+    const controller = new AbortController();
+    const { client, sleeps, calls } = scripted([failure(429, "1"), found], () => controller.abort());
+
+    const result = await client.searchTracks("AT", "q", controller.signal);
+
+    expect(result).toStrictEqual({ ok: false, error: "Spotify returned HTTP 429: nope", status: 429 });
+    expect(calls()).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  test("createPlaylist is retried the same way", async () => {
+    const created: Answer = () => json({ id: "PL1" }, 201);
+    const { client, sleeps, calls } = scripted([failure(429, "1"), created]);
+
+    const result = await client.createPlaylist("AT", "Name", "Desc");
+
+    expect(result).toStrictEqual({ ok: true, value: { id: "PL1", url: "https://open.spotify.com/playlist/PL1" } });
+    expect(calls()).toBe(2);
+    expect(sleeps).toEqual([1_000]);
+  });
+
+  test("addTracks is retried the same way, batch by batch", async () => {
+    const added: Answer = () => json({ snapshot_id: "s" }, 201);
+    const { client, sleeps, calls } = scripted([failure(429, "1"), added, added]);
+    const uris = Array.from({ length: 150 }, (_, i) => `spotify:track:${i}`);
+
+    const result = await client.addTracks("AT", "PL1", uris);
+
+    expect(result).toStrictEqual({ ok: true, value: 150 });
+    expect(calls()).toBe(3);
+    expect(sleeps).toEqual([1_000]);
+  });
 });
 
 describe("a player call and the host's signal", () => {
