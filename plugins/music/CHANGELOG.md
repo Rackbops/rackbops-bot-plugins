@@ -5,11 +5,14 @@
 ### Fixed
 
 - A token refresh that fails because Spotify is unreachable, slow, rate-limiting (429) or erroring
-  (5xx), or because the app's own credentials are refused (401), no longer deletes the user's stored
-  connection -- only a dead grant (HTTP 400 `invalid_grant`: revoked, expired, or superseded by a
-  later connect) does. The reply says the link is still saved and to try again in a moment, and a
-  party member's token therefore survives a Spotify blip instead of sending them back through
-  consent (#133). A dead grant still gets "no longer valid ... reconnect", exactly as before.
+  (5xx), or because the app's own credentials are refused (`invalid_client`), no longer deletes the
+  user's stored connection -- only a dead grant (HTTP 400 `invalid_grant`: the refresh token is
+  invalid, expired or revoked) does, and a failure the bot cannot read (a 400 with no error code) is
+  kept too. The reply says the link is still saved, to try again in a moment, and to run
+  `/spotify connect` again if it keeps failing. A party member's token therefore survives a Spotify
+  blip instead of sending them back through consent (#133); the party runner still drops them from
+  a running party on any failed refresh (that half is #154), but rejoining no longer needs a new
+  consent. A dead grant still gets "no longer valid ... reconnect", exactly as before.
 - A karaoke upload phrased "Originally Performed by <artist>" (or "Originally by <artist>") no
   longer survives on an instrumental penalty alone -- the phrase joins the same 100-point pattern
   as "tribute" and "in the style of". A candidate whose primary or secondary artist name contains

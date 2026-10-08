@@ -1,7 +1,7 @@
 // The Spotify half: the authorization-code OAuth flow, the calls that build a playlist, and the
 // player calls the listening party drives. `authorizeUrl`, `toTrackCandidates`, `chunkUris`,
-// `hasScopes` and `classifyPlayerError` are pure and exported for the tests; everything that
-// touches the network goes through an injected `fetch`.
+// `hasScopes`, `classifyPlayerError` and `isDeadGrant` are pure and exported for the tests;
+// everything that touches the network goes through an injected `fetch`.
 //
 // Scope note: scopes are requested INCREMENTALLY, a feature at a time -- see SPOTIFY_SCOPES and
 // PARTY_SCOPES below. A consent screen that asks for less is one a user is more likely to accept.
@@ -65,8 +65,9 @@ export interface SpotifyConfig {
  * a caller can tell a missing scope (403) from an idle device (404) without re-parsing prose. It is
  * absent on a timeout or a connection failure, which is itself the signal that nothing was reached.
  * `code` is Spotify's own machine-readable error code when the body carried one as a string -- the
- * accounts host's `invalid_grant` / `invalid_client` -- so a caller never has to classify a failure
- * by its prose (`error` prefers the human `error_description`, which is free to change).
+ * accounts host's `invalid_grant` / `invalid_client`; the API host's object-shaped bodies carry
+ * none -- so a caller classifying a token failure never has to read its prose (`error` prefers the
+ * human `error_description`, which is free to change).
  */
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string; status?: number; code?: string };
 
@@ -241,10 +242,15 @@ export function classifyPlayerError(status: number | undefined, message: string)
 /**
  * Whether a failed token call means the GRANT is dead -- the refresh token invalid, expired or
  * revoked -- as opposed to Spotify being unreachable, slow, rate-limiting or erroring, or the app's
- * own credentials being refused. OAuth 2.0 (RFC 6749 section 5.2) names exactly one of those
- * `invalid_grant`, always with HTTP 400; `invalid_client` comes back 401 and is the operator's
- * client id or secret, which reconnecting cannot fix. A 400 whose body carried no readable code is
- * not treated as dead either: dropping a stored token on ambiguity is the failure #133 is about.
+ * own credentials being refused. OAuth 2.0 (RFC 6749 section 5.2) calls a dead grant
+ * `invalid_grant` and gives it HTTP 400, and BOTH halves must hold here: a different status or a
+ * different code is not one. `invalid_client` is the operator's client id or secret, which
+ * reconnecting cannot fix; the RFC wants it as a 401 when the client authenticates by header, as
+ * this one does, but whichever status Spotify actually uses its code is not `invalid_grant`, so it
+ * is kept either way. A 400 whose body carried no readable code is not treated as dead either:
+ * dropping a stored token on ambiguity is the failure #133 is about. The price of that strictness
+ * is a dead grant arriving in some other shape being kept and failing on every call -- the reply
+ * on that path says to reconnect if it keeps failing, and a connect overwrites the stored token.
  */
 export function isDeadGrant(failure: { status?: number; code?: string }): boolean {
   return failure.status === 400 && failure.code === "invalid_grant";

@@ -170,6 +170,23 @@ describe("createSpotifyClient", () => {
     expect(result).toEqual({ ok: false, error: "Spotify returned HTTP 503", status: 503 });
   });
 
+  test("a string error with no description is both the message and the code", async () => {
+    const client = createSpotifyClient(CONFIG, async () => json({ error: "invalid_request" }, 400));
+    const result = await client.refresh("RT1");
+    expect(result).toEqual({
+      ok: false,
+      error: "Spotify returned HTTP 400: invalid_request",
+      status: 400,
+      code: "invalid_request",
+    });
+  });
+
+  test("a description with no error string is the message and carries no code", async () => {
+    const client = createSpotifyClient(CONFIG, async () => json({ error_description: "try later" }, 429));
+    const result = await client.refresh("RT1");
+    expect(result).toEqual({ ok: false, error: "Spotify returned HTTP 429: try later", status: 429 });
+  });
+
   test("a non-JSON error body still yields the status, not a crash", async () => {
     const client = createSpotifyClient(CONFIG, async () => new Response("<html>502</html>", { status: 502 }));
     const result = await client.searchTracks("AT", "q");
@@ -277,8 +294,16 @@ describe("isDeadGrant", () => {
     expect(isDeadGrant({ status: 400, code: "invalid_grant" })).toBe(true);
   });
 
-  test("a 401 invalid_client is the app's own credentials, which reconnecting cannot fix", () => {
+  test("invalid_client is the app's own credentials, which reconnecting cannot fix, at either status", () => {
     expect(isDeadGrant({ status: 401, code: "invalid_client" })).toBe(false);
+    expect(isDeadGrant({ status: 400, code: "invalid_client" })).toBe(false);
+  });
+
+  test("both halves are required: a different status or a different code is not a dead grant", () => {
+    expect(isDeadGrant({ status: 401, code: "invalid_grant" })).toBe(false);
+    expect(isDeadGrant({ status: 503, code: "invalid_grant" })).toBe(false);
+    expect(isDeadGrant({ code: "invalid_grant" })).toBe(false);
+    expect(isDeadGrant({ status: 400, code: "invalid_request" })).toBe(false);
   });
 
   test("a 400 with no readable code, a 5xx, a 429 and a timeout are not a dead grant", () => {

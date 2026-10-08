@@ -4,8 +4,10 @@ import { freshState, musicState, putConnection, resetStoreForTest } from "./stor
 import { accessTokenFor } from "./tokens.js";
 
 // These drive a REAL client over a fake fetch rather than a fake `refresh`, so what is pinned is
-// the whole boundary #133 is about: what Spotify's answer looks like on the wire, how spotify.ts
-// classifies it, and what tokens.ts then does to the stored connection.
+// the whole boundary #133 is about: the answer's shape on the wire, how spotify.ts classifies it,
+// and what tokens.ts then does to the stored connection. The body shapes follow RFC 6749 section
+// 5.2 and the fixtures spotify.test.ts already used; nothing here has run against Spotify itself,
+// which is why `invalid_client` is covered at both of the statuses it might arrive with.
 
 const CONFIG = {
   clientId: "cid",
@@ -23,22 +25,43 @@ function spotifyAnswering(answer: () => Response) {
   return createSpotifyClient(CONFIG, async () => answer());
 }
 
+function errorOf(result: Awaited<ReturnType<typeof accessTokenFor>>): string {
+  return result.ok ? "" : result.error;
+}
+
 beforeEach(() => {
   resetStoreForTest(putConnection(freshState(), USER, "RT1", CONNECTED_AT, SPOTIFY_SCOPES));
 });
 
 describe("accessTokenFor", () => {
-  test("a revoked grant (400 invalid_grant) removes the connection and says reconnect", async () => {
-    const spotify = spotifyAnswering(() => json({ error: "invalid_grant", error_description: "Refresh token revoked" }, 400));
-    const result = await accessTokenFor(spotify, USER);
-    expect(result).toMatchObject({ ok: false, kind: "revoked" });
-    expect(result.ok === false && result.error).toContain("no longer valid");
-    expect(musicState().connections[USER]).toBeUndefined();
-  });
+  // [name, Spotify's answer, the detail the reply must carry]
+  const revokedCases: Array<[string, () => Response, string]> = [
+    [
+      "a revoked grant (400 invalid_grant with Spotify's prose)",
+      () => json({ error: "invalid_grant", error_description: "Refresh token revoked" }, 400),
+      "Refresh token revoked",
+    ],
+    [
+      "a bare invalid_grant body with no description (the shape Spotify documents for a token past its six-month expiry)",
+      () => json({ error: "invalid_grant" }, 400),
+      "Spotify returned HTTP 400: invalid_grant",
+    ],
+  ];
 
-  const keptCases: Array<[string, () => Response]> = [
-    ["a 503", () => new Response("<html>503</html>", { status: 503 })],
-    ["a 429", () => json({ error: { status: 429, message: "Rate limited" } }, 429)],
+  for (const [name, answer, detail] of revokedCases) {
+    test(`${name} removes the connection and says reconnect`, async () => {
+      const result = await accessTokenFor(spotifyAnswering(answer), USER);
+      expect(result).toMatchObject({ ok: false, kind: "revoked" });
+      expect(errorOf(result)).toContain("no longer valid");
+      expect(errorOf(result)).toContain(detail);
+      expect(errorOf(result)).toContain("/spotify connect");
+      expect(musicState().connections[USER]).toBeUndefined();
+    });
+  }
+
+  const keptCases: Array<[string, () => Response, string]> = [
+    ["a 503", () => new Response("<html>503</html>", { status: 503 }), "Spotify returned HTTP 503"],
+    ["a 429", () => json({ error: { status: 429, message: "Rate limited" } }, 429), "Rate limited"],
     [
       "a timeout",
       () => {
@@ -46,22 +69,41 @@ describe("accessTokenFor", () => {
         err.name = "TimeoutError";
         throw err;
       },
+      "Spotify took too long to answer",
     ],
     [
       "a connection failure",
       () => {
         throw new TypeError("fetch failed");
       },
+      "couldn't reach Spotify",
     ],
-    ["a 401 invalid_client (the app's own credentials)", () => json({ error: "invalid_client", error_description: "Invalid client" }, 401)],
-    ["a 400 with no readable code", () => new Response("Bad Request", { status: 400 })],
+    [
+      "a 401 invalid_client (the app's own credentials)",
+      () => json({ error: "invalid_client", error_description: "Invalid client" }, 401),
+      "Invalid client",
+    ],
+    [
+      "a 400 invalid_client (the same refusal, whichever status Spotify gives it)",
+      () => json({ error: "invalid_client", error_description: "Invalid client" }, 400),
+      "Invalid client",
+    ],
+    [
+      "a 400 whose code is not invalid_grant, whatever its prose says",
+      () => json({ error: "invalid_request", error_description: "Refresh token revoked" }, 400),
+      "Refresh token revoked",
+    ],
+    ["a 400 with no readable code", () => new Response("Bad Request", { status: 400 }), "Spotify returned HTTP 400"],
   ];
 
-  for (const [name, answer] of keptCases) {
+  for (const [name, answer, detail] of keptCases) {
     test(`${name} keeps the connection and says the link is still saved`, async () => {
       const result = await accessTokenFor(spotifyAnswering(answer), USER);
       expect(result).toMatchObject({ ok: false, kind: "unavailable" });
-      expect(result.ok === false && result.error).toContain("still saved");
+      expect(errorOf(result)).toContain("still saved");
+      expect(errorOf(result)).toContain(detail);
+      expect(errorOf(result)).toContain("try again in a moment");
+      expect(errorOf(result)).toContain("/spotify connect");
       expect(musicState().connections[USER]).toMatchObject({ refreshToken: "RT1", connectedAt: CONNECTED_AT });
     });
   }
@@ -87,6 +129,7 @@ describe("accessTokenFor", () => {
     });
     const result = await accessTokenFor(spotify, "200000000000000002");
     expect(result).toMatchObject({ ok: false, kind: "not-connected" });
+    expect(errorOf(result)).toContain("/spotify connect");
     expect(calls).toBe(0);
   });
 });

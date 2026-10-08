@@ -20,14 +20,20 @@ export type TokenResult =
  * token when Spotify issues one.
  *
  * A refresh fails for two unrelated reasons, and only one of them is about the stored token. When
- * Spotify says the grant itself is dead (HTTP 400 `invalid_grant`: revoked, expired, or superseded
- * by a later connect), the connection is DROPPED here -- leaving it in place would make every later
+ * Spotify says the grant itself is dead (HTTP 400 `invalid_grant`: the refresh token is invalid,
+ * expired or revoked), the connection is DROPPED here -- leaving it in place would make every later
  * command fail the same way with no hint that reconnecting is the fix. When Spotify could not be
  * reached, was slow, rate-limited (429) or erroring (5xx), or refused the app's own credentials
- * (401), the stored token is as good as it ever was and is KEPT: the party sweep and every track
- * start refresh each member's token every minute, so dropping it on a blip would silently
- * disconnect a whole party and send everyone back through consent (#133). `isDeadGrant` decides,
- * from Spotify's error code rather than its prose.
+ * (`invalid_client`), the stored token is as good as it ever was and is KEPT: the party sweep
+ * refreshes every member's token once a minute and every track start refreshes it again, so
+ * dropping it on a blip would silently disconnect a whole party and send everyone back through
+ * consent (#133). `isDeadGrant` decides, from Spotify's error code rather than its prose, and it
+ * errs towards keeping: a dead grant that arrives in any other shape is kept and fails again on the
+ * next call, so the kept-path reply also says to reconnect if it keeps failing -- `/spotify connect`
+ * overwrites the stored token, which is the way out.
+ *
+ * Two refreshes for the same user can overlap (the sweep and a track start), and the writes below
+ * are against the connection as read before the await: #146 is that race, not this.
  *
  * The granted scopes come back too: Spotify reports them on every refresh, so a grant the user
  * narrowed in their Spotify settings is noticed here rather than as a 403 in the middle of a party.
@@ -50,7 +56,8 @@ export async function accessTokenFor(spotify: SpotifyClient, discordUserId: stri
         kind: "unavailable",
         error:
           `Spotify couldn't refresh your connection right now (${refreshed.error}). ` +
-          "Your link is still saved -- try again in a moment.",
+          "Your link is still saved -- try again in a moment, and if it keeps failing, " +
+          "run `/spotify connect` again.",
       };
     }
     await commit(removeConnection(musicState(), discordUserId));

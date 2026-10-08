@@ -21,7 +21,7 @@ Written 2026-10-08 against `main` at `2820afe` (`plugins/music` at 1.6.0 + Unrel
 ### Steps
 
 1. `plugins/music/src/spotify.ts`
-   - `Result<T>` failure: `{ ok: false; error: string; status?: number; code?: string }`; JSDoc for `code`: Spotify's own `error` code from the accounts host (`invalid_grant`, `invalid_client`, ...) or the API's `error.message`-less bodies, when the body carried a string one.
+   - `Result<T>` failure: `{ ok: false; error: string; status?: number; code?: string }`; JSDoc for `code`: Spotify's own `error` code when the body carried one as a string (the accounts host's `invalid_grant`, `invalid_client`, ...; the API host's object-shaped bodies carry none).
    - `describeFailure(response)` returns `{ error: string; code?: string }` (the message exactly as before; `code` = `body.error` when it is a string). `call()` returns `{ ok: false, error, status, ...(code ? { code } : {}) }`, so an existing `toEqual` on a failure without a code is unchanged.
    - `export function isDeadGrant(failure: { status?: number; code?: string }): boolean { return failure.status === 400 && failure.code === "invalid_grant"; }` with a JSDoc that cites RFC 6749 section 5.2 and says why 401 is not included.
 2. `plugins/music/src/tokens.ts`
@@ -43,11 +43,31 @@ Written 2026-10-08 against `main` at `2820afe` (`plugins/music` at 1.6.0 + Unrel
 
 | Outcome (the issue has no Acceptance section; these are its observable outcomes) | Step | Test | Mutation that must fail it |
 |---|---|---|---|
-| A timeout, connection failure, 429 or 5xx on refresh keeps the stored connection and answers "unavailable" | 1, 2 | `tokens.test.ts`: the 503, 429, timeout and connection-failure cases | delete the `isDeadGrant` branch in `tokens.ts` so every failure removes |
-| A 400 `invalid_grant` still removes the connection and says reconnect | 1, 2 | `tokens.test.ts` revoked case; `commands.test.ts:698` (updated) | make `isDeadGrant` return `false` always |
-| The decision reads Spotify's `error` code, not the prose | 1 | `spotify.test.ts` 400 case; the `tokens.test.ts` revoked case drives a real client with a fake fetch | stop setting `code` in `call()`: the revoked case then keeps the connection |
-| 401 `invalid_client` keeps the connection | 1, 2 | `tokens.test.ts` 401 case; `isDeadGrant` table | widen `isDeadGrant` to any 4xx |
+| A timeout, connection failure, 429 or 5xx on refresh keeps the stored connection and answers "unavailable" | 1, 2 | `tokens.test.ts`: the 503, 429, timeout and connection-failure kept cases; the `commands.test.ts` sibling | delete the `isDeadGrant` branch in `tokens.ts` so every failure removes |
+| A 400 `invalid_grant` still removes the connection and says reconnect -- with Spotify's prose, or as the bare body Spotify documents for a token past its six-month expiry | 1, 2 | `tokens.test.ts` revoked cases; `commands.test.ts:698` (updated); `isDeadGrant` table | make `isDeadGrant` return `false` always; set `code` only when an `error_description` is present, so the bare body is kept |
+| The decision reads Spotify's `error` code, not the prose | 1 | `spotify.test.ts` 400 case; `tokens.test.ts`: the bare-body revoked case and the `invalid_request`-with-"Refresh token revoked" kept case | stop setting `code` in `call()`; classify on `/revoked/` in the prose instead of `isDeadGrant` |
+| Both halves of `isDeadGrant` are required: a different status, or a different code at 400, keeps | 1, 2 | `isDeadGrant` "both halves" test; `tokens.test.ts` 400 `invalid_client` and 400 `invalid_request` kept cases | drop the status half; compare the code to `undefined` instead of to `invalid_grant`; decide on the status alone |
+| `invalid_client` (the app's own credentials) keeps the connection at either status | 1, 2 | `tokens.test.ts` 401 and 400 `invalid_client` cases; `isDeadGrant` table | widen `isDeadGrant` to any 4xx |
+| A 400 whose body carries no readable code keeps the connection | 1, 2 | `tokens.test.ts` no-code case; `isDeadGrant` table | decide on the status alone (shared with the "both halves" row) |
+| The kept-path reply names the cause, says to try again, and says to reconnect if it keeps failing | 2 | every `tokens.test.ts` kept case | drop the parenthetical; drop the "try again ... connect again" sentence |
+| `describeFailure`'s message is exactly as before for every body shape | 1 | `spotify.test.ts`: the string-error-only and description-only cases, beside the existing object-message and HTML cases | drop the `: body.error` fallback; delete the description-only branch |
 | `/setlist` on a transient failure says the link is kept and records nothing | 2 | the new `commands.test.ts` sibling | return the "no longer valid" text on the unavailable path |
 | A rotated refresh token and the granted scopes still persist on success | -- (existing, previously untested) | `tokens.test.ts` rotation case | drop the `putConnection` commit |
 
 Run each mutation in a scratch worktree (`git worktree add --detach`), never in the tree under test; name the red test per row in the PR.
+
+### Gate round 1 (2026-10-08) -- what it added to the plan above
+
+Both reviewers returned SOUND on the major points; every evidenced finding is fixed or declined below. None of the fixes changes what the code does -- they are tests, comments and reply text -- so no second round was run.
+
+- **Both halves of `isDeadGrant` were unpinned** (A: F1, B: F1). Dropping the status half, or comparing the code to `undefined`, survived the suite. Fixed: the "both halves" `isDeadGrant` test and the 400 `invalid_client` / 400 `invalid_request` kept cases; two coverage rows above.
+- **The bare `{ "error": "invalid_grant" }` body was untested** (A: F1, M3). Spotify's refresh-token-expiry post documents that shape for a token past six months (enforced for existing apps since 2026-07-20), so it is now the usual dead-grant shape. Fixed: a second revoked case, and the `describeFailure` string-only / description-only cases.
+- **"`invalid_client` comes back 401" was stated as fact** (A: F2, B: F3). RFC 6749 section 5.2 requires 401 when the client authenticates by header, as this one does, but Spotify's own status for it is unverified and community reports say 400. Fixed in the JSDoc and the CHANGELOG; both statuses are kept cases.
+- **"Superseded by a later connect" was an ungrounded cause** (A: F5, B: F2): a connect overwrites the stored token. Fixed: RFC wording ("invalid, expired or revoked") in the JSDoc and the CHANGELOG.
+- **The kept-forever case was undisclosed** (A: F3). A dead grant arriving in any shape but 400 `invalid_grant` is kept and fails on every call, with nothing telling the user the way out. Fixed: the kept-path reply ends "and if it keeps failing, run `/spotify connect` again" (pinned by every kept case), and the JSDoc and CHANGELOG say ambiguous failures are kept.
+- **The runner still drops the member** (A: F4, B: F4). Deferred to #154 as the third Decision says; the CHANGELOG now says so. The doubled period in the runner's drop-out line (`runner.ts:202` appends one to a message that already ends in one) is pre-existing for the revoked text and is noted on #154.
+- **Reply text and `describeFailure` branches survived mutation; test names over-claimed** (B: F5). Fixed: the kept cases assert the cause and the try-again sentence, the revoked and not-connected cases assert `/spotify connect`, and the string-only / description-only shapes are pinned.
+- **Plan-versus-code drift** (B: F7): the shipped CHANGELOG text is longer than Step 4's; Step 1's JSDoc text was corrected above; `call()` spreads `describeFailure`'s result rather than `...(code ? { code } : {})`, which differs only for an empty-string `error` and is harmless; `TokenFailureKind` is exported; the extra tests are in the table. Recorded, not changed.
+- **The `/party` consumer has no test for the new text** (B: F6). Declined: `requirePartyAccess` (`commands.ts:612`) passes `token.error` through unchanged, which the `/setlist` sibling pins at the same function; a duplicate adds no discrimination.
+- **Two overlapping refreshes for one user race on the stored token** (B: N1; A: Q5). Reproduced in a scratch worktree, identically at `2820afe` and on this branch: the loser of a rotation race deletes the rotated token (a dead grant on the old one) or writes the old token back (success without rotation). Declined here: it is #146 (C), a different root cause with its own fix shape; the reproduction is posted on #146.
+- **Wording** (A: F6, B: F8): `isDeadGrant` added to `spotify.ts`'s header list of pure exports; the `Result.code` JSDoc no longer claims to cover API-host bodies; "every minute" corrected to the sweep's once a minute plus every track start.
