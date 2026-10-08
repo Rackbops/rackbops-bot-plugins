@@ -609,6 +609,116 @@ describe("a refresh Spotify couldn't do right now", () => {
   });
 });
 
+describe("a host who drops (#194)", () => {
+  test("a host dropped at a boundary ends the party, and the notice says so", async () => {
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    // Fine for the start; the grant is dead by the first boundary.
+    const { runner, notices, mentions } = makeRunner(client, clock, tokenSequence("host", [GOOD, REVOKED]));
+
+    await runner.start("G1");
+    expect(clock.pendingCount()).toBe(1);
+    await clock.advanceTo(NOW + TRACK_MS);
+    // The boundary's plays, the drop and the notice are several awaits past what `advanceTo` waits for.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(getParty(partiesState(), "G1")).toBeUndefined();
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("<@host> has dropped out of the party");
+    expect(notices[0]).toContain("The party has ended");
+    expect(notices[0]).toContain("`/party start` opens a new one.");
+    // Still only the host is pinged (#190).
+    expect(mentions).toEqual(["host"]);
+    expect(clock.pendingCount()).toBe(0);
+    runner.stopAll();
+  });
+
+  test("a host dropped by the sweep's resync ends the party and cancels its timer", async () => {
+    // Both members report track one at 0:00, so both are drifted by the time the sweep looks.
+    const { client } = fakeSpotify({
+      playbackState: async () => ({ ok: true, value: { isPlaying: true, progressMs: 0, trackUri: "spotify:track:one" } }),
+    });
+    const clock = fakeClock();
+    // Fine for the sweep's own playback check; dead when the resync asks for a token again.
+    const { runner, notices, mentions } = makeRunner(client, clock, tokenSequence("host", [GOOD, REVOKED]));
+
+    await clock.advanceTo(NOW + 30_000);
+    await runner.sweep();
+
+    expect(getParty(partiesState(), "G1")).toBeUndefined();
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("<@host> has dropped out of the party");
+    expect(notices[0]).toContain("The party has ended");
+    expect(mentions).toEqual(["host"]);
+    // The sweep armed the party's timer before it resynced; the party it was for is gone.
+    expect(clock.pendingCount()).toBe(0);
+    runner.stopAll();
+  });
+
+  test("a fragment reason keeps its one period, and the other members' failures after the host's are not reported", async () => {
+    // Everyone's play is refused for Premium, a fragment ("... to control playback") with no period of
+    // its own. The host comes first in the list, so its drop closes the party before the friend's
+    // failure is noted: the channel reads one notice, not a "dropped out" line after "ended".
+    const { client } = fakeSpotify({
+      play: async () => ({ ok: false, error: "Player command failed: Premium required", status: 403 }),
+    });
+    const clock = fakeClock();
+    const { runner, notices } = makeRunner(client, clock);
+
+    await runner.start("G1");
+
+    expect(getParty(partiesState(), "G1")).toBeUndefined();
+    expect(notices).toEqual([
+      "<@host> has dropped out of the party: Spotify Premium is required to control playback. " +
+        "The party has ended -- `/party start` opens a new one.",
+    ]);
+    expect(clock.pendingCount()).toBe(0);
+    runner.stopAll();
+  });
+
+  test("a host drop is judged against the party as it is now, not the one the plays were for", async () => {
+    // While the host's play is in flight the party is stopped and another party, under another host,
+    // is started in the same guild. The old host's failure is no reason to say THAT party ended.
+    let swapped = false;
+    const { client } = fakeSpotify({
+      play: async () => {
+        if (!swapped) {
+          swapped = true;
+          await commitParties(
+            openParty(closeParty(partiesState(), "G1"), party({ hostId: "other", members: ["other", "host"] })),
+          );
+        }
+        return { ok: false, error: "Player command failed: Premium required", status: 403 };
+      },
+    });
+    const clock = fakeClock();
+    const { runner, notices } = makeRunner(client, clock);
+
+    await runner.start("G1");
+
+    expect(getParty(partiesState(), "G1")?.hostId).toBe("other");
+    expect(notices.length).toBeGreaterThan(0);
+    for (const notice of notices) expect(notice).not.toContain("The party has ended");
+    runner.stopAll();
+  });
+
+  test("a member who is not the host drops without ending anything", async () => {
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, notices } = makeRunner(client, clock, tokenSequence("friend", [REVOKED]));
+
+    await runner.start("G1");
+
+    expect(getParty(partiesState(), "G1")?.members).toEqual(["host"]);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("<@friend> has dropped out of the party");
+    expect(notices[0]).not.toContain("The party has ended");
+    // The party plays on: its timer is still armed.
+    expect(clock.pendingCount()).toBe(1);
+    runner.stopAll();
+  });
+});
+
 describe("a member's failure count", () => {
   test("a strike does not survive the party being stopped and started again", async () => {
     const { client } = fakeSpotify();

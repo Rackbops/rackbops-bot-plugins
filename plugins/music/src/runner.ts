@@ -281,6 +281,16 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
       failures.delete(key);
       return;
     }
+    // `party` is the snapshot the plays were issued for; read the party as it is now. If it is gone,
+    // an earlier drop in this same pass closed it (the host is always first in the list, so a host
+    // drop is followed by every other failing member's) or a stop landed while the plays were in
+    // flight. Nobody is waiting to hear about it, and a "dropped out" line after "The party has
+    // ended" would contradict itself.
+    const live = getParty(partiesState(), party.guildId);
+    if (live === undefined) {
+      failures.delete(key);
+      return;
+    }
     const count = (failures.get(key) ?? 0) + 1;
     failures.set(key, count);
     const reason = outcome.error ?? "their Spotify stopped responding";
@@ -291,12 +301,27 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
       return;
     }
     failures.delete(key);
+    // The host going closes the whole party (`removeMember`), so its boundary timer goes with it:
+    // left armed, it would fire into a party that no longer exists. The notice says so as well, or the
+    // channel is left with a Join button that now answers "That party has ended". Decided from the
+    // party as it is now, not the snapshot: a stop and a new party under another host may have landed
+    // while the plays were in flight, and that party's timer is not this drop's to cancel.
+    const endsParty = outcome.discordUserId === live.hostId;
+    if (endsParty) {
+      timers.get(party.guildId)?.cancel();
+      timers.delete(party.guildId);
+    }
     await commitParties(removeMember(partiesState(), party.guildId, outcome.discordUserId));
     // Some reasons are fragments (Premium, no player, a bare HTTP status), others full sentences
     // (the token lookup's, the two scope messages). One period either way.
     const stop = reason.endsWith(".") ? "" : ".";
+    const ended = endsParty ? " The party has ended -- `/party start` opens a new one." : "";
     // `reason` can be Spotify's own response text, so only the dropped member may be pinged.
-    await deps.notify(party, `<@${outcome.discordUserId}> has dropped out of the party: ${reason}${stop}`, outcome.discordUserId);
+    await deps.notify(
+      party,
+      `<@${outcome.discordUserId}> has dropped out of the party: ${reason}${stop}${ended}`,
+      outcome.discordUserId,
+    );
   }
 
   async function playCurrent(guildId: string): Promise<MemberOutcome[]> {

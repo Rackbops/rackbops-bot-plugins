@@ -8,6 +8,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   MessageFlags,
+  PermissionFlagsBits,
   StringSelectMenuBuilder,
   type ChatInputCommandInteraction,
   type MessageComponentInteraction,
@@ -257,6 +258,41 @@ function logStop(stage: StopStage, reason: string): void {
 async function replyEphemeral(interaction: ChatInputCommandInteraction, content: string): Promise<void> {
   if (interaction.deferred || interaction.replied) await interaction.editReply({ content });
   else await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+}
+
+/** What a person is told when a step fails after the bot has already acknowledged their command. */
+const FAILED_LATE = "Something went wrong on the bot's side. Try again in a moment.";
+
+/**
+ * Runs a whole handler, from the outside, so a throw AFTER it acknowledged the command (a deferred
+ * reply, a component update) is answered instead of left as a spinner. The host never answers one:
+ * for a component or modal interaction it replies "Something went wrong" only when the interaction is
+ * neither replied nor deferred, and for a slash command it only logs, so past the acknowledgement the
+ * person is left on "thinking..." until Discord expires it. A throw before any acknowledgement is
+ * re-thrown untouched, exactly as before, for the host to log (and, for a component, answer). The
+ * error goes to the log, never into the reply.
+ *
+ * What the failure line replaces is the acknowledgement, which can be a success message: a step that
+ * threw after its work was done (the follow-up announcing a queued track, say) leaves "Something went
+ * wrong" over work that took effect. The line says to try again in a moment, so for those the log is
+ * the truth; the memory-versus-disk divergence behind a failed commit is a store design question, not
+ * this wrapper's (#190).
+ */
+async function contained(
+  interaction: { deferred: boolean; replied: boolean; editReply(options: { content: string }): Promise<unknown> },
+  body: () => Promise<void>,
+): Promise<void> {
+  try {
+    await body();
+  } catch (err) {
+    if (!interaction.deferred && !interaction.replied) throw err;
+    wiring?.log?.error("a music command failed after it was acknowledged", err);
+    try {
+      await interaction.editReply({ content: FAILED_LATE });
+    } catch (editErr) {
+      wiring?.log?.error("...and the failure reply could not be sent", editErr);
+    }
+  }
 }
 
 /**
@@ -761,6 +797,13 @@ async function handlePartyAdd(interaction: ChatInputCommandInteraction, guildId:
     await replyEphemeral(interaction, "No party here yet -- `/party start` opens one.");
     return;
   }
+  // Like skip, and answered before the defer for the same reason: being in the party is what lets
+  // someone steer it. An add can start playback on every member's player, so a connected stranger
+  // must not be able to do it (#194).
+  if (!party.members.includes(interaction.user.id)) {
+    await replyEphemeral(interaction, "Only people in the party can add tracks -- press Join on the party message first.");
+    return;
+  }
   // Ephemeral until the add has actually worked. The access check can answer with a fresh authorize
   // link whose single-use `state` token is the only thing tying the callback to this caller's Discord
   // account -- whoever else in the channel completes consent on it attaches their Spotify to the
@@ -925,8 +968,17 @@ async function handlePartyStop(interaction: ChatInputCommandInteraction, guildId
     await replyEphemeral(interaction, "No party here.");
     return;
   }
-  if (party.hostId !== interaction.user.id) {
-    await replyEphemeral(interaction, "Only whoever started the party can stop it.");
+  // The host, or anyone who can manage the server: one party per guild persists in `parties.json`,
+  // so a host who left the server would otherwise leave every `/party start` answering "already a
+  // party" with nobody able to clear it. `memberPermissions` is null outside a server; `handleParty`
+  // has already turned that away.
+  const mayStop =
+    party.hostId === interaction.user.id || interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild) === true;
+  if (!mayStop) {
+    await replyEphemeral(
+      interaction,
+      "Only whoever started the party, or someone who can manage this server, can stop it.",
+    );
     return;
   }
   const { runner } = required();
@@ -998,8 +1050,10 @@ async function handlePartyJoin(
 export async function musicInteractions(
   interaction: MessageComponentInteraction | ModalSubmitInteraction,
 ): Promise<void> {
-  if (interaction.customId === PARTY_JOIN_ID) return handlePartyJoin(interaction);
-  return handlePick(interaction);
+  return contained(interaction, async () => {
+    if (interaction.customId === PARTY_JOIN_ID) return handlePartyJoin(interaction);
+    return handlePick(interaction);
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -1030,7 +1084,7 @@ export function musicCommands(): PluginCommand[] {
               .setRequired(false)
               .setMaxLength(10),
           ),
-      handle: handleSetlist,
+      handle: (interaction) => contained(interaction, () => handleSetlist(interaction)),
     },
     {
       name: "spotify",
@@ -1063,8 +1117,10 @@ export function musicCommands(): PluginCommand[] {
           .addSubcommand((s) => s.setName("skip").setDescription("Skip to the next queued track"))
           .addSubcommand((s) => s.setName("status").setDescription("What's playing and who's listening"))
           .addSubcommand((s) => s.setName("leave").setDescription("Leave the party"))
-          .addSubcommand((s) => s.setName("stop").setDescription("End the party (whoever started it)")),
-      handle: handleParty,
+          .addSubcommand((s) =>
+            s.setName("stop").setDescription("End the party (whoever started it, or a server manager)"),
+          ),
+      handle: (interaction) => contained(interaction, () => handleParty(interaction)),
     },
   ];
 }
