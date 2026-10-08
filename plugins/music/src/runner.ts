@@ -133,7 +133,16 @@ export function createPartyRunner(deps: RunnerDeps): PartyRunner {
     timers.set(
       guildId,
       deps.schedule(delay, () => {
-        void advanceParty(guildId);
+        // This timer is the plugin's own: the host wraps command and tick paths, but nothing awaits
+        // this promise, and an unawaited rejection (a failed disk write at the boundary, a token
+        // refresh that cannot save) ends the whole bot process. So it is caught here, logged, and the
+        // party re-armed. `commitParties` sets the in-memory state before it awaits the writer, so by
+        // the time it rejects the party has already moved on and the next timer lands at the next
+        // boundary: a persistent failure retries once per track, not in a loop (#151).
+        advanceParty(guildId).catch((err: unknown) => {
+          deps.log.error(`party in guild ${guildId}: advancing to the next track failed; re-arming`, err);
+          arm(guildId);
+        });
       }),
     );
   }

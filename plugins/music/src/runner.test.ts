@@ -22,6 +22,7 @@ import {
   type Party,
 } from "./party.js";
 import { PARTY_SCOPES, SPOTIFY_SCOPES, type SpotifyClient } from "./spotify.js";
+import { makeRealStorage } from "../../../packages/testkit/index.js";
 
 const NOW = 1_700_000_000_000;
 const TRACK_MS = 180_000;
@@ -110,6 +111,8 @@ function makeRunner(
   const notices: string[] = [];
   const warnings: string[] = [];
   const infos: string[] = [];
+  const errors: string[] = [];
+  const errorCauses: unknown[] = [];
   const deps: RunnerDeps = {
     spotify,
     accessTokenFor: async (id) => token(id),
@@ -125,10 +128,13 @@ function makeRunner(
       warn(m) {
         warnings.push(m);
       },
-      error() {},
+      error(m, err) {
+        errors.push(m);
+        errorCauses.push(err);
+      },
     },
   };
-  return { runner: createPartyRunner(deps), notices, warnings, infos };
+  return { runner: createPartyRunner(deps), notices, warnings, infos, errors, errorCauses };
 }
 
 // What `accessTokenFor` answers, by `kind`. The texts are copied from tokens.ts, whose own tests pin
@@ -1091,6 +1097,74 @@ describe("the tick, when the host aborts it", () => {
     await runner.start("G1");
 
     expect(disposed).toBe(true);
+    expect(clock.pendingCount()).toBe(0);
+  });
+});
+
+describe("a boundary whose disk write fails", () => {
+  /** One macrotask: the rejection path has more awaits than `advanceTo`'s two microtask turns. */
+  const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  /** A storage whose parties writer rejects on every save, as a full or read-only disk does. */
+  function failingStorage(onSave: () => void = () => {}) {
+    return {
+      ...makeRealStorage(),
+      createJsonWriter: () => ({
+        save: async (): Promise<void> => {
+          onSave();
+          throw new Error("disk full");
+        },
+      }),
+    };
+  }
+
+  test("is logged, does not escape the timer, and re-arms the party", async () => {
+    resetPartiesForTest(openParty(freshParties(), party()), failingStorage(), "unused.json");
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    const { runner, errors, errorCauses } = makeRunner(client, clock);
+    const escaped: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      escaped.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      // A fresh runner re-arms a timerless party without writing anything.
+      await runner.sweep();
+      expect(clock.pendingCount()).toBe(1);
+
+      await clock.advanceTo(NOW + TRACK_MS);
+      await flush();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    expect(escaped).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("advancing to the next track failed");
+    expect(errors[0]).toContain("G1");
+    expect(String(errorCauses[0])).toContain("disk full");
+    // The in-memory state moved on before the write failed, and the next boundary has a timer.
+    expect(getParty(partiesState(), "G1")?.index).toBe(1);
+    expect(clock.pendingCount()).toBe(1);
+    runner.stopAll();
+  });
+
+  test("a plugin disposed while the write is failing is not re-armed", async () => {
+    let runner: PartyRunner;
+    // Dispose lands inside the failing write, before the catch runs.
+    resetPartiesForTest(openParty(freshParties(), party()), failingStorage(() => runner.stopAll()), "unused.json");
+    const { client } = fakeSpotify();
+    const clock = fakeClock();
+    const made = makeRunner(client, clock);
+    runner = made.runner;
+
+    await runner.sweep();
+    expect(clock.pendingCount()).toBe(1);
+    await clock.advanceTo(NOW + TRACK_MS);
+    await flush();
+
+    expect(made.errors).toHaveLength(1);
     expect(clock.pendingCount()).toBe(0);
   });
 });
