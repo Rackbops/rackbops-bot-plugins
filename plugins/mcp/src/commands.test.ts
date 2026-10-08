@@ -5,9 +5,10 @@ import type { RegistryStore } from "./registry.js";
 
 const USER = "111111111111111111";
 
-function fakeInteraction(subcommand: string, globalName: string | null = "Ash", username = "ash123") {
+function fakeInteraction(subcommand: string, globalName: string | null = "Ash", username = "ash123", commandName = "agent") {
   const replies: { content?: string; flags?: unknown }[] = [];
   const interaction = {
+    commandName,
     user: { id: USER, globalName, username },
     options: { getSubcommand: () => subcommand },
     reply: async (opts: { content?: string; flags?: unknown }) => {
@@ -62,6 +63,13 @@ describe("agentCommand: register", () => {
     expect(replies).toEqual([{ content: "Registered. Run `/agent pair` to generate a pairing code for your agent.", flags: MessageFlags.Ephemeral }]);
   });
 
+  test("names the invoked command, so a prefixed instance reads /pipagent pair", async () => {
+    const { store } = fakeStore({ register: async () => ({ changed: true, generation: "gen-1" }) });
+    const { interaction, replies } = fakeInteraction("register", "Ash", "ash123", "pipagent");
+    await agentCommand(store).handle(interaction);
+    expect(replies).toEqual([{ content: "Registered. Run `/pipagent pair` to generate a pairing code for your agent.", flags: MessageFlags.Ephemeral }]);
+  });
+
   test("falls back to username when globalName is null", async () => {
     const { store } = fakeStore({ register: async (_userId, displayName) => (expect(displayName).toBe("ash123"), { changed: true, generation: "gen-1" }) });
     const { interaction } = fakeInteraction("register", null, "ash123");
@@ -95,7 +103,14 @@ describe("agentCommand: pair", () => {
     const { store } = fakeStore({ pair: async () => ({ ok: false }) });
     const { interaction, replies } = fakeInteraction("pair");
     await agentCommand(store).handle(interaction);
-    expect(replies).toEqual([{ content: "Run `register` first.", flags: MessageFlags.Ephemeral }]);
+    expect(replies).toEqual([{ content: "Run `/agent register` first.", flags: MessageFlags.Ephemeral }]);
+  });
+
+  test("the not-registered refusal names the invoked command", async () => {
+    const { store } = fakeStore({ pair: async () => ({ ok: false }) });
+    const { interaction, replies } = fakeInteraction("pair", "Ash", "ash123", "ragent");
+    await agentCommand(store).handle(interaction);
+    expect(replies).toEqual([{ content: "Run `/ragent register` first.", flags: MessageFlags.Ephemeral }]);
   });
 });
 

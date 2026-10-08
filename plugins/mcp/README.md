@@ -10,6 +10,10 @@ retries. It also owns Discord-side agent identity ([Rackbops/Tooling#743](https:
 the `/agent` slash command, and `POST /pair/redeem` + `GET /registration/{user_id}` under the same
 `/mcp/` path.
 
+The host prefixes every plugin command with the instance's `COMMAND_PREFIX` (`/pipagent` on a bot
+with `COMMAND_PREFIX=pip`), so `/agent` below reads literally only on an unprefixed bot; the
+command's own replies name whichever form the user invoked.
+
 ## What it does
 
 - Accepts a delivery request, answers `202` immediately, and delivers to Discord in the background.
