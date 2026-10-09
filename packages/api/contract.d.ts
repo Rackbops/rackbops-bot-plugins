@@ -30,11 +30,20 @@ export const HOST_API_VERSION = 1;
 
 /**
  * One env key a plugin owns. `format` is a POSIX ERE in bash's `[[ =~ ]]` dialect (keep to the common
- * subset — it may be evaluated in a C locale, so enumerate characters, never multibyte ranges); it is
- * consumed by `ops/bot-ops.sh env-set` to validate a changed value, never by the bot itself (the
- * plugin parses its own config from `HostApi.env`). `required` mirrors bot-ops.sh's `REQUIRED` set
- * (env-set refuses to blank it). `secret` keys are never listed or edited by ops tooling, exactly like
- * the core secrets (`DISCORD_TOKEN`, `GITHUB_TOKEN`, …).
+ * subset); it is consumed by `ops/bot-ops.sh env-set` to validate a changed value, never by the bot
+ * itself (the plugin parses its own config from `HostApi.env`). The admin panel also pre-checks a
+ * change against it as a JS `RegExp`, which counts characters, but env-set is the authority. env-set
+ * always matches it in the C locale, whatever locale its caller runs in (#430), so the pattern sees
+ * bytes, not characters: `.` and a bracket expression each match ONE byte, and a `{n}`/`{m,n}` bound on
+ * either counts bytes. Enumerate characters, never multibyte ranges, and expect an enumerated non-ASCII
+ * character to admit each of its bytes on its own and a non-ASCII value's length limit to be judged in
+ * bytes: the wow plugin's `WOW_REALM` format, `^[a-z0-9àáâ…ÿ-]{1,40}$` (abridged), refuses a
+ * 40-character slug containing `é` (41 bytes), though the panel's pre-check passes it. `required`
+ * mirrors bot-ops.sh's `REQUIRED` set (env-set refuses to blank it). A `secret` key is write-only (#240,
+ * ADR-0006 decision 8): env-set accepts it, validated against `format` like any other key, but env-get
+ * never lists it, and env-schema reports its `format` and `required` flag, that it is secret, and
+ * whether it is set, never its value. The core secrets (`DISCORD_TOKEN`, `GITHUB_TOKEN`, …) differ:
+ * env-set refuses them.
  */
 export interface PluginEnvKey {
   key: string;
