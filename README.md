@@ -79,9 +79,16 @@ later, inside `activate()`.
   provenance statement, and the registry rejects the publish (E422) unless `repository.url` matches
   this repo. Copy it verbatim, changing only `directory` to `plugins/<name>`.
 - `env[].format` is a POSIX ERE evaluated by the bot's `ops/bot-ops.sh env-set` in bash's `[[ =~ ]]`,
-  possibly in a C locale -- **keep to the common subset: enumerate characters, never multibyte
-  ranges** (`[A-Za-z0-9]`, not `[[:alpha:]]` or unicode ranges). `required` mirrors env-set's REQUIRED
-  set; `secret` keys are never listed or edited by ops tooling.
+  always in the C locale since rackbops-discord-bot#430 (bot-ops schema 7), so it sees bytes, not
+  characters: `.` and a bracket expression each match one byte, and a `{n}`/`{m,n}` bound on either
+  counts bytes. The admin panel also pre-checks a change against it as a JS `RegExp`, which counts
+  characters, but env-set is the authority. **Keep to the common subset: enumerate characters, never
+  multibyte ranges** (`[A-Za-z0-9]`, not `[[:alpha:]]` or unicode ranges), and expect a non-ASCII
+  value's length limit to be judged in bytes: `wow`'s `WOW_REALM` format (`{1,40}`) refuses a
+  40-character slug containing `é` (41 bytes), though the panel's pre-check passes it. `required`
+  mirrors env-set's REQUIRED set. A `secret` key is write-only (rackbops-discord-bot#240): env-set
+  accepts it, validated against its `format`, but env-get never lists it, and env-schema reports its
+  `format` and `required` flag, that it is secret, and whether it is set, never its value.
 - `destinations` (optional, rackbops-discord-bot#219) names the places the plugin can post besides
   its usual one: `[{ "name": "news", "description": "Headlines" }]`, each `name` following the
   plugin-name rule and unique within the plugin. The operator maps each name to a channel per server
