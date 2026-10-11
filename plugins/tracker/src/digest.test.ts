@@ -301,13 +301,14 @@ describe("forget-me", () => {
 describe("the plugin's notify tick", () => {
   it("sends the digest after the runs due now, on a real data file", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "tracker-digest-"));
-    const clock = fakeClock("2026-10-05T10:00:00.000Z");
-    const delivery = makeFakeDelivery();
-    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: OWNER }, ...delivery }), { clock });
-    // A second connection to the plugin's file, closed with the plugin before the directory goes:
-    // Windows refuses to delete an open file (#232).
+    // The plugin and a second connection to its file, closed before the directory goes: Windows
+    // refuses to delete an open file (#232).
+    let plugin: ReturnType<typeof createPlugin> | null = null;
     let db: Database | null = null;
     try {
+      const clock = fakeClock("2026-10-05T10:00:00.000Z");
+      const delivery = makeFakeDelivery();
+      plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: OWNER }, ...delivery }), { clock });
       await plugin.activate!();
       db = openDatabase(join(dataDir, DB_DIR, DB_FILE));
       const store = new SqliteStore(db);
@@ -340,7 +341,7 @@ describe("the plugin's notify tick", () => {
       await plugin.ticks![0]!.run(new AbortController().signal);
       expect(delivery.calls.dm).toHaveLength(2);
     } finally {
-      await plugin.dispose!();
+      await plugin?.dispose?.();
       db?.close();
       removeDir(dataDir);
     }

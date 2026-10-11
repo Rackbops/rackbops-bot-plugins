@@ -31,12 +31,19 @@ function closeAfter<T extends ReturnType<typeof createPlugin> | Database>(x: T):
   return x;
 }
 
-// Closes what the tests opened, and only then removes their directories: Windows refuses to delete
-// a file still open (#232). A second dispose or close of one a test already closed does nothing.
-afterEach(async () => {
-  for (const x of opened.splice(0)) await (x instanceof Database ? x.close() : x.dispose?.());
-  for (const d of dirs.splice(0)) removeDir(d);
-});
+/**
+ * The `afterEach`: closes what the tests opened, and only then removes their directories, since
+ * Windows refuses to delete a file still open (#232). A second dispose or close of one a test
+ * already closed does nothing. `remove` is for the test of this order, at the end of the file.
+ */
+async function closeThenRemove(remove: (dir: string) => void = removeDir): Promise<void> {
+  const closing = opened.splice(0);
+  const removing = dirs.splice(0);
+  for (const x of closing) await (x instanceof Database ? x.close() : x.dispose?.());
+  for (const d of removing) remove(d);
+}
+
+afterEach(() => closeThenRemove());
 
 function clockAt(iso: string) {
   let now = new Date(iso);
@@ -318,5 +325,25 @@ describe("the plugin end to end on a real data file", () => {
 
   it("registers reminder, renewal and price (#81), research (#82) and the scout (#83), the execute-lane types, which run only with an Executor, and the want-list watcher, plain and judged (#83)", () => {
     expect(Object.keys(TRACKER_TYPES).sort()).toEqual(["price", "reminder", "renewal", "research", "scout", "wantjudge", "wantlist"]);
+  });
+});
+
+describe("this file's cleanup (#232)", () => {
+  it("closes every plugin and database a test opened before it removes the directory", async () => {
+    const dataDir = tempDir();
+    const path = join(dataDir, DB_DIR, DB_FILE);
+    const plugin = closeAfter(createPlugin(makeFakeHost({ name: "tracker", dataDir }), { clock: clockAt(START) }));
+    await plugin.activate!();
+    closeAfter(openDatabase(path));
+    expect(existsSync(`${path}-wal`)).toBe(true);
+    // SQLite deletes a database's write-ahead log when its last connection closes, so a log still
+    // there when the directory is removed is a plugin or a connection still open.
+    const walAtRemoval: boolean[] = [];
+    await closeThenRemove((dir) => {
+      walAtRemoval.push(existsSync(`${path}-wal`));
+      removeDir(dir);
+    });
+    expect(walAtRemoval).toEqual([false]);
+    expect(existsSync(dataDir)).toBe(false);
   });
 });

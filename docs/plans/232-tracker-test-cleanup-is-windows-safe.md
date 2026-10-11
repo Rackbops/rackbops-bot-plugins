@@ -137,3 +137,44 @@ Only a Windows run shows that.
    `bun test plugins/tracker`: this was the one directory removed with a file in it still open. So
    that a forgotten `await` cannot do this again, `cleanup()` also takes the plugins and directories
    made before the call, and leaves any made while it awaits for the next call.
+
+### Audit round 1
+
+The auditor found the change sound (no Major; 232 removals on Linux, none with a file or mapping
+still open) and four Minor gaps, closed here:
+
+6. **(m1) Close-before-remove is now pinned where a cheap seam fits.** `cleanup()` takes an optional
+   `remove` (default `removeDir`); the harness test hands it one that notes whether each world's
+   `-wal` is still there when its directory is removed (SQLite deletes it when the last connection
+   closes), so removing before disposing fails it as well as not disposing. `index.test.ts`'s
+   `afterEach` is now `closeThenRemove(remove = removeDir)`, with a test of the same shape ("this
+   file's cleanup (#232)"). `store.test.ts` and `digest.test.ts` close in a `finally` before
+   `removeDir`, with no seam, and none was added: a test of one `finally` would be a test of the
+   test. So the Coverage row "The harness closes what `world()` opened before removing it" holds
+   for the harness and `index.test.ts`; in `store.test.ts` and `digest.test.ts` the order rests on
+   the code as written and on the `/proc/self/fd` check, which is not run in CI.
+7. **(m2) The wait between tries and every busy code are tested.** `removeDir` takes `sleep`
+   (default `Bun.sleepSync`) beside `rm`. "retries a busy directory and then removes it" runs once
+   for each of `EBUSY`, `EPERM` and `ENOTEMPTY` and checks two waits of 100 ms (a literal, so a
+   changed `RETRY_MS` fails it); the give-up test checks five; the other-error test none. The
+   removeDir tests no longer sleep for real.
+8. **(m3) A failing execute-lane test no longer pays the 5 s or leaves its directory.** Each
+   `silentCityHall()` registers its hang-up in `hangUps`, and the file's `afterEach` calls them all
+   before `cleanup()`, however the test ended; the two tests' own end-of-test `hangUp()` and
+   `await Promise.all(started)` are gone (`dispose()` waits for the run, which now ends at once).
+9. **(m4)** `digest.test.ts` makes its plugin inside the `try`, so a `createPlugin` that throws
+   cannot leave the directory behind; `test-dirs.test.ts`'s `failing()` says what Node says for
+   each code (`EACCES: permission denied`, not "resource busy or locked").
+
+Mutations the auditor ran that survive, and are equivalent for the reasons given:
+
+- `removeDir` calling `rm` with `force: false`: every directory it is given exists.
+- `cleanup()` not awaiting `dispose()`: `index.ts` closes the database synchronously today when no
+  execute run is in flight, and the execute-lane tests now end theirs before `cleanup()`.
+- `cleanup()` emptying its lists after its awaits rather than before: that only matters to a call
+  that is not awaited, and none is left.
+- `scout.test.ts`'s mid-test `cleanup()` left unawaited: with the lists taken at the call, it removes
+  only the first world's directory, after disposing it synchronously -- 0 open, by design.
+- `index.test.ts` and `store.test.ts` skipping the plugin dispose in their cleanup on a passing run:
+  every such test disposes its own plugin before it ends, so the cleanup's dispose is a second one.
+- No `await` after `hangUp()`: `dispose()` waits for the run in flight itself.

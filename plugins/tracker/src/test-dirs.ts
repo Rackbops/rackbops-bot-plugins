@@ -20,8 +20,10 @@ export const RETRY_MS = 100;
 
 export type Rm = (dir: string, options: { recursive: boolean; force: boolean }) => void;
 
-export function removeDir(dir: string, opts: { rm?: Rm } = {}): void {
+/** `rm` and `sleep` are for its own tests (test-dirs.test.ts): Linux never answers a remove with EBUSY. */
+export function removeDir(dir: string, opts: { rm?: Rm; sleep?: (ms: number) => void } = {}): void {
   const rm = opts.rm ?? rmSync;
+  const sleep = opts.sleep ?? Bun.sleepSync;
   for (let attempt = 0; ; attempt++) {
     try {
       rm(dir, { recursive: true, force: true });
@@ -33,7 +35,7 @@ export function removeDir(dir: string, opts: { rm?: Rm } = {}): void {
         console.warn(`removeDir: left ${dir} behind (${code} after ${RETRIES + 1} tries): close what the test opened in it first`);
         return;
       }
-      Bun.sleepSync(RETRY_MS);
+      sleep(RETRY_MS);
     }
   }
 }

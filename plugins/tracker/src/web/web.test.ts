@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import pkg from "../../package.json" with { type: "json" };
 import { type Membership, NOT_ADMITTED } from "../access.js";
@@ -13,6 +13,7 @@ import { parseWebUrl, WEB_URL_FORMAT } from "./config.js";
 import { esc, html } from "./html.js";
 import { sha256 } from "./secrets.js";
 import { STYLESHEET_PATH } from "./theme.js";
+import { removeDir } from "../test-dirs.js";
 
 /**
  * The web area's first slice (rackbops-bot-plugins#80), through the plugin's own `http` handler and
@@ -27,7 +28,6 @@ import {
   cleanup,
   csrfOf,
   CURLY,
-  dirs,
   GUILD,
   GUILD_B,
   hidden,
@@ -617,25 +617,23 @@ describe("escaping", () => {
 });
 
 describe("the harness (#232)", () => {
-  it("cleanup disposes every plugin world() made", async () => {
+  it("cleanup disposes every plugin world() made, before it removes their directories", async () => {
     const made = [await world(), await world()];
     for (const w of made) {
       expect((await call(w.plugin, "GET", "/healthz")).status).toBe(200);
       expect(existsSync(`${w.dbPath}-wal`)).toBe(true);
     }
-    // Held back from the removal, to see what the disposing left: SQLite deletes a database's
-    // write-ahead log when its last connection closes, so a log still there is a database still open.
-    const held = dirs.splice(0);
-    try {
-      await cleanup();
-      for (const w of made) {
-        expect(await (await call(w.plugin, "GET", "/healthz")).json()).toMatchObject({ status: "inactive" });
-        expect(existsSync(`${w.dbPath}-wal`)).toBe(false);
-      }
-    } finally {
-      dirs.push(...held);
+    // SQLite deletes a database's write-ahead log when its last connection closes, so a log still
+    // there when its directory is removed is a database still open.
+    const walAtRemoval = new Map<string, boolean>();
+    await cleanup((dir) => {
+      walAtRemoval.set(dir, existsSync(join(dir, "tracker.sqlite-wal")));
+      removeDir(dir);
+    });
+    expect([...walAtRemoval]).toEqual(made.map((w) => [dirname(w.dbPath), false]));
+    for (const w of made) {
+      expect(await (await call(w.plugin, "GET", "/healthz")).json()).toMatchObject({ status: "inactive" });
+      expect(existsSync(dirname(w.dbPath))).toBe(false);
     }
-    await cleanup();
-    for (const w of made) expect(existsSync(dirname(w.dbPath))).toBe(false);
   });
 });

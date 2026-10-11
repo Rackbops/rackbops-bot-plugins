@@ -11,14 +11,21 @@ import { openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
 import { cleanup, CURLY, LARRY, people, slash, world } from "./web/harness.js";
 
-afterEach(cleanup);
+/** Each silent city-hall's `hangUp`, called by the `afterEach` before `cleanup`, however the test ended. */
+const hangUps: (() => void)[] = [];
+
+afterEach(async () => {
+  for (const hangUp of hangUps.splice(0)) hangUp();
+  await cleanup();
+});
 
 const AT = "2026-10-01T12:00:00.000Z";
 
 /**
- * A city-hall that never answers while the test runs. `hangUp`, at the test's end, fails every call
- * still out and every later one, so the execute run ends before `cleanup` disposes the plugin:
- * dispose waits up to 5 s for a run in flight, as long as bun gives an `afterEach` (#232).
+ * A city-hall that never answers while the test runs. Its `hangUp`, called after the test (pass or
+ * fail), fails every call still out and every later one, so the execute run ends as `cleanup`
+ * disposes the plugin: dispose waits up to 5 s for a run in flight, as long as bun gives an
+ * `afterEach` (#232).
  */
 function silentCityHall() {
   const out: ((err: Error) => void)[] = [];
@@ -28,11 +35,11 @@ function silentCityHall() {
     if (state.over) throw new Error("city-hall hung up");
     return new Promise<Response>((_, reject) => void out.push(reject));
   }) as unknown as typeof globalThis.fetch;
-  const hangUp = () => {
+  hangUps.push(() => {
     state.over = true;
     for (const fail of out.splice(0)) fail(new Error("city-hall hung up"));
-  };
-  return { fetch, state, hangUp };
+  });
+  return { fetch, state };
 }
 
 describe("the execute lane's tick (execute-lane.ts)", () => {
@@ -94,8 +101,6 @@ describe("the execute lane's tick (execute-lane.ts)", () => {
     expect(w.sent.some((s) => String((s.message as { content: string }).content).includes("water the plants"))).toBe(true);
     await new Promise((r) => setTimeout(r, 10));
     expect(cityHall.state.calls).toBe(1);
-    cityHall.hangUp();
-    await Promise.all(started);
   });
 });
 
@@ -151,8 +156,6 @@ describe("a slow city-hall never holds the queue (review of #110)", () => {
     expect(mine).toBe(TASK_BUSY);
     expect(theirs).toContain("water the plants");
     expect(Date.now() - begun).toBeLessThan(1000);
-    cityHall.hangUp();
-    await Promise.all(started);
   });
 });
 

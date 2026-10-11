@@ -34,13 +34,13 @@ const plugins: Plugin[] = [];
  * (#232), where Linux does not care, so it is this order that keeps the suite green on Windows. A
  * plugin its test already disposed is disposed again, which does nothing (index.ts nulls its handle
  * on the first). It takes only what was made before the call: a world made while it awaits is left
- * for the next one.
+ * for the next one. `remove` is for the harness's own test (web.test.ts), to see the order.
  */
-export async function cleanup(): Promise<void> {
+export async function cleanup(remove: (dir: string) => void = removeDir): Promise<void> {
   const disposing = plugins.splice(0);
   const removing = dirs.splice(0);
   for (const p of disposing) await p.dispose?.();
-  for (const d of removing) removeDir(d);
+  for (const d of removing) remove(d);
 }
 
 export function clockAt(iso: string) {
