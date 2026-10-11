@@ -91,6 +91,12 @@ describe("fitTaskList", () => {
     expect(short.length).toBeLessThanOrEqual(whole.length - 1);
     expect(short.split("\n")).toEqual([...active.slice(0, 2), "...and 1 more active.", HISTORY]);
 
+    // One active line shorter than its note and the closing line together: fitting the paused lines
+    // beside those two alone would drop one, yet the whole list, exactly at the limit, fits as it is.
+    const tiny = ["`t1` x -- nothing due", ...pausedLines(3)];
+    const tinyWhole = tiny.join("\n");
+    expect(fitTaskList(tiny.slice(0, 1), tiny.slice(1), false, tinyWhole.length)).toBe(tinyWhole);
+
     const huge = `Paused: \`t9\` bins out -- I could not DM ${Array.from({ length: 300 }, (_, i) => `person ${i}`).join(", ")}; \`/task resume t9\` goes on without them.`;
     expect(huge.length).toBeGreaterThan(MAX_ANSWER);
     expect(fitTaskList(active, [huge], false)).toBe([...active, "...and 1 more paused.", HISTORY].join("\n"));

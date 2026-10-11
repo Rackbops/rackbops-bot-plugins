@@ -114,6 +114,8 @@ near 2000 characters now shows its status line instead of cutting it off (#161, 
    line is never given up for an active note when every active line fits in its place.
 4. **One helper test beyond the plan's five,** "cuts at the limit exactly, and leaves a line longer
    than a whole message out whole": a list exactly at `max` is whole, one character under keeps whole
-   lines and counts the rest, and a paused line over 2000 characters (many held names) is counted,
-   not cut. These are reviewer A's arithmetic edges, pinned in the suite.
+   lines and counts the rest, a paused line over 2000 characters (many held names) is counted, not
+   cut, and a whole list exactly at `max` whose one active line is shorter than its note and the
+   closing line together stays whole (deviation 3; fitting the paused lines beside the note alone
+   survives every other test). These are reviewer A's arithmetic edges, pinned in the suite.
 5. **`pressButton` needed no change**: it already returns each edit's content.
