@@ -94,3 +94,27 @@ Recorded by the implementer; the plan above is left as handed down. The mutation
    new `describe`); the left-the-server test shares a task, as the plan says. `world` gains an
    `unknown` set (the plan's "a second set"): an id in it gets `"unknown"` from the lookup while the
    gate is on.
+
+### Audit round 1
+
+Verdict SOUND (no Major). Each finding and what was done about it:
+
+1. **The unknown-membership press pinned Done only**, so adding snooze (C3) or decision (C8) to
+   `reducesContact` (press.ts) survived. The test now also presses Snooze and a renewal ask's
+   "renewed" (t2: a `/renewal` inside its lead asks on the next tick) while Larry is `unknown`: each
+   answers `MEMBERSHIP_UNKNOWN` and changes neither task's history; once Larry is checked, "renewed"
+   is recorded and shows as `Larry chose renewed`. The file's `slash` gains a `numbers` option
+   (`getNumber`) for `/renewal`'s amount.
+2. **The submit's own reply check was unpinned**: `submitReplyLocked` skipping `replyRefusal` (C7)
+   survived. New test "a recipient who opted out after opening the Reply modal is refused at its
+   submit, and nothing is stored": Curly opens the modal, opts out, submits -> "That is not yours to
+   reply to." and no reply in the history; the owner's submit to the same run is then stored. It
+   shares a task, so deviation 5's "the tests other than the left-the-server one" no longer holds:
+   both sharing tests use a `sharedAndFired` helper.
+3. **`need: "admitted"` in place of `"registered"` on the modal (R5) or the press (P6) path**
+   survived. The unregistered test now also asserts the modal submit answers `NOT_REGISTERED` and a
+   gated press (Done) gets `followUps: [NOT_REGISTERED]`; its name says so.
+4. **Declined: pinning the refusal texts' literal values in `access.test.ts`.** The auditor's
+   reason: out of scope for #162.
+5. **Declined: the registration-before-membership order mutant** (`decideAccess` checking
+   registration ahead of membership). The auditor's reason: it cannot happen on these paths.

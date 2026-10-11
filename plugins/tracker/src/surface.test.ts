@@ -75,7 +75,7 @@ function world(opts: { members?: Set<string>; unknown?: Set<string>; unreachable
   return { plugin, clock, sent, unreachable, warnings };
 }
 
-type Options = { sub?: string; strings?: Record<string, string>; ints?: Record<string, number>; users?: Record<string, string>; client?: unknown; guildId?: string };
+type Options = { sub?: string; strings?: Record<string, string>; ints?: Record<string, number>; numbers?: Record<string, number>; users?: Record<string, string>; client?: unknown; guildId?: string };
 
 /** Runs a slash command as `userId` and returns the ephemeral answer's text. */
 async function slash(plugin: Plugin, name: string, userId: string, o: Options = {}): Promise<string> {
@@ -92,6 +92,7 @@ async function slash(plugin: Plugin, name: string, userId: string, o: Options = 
       getSubcommand: () => o.sub ?? "",
       getString: (k: string) => o.strings?.[k] ?? null,
       getInteger: (k: string) => o.ints?.[k] ?? null,
+      getNumber: (k: string) => o.numbers?.[k] ?? null,
       getUser: (k: string) => (o.users?.[k] ? { id: o.users[k], bot: false } : null),
     },
     deferReply: async (x: unknown) => void (deferred = x),
@@ -634,12 +635,8 @@ describe("the Reply path's gates (#162)", () => {
     expect(buttonIds(w.sent.at(-1))).toEqual(["tracker:d.o.o1", "tracker:s.o.o1", "tracker:r.o.o1"]);
   }
 
-  /** t1's history as the admin -- every run, every reply -- read from the store by `/task history`. */
-  const historyOf = (w: ReturnType<typeof world>) => slash(w.plugin, "task", ADMIN, { sub: "history", strings: { task: "t1" } });
-
-  it("a recipient who left the server is refused at the Reply modal, and nothing is stored", async () => {
-    const members = new Set([ADMIN, LARRY, CURLY]);
-    const w = world({ members });
+  /** Larry's weekly "bins out" shared with Curly, who accepts; run o1 fired, with opt-out and Reply on Curly's DM. */
+  async function sharedAndFired(w: ReturnType<typeof world>) {
     await withLarry(w);
     await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
     await slash(w.plugin, "register", CURLY);
@@ -649,6 +646,15 @@ describe("the Reply path's gates (#162)", () => {
     w.clock.set("2026-10-01T13:00:00.000Z");
     await tick(w.plugin);
     expect(buttonIds(w.sent.at(-1))).toEqual(["tracker:q.o.o1", "tracker:r.o.o1"]);
+  }
+
+  /** A task's history as the admin -- every run, every reply -- read from the store by `/task history`. */
+  const historyOf = (w: ReturnType<typeof world>, task = "t1") => slash(w.plugin, "task", ADMIN, { sub: "history", strings: { task } });
+
+  it("a recipient who left the server is refused at the Reply modal, and nothing is stored", async () => {
+    const members = new Set([ADMIN, LARRY, CURLY]);
+    const w = world({ members });
+    await sharedAndFired(w);
     // The button checks no membership (its answer has to be the modal): it opens, then Curly leaves.
     expect((await pressButton(w.plugin, "tracker:r.o.o1", CURLY)).modals).toHaveLength(1);
     members.delete(CURLY);
@@ -662,32 +668,59 @@ describe("the Reply path's gates (#162)", () => {
     expect(history).not.toContain("done it already");
   });
 
+  it("a recipient who opted out after opening the Reply modal is refused at its submit, and nothing is stored", async () => {
+    const w = world();
+    await sharedAndFired(w);
+    expect((await pressButton(w.plugin, "tracker:r.o.o1", CURLY)).modals).toHaveLength(1);
+    expect((await pressButton(w.plugin, "tracker:q.o.o1", CURLY, "bins out")).edits[0]?.content).toContain("-- You will not get this task's messages any more.");
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", CURLY, "done it already")).toBe("That is not yours to reply to.");
+    expect(await historyOf(w)).not.toContain("replied");
+    // The owner's submit to the same run is stored and shows: the history above would have shown Curly's.
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", LARRY, "bins are out")).toBe("Reply kept with the task's history.");
+    const history = await historyOf(w);
+    expect(history).toContain('Larry replied "bins are out"');
+    expect(history).not.toContain("done it already");
+  });
+
   it("the Reply button refuses someone it does not know, and shows no modal", async () => {
     const w = world();
     await firedReminder(w);
     expect(await pressButton(w.plugin, "tracker:r.o.o1", STRANGER)).toEqual({ edits: [], followUps: [], replies: [NOT_ADMITTED], modals: [] });
   });
 
-  it("the Reply button refuses someone admitted but not registered, and shows no modal", async () => {
+  it("the Reply button refuses someone admitted but not registered, and shows no modal; its modal and a button refuse them too", async () => {
     const w = world();
     await firedReminder(w);
     expect(await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } })).toContain("Allowed");
     expect(await pressButton(w.plugin, "tracker:r.o.o1", CURLY)).toEqual({ edits: [], followUps: [], replies: [NOT_REGISTERED], modals: [] });
+    // A modal kept open from before, or a press, meets the same gate at the submit and the press.
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", CURLY, "x")).toBe(NOT_REGISTERED);
+    expect(await pressButton(w.plugin, "tracker:d.o.o1", CURLY)).toEqual({ edits: [], followUps: [NOT_REGISTERED], replies: [], modals: [] });
   });
 
   it("a button pressed while membership cannot be checked is refused, and changes nothing", async () => {
     const unknown = new Set<string>();
     const w = world({ members: new Set([ADMIN, LARRY]), unknown });
     await firedReminder(w);
-    const before = await historyOf(w);
+    // A renewal inside its lead asks at once (t2), with keep, cancel and renewed: docket's decision buttons.
+    await slash(w.plugin, "renewal", LARRY, { strings: { name: "Netflix", currency: "usd", renews: "2026-10-03" }, numbers: { amount: 15.99 } });
+    await tick(w.plugin);
+    const renewed = w.sent.at(-1)?.message.buttons?.find((b) => b.label === "renewed")?.customId as string;
+    expect(renewed).toStartWith("tracker:");
+    const before = [await historyOf(w), await historyOf(w, "t2")];
     unknown.add(LARRY);
-    expect(await pressButton(w.plugin, "tracker:d.o.o1", LARRY, "water the plants")).toEqual({ edits: [], followUps: [MEMBERSHIP_UNKNOWN], replies: [], modals: [] });
-    expect(await historyOf(w)).toBe(before);
-    expect(before).not.toContain("Larry done");
-    // Once Larry can be checked, the same press is the run's first answer.
+    for (const id of ["tracker:d.o.o1", "tracker:s.o.o1", renewed]) {
+      expect(await pressButton(w.plugin, id, LARRY)).toEqual({ edits: [], followUps: [MEMBERSHIP_UNKNOWN], replies: [], modals: [] });
+    }
+    expect([await historyOf(w), await historyOf(w, "t2")]).toEqual(before);
+    expect(before[0]).not.toContain("Larry done");
+    expect(before[1]).not.toContain("Larry chose");
+    // Once Larry can be checked, the same presses are the runs' first answers.
     unknown.delete(LARRY);
     expect((await pressButton(w.plugin, "tracker:d.o.o1", LARRY, "water the plants")).edits[0]?.content).toBe("water the plants\n\n-- Marked done.");
     expect(await historyOf(w)).toContain("- Thu Oct 1, 9:00 -- done; Larry done");
+    expect((await pressButton(w.plugin, renewed, LARRY, "Netflix")).edits[0]?.content).toBe("Netflix\n\n-- Recorded: renewed.");
+    expect(await historyOf(w, "t2")).toContain("Larry chose renewed");
   });
 
   it("a modal submitted while membership cannot be checked is refused, and nothing is stored", async () => {
