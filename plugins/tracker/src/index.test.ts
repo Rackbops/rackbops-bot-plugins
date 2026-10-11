@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { materialize } from "@rackbops/docket-core";
@@ -11,10 +11,13 @@ import { createPlugin, DB_DIR, DB_FILE, TRACKER_TYPES } from "./index.js";
 import { admit } from "./people.js";
 import { MIGRATIONS, openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
+import { removeDir } from "./test-dirs.js";
 
 const ADMIN = "111111111111111111";
 const START = "2026-10-01T12:00:00.000Z";
 const dirs: string[] = [];
+/** The plugins and databases the tests made on a file in `dirs`. */
+const opened: (ReturnType<typeof createPlugin> | Database)[] = [];
 
 function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "tracker-"));
@@ -22,8 +25,17 @@ function tempDir(): string {
   return dir;
 }
 
-afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+/** `x`, disposed (a plugin) or closed (a database) after the test, however it ended. */
+function closeAfter<T extends ReturnType<typeof createPlugin> | Database>(x: T): T {
+  opened.push(x);
+  return x;
+}
+
+// Closes what the tests opened, and only then removes their directories: Windows refuses to delete
+// a file still open (#232). A second dispose or close of one a test already closed does nothing.
+afterEach(async () => {
+  for (const x of opened.splice(0)) await (x instanceof Database ? x.close() : x.dispose?.());
+  for (const d of dirs.splice(0)) removeDir(d);
 });
 
 function clockAt(iso: string) {
@@ -89,7 +101,7 @@ describe("the plugin end to end on a real data file", () => {
     const dataDir = tempDir();
     const clock = clockAt(START);
     const delivery = makeFakeDelivery();
-    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN }, ...delivery }), { clock });
+    const plugin = closeAfter(createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN }, ...delivery }), { clock }));
 
     expect((await healthz(plugin)).status).toBe(503);
     await plugin.activate!();
@@ -97,7 +109,7 @@ describe("the plugin end to end on a real data file", () => {
     expect((await healthz(plugin)).status).toBe(200);
 
     // A second connection to the same file stands in for the commands #79 will add.
-    const store = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
+    const store = new SqliteStore(closeAfter(openDatabase(join(dataDir, DB_DIR, DB_FILE))));
     const owner = await admit(store, ADMIN, clock.now());
     expect(owner.admin).toBe(true);
     const task = await store.createTask({
@@ -131,7 +143,7 @@ describe("the plugin end to end on a real data file", () => {
   });
 
   it("on a host without dm: the lane stays off and /healthz says why", async () => {
-    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir: tempDir() }), { clock: clockAt(START) });
+    const plugin = closeAfter(createPlugin(makeFakeHost({ name: "tracker", dataDir: tempDir() }), { clock: clockAt(START) }));
     await plugin.activate!();
     await plugin.ticks![0]!.run();
     const res = await healthz(plugin);
@@ -144,7 +156,7 @@ describe("the plugin end to end on a real data file", () => {
     const dataDir = tempDir();
     const clock = clockAt("2026-10-01T12:01:00.000Z");
     mkdirSync(join(dataDir, DB_DIR));
-    const db = openDatabase(join(dataDir, DB_DIR, DB_FILE));
+    const db = closeAfter(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
     const store = new SqliteStore(db);
     const owner = await admit(store, ADMIN, clock.now());
     const task = await store.createTask({
@@ -168,16 +180,18 @@ describe("the plugin end to end on a real data file", () => {
 
     const delivery = makeFakeDelivery();
     const warnings: string[] = [];
-    const plugin = createPlugin(
-      makeFakeHost({ name: "tracker", dataDir, log: { info() {}, warn: (m) => void warnings.push(m), error() {} }, ...delivery }),
-      { clock },
+    const plugin = closeAfter(
+      createPlugin(
+        makeFakeHost({ name: "tracker", dataDir, log: { info() {}, warn: (m) => void warnings.push(m), error() {} }, ...delivery }),
+        { clock },
+      ),
     );
     await plugin.activate!();
     expect(warnings.some((w) => w.includes("requeued 1 occurrence"))).toBe(true);
     expect(warnings.some((w) => w.includes(`delivery of ${id} to ${owner.id} claimed ${START} is unconfirmed`) && w.includes("will not be resent"))).toBe(true);
     await plugin.ticks![0]!.run();
     expect(delivery.calls.dm).toHaveLength(0);
-    const reopened = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
+    const reopened = new SqliteStore(closeAfter(openDatabase(join(dataDir, DB_DIR, DB_FILE))));
     const after = await reopened.getOccurrence(id);
     expect(after?.status).toBe("done");
     expect(after?.record).toEqual(record);
@@ -190,7 +204,7 @@ describe("the plugin end to end on a real data file", () => {
     mkdirSync(join(dataDir, DB_DIR));
     // A schema 4 file as 0.8.0 left it: one claim never settled, one unconfirmed it never reported,
     // one unconfirmed it did report.
-    const old = new Database(join(dataDir, DB_DIR, DB_FILE));
+    const old = closeAfter(new Database(join(dataDir, DB_DIR, DB_FILE)));
     for (let v = 0; v < 4; v++) {
       old.exec(MIGRATIONS[v] as string);
       old.exec(`PRAGMA user_version = ${v + 1}`);
@@ -205,7 +219,7 @@ describe("the plugin end to end on a real data file", () => {
     const delivery = makeFakeDelivery();
     const warnings: string[] = [];
     const host = { name: "tracker", dataDir, log: { info() {}, warn: (m: string) => void warnings.push(m), error() {} }, ...delivery };
-    const plugin = createPlugin(makeFakeHost(host), { clock: clockAt(START) });
+    const plugin = closeAfter(createPlugin(makeFakeHost(host), { clock: clockAt(START) }));
     await plugin.activate!();
     const claims = warnings.filter((w) => w.startsWith("delivery of "));
     expect(claims).toEqual([
@@ -215,7 +229,7 @@ describe("the plugin end to end on a real data file", () => {
     await plugin.ticks![0]!.run();
     expect(delivery.calls.dm).toHaveLength(0);
     await plugin.dispose!();
-    const reopened = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
+    const reopened = new SqliteStore(closeAfter(openDatabase(join(dataDir, DB_DIR, DB_FILE))));
     expect((await reopened.listDeliveries()).map((d) => [d.occurrenceId, d.status, d.retryAt])).toEqual([
       ["o1", "unconfirmed", null],
       ["o2", "unconfirmed", null],
@@ -224,7 +238,7 @@ describe("the plugin end to end on a real data file", () => {
 
     // A second start logs none of them again.
     warnings.length = 0;
-    const again = createPlugin(makeFakeHost(host), { clock: clockAt(START) });
+    const again = closeAfter(createPlugin(makeFakeHost(host), { clock: clockAt(START) }));
     await again.activate!();
     expect(warnings.filter((w) => w.startsWith("delivery of "))).toEqual([]);
     await again.dispose!();
@@ -234,7 +248,7 @@ describe("the plugin end to end on a real data file", () => {
     const dataDir = tempDir();
     const clock = clockAt("2026-10-01T12:01:00.000Z");
     mkdirSync(join(dataDir, DB_DIR));
-    const db = openDatabase(join(dataDir, DB_DIR, DB_FILE));
+    const db = closeAfter(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
     const store = new SqliteStore(db);
     const owner = await admit(store, ADMIN, clock.now());
     const task = await store.createTask({
@@ -252,9 +266,9 @@ describe("the plugin end to end on a real data file", () => {
     db.close();
 
     const delivery = makeFakeDelivery();
-    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, ...delivery }), { clock });
+    const plugin = closeAfter(createPlugin(makeFakeHost({ name: "tracker", dataDir, ...delivery }), { clock }));
     await plugin.activate!();
-    const reopened = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
+    const reopened = new SqliteStore(closeAfter(openDatabase(join(dataDir, DB_DIR, DB_FILE))));
     expect((await reopened.getOccurrence(occurrence?.id ?? ""))?.startedAt).toBeNull();
     await plugin.ticks![0]!.run();
     await plugin.ticks![0]!.run();
@@ -266,7 +280,7 @@ describe("the plugin end to end on a real data file", () => {
   it("a tick after dispose, or one the host abandoned across it, touches nothing", async () => {
     const dataDir = tempDir();
     const delivery = makeFakeDelivery();
-    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, ...delivery }), { clock: clockAt(START) });
+    const plugin = closeAfter(createPlugin(makeFakeHost({ name: "tracker", dataDir, ...delivery }), { clock: clockAt(START) }));
     await plugin.activate!();
     await plugin.dispose!();
     await plugin.ticks![0]!.run(new AbortController().signal);
@@ -277,10 +291,10 @@ describe("the plugin end to end on a real data file", () => {
     const dataDir = tempDir();
     mkdirSync(join(dataDir, DB_DIR));
     // A database from a newer plugin: activate() must refuse it and leave nothing open.
-    const db = openDatabase(join(dataDir, DB_DIR, DB_FILE));
+    const db = closeAfter(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
     db.exec("PRAGMA user_version = 99");
     db.close();
-    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir }), { clock: clockAt(START) });
+    const plugin = closeAfter(createPlugin(makeFakeHost({ name: "tracker", dataDir }), { clock: clockAt(START) }));
     await expect(plugin.activate!()).rejects.toThrow("newer than this plugin knows");
     expect((await healthz(plugin)).status).toBe(503);
     await plugin.ticks![0]!.run();
@@ -289,7 +303,7 @@ describe("the plugin end to end on a real data file", () => {
   it("health goes 503 on dispose and back to 200 on a second activate, with the data kept", async () => {
     const dataDir = tempDir();
     const clock = clockAt(START);
-    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN }, ...makeFakeDelivery() }), { clock });
+    const plugin = closeAfter(createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN }, ...makeFakeDelivery() }), { clock }));
     await plugin.activate!();
     await plugin.ticks![0]!.run();
     expect((await healthz(plugin)).status).toBe(200);
@@ -298,7 +312,7 @@ describe("the plugin end to end on a real data file", () => {
     await plugin.activate!();
     expect((await healthz(plugin)).status).toBe(200);
     await plugin.dispose!();
-    const store = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
+    const store = new SqliteStore(closeAfter(openDatabase(join(dataDir, DB_DIR, DB_FILE))));
     expect((await store.findUserByDiscordId(ADMIN))?.admin).toBe(true);
   });
 

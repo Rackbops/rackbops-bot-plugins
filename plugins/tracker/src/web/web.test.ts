@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
+import { dirname } from "node:path";
 import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import pkg from "../../package.json" with { type: "json" };
 import { type Membership, NOT_ADMITTED } from "../access.js";
@@ -25,6 +27,7 @@ import {
   cleanup,
   csrfOf,
   CURLY,
+  dirs,
   GUILD,
   GUILD_B,
   hidden,
@@ -610,5 +613,26 @@ describe("escaping", () => {
     expect(esc(`<a href="x" onclick='y'>&</a>`)).toBe("&lt;a href=&quot;x&quot; onclick=&#39;y&#39;&gt;&amp;&lt;/a&gt;");
     const inner = html`<b>${"<i>"}</b>`;
     expect(html`<p>${inner}${["<", 1]}${null}${false}</p>`.value).toBe("<p><b>&lt;i&gt;</b>&lt;1</p>");
+  });
+});
+
+describe("the harness (#232)", () => {
+  it("cleanup disposes every plugin world() made", async () => {
+    const made = [await world(), await world()];
+    for (const w of made) {
+      expect((await call(w.plugin, "GET", "/healthz")).status).toBe(200);
+      expect(existsSync(`${w.dbPath}-wal`)).toBe(true);
+    }
+    // Held back from the removal, to see what the disposing left: SQLite deletes a database's
+    // write-ahead log when its last connection closes, so a log still there is a database still open.
+    const held = dirs.splice(0);
+    await cleanup();
+    for (const w of made) {
+      expect(await (await call(w.plugin, "GET", "/healthz")).json()).toMatchObject({ status: "inactive" });
+      expect(existsSync(`${w.dbPath}-wal`)).toBe(false);
+    }
+    dirs.push(...held);
+    await cleanup();
+    for (const w of made) expect(existsSync(dirname(w.dbPath))).toBe(false);
   });
 });

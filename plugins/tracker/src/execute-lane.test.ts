@@ -15,6 +15,26 @@ afterEach(cleanup);
 
 const AT = "2026-10-01T12:00:00.000Z";
 
+/**
+ * A city-hall that never answers while the test runs. `hangUp`, at the test's end, fails every call
+ * still out and every later one, so the execute run ends before `cleanup` disposes the plugin:
+ * dispose waits up to 5 s for a run in flight, as long as bun gives an `afterEach` (#232).
+ */
+function silentCityHall() {
+  const out: ((err: Error) => void)[] = [];
+  const state = { calls: 0, over: false };
+  const fetch = (async () => {
+    state.calls++;
+    if (state.over) throw new Error("city-hall hung up");
+    return new Promise<Response>((_, reject) => void out.push(reject));
+  }) as unknown as typeof globalThis.fetch;
+  const hangUp = () => {
+    state.over = true;
+    for (const fail of out.splice(0)) fail(new Error("city-hall hung up"));
+  };
+  return { fetch, state, hangUp };
+}
+
 describe("the execute lane's tick (execute-lane.ts)", () => {
   it("withLocks takes every task's lock, in id order, and an edit of one of them waits for the whole tick", async () => {
     const locks = new TaskLocks();
@@ -50,15 +70,11 @@ describe("the execute lane's tick (execute-lane.ts)", () => {
   });
 
   it("never holds up the notify lane: a city-hall that never answers leaves the host's tick returning at once, and reminders go out", async () => {
-    let calls = 0;
-    const hanging = (async () => {
-      calls++;
-      return new Promise<Response>(() => {});
-    }) as unknown as typeof fetch;
+    const cityHall = silentCityHall();
     const started: Promise<void>[] = [];
     const w = await world({
       env: { TRACKER_CITY_HALL_URL: "https://city-hall.example.com", TRACKER_CITY_HALL_KEY: "k", TRACKER_CITY_HALL_CAPABILITY: "claude-cli:subscription" },
-      cityHallFetch: hanging,
+      cityHallFetch: cityHall.fetch,
       executeStarted: (p) => void started.push(p),
     });
     await people(w.plugin);
@@ -77,7 +93,9 @@ describe("the execute lane's tick (execute-lane.ts)", () => {
     await w.plugin.ticks?.find((t) => t.name === "notify")?.run(new AbortController().signal);
     expect(w.sent.some((s) => String((s.message as { content: string }).content).includes("water the plants"))).toBe(true);
     await new Promise((r) => setTimeout(r, 10));
-    expect(calls).toBe(1);
+    expect(cityHall.state.calls).toBe(1);
+    cityHall.hangUp();
+    await Promise.all(started);
   });
 });
 
@@ -113,11 +131,11 @@ describe("the execute lane keeps one docket Lanes (review of #110)", () => {
 
 describe("a slow city-hall never holds the queue (review of #110)", () => {
   it("a queue turn about a task the execute tick holds answers busy at once; another person's command is not delayed", async () => {
-    const hanging = (async () => new Promise<Response>(() => {})) as unknown as typeof fetch;
+    const cityHall = silentCityHall();
     const started: Promise<void>[] = [];
     const w = await world({
       env: { TRACKER_CITY_HALL_URL: "https://city-hall.example.com", TRACKER_CITY_HALL_KEY: "k", TRACKER_CITY_HALL_CAPABILITY: "claude-cli:subscription" },
-      cityHallFetch: hanging,
+      cityHallFetch: cityHall.fetch,
       executeStarted: (p) => void started.push(p),
     });
     await people(w.plugin);
@@ -133,6 +151,8 @@ describe("a slow city-hall never holds the queue (review of #110)", () => {
     expect(mine).toBe(TASK_BUSY);
     expect(theirs).toContain("water the plants");
     expect(Date.now() - begun).toBeLessThan(1000);
+    cityHall.hangUp();
+    await Promise.all(started);
   });
 });
 
