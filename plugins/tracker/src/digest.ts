@@ -31,8 +31,8 @@ import { MAX_CONTENT, wrapBareUrls } from "./notifier.js";
  * A renewal's run is its ask, `lead` days before the date, so an overdue renewal's line says "asked",
  * not "due". docket keeps one scheduled run queued at a time, so a reminder that comes twice a day
  * shows its next run only; a run that never fired (the lane was off) is in neither list until it
- * fires. A digest too long for one message shows fewer lines in each section, the same number in
- * both, and counts the rest.
+ * fires. A digest too long for one message caps both sections at the same, smaller number of lines
+ * (the most that fit) and counts the rest.
  *
  * Late but same-day: the digest goes at the first `notify` tick at or after the hour, so one the bot
  * was down for goes out when it is back, until the person's midnight; a day missed entirely is not
@@ -143,9 +143,9 @@ export function formatDigest(digest: Digest, user: User, now: Date): string | nu
       ...section("**Due today**", digest.today, today, shown),
       "`/task done` marks a reminder done, `/task decide` answers a renewal, `/task snooze` puts either off; `/tasks` lists everything.",
     ].join("\n");
-  // Built to fit one message as the host measures it (after wrapping bare links): the most lines that
-  // fit, the same number in both sections, so a long Overdue cannot push Due today out. The
-  // notifier's cut (notifier.ts `toHostMessage`) stays as the backstop.
+  // Built to fit one message as the host measures it (after wrapping bare links): one cap for both
+  // sections, the most lines that fit, so a long Overdue cannot push Due today out. The notifier's
+  // cut (notifier.ts `toHostMessage`) stays as the backstop.
   let shown = MAX_LINES;
   let text = render(shown);
   while (shown > 0 && wrapBareUrls(text).length > MAX_CONTENT) text = render(--shown);

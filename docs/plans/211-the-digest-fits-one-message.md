@@ -14,8 +14,8 @@ Written 2026-10-11 against `main` at `2949dbe`; re-find each cite by function na
 count, not a length. A line runs to about 170 characters: an id, a title cut to 80, and for an
 overdue renewal "asked <date>, waiting on your keep, cancel or renewed". Ten overdue renewals and
 several due today pass Discord's 2000. `toHostMessage` (`notifier.ts`) then cuts the tail and adds
-"...": the Overdue section survives, and Due today, the footer and both "- and N more" lines are cut,
-part way through a line. The day is already claimed, so nothing is resent. The one test of the cap
+"...": the Overdue section and its count survive; Due today is cut part way through a line, losing
+the rest of its lines, its "- and N more" and the footer. The day is already claimed, so nothing is resent. The one test of the cap
 (`digest.test.ts` "formatDigest" > "is null with nothing to list, ...") uses short titles.
 
 ### Decisions
@@ -96,9 +96,9 @@ part way through a line. The day is already claimed, so nothing is resent. The o
 
 ## CHANGELOG bullet (for the PR body)
 
-A daily digest too long for one Discord message is no longer cut part way through, which lost the
-Due today section and its counts. Each section now shows fewer lines, the same number in both, and
-counts the rest (#211).
+A daily digest too long for one Discord message is no longer cut part way through Due today, which
+lost the rest of its lines, its count and the footer. Both sections now show at most the same number
+of lines, as many as fit, and count the rest (#211).
 
 ## Deviations as implemented
 
@@ -156,3 +156,41 @@ own fixtures.
    title with a bare link ..." (whose one-more rendering needs 8). Why: a 12 + 12 fixture with
    100-character titles cannot reach 8 lines a section (2217 characters), so no change to that test
    within the plan's fixture would catch it.
+
+### Review gate round 1
+
+Both reviewers SOUND on `cca37a4`, Minors only; all five applied.
+
+8. **What main loses was overstated (B Minor 1).** Finding: on `main` the 12 + 12 digest keeps the
+   whole Overdue section and its "- and 2 more", then "**Due today**" and its first 4 lines, and is
+   cut at 2000 part way through the 5th; it loses the rest of Due today's lines, its count and the
+   footer (checked by running the notify-tick test against `main`'s `digest.ts`). The plan said both
+   "- and N more" lines were cut. Fix: "What is wrong" and the CHANGELOG bullet above now say what
+   is lost. The body of commit `cca37a4` repeats the overstatement ("Due today, both counts and the
+   footer were lost"); it stays in history, and this entry corrects it.
+9. **"Fewer lines in each section, the same number in both" (B Minor 2).** Finding: false when one
+   section is shorter than the cap: it keeps all its lines. Fix: `digest.ts`'s header now reads "A
+   digest too long for one message caps both sections at the same, smaller number of lines (the
+   most that fit) and counts the rest."; the comment above the loop says "one cap for both
+   sections"; the README's Daily digest row says the same as the header. Step 1's quoted sentence
+   above is left as handed down.
+10. **The fit's boundary was not pinned (A + B Minor 3).** Finding: `>` to `>=` survived; no fixture
+    landed on exactly 2000. Fix: "a title with a bare link ..." builds its fixture twice (this
+    replaces deviation 1's 37-character first title). With the first title at 29 characters the
+    wrapped text with eight lines a section is exactly 2000 (1984 plain), and eight are shown; at 30
+    it would be 2001 (1985 plain), and seven are shown (1759 plain, 1773 wrapped). The unlinked
+    twin's check now runs on the 30 fixture and expects exactly 2001 once wrapped. Red under `>=`,
+    under `> MAX_CONTENT + 1`, and still under `text.length`.
+11. **An empty section leaves the other the full cap (B Minor 4).** Finding: no test showed it.
+    Fix: "a section that can show no line counts them all" is renamed "..., and an empty section
+    leaves the other the full cap", and also renders the twelve overdue renewals with nothing due
+    today, pinning the whole text: the header, "**Overdue**", all ten lines, "- and 2 more" and the
+    footer (1715 characters). The suggested "- 12 in all" holds only for the stand-in ids, which fit
+    no line at any cap and so cannot show it; the fixture's own items do. Red under a mutant where an
+    empty Due today still takes room from the cap (`+ (digest.today.length === 0 ? shown * 100 : 0)`
+    in the fit check, which shows seven), and also under "start the loop at `MAX_LINES - 3`" and
+    "`- 1`".
+12. **A section with exactly `k` items prints no count (B Minor 5).** Fix: new test "a section with
+    no more items than the cap shows them all, with no count": seven overdue and twelve due today
+    give `k` = 7 (1952 characters; eight would be 2050). Overdue shows its seven with no count line,
+    and the only "- and" line is Due today's "- and 5 more". Red under `items.length >= shown`.

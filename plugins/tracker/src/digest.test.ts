@@ -343,23 +343,31 @@ describe("formatDigest", () => {
 
   it("a title with a bare link counts the host's wrapping", async () => {
     // Every reminder's title is a bare link, two characters longer once the host wraps it. The first
-    // one's length puts the text with eight lines a section 8 under MAX_CONTENT plain, 8 over wrapped.
-    const { s, digest } = await longDigest((i) => `https://shop.example/${i}/`.padEnd(i === 0 ? 37 : 54, "m"));
+    // one's length sets the wrapped text with eight lines a section: 2000 characters at 29, 2001 at 30.
+    const linked = (first: number) => longDigest((i) => `https://shop.example/${i}/`.padEnd(i === 0 ? first : 54, "m"));
+    // Exactly MAX_CONTENT once wrapped fits: eight lines a section.
+    const exact = await linked(29);
+    const fits = formatDigest(exact.digest, exact.s.owner, new Date(AT_HOUR)) ?? "";
+    expect(wrapBareUrls(fits).length).toBe(MAX_CONTENT);
+    expect(shownLines(fits).overdue).toHaveLength(8);
+    expect(shownLines(fits).today).toHaveLength(8);
+    // One character more does not: seven lines a section.
+    const { s, digest } = await linked(30);
     const text = formatDigest(digest, s.owner, new Date(AT_HOUR)) ?? "";
     expect(wrapBareUrls(text).length).toBeLessThanOrEqual(MAX_CONTENT);
-    // The same digest with no link ("hxxps" is the same length) shows one more line in each section;
-    // with the links back, that text fits by its plain length and not once they are wrapped.
+    expect(shownLines(text).overdue).toHaveLength(7);
+    expect(shownLines(text).today).toHaveLength(7);
+    // The same digest with no link ("hxxps" is the same length) shows eight; with the links back, that
+    // text fits by its plain length and is one over once they are wrapped.
     const unlink = (i: DigestItem) => ({ ...i, task: { ...i.task, title: i.task.title.replace("https://", "hxxps://") } });
     const oneMore = (formatDigest({ overdue: digest.overdue, today: digest.today.map(unlink) }, s.owner, new Date(AT_HOUR)) ?? "").replaceAll("hxxps://", "https://");
     expect(oneMore.length).toBeLessThanOrEqual(MAX_CONTENT);
-    expect(wrapBareUrls(oneMore).length).toBeGreaterThan(MAX_CONTENT);
-    const shown = shownLines(text);
-    expect(shown.overdue).toHaveLength(shown.today.length);
-    expect(shownLines(oneMore).overdue).toHaveLength(shown.overdue.length + 1);
-    expect(shownLines(oneMore).today).toHaveLength(shown.today.length + 1);
+    expect(wrapBareUrls(oneMore).length).toBe(MAX_CONTENT + 1);
+    expect(shownLines(oneMore).overdue).toHaveLength(8);
+    expect(shownLines(oneMore).today).toHaveLength(8);
   });
 
-  it("a section that can show no line counts them all", async () => {
+  it("a section that can show no line counts them all, and an empty section leaves the other the full cap", async () => {
     // Only a stand-in id this long reaches the case: with titles cut to 80 and the store's own ids,
     // one line in each section comes to about 590 characters at most.
     const { s, digest } = await longDigest();
@@ -367,6 +375,22 @@ describe("formatDigest", () => {
     expect(formatDigest({ overdue: digest.overdue.map(long), today: digest.today.map(long) }, s.owner, new Date(AT_HOUR))).toBe(
       ["Your day, Mon Oct 5:", "**Overdue**", "- 12 in all", "**Due today**", "- 12 in all", FOOTER].join("\n"),
     );
+    // The twelve overdue alone, nothing due today: all ten lines fit, and only the rest is counted.
+    const asked = (i: number) => `- \`t${i + 1}\` ${`renewal ${i} `.padEnd(77, "r")}... -- asked Sat Oct 3, 9:${10 + i}, waiting on your keep, cancel or renewed`;
+    expect(formatDigest({ overdue: digest.overdue, today: [] }, s.owner, new Date(AT_HOUR))).toBe(
+      ["Your day, Mon Oct 5:", "**Overdue**", ...Array.from({ length: MAX_LINES }, (_, i) => asked(i)), "- and 2 more", FOOTER].join("\n"),
+    );
+  });
+
+  it("a section with no more items than the cap shows them all, with no count", async () => {
+    // Seven overdue and twelve due today: seven lines a section is the most that fits, all of Overdue.
+    const { s, digest } = await longDigest();
+    const text = formatDigest({ overdue: digest.overdue.slice(0, 7), today: digest.today }, s.owner, new Date(AT_HOUR)) ?? "";
+    expect(shownLines(text).overdue).toHaveLength(7);
+    expect(shownLines(text).today).toHaveLength(7);
+    const lines = text.split("\n");
+    expect(lines[9]).toBe("**Due today**");
+    expect(lines.filter((l) => l.startsWith("- and "))).toEqual(["- and 5 more"]);
   });
 });
 
