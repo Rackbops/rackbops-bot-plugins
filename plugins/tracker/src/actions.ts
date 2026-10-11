@@ -118,7 +118,12 @@ export const NO_LONGER_LISTED = "You are no longer on this tracker's list.";
 export const NO_SUCH_TASK = "You have no task with that id. `/tasks` lists yours.";
 
 export function clip(text: string, max = MAX_ANSWER): string {
-  return text.length <= max ? text : `${text.slice(0, max - 3)}...`;
+  if (text.length <= max) return text;
+  let end = max - 3;
+  // Never half an emoji: a cut just after a high surrogate would leave it alone, so cut before it.
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end--;
+  return `${text.slice(0, end)}...`;
 }
 
 export type Entry = { ok: true; user: User; notice: string | null } | { ok: false; content: string };
@@ -441,9 +446,18 @@ export async function listTasks(d: TrackerDeps, user: User): Promise<string> {
   const pausedLines = paused.map(({ task, held }) =>
     held.length === 0
       ? `Paused: \`${task.id}\` ${task.title}`
-      : `Paused: \`${task.id}\` ${task.title} -- I could not DM ${held.join(", ")}; \`/task resume ${task.id}\` goes on without them.`,
+      : `Paused: \`${task.id}\` ${task.title} -- I could not DM ${heldNames(held)}; \`/task resume ${task.id}\` goes on without them.`,
   );
   return fitTaskList(active, pausedLines, d.webEditor);
+}
+
+/** The most people one paused line of `/tasks` names: a task's recipients are not capped, and each name is up to 100 characters. */
+const MAX_HELD_NAMES = 3;
+
+/** Who a paused task could not DM, for `/tasks`: the first few by name, then how many more. */
+function heldNames(held: readonly string[]): string {
+  if (held.length <= MAX_HELD_NAMES) return held.join(", ");
+  return `${held.slice(0, MAX_HELD_NAMES).join(", ")} and ${held.length - MAX_HELD_NAMES} more`;
 }
 
 /** docket's `formatTaskList` for an empty list: `/tasks` with no active task says so, whatever is paused. */
@@ -452,14 +466,16 @@ const NO_ACTIVE_TASKS = "You have no active tasks.";
 /**
  * `/tasks`' answer in one message of at most `max` characters (rackbops-bot-plugins#161), cut only
  * between whole lines. `active` holds one line per active task (a line may hold a newline: a title
- * can), none meaning {@link NO_ACTIVE_TASKS}; `paused` one per paused task. Shown in the documented
- * order, the active lines and then the paused ones; when that is too long, fitted in this order:
+ * can), none meaning {@link NO_ACTIVE_TASKS}; `paused` one per paused task. Always shown in the
+ * documented order, the active lines and then the paused ones; when that is too long, the room goes
+ * in this order of preference:
  *
- * 1. The paused lines first: a paused task sends nothing until it is resumed, and the id this list
- *    shows is what `/task resume` needs. As many as fit, then `...and N more paused.`
+ * 1. The paused lines, in preference to the active ones that do not fit: a paused task sends nothing
+ *    until it is resumed, and the id this list shows is what `/task resume` needs. As many as fit,
+ *    then `...and N more paused.`
  * 2. The active lines in the room left, then `...and N more active.`
- * 3. When anything was left out, one closing line saying where the rest is: `/web` while the web area
- *    is set up, `/task history` otherwise.
+ * 3. With the web area set up, when anything was left out, one closing line pointing to `/web`, which
+ *    lists them all. Without it there is none: nothing else lists them, and the counts say what is missing.
  *
  * Every note's own length is counted. `max` must leave room for the three notes (under 100
  * characters); `MAX_ANSWER` does.
@@ -470,7 +486,7 @@ export function fitTaskList(active: readonly string[], paused: readonly string[]
     if (a < active.length) lines.push(`...and ${active.length - a} more active.`);
     lines.push(...paused.slice(0, p));
     if (p < paused.length) lines.push(`...and ${paused.length - p} more paused.`);
-    if (a < active.length || p < paused.length) lines.push(webEditor ? "The web area lists them all: `/web`." : "`/task history <id>` still works for any of them.");
+    if (webEditor && (a < active.length || p < paused.length)) lines.push("The web area lists them all: `/web`.");
     return lines.join("\n");
   };
   const fits = (a: number, p: number) => render(a, p).length <= max;

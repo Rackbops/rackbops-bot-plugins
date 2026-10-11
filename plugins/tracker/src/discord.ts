@@ -8,6 +8,7 @@ import {
   clip,
   enter,
   listTasks,
+  MAX_ANSWER,
   registerPerson,
   said,
   setHour,
@@ -112,6 +113,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
   ) {
     await interaction.deferReply(EPHEMERAL);
     let content: string;
+    let notice: string | null = null;
     try {
       const d = w.deps();
       if (!d) content = STARTING;
@@ -130,13 +132,21 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           const result = await outside();
           body = await ctx.queue(() => finish(result));
         }
-        content = clip(first.notice ? `${first.notice}\n\n${body}` : body);
+        // The resume notice goes above the answer, unless the two would pass one message: then the
+        // answer goes alone and the notice after it, so the notice never cuts it short (a full `/tasks`, #161).
+        const together = first.notice ? `${first.notice}\n\n${body}` : body;
+        if (together.length <= MAX_ANSWER) content = together;
+        else {
+          content = clip(body);
+          notice = first.notice;
+        }
       }
     } catch (err) {
       w.log.error(`/${interaction.commandName} failed`, err);
       content = FAILED;
     }
     await interaction.editReply({ content, ...NO_MENTIONS });
+    if (notice) await interaction.followUp({ content: notice, ...EPHEMERAL });
   }
 
   const commands: PluginCommand[] = [

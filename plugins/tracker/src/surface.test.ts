@@ -36,7 +36,7 @@ interface Sent {
   message: HostMessage;
 }
 
-function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: Set<string> } = {}) {
+function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: Set<string>; web?: boolean } = {}) {
   const clock = clockAt(START);
   const sent: Sent[] = [];
   const unreachable = opts.unreachable ?? new Set<string>();
@@ -53,7 +53,11 @@ function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: 
   const plugin = createPlugin(
     makeFakeHost({
       name: "tracker",
-      env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, ...(members ? { TRACKER_GUILD_ID: GUILD } : {}) },
+      env: {
+        TRACKER_ADMIN_DISCORD_IDS: ADMIN,
+        ...(members ? { TRACKER_GUILD_ID: GUILD } : {}),
+        ...(opts.web ? { TRACKER_WEB_URL: "https://clerk.example.com" } : {}),
+      },
       log: { info() {}, warn: (m) => void warnings.push(m), error() {} },
       dm,
     }),
@@ -68,7 +72,16 @@ function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: 
   return { plugin, clock, sent, unreachable, warnings };
 }
 
-type Options = { sub?: string; strings?: Record<string, string>; ints?: Record<string, number>; users?: Record<string, string>; client?: unknown; guildId?: string };
+type Options = {
+  sub?: string;
+  strings?: Record<string, string>;
+  ints?: Record<string, number>;
+  users?: Record<string, string>;
+  client?: unknown;
+  guildId?: string;
+  /** Collects the text of each ephemeral follow-up after the answer. */
+  followUps?: string[];
+};
 
 /** Runs a slash command as `userId` and returns the ephemeral answer's text. */
 async function slash(plugin: Plugin, name: string, userId: string, o: Options = {}): Promise<string> {
@@ -89,6 +102,7 @@ async function slash(plugin: Plugin, name: string, userId: string, o: Options = 
     },
     deferReply: async (x: unknown) => void (deferred = x),
     editReply: async (x: { content: string }) => void edits.push(x),
+    followUp: async (x: { content: string }) => void o.followUps?.push(x.content),
   };
   await command.handle(interaction as unknown as ChatInputCommandInteraction);
   expect(deferred).toMatchObject({ flags: 64 });
@@ -632,10 +646,9 @@ describe("share refusals", () => {
     expect(await share(CURLY)).toContain("declined an earlier invitation from you");
   });
 });
-
 describe("one message (#161, #205 discord-1)", () => {
-  it("/tasks with 40 tasks and a paused one keeps the paused one's id and says how many it left out", async () => {
-    const w = world();
+  /** Larry's `t1`, shared with Curly, paused because Curly cannot be DMed (as above). */
+  async function pausedForCurly(w: ReturnType<typeof world>) {
     await withLarry(w);
     await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
     await slash(w.plugin, "register", CURLY);
@@ -647,16 +660,82 @@ describe("one message (#161, #205 discord-1)", () => {
       w.clock.set(`2026-10-${day}T13:00:00.000Z`);
       await tick(w.plugin);
     }
-    for (let i = 1; i <= 40; i++) {
-      expect(await slash(w.plugin, "remind", LARRY, { strings: { text: `water the plants on the back porch, pot ${i}`, repeat: "day" } })).toContain("set:");
+  }
+
+  /** `n` daily reminders for Larry, each answered as set. */
+  async function reminders(w: ReturnType<typeof world>, n: number, text: (i: number) => string) {
+    for (let i = 1; i <= n; i++) {
+      expect(await slash(w.plugin, "remind", LARRY, { strings: { text: text(i), repeat: "day" } })).toContain("set:");
     }
+  }
+
+  const PAUSED_T1 = "Paused: `t1` bins out -- I could not DM user333; `/task resume t1` goes on without them.";
+  const porch = (i: number) => `water the plants on the back porch, pot ${i}`;
+
+  /** The count in `/tasks`' `...and N more active.` line (NaN when there is none). */
+  const moreActive = (list: string) => Number(list.match(/^\.\.\.and (\d+) more active\.$/m)?.[1]);
+
+  it("/tasks with 40 tasks and a paused one keeps the paused one's id and says how many it left out", async () => {
+    const w = world();
+    await pausedForCurly(w);
+    await reminders(w, 40, porch);
     const list = await slash(w.plugin, "tasks", LARRY);
     expect(list.length).toBeLessThanOrEqual(2000);
-    expect(list).toContain("\nPaused: `t1` bins out -- I could not DM user333; `/task resume t1` goes on without them.\n");
-    const note = list.match(/^\.\.\.and (\d+) more active\.$/m);
     const shown = list.split("\n").filter((l) => l.includes("water the plants on the back porch")).length;
-    expect(shown + Number(note?.[1])).toBe(40);
-    expect(list.endsWith("\n`/task history <id>` still works for any of them.")).toBe(true);
+    expect(shown + moreActive(list)).toBe(40);
+    // Without the web area there is no closing line: the paused one is last.
+    expect(list.endsWith(`\n${PAUSED_T1}`)).toBe(true);
+    expect(list).not.toContain("/web");
+  });
+
+  it("/tasks with the web area set up points to /web for the rest", async () => {
+    const w = world({ web: true });
+    await withLarry(w);
+    await reminders(w, 40, porch);
+    const list = await slash(w.plugin, "tasks", LARRY);
+    expect(list.length).toBeLessThanOrEqual(2000);
+    expect(list.endsWith("\nThe web area lists them all: `/web`.")).toBe(true);
+    const shown = list.split("\n").filter((l) => l.includes("water the plants on the back porch")).length;
+    expect(shown + moreActive(list)).toBe(40);
+  });
+
+  it("/tasks keeps a task whose title holds a newline whole: never its first line without its second", async () => {
+    const w = world();
+    await withLarry(w);
+    await reminders(w, 40, (i) => `water the plants on the back porch\npot ${i}`);
+    const list = await slash(w.plugin, "tasks", LARRY);
+    expect(list.length).toBeLessThanOrEqual(2000);
+    const lines = list.split("\n");
+    const firsts = lines.flatMap((l, i) => (/^`t\d+` water the plants on the back porch$/.test(l) ? [i] : []));
+    expect(firsts.length).toBeGreaterThan(0);
+    expect(firsts.length + moreActive(list)).toBe(40);
+    for (const i of firsts) expect(lines[i + 1]).toMatch(/^pot \d+ -- /);
+  });
+
+  it("the first command after a pause answers a full /tasks whole, and tells of the resume in a second message", async () => {
+    const w = world();
+    await pausedForCurly(w);
+    await reminders(w, 40, porch);
+    w.unreachable.add(LARRY);
+    for (const day of ["05", "06", "07", "08"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await tick(w.plugin);
+    }
+    w.unreachable.delete(LARRY);
+    const followUps: string[] = [];
+    const list = await slash(w.plugin, "tasks", LARRY, { followUps });
+    expect(list.length).toBeLessThanOrEqual(2000);
+    // The answer is the list alone, from its first task line to its paused one.
+    expect(list).toMatch(/^`t\d+` water the plants on the back porch, pot \d+ -- /);
+    expect(list).not.toContain("I could not DM you");
+    expect(list).toMatch(/^\.\.\.and \d+ more active\.$/m);
+    expect(list.endsWith(`\n${PAUSED_T1}`)).toBe(true);
+    expect(followUps).toHaveLength(1);
+    expect(followUps[0]).toContain(`I could not DM you ${PAUSE_AFTER} times in a row, so your reminders were paused.`);
+    // Next time there is no notice, and nothing follows.
+    const again: string[] = [];
+    await slash(w.plugin, "tasks", LARRY, { followUps: again });
+    expect(again).toEqual([]);
   });
 
   it("a button pressed on a 2000-character DM keeps its status", async () => {
@@ -670,5 +749,20 @@ describe("one message (#161, #205 discord-1)", () => {
     expect(content.endsWith("\n\n-- Marked done.")).toBe(true);
     expect(content.length).toBeLessThanOrEqual(2000);
     expect(content.startsWith(`${"x".repeat(1980)}...`)).toBe(true);
+  });
+
+  it("a button pressed on a DM cut inside an emoji keeps the emoji whole or leaves it out, never half", async () => {
+    const w = world();
+    await withLarry(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "water the plants", when: "9am" } });
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await tick(w.plugin);
+    const dm = `${"x".repeat(1979)}${"😀".repeat(11)}`;
+    const content = (await pressButton(w.plugin, buttonIds(w.sent[0])[0] as string, LARRY, dm)).edits[0]?.content ?? "";
+    expect(content.endsWith("\n\n-- Marked done.")).toBe(true);
+    expect(content.length).toBeLessThanOrEqual(2000);
+    // No lone surrogate: half an emoji shows as a broken character.
+    expect(content).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    expect(content).toBe(`${"x".repeat(1979)}...\n\n-- Marked done.`);
   });
 });

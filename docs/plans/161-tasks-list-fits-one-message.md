@@ -93,16 +93,20 @@ Written 2026-10-11 against `main` at `2949dbe`; re-find each cite by function na
 ## CHANGELOG bullet (for the PR body)
 
 `/tasks` no longer cuts its answer in the middle of a line at Discord's 2000 characters: a long list
-keeps whole lines, always keeps your paused tasks (whose ids `/task resume` needs), says how many
-active ones it left out, and points to `/web` when the web area is set up. Pressing a button on a DM
-near 2000 characters now shows its status line instead of cutting it off (#161, #205).
+keeps whole lines, keeps your paused tasks in preference to active ones that do not fit (whose ids
+`/task resume` needs; any that still do not fit are counted), says how many active ones it left out,
+and points to `/web` when the web area is set up. A paused task's line names at most three people it
+could not DM, then how many more. When the notice that your reminders are back on would push a
+command's answer past one message, it comes as a second message instead. Pressing a button on a DM
+near 2000 characters now shows its status line instead of cutting it off, and no cut answer ends in
+half an emoji (#161, #205).
 
 ## Deviations as implemented
 
 1. **The helper's tests are in a new `plugins/tracker/src/actions.test.ts`.** No test file held
    `actions.ts`'s unit tests in general: the ones importing it are named for their topic
-   (`answer.test.ts`, `execute-lane.test.ts`, and the surface tests), so the file next to
-   `actions.ts` is a new one.
+   (`answer.test.ts`, `execute-lane.test.ts`, `research.test.ts`, `scout.test.ts`,
+   `surface.test.ts`), so the file next to `actions.ts` is a new one.
 2. **No active task is a fixed line, never counted.** Built one entry at a time, an empty list has
    no line at all, while docket's `formatTaskList([])` says "You have no active tasks." (which
    `surface.test.ts` and `role-check.test.ts` expect). `fitTaskList` writes that line itself
@@ -119,3 +123,53 @@ near 2000 characters now shows its status line instead of cutting it off (#161, 
    closing line together stays whole (deviation 3; fitting the paused lines beside the note alone
    survives every other test). These are reviewer A's arithmetic edges, pinned in the suite.
 5. **`pressButton` needed no change**: it already returns each edit's content.
+
+### Review gate round 1
+
+6. **(A, Major) The resume notice and a full `/tasks` were cut mid-line together.** `run`
+   (`discord.ts`) put the resume notice (about 190 characters) above the answer and clipped the
+   two at 2000, so the first command after someone's own DMs were paused lost the list's tail.
+   Now, when notice + blank line + answer would pass `MAX_ANSWER`, the answer goes alone and the
+   notice follows as an ephemeral follow-up (as `onButton` already does); otherwise the combined
+   answer is unchanged. This holds for every command. Test: `surface.test.ts` "the first command
+   after a pause answers a full /tasks whole, and tells of the resume in a second message" (A's
+   scenario: 40 reminders, `t1` paused for Curly, Larry paused for four days, then back); its
+   `slash` helper gained a `followUps` collector. README's pause paragraph says so.
+7. **(B, Major) The CHANGELOG bullet's "always keeps your paused tasks" was false** (paused lines
+   alone over the limit are counted, not shown). Reworded as the coordinator gave it: "keeps your
+   paused tasks in preference to active ones that do not fit (whose ids `/task resume` needs; any
+   that still do not fit are counted)". The bullet also gained the three-names bound (8), the
+   notice follow-up (6) and the emoji-safe cut (10), since those are user-visible.
+8. **(A, Minor) A paused line could pass a whole message** (display names up to 100 characters,
+   recipients uncapped), and `mostThatFit` stops at the first line that does not fit, dropping later
+   short paused lines with their ids. Now a paused line names the first three people it could not
+   DM, then `and N more` (`heldNames`, `MAX_HELD_NAMES`); the web page still names everyone. Test:
+   `actions.test.ts` "listTasks's paused lines" (10 held -> 3 names + "and 7 more"; 3 held -> all
+   three).
+9. **(B, Major) One call per entry was unpinned** (M29: `formatTaskList(entries, ...).split("\n")`
+   survived). Titles can hold a newline (`/remind` text, the web textarea). Test: `surface.test.ts`
+   "/tasks keeps a task whose title holds a newline whole: never its first line without its second"
+   (B's: 40 reminders `water the plants on the back porch\npot ${i}`; first lines + the active
+   note's N = 40, each followed by its `pot N -- ` line).
+10. **(A, Minor) `clip` could split a surrogate pair.** When the unit before the cut is a high
+    surrogate, it now cuts one unit earlier. Test: `surface.test.ts` "a button pressed on a DM cut
+    inside an emoji keeps the emoji whole or leaves it out, never half" (1979 `x` + 11 emoji: no
+    lone surrogate, ends with the status).
+11. **(A, B, coordinator; Minor) No closing line without the web area.** "`/task history <id>`
+    still works" pointed at ids the person cannot see, so without the web area there is none: the
+    `...and N more` counts say what is missing. With it, the `/web` line is unchanged. The helper
+    tests, README row and bullet match; deviation 4's "short active line" case now uses the web
+    area, since only the closing line makes the note shape longer than a real active line.
+12. **(B, Minor) M30 survived** (passing `false` for `d.webEditor`). Test: `surface.test.ts`
+    "/tasks with the web area set up points to /web for the rest" (a `world({ web: true })`).
+13. **(B, Minor) The held-less paused line ``Paused: `id` title`` had no test** (M32). Cheap
+    through a `listTasks` unit test on a real `SqliteStore` with a fake `health.pausesFor`: the same
+    "listTasks's paused lines" test has a task paused for no one and expects ``Paused: `t3` water``.
+14. **(B, Minor) Wording.** `actions.test.ts`'s header, README's row and `fitTaskList`'s JSDoc now say
+    "in preference to the active ones that do not fit", not "first", which read as screen order.
+    Deviation 1's list of files importing `actions.ts` now includes `research.test.ts` and
+    `scout.test.ts`.
+15. **Coverage row 1's mutation as written** ("return `clip(lines.join("\n"))` again", in
+    `listTasks`) is the same change as row 6 ("revert `listTasks`") and turns only the surface
+    `/tasks` tests red. The mutation table runs it in `listTasks` as written and, as row 1b, inside
+    `fitTaskList` (returning `clip` of the whole list), which turns the helper tests red.
