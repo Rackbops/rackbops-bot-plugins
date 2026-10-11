@@ -137,13 +137,24 @@ findings below are tests, comments or wording; none changes the code's behaviour
 5. **Escaping `<` is now pinned (B, Major, a gap older than this change).** Nothing failed when
    `escapeLt` was the identity, when blocks were kept unescaped, or when a JSON body was kept
    unescaped or raw, and each of those brings back #81's slow scans (B measured 50.8 s and 87.8 s).
-   The 3 MB loop gains two bodies: 200 JSON-LD blocks whose data is `<meta ` repeated, and a JSON
-   body of `<meta ` repeated (about 110 ms and 45 ms on this branch).
+   The 3 MB loop gains two bodies: 200 JSON-LD blocks whose data is `<meta ` repeated 2,600 times,
+   and a JSON body of 200 strings, each `<meta ` repeated 2,600 times and then a `>` (about 110 ms
+   and 50 ms on this branch). The JSON body is not the one the round asked for
+   (`JSON.stringify({note: "<meta ".repeat(MB3/6-10)})`): that one has no `>` anywhere, so with it
+   unescaped every `<meta` scan runs to the end of 3 MB, and the time is quadratic in its length
+   (measured 0.6 s at 24 KB, 2.5 s at 49 KB, 9.9 s at 98 KB, so about 3 hours at 3 MB). The test
+   would hang rather than fail. A `>` every 15 KB bounds each scan the way the block ends do, so
+   the unescaped body takes about 45 s and the time bound fails it.
 6. **Upper case in the timing cases (A, Minor).** The 3 MB loop gains `"<sCrIpT a>"` and `"Aa"`
-   repeated to 3 MB, so the fold itself runs under the time bound.
+   repeated to 3 MB, so the fold itself runs under the time bound (about 120-210 ms each). Like the
+   coverage table's linearity row, they are a time bound, not a mutation: no plausible one-line
+   change to the fold is slow only on upper case.
 7. **The 3 MB JSON-LD case asserts the cap (B).** `jsonLdBlocks(pageForExtraction(manyBlocks))`
-   has exactly `MAX_BLOCKS` entries, which the keep-the-first test cannot pin for a cap above its
-   own `MAX_BLOCKS + 10` blocks.
+   has exactly `MAX_BLOCKS` entries. The keep-the-first test builds `MAX_BLOCKS + 10` blocks, so it
+   passes whatever the constant is; this page is a fixed 3 MB (about 42,500 blocks), so a cap too
+   large for a 3 MB page to reach now fails (`MAX_BLOCKS = 100_000` passed the suite before and
+   fails here). The value 200 itself is pinned only by the constant: any cap from 40 (the 40-card
+   test) up to about 42,500 still passes.
 8. **An upper-case `<STYLE>` case (B).** "upper-case tags are still read" gains a `<STYLE>` whose
    text holds a price meta (1.00) before a real `<META>` (8.00): the style must be skipped to its own
    `</STYLE>`.

@@ -130,9 +130,10 @@ describe("pageForExtraction", () => {
       "<>".repeat(MB3 / 2),
       `${"<meta ".repeat(MB3 / 12)}>${"<meta ".repeat(MB3 / 12)}`,
       manyBlocks,
-      // Tag starts inside JSON-LD data and inside a JSON body: kept only with every < escaped.
+      // Tag starts inside JSON-LD data and inside a JSON body, a `>` every 15 KB: kept only with every
+      // < escaped (unescaped, each takes over 40 s; with no `>` at all, hours, so the test would hang).
       Array.from({ length: 200 }, () => `<script type="application/ld+json">${JSON.stringify({ d: "<meta ".repeat(2600) })}</script>`).join(""),
-      JSON.stringify({ note: "<meta ".repeat(MB3 / 6 - 10) }),
+      JSON.stringify(Array.from({ length: 200 }, () => `${"<meta ".repeat(2600)}>`)),
       // Upper and mixed case, which the fold lower-cases.
       "<sCrIpT a>".repeat(MB3 / 10),
       "Aa".repeat(MB3 / 2),
