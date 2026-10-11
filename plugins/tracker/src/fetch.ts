@@ -55,9 +55,11 @@ export interface PageFetchOptions {
 }
 
 /**
- * docket-types' page reads carry `NEVER_EBAY`: a directive to this port, never sent. Any hop to
- * eBay is refused, so a pasted page that redirects to eBay is not read either (roshne's rule:
- * the tracker never reads eBay; an eBay watch gets its listings sent in, inbox.ts).
+ * docket-types' `page` source (the want-list watcher's page reads) carries `NEVER_EBAY`: a
+ * directive to this port, never sent. Any hop to eBay is refused, so a pasted page that redirects
+ * to eBay is not read either (roshne's rule: the want-list watcher never reads eBay; an eBay watch
+ * gets its listings sent in, inbox.ts). `/price`'s reads carry no such header, so a price may
+ * track an eBay page (roshne, 2026-10-11, #165).
  */
 export { isEbayHost, NEVER_EBAY };
 

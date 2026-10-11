@@ -9,7 +9,7 @@ import { api, call, cleanup, CURLY, csrfOf, LARRY, makeToken, ORIGIN, people, si
 /**
  * Inbox watches (tracker 0.19.0; docket-types 0.7.0's `inbox` source): `/want source: ebay`, and
  * `source: bgg` on a bot without BGG's API, make a watch whose listings are sent in through the
- * task API's `POST /tasks/<id>/listings` -- the tracker never opens eBay or BGG -- and the poll tick
+ * task API's `POST /tasks/<id>/listings` -- such a watch never opens eBay or BGG -- and the poll tick
  * DMs the new ones. End to end through the plugin: the command, the API, the tick, the web editor.
  */
 
