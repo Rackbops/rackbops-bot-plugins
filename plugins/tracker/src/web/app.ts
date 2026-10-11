@@ -9,7 +9,7 @@ import { FAILED_BURST, FAILED_PER_SECOND, handleApi, json, RATE_BURST, RATE_PER_
 import { problem } from "./api-tasks.js";
 import { CreationLog, tokensGet, tokensPost, tokenRevokePost } from "./tokens.js";
 import { actionPost, editGet, editPost, type Editor, newGet, newPost, taskPage } from "./editor.js";
-import { notice } from "./editor-pages.js";
+import { notice, RESUMED_DMS, resumedDmsNotice } from "./editor-pages.js";
 import { cookie, htmlResponse, readBody, readCookie, redirect } from "./html.js";
 import { errorPage, loginPage, notFoundPage, settingsPage, signInHelpPage, tasksPage, type Viewer } from "./pages.js";
 import { isAdminRoute, methodsOf, route } from "./routes.js";
@@ -142,6 +142,9 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   const failed = new RateLimiter(FAILED_BURST, FAILED_PER_SECOND);
   // API token creations per person per hour (tokens.ts): each sends a DM.
   const created = new CreationLog();
+  // Per tracker user id, how many tasks their last Resume DMs set going again, until My tasks shows it
+  // (`?done=resumed-dms`): the done notices name nothing from the address.
+  const resumedBack = new Map<string, number>();
 
   async function authenticate(d: TrackerDeps, request: Request): Promise<Auth> {
     const id = readCookie(request, SESSION_COOKIE);
@@ -331,6 +334,23 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     return redirect(`${base}/settings?saved=1`);
   }
 
+  /**
+   * Resume DMs, the button on the banner a paused person sees on every page (pages.ts `framed`):
+   * `DeliveryHealth.resume`, as their next command would, in the queue like every web write, then
+   * My tasks says how many tasks are back on. Not paused (a second press, another tab): My tasks,
+   * nothing changed.
+   */
+  async function resumeDmsPost(d: TrackerDeps, v: Viewer): Promise<Response> {
+    const resumed = await w.queue(async () => {
+      // As the store has them now, as every web write reads its writer: someone gone since resumes nothing.
+      const fresh = await d.store.getUser(v.user.id);
+      return fresh ? d.health.resume(v.user.id, d.clock.now()) : null;
+    });
+    if (!resumed) return redirect(`${base}/`);
+    resumedBack.set(v.user.id, resumed.tasks.length);
+    return redirect(`${base}/?done=${RESUMED_DMS}`);
+  }
+
   return async (request, info) => {
     // The JSON task API (api.ts): bearer tokens, never the cookie, and its own methods and errors.
     if (info.path === "/api" || info.path.startsWith("/api/")) {
@@ -385,7 +405,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     // an admin whose flag was revoked a moment ago is refused now, not at their next sign-in.
     if (admin && !auth.user.admin) return unknownPage(base);
     if (admin && !allowed.split(", ").includes(method)) return plain(405, "Method not allowed", { Allow: allowed });
-    const v: Viewer = { base, user: auth.user, csrf: auth.session.csrf };
+    const v: Viewer = { base, user: auth.user, csrf: auth.session.csrf, deliveryPaused: d.health.isPaused(auth.user.id) };
     const e: Editor = { d, v, queue: w.queue, reading };
     const a: AdminWeb = { d, v, queue: w.queue, memberOf: (id) => memberOf(id), signOutCookie: clear(SESSION_COOKIE), usrGuildId: w.guildIds?.[0] ?? null };
 
@@ -402,6 +422,8 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
         ]);
       case "settings":
         return settingsPost(d, v, form);
+      case "resume-dms":
+        return resumeDmsPost(d, v);
       case "new":
         return newPost(e, r.type, form);
       case "edit":
@@ -429,8 +451,14 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     const now = d.clock.now();
     const done = url.searchParams.get("done");
     switch (r.kind) {
-    case "tasks":
-      return htmlResponse(tasksPage(v, await loadTaskList(d, auth.user), now, notice(done), d.research === true));
+    case "tasks": {
+      let flash = notice(done);
+      if (done === RESUMED_DMS) {
+        flash = resumedDmsNotice(resumedBack.get(auth.user.id));
+        resumedBack.delete(auth.user.id);
+      }
+      return htmlResponse(tasksPage(v, await loadTaskList(d, auth.user), now, flash, d.research === true));
+    }
     case "task":
       return taskPage(e, r.id, done);
     case "edit":
