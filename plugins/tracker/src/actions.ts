@@ -432,15 +432,65 @@ export async function loadTaskList(d: Pick<TrackerDeps, "store" | "health">, use
   return { entries, paused };
 }
 
-/** `/tasks`: the person's own active tasks and the ones they receive, plus their paused ones. */
+/** `/tasks`: the person's own active tasks and the ones they receive, plus their paused ones, in one message. */
 export async function listTasks(d: TrackerDeps, user: User): Promise<string> {
   const { entries, paused } = await loadTaskList(d, user);
-  const lines = [formatTaskList(entries, user, d.clock.now())];
-  for (const { task, held } of paused) {
-    if (held.length === 0) lines.push(`Paused: \`${task.id}\` ${task.title}`);
-    else lines.push(`Paused: \`${task.id}\` ${task.title} -- I could not DM ${held.join(", ")}; \`/task resume ${task.id}\` goes on without them.`);
-  }
-  return clip(lines.join("\n"));
+  const now = d.clock.now();
+  // One entry at a time, not docket's whole list split on "\n": a title may hold a newline (a web form's).
+  const active = entries.map((entry) => formatTaskList([entry], user, now));
+  const pausedLines = paused.map(({ task, held }) =>
+    held.length === 0
+      ? `Paused: \`${task.id}\` ${task.title}`
+      : `Paused: \`${task.id}\` ${task.title} -- I could not DM ${held.join(", ")}; \`/task resume ${task.id}\` goes on without them.`,
+  );
+  return fitTaskList(active, pausedLines, d.webEditor);
+}
+
+/** docket's `formatTaskList` for an empty list: `/tasks` with no active task says so, whatever is paused. */
+const NO_ACTIVE_TASKS = "You have no active tasks.";
+
+/**
+ * `/tasks`' answer in one message of at most `max` characters (rackbops-bot-plugins#161), cut only
+ * between whole lines. `active` holds one line per active task (a line may hold a newline: a title
+ * can), none meaning {@link NO_ACTIVE_TASKS}; `paused` one per paused task. Shown in the documented
+ * order, the active lines and then the paused ones; when that is too long, fitted in this order:
+ *
+ * 1. The paused lines first: a paused task sends nothing until it is resumed, and the id this list
+ *    shows is what `/task resume` needs. As many as fit, then `...and N more paused.`
+ * 2. The active lines in the room left, then `...and N more active.`
+ * 3. When anything was left out, one closing line saying where the rest is: `/web` while the web area
+ *    is set up, `/task history` otherwise.
+ *
+ * Every note's own length is counted. `max` must leave room for the three notes (under 100
+ * characters); `MAX_ANSWER` does.
+ */
+export function fitTaskList(active: readonly string[], paused: readonly string[], webEditor: boolean, max = MAX_ANSWER): string {
+  const render = (a: number, p: number): string => {
+    const lines = active.length === 0 ? [NO_ACTIVE_TASKS] : active.slice(0, a);
+    if (a < active.length) lines.push(`...and ${active.length - a} more active.`);
+    lines.push(...paused.slice(0, p));
+    if (p < paused.length) lines.push(`...and ${paused.length - p} more paused.`);
+    if (a < active.length || p < paused.length) lines.push(webEditor ? "The web area lists them all: `/web`." : "`/task history <id>` still works for any of them.");
+    return lines.join("\n");
+  };
+  const fits = (a: number, p: number) => render(a, p).length <= max;
+  // The paused lines that fit beside the fewest active characters: none of the active lines (their
+  // note instead), or all of them (no note), whichever is shorter. A whole list that fits is kept whole.
+  const p = mostThatFit(paused.length, (k) => fits(0, k) || fits(active.length, k));
+  const a = mostThatFit(active.length, (k) => fits(k, p));
+  return render(a, p);
+}
+
+/**
+ * The most of `n` lines that fit: all of them, or else the most before the first that does not.
+ * Below `n` each line kept adds at least its newline while its note can shrink by only a digit, so
+ * the length never shrinks there; at `n` the note goes, so all `n` can fit when `n - 1` do not.
+ */
+function mostThatFit(n: number, fits: (k: number) => boolean): number {
+  if (fits(n)) return n;
+  let k = 0;
+  while (k + 1 < n && fits(k + 1)) k++;
+  return k;
 }
 
 /**

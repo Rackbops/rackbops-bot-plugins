@@ -632,3 +632,43 @@ describe("share refusals", () => {
     expect(await share(CURLY)).toContain("declined an earlier invitation from you");
   });
 });
+
+describe("one message (#161, #205 discord-1)", () => {
+  it("/tasks with 40 tasks and a paused one keeps the paused one's id and says how many it left out", async () => {
+    const w = world();
+    await withLarry(w);
+    await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
+    await slash(w.plugin, "register", CURLY);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } });
+    await pressButton(w.plugin, "tracker:a.t.t1", CURLY);
+    w.unreachable.add(CURLY);
+    for (const day of ["01", "02", "03", "04"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await tick(w.plugin);
+    }
+    for (let i = 1; i <= 40; i++) {
+      expect(await slash(w.plugin, "remind", LARRY, { strings: { text: `water the plants on the back porch, pot ${i}`, repeat: "day" } })).toContain("set:");
+    }
+    const list = await slash(w.plugin, "tasks", LARRY);
+    expect(list.length).toBeLessThanOrEqual(2000);
+    expect(list).toContain("\nPaused: `t1` bins out -- I could not DM user333; `/task resume t1` goes on without them.\n");
+    const note = list.match(/^\.\.\.and (\d+) more active\.$/m);
+    const shown = list.split("\n").filter((l) => l.includes("water the plants on the back porch")).length;
+    expect(shown + Number(note?.[1])).toBe(40);
+    expect(list.endsWith("\n`/task history <id>` still works for any of them.")).toBe(true);
+  });
+
+  it("a button pressed on a 2000-character DM keeps its status", async () => {
+    const w = world();
+    await withLarry(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "water the plants", when: "9am" } });
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await tick(w.plugin);
+    const pressed = await pressButton(w.plugin, buttonIds(w.sent[0])[0] as string, LARRY, "x".repeat(2000));
+    const content = pressed.edits[0]?.content ?? "";
+    expect(content.endsWith("\n\n-- Marked done.")).toBe(true);
+    expect(content.length).toBeLessThanOrEqual(2000);
+    expect(content.startsWith(`${"x".repeat(1980)}...`)).toBe(true);
+  });
+});
