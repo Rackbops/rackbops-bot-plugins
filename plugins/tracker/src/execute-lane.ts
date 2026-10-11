@@ -21,8 +21,9 @@ import { tasksStore } from "./notify-lane.js";
  * minute later) and a queue turn about one answers "busy, try again" (`TaskLocks.turn`), so a slow
  * city-hall (each call is bounded, executor.ts) holds up neither a reminder nor another person's
  * command. index.ts starts it in the background and returns at once, at most one at a time and at
- * most once per `EXECUTE_EVERY_MS`. What a run owes its recipients goes out on the notify tick, as
- * docket asks.
+ * most once per host tick (a second call within half a minute is skipped: the host's ticks are a
+ * minute apart from each round's start, and this tick runs after every earlier check of the round).
+ * What a run owes its recipients goes out on the notify tick, as docket asks.
  */
 
 /** How often the execute lane is asked to run; each run asks city-hall about at most every Job out. */
