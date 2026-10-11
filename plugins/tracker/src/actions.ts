@@ -42,7 +42,8 @@ import type { LoginLinks } from "./web/signin-link.js";
 /**
  * What each slash command does (plan 5.5, 5.8, E2), with no discord.js in sight: discord.ts reads
  * the options, looks up membership, and renders the `content` these return, always ephemerally.
- * Everything touches the world only through the injected Store, clock and host `dm`.
+ * Everything touches the world only through the injected Store, clock, host `dm` and, for `/allow`
+ * and `/register`, the usr HTTP client (`TrackerDeps.usr`, usr.ts).
  */
 
 export interface TrackerDeps {

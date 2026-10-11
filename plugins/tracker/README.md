@@ -100,7 +100,9 @@ done: one Job at a time across everyone (plan 5.3), on a tick of its own that ru
 background, so a slow city-hall never holds up a reminder. While that tick waits on city-hall it
 holds its tasks: the notify tick sends their DMs a minute later, and a command, button or web
 action on one of them answers "That task is with the model runner right now; try again in a
-minute." at once, so no one else's command waits behind it. city-hall unreachable, a 5xx, or a
+minute." at once, so no one else's command waits behind it. The one exception is a zone or hour
+change by the owner of a scout the tick holds: it waits for the tick, and so does every command,
+button and web write queued behind it (see **One task at a time** below). city-hall unreachable, a 5xx, or a
 refused credential or edge redirect (logged once an hour as such, and the admins told once per Job)
 holds the run and asks again; a Job still not back after six hours is given up (docket's
 `PENDING_LIMIT_MS`). A record in `executor_jobs` goes once its run is gone, or once it was
@@ -183,7 +185,12 @@ edits (the editor, pause, resume, delete, a zone or hour change) take that task'
 (`src/locks.ts`), so none of them overlap. The notify and poll ticks run one pass per task that has
 work; an answer that lands while its own task runs waits for that pass. The execute tick is the
 exception: it can wait on city-hall, so an answer or edit about a task it holds does not wait but
-answers "That task is with the model runner right now; try again in a minute."
+answers "That task is with the model runner right now; try again in a minute." A zone or hour
+change (`/register`, `/settings hour`, the web area's settings page) is the one edit that waits
+instead, since it re-times every recurring task that follows the zone or hour and may skip none.
+Of the tasks the execute tick holds, only a scout is one of those: a zone or hour change by its
+owner waits for the rest of that tick's pass, each city-hall call in it bounded at 15 seconds, and
+every command, button and web write queued behind it waits too.
 
 ## Web area
 
@@ -499,11 +506,12 @@ a price back the page's address -- exactly as the web editor's empty fields do. 
 value: it is refused as the wrong JSON type (send `""` to clear a note).
 
 Which types: `GET /tasks`, `GET /tasks/<id>`, pause, resume and `DELETE` work on any task you own,
-whatever its type. `POST /tasks` takes the three editor types (reminder, renewal, price) and,
-while the model runner is set up on this bot, `research` (#82), by `/research`'s rules, and `scout`
-(#83), by `/scout new`'s; while it is not, a `research` or `scout` create answers `503 unavailable`.
-`PATCH` takes the editor types and `scout` (a scout made while the runner was set up stays
-editable): a research request cannot be edited, here or in Discord, and a `PATCH` of one answers
+whatever its type. `POST /tasks` takes the three editor types (reminder, renewal, price),
+`wantlist`, by `/want`'s rules, and, while the model runner is set up on this bot, `research`
+(#82), by `/research`'s rules, and `scout` (#83), by `/scout new`'s; while it is not, a `research`
+or `scout` create answers `503 unavailable`. `PATCH` takes the editor types, a want-list watch
+(`wantlist` or `wantjudge`) and `scout` (a scout made while the runner was set up stays editable):
+a research request cannot be edited, here or in Discord, and a `PATCH` of one answers
 `409 conflict`.
 
 | Method and path | What |
@@ -649,8 +657,8 @@ From then on they `/allow` everyone else. (usr's own "Setup" step 3, in `docs/di
 ## Not yet
 
 - The rest of the web area (E5): sharing a task from the web, and the admin view's grants and
-  retry. The task API makes reminders, renewals, prices and
-  research requests -- not `/task done`, `snooze`, `decide`, `share` or the settings -- and no intake agent uses it yet
+  retry. The task API makes reminders, renewals, prices, research requests, scouts and
+  want-list watches -- not `/task done`, `snooze`, `decide`, `share` or the settings -- and no intake agent uses it yet
   (E10, deferred). Discord OAuth2 as a second sign-in
   method, if chosen (plan item 41).
 - For the want-list watcher (#83): a captured BGG response to replace the hand-written fixture once
@@ -663,7 +671,7 @@ From then on they `/allow` everyone else. (usr's own "Setup" step 3, in `docs/di
   [Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17); the research lane
   still needs a deployed city-hall with a runner).
 - Editing in Discord (the editor is on the web only; `/scout edit` is the one exception), and changing a price tracker's page or `near` after it is made (make a new one); a free-form pattern for `price` (`near` is the safe subset: a user's regular expression run on a large page could hang the bot).
-- An optional Discord-role gate (plan 5.5), and showing unconfirmed deliveries to admins anywhere but the log, or a run's deliveries in its history.
+- Showing unconfirmed deliveries to admins anywhere but the log, or a run's deliveries in its history.
 
 docket-core, docket-types and `@rackbops/styles` are `devDependencies`: `bun build` bundles them
 into `dist/plugin.js` (the theme's CSS as text), and the bot loads that file without installing
