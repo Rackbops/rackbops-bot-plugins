@@ -626,12 +626,15 @@ describe("the harness (#232)", () => {
     // Held back from the removal, to see what the disposing left: SQLite deletes a database's
     // write-ahead log when its last connection closes, so a log still there is a database still open.
     const held = dirs.splice(0);
-    await cleanup();
-    for (const w of made) {
-      expect(await (await call(w.plugin, "GET", "/healthz")).json()).toMatchObject({ status: "inactive" });
-      expect(existsSync(`${w.dbPath}-wal`)).toBe(false);
+    try {
+      await cleanup();
+      for (const w of made) {
+        expect(await (await call(w.plugin, "GET", "/healthz")).json()).toMatchObject({ status: "inactive" });
+        expect(existsSync(`${w.dbPath}-wal`)).toBe(false);
+      }
+    } finally {
+      dirs.push(...held);
     }
-    dirs.push(...held);
     await cleanup();
     for (const w of made) expect(existsSync(dirname(w.dbPath))).toBe(false);
   });
