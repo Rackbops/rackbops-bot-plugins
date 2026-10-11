@@ -47,6 +47,26 @@ export function recipientPauseDetail(userId: string): string {
 /** A person named in a history row's detail by `recipientPauseDetail`'s braces. */
 export const PERSON_REF = /\{(u[1-9][0-9]*)\}/g;
 
+/**
+ * Whether a history row is a pause for a recipient (`recipientPauseDetail`), which only that
+ * recipient, the task's owner and admins may see (#167, history.ts `loadHistory`): another recipient
+ * would learn from it who else receives the task, and that their DMs fail. Matched on the detail's
+ * `delivery to ` prefix, so a row from before 0.6.0, which carries a display name, is one too.
+ * `PAUSE_DETAIL` (the owner's own DMs failed), `paused by the owner` (manage.ts) and every
+ * `resumed` row are not.
+ */
+export function isRecipientPause(e: { kind: string; detail: string }): boolean {
+  return e.kind === "paused" && e.detail.startsWith("delivery to ");
+}
+
+/**
+ * Whether a recipient pause's detail names `userId`: only by id in braces (`{u5}`), never by a
+ * name, so a row from before 0.6.0 names nobody and is left to the owner and admins.
+ */
+export function pauseNames(detail: string, userId: string): boolean {
+  return detail.includes(`{${userId}}`);
+}
+
 /** Whether this failure is the one that pauses: pure, so the threshold is tested on its own. */
 export function decidePause(failures: number, alreadyPaused: boolean): boolean {
   return !alreadyPaused && failures >= PAUSE_AFTER;

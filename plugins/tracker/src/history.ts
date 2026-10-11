@@ -14,7 +14,7 @@ import {
   type User,
 } from "@rackbops/docket-core";
 import { clip, NO_SUCH_TASK, type TrackerDeps } from "./actions.js";
-import { PERSON_REF } from "./delivery-health.js";
+import { isRecipientPause, PERSON_REF, pauseNames } from "./delivery-health.js";
 
 /**
  * `/task history` (plan 1.3 "History", 5.10): every run of a task -- when it was due, how it went,
@@ -138,7 +138,11 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
   const runs = all.filter((o) => !upcoming(o));
   const next = all.find(upcoming);
   const replies = (await visibleReplies(d.store, actor, task.id)) ?? [];
-  const changes = (await visibleHistory(d.store, actor, task.id)) ?? [];
+  // A pause for a recipient is shown only to them, the owner and admins (#167; delivery-health.ts
+  // `isRecipientPause`): docket's `visibleHistory` hides a recipient's own rows from the others, but
+  // not this one. Filtered here, before the count and the names, so Discord, the web and the API agree.
+  const seesEveryPause = user.admin || task.ownerId === user.id;
+  const changes = ((await visibleHistory(d.store, actor, task.id)) ?? []).filter((e) => seesEveryPause || !isRecipientPause(e) || pauseNames(e.detail, user.id));
   const people = new Map<string, User>();
   for (const r of replies) {
     if (!people.has(r.userId)) {
