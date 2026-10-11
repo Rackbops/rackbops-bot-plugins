@@ -72,7 +72,9 @@ The README and the package description no longer say the tracker never reads eBa
 the public page it is given, eBay's included; it is the want-list watcher (`/want`, its page reads,
 its inbox watches and its judge) that never opens eBay. The watcher's own replies (its refusals, an
 inbox watch's confirmation, `/want`'s `source` choice and the editor's help) now say it is the
-watch, not the bot, that never opens eBay. Nothing changed in what the tracker does (#165).
+watch, not the bot, that never opens eBay (and that an inbox watch never opens BGG's pages). The
+released 0.16.0 and 0.19.0 notes ("never reads eBay", "never by reading either site") meant the
+want-list watcher. Nothing changed in what the tracker does (#165).
 
 ## Deviations as implemented
 
@@ -86,8 +88,10 @@ watch, not the bot, that never opens eBay. Nothing changed in what the tracker d
    opens neither site.
 2. **One adjacent false clause corrected.** `index.ts`'s inbox comment said "eBay and BoardGameGeek
    reach a watch only this way", false for BGG while the token is set (`index.ts:149`, `want.ts:198`).
-   Rewritten with its "never" claim as "An eBay watch, and a BGG one without its token, gets its
-   listings only this way".
+   Rewritten with its "never" claim as "An eBay watch, and a BGG one made while the bot has no BGG
+   token, get their listings only this way" (the audit's wording: a `bgg` watch made while the token
+   was set, and later left without it, is no inbox watch and gets no listings at all, docket-types'
+   `wantlist.js:107`).
 3. **The six user-facing strings that said "I never open/read eBay" (or BGG's pages) are scoped to
    the watch** (orchestrator's call, 2026-10-11, in place of step 3's stop-and-report: the owner's
    decision to allow `/price` on eBay makes the bot's unqualified "I never open eBay" false). Wording
@@ -99,4 +103,22 @@ watch, not the bot, that never opens eBay. Nothing changed in what the tracker d
    `fetch.ts:185` (the refusal on a want-list page read: "which a want-list watch never reads").
    Tests updated: `fetch.test.ts:117` and `want-inbox.test.ts:55`; `want.test.ts:133` compares
    with `EBAY_PAGE` itself. So this child is no longer docs-only in the strict sense: the bot's
-   words changed, not what it does. The CHANGELOG bullet above gained one sentence for it.
+   words changed, not what it does. The CHANGELOG bullet above says so.
+4. **The plan's inventory missed CHANGELOG 0.19.0, lines 85-86** ("Rod's choice: Clerk watches eBay
+   and BoardGameGeek for what people want through listings sent in, never by reading either site
+   itself"). Left in place under the plan's no-rewrite rule for released notes; the CHANGELOG bullet
+   above now says that note, like 0.16.0's, meant the want-list watcher.
+5. **The plan's title overclaims.** "only the want-list watcher never opens eBay" is false as
+   written: reminders, renewals and the digest never open eBay either, since they open no page at
+   all. The accurate form is "only the want-list watcher refuses eBay", which the README's `/price`
+   row uses and the PR title will use. Commit 765b16c's body ("no user-facing string or behaviour
+   changes") is superseded by the next commit, which changed the six replies (item 3); the PR body
+   does not reuse it.
+6. **Tests added, against the plan's Coverage ("no test, no mutation")**, at the audit's request:
+   `tracked.test.ts` pins the owner's decision that `/price` tracks an eBay page (the page is read at
+   once and on the poll tick, with no `NEVER_EBAY` directive on either read), and
+   `want-inbox.test.ts` asserts the BGG inbox watch's changed clause ("this watch never opens BGG's
+   pages itself"). The first was mutation-checked in a scratch worktree: making `startPrice` refuse
+   an eBay host turns it red, and so does making `/price`'s preview send `NEVER_EBAY`. Also at the
+   audit's request, the README's Page reads row gained one sentence on `NEVER_EBAY`, since the
+   `/price` row points there, and `want.ts` names roshne's 2026-10-11 scoping beside Rod's rule.

@@ -17,8 +17,8 @@ import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
  * - `bgg`: a BoardGameGeek game, read through BGG's API while `TRACKER_BGG_TOKEN` is set (`d.bgg`);
  *   without it (BGG declined the application), an inbox watch for BGG, as for eBay below.
  * - `ebay`: an inbox watch (docket-types' `inbox` source, inbox.ts). The want-list watcher never
- *   opens eBay, and an inbox watch opens neither eBay nor BGG: Rod's rule, 2026-10-05, scoped to
- *   the watcher in #165 (`/price` may read an eBay page). The listings reach the watch when someone
+ *   opens eBay, and an inbox watch opens neither eBay nor BGG: Rod's rule, 2026-10-05; scoped to
+ *   the watcher by roshne, 2026-10-11 (#165). The listings reach the watch when someone
  *   sends them in -- the owner's own browser, Claude in Chrome searching eBay for them, through
  *   the task API's `POST /tasks/<id>/listings`; later eBay's saved-search alert emails -- and the
  *   watch DMs the new ones as any watch does. The answer still hands over the eBay search, with

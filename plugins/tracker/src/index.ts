@@ -149,8 +149,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createPageFetch({ raw: true, noRedirects: true }) }) : null);
   // The want-list inboxes (inbox.ts) live in the database `activate()` opens; until then, and after
   // `dispose()`, an inbox reads as empty (no tick runs then anyway). An eBay watch, and a BGG one
-  // without its token, gets its listings only this way: the want-list watcher never opens eBay, and
-  // an inbox watch opens neither site (Rod, 2026-10-05).
+  // made while the bot has no BGG token, get their listings only this way: the want-list watcher
+  // never opens eBay, and an inbox watch opens neither site (Rod, 2026-10-05).
   let inbox: WantInbox | null = null;
   const readInbox: ReadInbox = async (key) => inbox?.read(key) ?? [];
   const types = options.types ?? { ...TRACKER_TYPES, ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}) }) };

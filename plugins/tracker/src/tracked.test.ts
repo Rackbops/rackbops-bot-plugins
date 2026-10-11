@@ -3,7 +3,7 @@ import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { ChatInputCommandInteraction, MessageComponentInteraction } from "discord.js";
 import type { HostApi, HostMessage, Plugin } from "../../../packages/api/contract.js";
 import { makeFakeHost } from "../../../packages/testkit/index.js";
-import { FetchRefusedError } from "./fetch.js";
+import { FetchRefusedError, NEVER_EBAY } from "./fetch.js";
 import { createPlugin } from "./index.js";
 import { FETCH_TYPES, takesType } from "./notify-lane.js";
 import { MAX_PRICE_TASKS, nearPattern } from "./price.js";
@@ -45,12 +45,15 @@ function world() {
     price: 100 as number | null,
     status: 200,
     reads: [] as string[],
+    /** Each read's request headers, as the Fetch port would get them. */
+    headers: [] as Record<string, string>[],
     refuse: null as string | null,
     onRead: null as (() => void) | null,
   };
   const fetch: Fetch = {
-    async get(url: string): Promise<FetchResponse> {
+    async get(url: string, headers: Record<string, string> = {}): Promise<FetchResponse> {
       shop.reads.push(url);
+      shop.headers.push(headers);
       shop.onRead?.();
       if (shop.refuse) throw new FetchRefusedError(shop.refuse);
       return { status: shop.status, body: page(shop.price), headers: {} };
@@ -286,6 +289,18 @@ describe("/price", () => {
       expect(await slash(w.plugin, "price", LARRY, { strings: { url: `${SHOP}/${i}` } })).toContain("Tracking");
     }
     expect(await slash(w.plugin, "price", LARRY, { strings: { url: SHOP } })).toContain(`You already track ${MAX_PRICE_TASKS} prices`);
+  });
+
+  it("tracks an eBay page: only the want-list watcher refuses eBay (roshne, 2026-10-11, #165)", async () => {
+    const w = world();
+    await withLarry(w);
+    const ebay = "https://www.ebay.com/itm/1";
+    expect(await slash(w.plugin, "price", LARRY, { strings: { url: ebay } })).toContain("Tracking `t1`: www.ebay.com/itm/1. I read 100.00 USD just now.");
+    await pollTick(w.plugin);
+    expect(w.sent[0]?.message.content).toContain("Now tracking www.ebay.com/itm/1 at 100.00 USD.");
+    expect(w.shop.reads).toEqual([ebay, ebay]);
+    // No read asks the Fetch port to refuse eBay: only the want-list's page source sends that directive.
+    expect(w.shop.headers.flatMap((h) => Object.keys(h).map((k) => k.toLowerCase()))).not.toContain(NEVER_EBAY);
   });
 
   it("near builds a pattern that finds the price after the owner's words", async () => {

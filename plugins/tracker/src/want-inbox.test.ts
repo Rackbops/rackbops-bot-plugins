@@ -90,6 +90,7 @@ describe("/want source: bgg without BGG's API", () => {
     const game = await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "bgg", target: "https://boardgamegeek.com/boardgameexpansion/300580/x" } });
     expect(game).toContain("I look at what you send in from BoardGameGeek every 1 hour");
     expect(game).toContain("This bot has no BoardGameGeek API access");
+    expect(game).toContain("this watch never opens BGG's pages itself");
     expect(game).toContain("What to look for: BGG game 300580.");
     const words = await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "bgg", target: "Wingspan Oceania" } });
     expect(words).toContain('What to look for: "Wingspan Oceania".');
