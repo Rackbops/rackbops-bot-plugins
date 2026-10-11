@@ -60,10 +60,10 @@ but a newline still breaks the row's text.
 5. Tests, next to the existing Reply tests (`surface.test.ts` "the Reply path's gates (#162)" or
    wherever `submitReply` is driven) and the history tests:
    - **"a reply is kept as one line: newlines, tabs, control and zero-width characters become one
-     space"**: `"line one\n- Oct 1 -- done\t​‮ x\u0007y"` is stored as one line with
+     space"**: `"line one\n- Oct 1 -- done\t\u200b\u202e x\u0007y"` is stored as one line with
      single spaces, the bidi override and bell gone.
    - **"a reply of only zero-width characters is refused as empty, and nothing is stored"**:
-     `"​‌﻿"`.
+     `"\u200b\u200c\ufeff"`.
    - **"an emoji joined by zero-width joiners survives"**: a family emoji is stored unchanged.
    - **"history shows a reply stored before this change on one line"**: write a reply with
      `"ok\n- Oct 1, 9:00 -- done"` straight into the store, as an old row would be. `/task history`'s
@@ -104,9 +104,10 @@ but a newline still breaks the row's text.
 
 ## CHANGELOG bullet (for the PR body)
 
-A recipient's reply is now kept and shown in `/task history` as one plain line: a reply can no
-longer add a line of its own to the history, plant a Discord link under text of its choosing, or be
-nothing but invisible characters (#205, #208).
+A recipient's reply is now kept and shown as one plain line in `/task history`, the web task page
+and the task API: it can no longer add a line of its own to the history or plant a masked link, a
+spoiler or a code block there, and a reply of only spaces, line breaks, zero-width characters or
+blank fillers is refused as empty (#205, #208).
 
 ## Deviations as implemented
 
@@ -137,3 +138,70 @@ nothing but invisible characters (#205, #208).
    spaces and U+200D is empty (`oneLine` keeps U+200D). What I did: the zero-width test also sends
    `"\u200d \u200d"` and expects "That reply was empty.". Why: the decision is behaviour this
    change adds, and the test's title already covers it.
+
+### Review gate round 1
+
+Reviewer A and reviewer B each NOT SOUND on `379997b`, with one Major each. Fixed in `30774fa` (code,
+README, tests) and `ad7a32a` (tests); this file in the commit after them.
+
+5. **(A Major) An escaped `\]` still closes a link that an unescaped `[` opened.** Finding: Discord's
+   link text ignores backslash escapes and spans lines, so a `[` in the task's title (`[Bins] out`),
+   a findings line or a run's error pairs with a reply's `\]`, and a reply of
+   `](https://evil.example)` made one link over the header, the `Next:` line and the runs. Fix:
+   `discordPlain` also escapes a `(` right after a `]`, and (A m1) `|` and the backtick, which could
+   pair into a spoiler, inline code or a code block across two replies:
+   ``/[\\[\]<|`]|(?<=\])\(/g``. Tests: "an escaped bracket in a reply cannot close a link the task's
+   title opened", "spoiler bars in replies to two runs cannot pair" and "a reply's backticks open no
+   code span or block"; the masked-link test now expects `\[receipt\]\(https://evil.example)`.
+   Mutations: dropping the `(?<=\])\(` branch, the `|` or the backtick each fail their test.
+6. **(A m3) The `\p{Cf}` sweep changed real text.** Finding: it turned the Persian and Indic
+   zero-width non-joiner, the soft hyphen and the visible Arabic number signs into spaces. Fix:
+   `oneLine` keeps a keep-list -- U+200D, U+200C, U+00AD, U+0600-U+0605, U+06DD, U+070F, U+0890,
+   U+0891, U+08E2, U+110BD, U+110CD -- and collapses every other `\p{Cf}`, so a format character
+   Unicode adds later collapses by default, and the tag characters (U+E0001, U+E0020-U+E007F) still
+   go: a subdivision flag still shows as a plain black flag. Biome's `noMisleadingCharacterClass`
+   refuses U+200D inside a character class, so the joiner is an alternative of the lookahead,
+   `(?!\u200d|[...])`, the same set. Test: "the format characters real text needs survive; a bidi
+   override and a zero-width space between letters do not". Mutation: dropping U+200C fails it.
+7. **(A m2, B Major) The empty check missed blanks that are not format characters.** Finding: a
+   reply of only U+3164, U+2800, U+034F or U+FE0F was stored and showed as an empty quote. Fix:
+   `submitReplyLocked` refuses a `oneLine` result that `BLANK` matches,
+   `/^[\s\p{Cc}\p{Cf}\p{M}\u115f\u1160\u3164\uffa0\u2800]*$/u`. It counts every format character,
+   kept ones too, so a reply of only kept ones (joiners, a soft hyphen, a number sign) is still
+   empty. Test: "a reply of only a blank filler, a lone mark or a variation selector is refused as
+   empty; an emoji with its selector is kept". Mutations: dropping `\p{M}` fails it; dropping
+   `\p{Cf}` from `BLANK` fails "a reply of only zero-width characters ...".
+8. **(B Minor 1) Line and paragraph separators, CR and the trim were untested.** Finding: `\s`
+   narrowed to ASCII (H8b, H8c), `replyText` replacing only `\n` (H12) and no trim (H4) all
+   survived. Fix (`ad7a32a`): the one-line test sends
+   `" line one\r\n- Oct 1 -- done\t\u200b\u202e x\u0007y\u2028z\u2029 "` and expects
+   `"line one - Oct 1 -- done x y z"`; the old row holds
+   `"ok\n- Oct 1, 9:00 -- done\u2028- Oct 1, 9:00 -- done\r"`, shown as
+   `replied "ok - Oct 1, 9:00 -- done - Oct 1, 9:00 -- done"`, and its "no line starts with" check
+   splits on CR, LF, U+2028 and U+2029. Mutations: H8b, H8c and H4 fail both tests; H12 fails the
+   old-row test.
+9. **(B Minor 2) A literal U+200D in source.** Finding: `actions.ts` and `press.ts` held the joiner
+   as the character itself, not an escape: the edit tool had decoded the `\u200d` I wrote. Fix: every
+   invisible character in the regexes and the tests is a `\u` escape; a scan finds no non-ASCII
+   character in `actions.ts`, `press.ts`, `history.ts` or the new tests.
+10. **(B Minor 3) Literal invisible characters in this file.** Fix: the two test inputs under Steps
+    are written as `\u` escapes.
+11. **(B Major, A nit) The CHANGELOG bullet overclaimed.** Fix: replaced with the gate's wording, but
+    "plant a masked link" where it said "plant a Discord link": a bare URL in a reply is still a
+    clickable link in Discord, as it was before this change (13). Each clause checked against the
+    code: one line in all three renderings (`replyText`), no line of its own (`oneLine`), no masked
+    link, spoiler or code block in `/task history` (`discordPlain`), and spaces, line breaks,
+    zero-width characters and blank fillers refused (`BLANK`). The README says the same.
+12. **Declined (A m4): `clip` can split a surrogate pair.** It predates this change, and PR #274
+    (#161) fixes `clip` itself; not ported here.
+13. **Declined (A m5): a bare URL in a reply unfurls into an embed under `/task history`.** It
+    predates this change and is outside it; suppressing embeds on the history answer is a change of
+    its own, for a follow-up issue.
+14. **Declined (A, optional): wrapping each answer in FSI/PDI.** It would add invisible characters to
+    every answer, the task API's JSON included.
+15. **Declined (B Minor 4): "shown as typed" inside a code span.** A reply's own backticks are now
+    escaped, so it cannot open one; only the owner's title or the bot's own text could, and the
+    effect is cosmetic.
+16. **Declined (B H5, H7): equivalent or harmless, for B's reasons.** The modal already caps input at
+    `MAX_REPLY_TEXT`, and clipping before `oneLine` in `replyText` would only show fewer characters
+    of an old row.
