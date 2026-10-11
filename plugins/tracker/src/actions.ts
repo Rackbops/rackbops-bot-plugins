@@ -121,6 +121,11 @@ export function clip(text: string, max = MAX_ANSWER): string {
   return text.length <= max ? text : `${text.slice(0, max - 3)}...`;
 }
 
+/** Text on one line: each run of whitespace (line and paragraph separators too), control and format characters, but U+200D (which joins emoji), is one space; trimmed. */
+export function oneLine(text: string): string {
+  return text.replace(/(?:(?!‍)[\s\p{Cc}\p{Cf}])+/gu, " ").trim();
+}
+
 export type Entry = { ok: true; user: User; notice: string | null } | { ok: false; content: string };
 
 /**

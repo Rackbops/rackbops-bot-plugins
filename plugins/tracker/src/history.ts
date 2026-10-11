@@ -13,7 +13,7 @@ import {
   type TaskEvent,
   type User,
 } from "@rackbops/docket-core";
-import { clip, NO_SUCH_TASK, type TrackerDeps } from "./actions.js";
+import { clip, NO_SUCH_TASK, oneLine, type TrackerDeps } from "./actions.js";
 import { PERSON_REF } from "./delivery-health.js";
 
 /**
@@ -29,7 +29,8 @@ export const HISTORY_CHANGES = 5;
 function replyText(r: Reply): string {
   if (r.kind === "text") {
     const text = typeof r.payload === "object" && r.payload !== null ? String((r.payload as { text?: unknown }).text ?? "") : "";
-    return `replied "${clip(text, 80)}"`;
+    // One line even when it was kept before #205, line breaks and all.
+    return `replied "${clip(oneLine(text), 80)}"`;
   }
   if (r.kind === "decision") return `chose ${String((r.payload as { choice?: unknown } | null)?.choice ?? "?")}`;
   return r.kind === "opt_out" ? "opted out" : r.kind;
@@ -42,7 +43,7 @@ export interface RunView {
   late: boolean;
   /** The failure, clipped; null unless the run failed with one. */
   error: string | null;
-  /** `Larry replied "..."`, `Curly opted out`. */
+  /** `Larry replied "..."`, `Curly opted out`: plain text, one line each; Discord's rendering (`runLine`) escapes them. */
   answers: string[];
 }
 
@@ -69,10 +70,15 @@ export function changeView(e: TaskEvent, viewer: User, now: Date, names: Readonl
   return { at: formatInstant(e.at, viewer.timeZone, now), kind: e.kind.replaceAll("_", " "), detail };
 }
 
+/** Shown as typed in Discord: a backslash before each `\`, `[`, `]` and `<`, so no masked link, mention or timestamp renders. */
+function discordPlain(text: string): string {
+  return text.replace(/[\\[\]<]/g, "\\$&");
+}
+
 function runLine(v: RunView): string {
   const late = v.late ? " (late)" : "";
   const error = v.error ? `: ${v.error}` : "";
-  const answered = v.answers.length > 0 ? `; ${v.answers.join(", ")}` : "";
+  const answered = v.answers.length > 0 ? `; ${v.answers.map(discordPlain).join(", ")}` : "";
   return `- ${v.due} -- ${v.status}${late}${error}${answered}`;
 }
 

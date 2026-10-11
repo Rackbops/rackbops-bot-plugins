@@ -9,7 +9,7 @@ import {
   type User,
 } from "@rackbops/docket-core";
 import type { Membership } from "./access.js";
-import { answeredText, clip, NO_SUCH_TASK, replyLanes, type TrackerDeps } from "./actions.js";
+import { answeredText, clip, NO_SUCH_TASK, oneLine, replyLanes, type TrackerDeps } from "./actions.js";
 import { MAX_REPLY_TEXT } from "./buttons.js";
 import { TASK_BUSY } from "./locks.js";
 import { HOST_CANNOT_MESSAGE, isUnreachable } from "./notifier.js";
@@ -180,8 +180,9 @@ export async function submitReply(d: TrackerDeps, user: User, occurrenceId: stri
 async function submitReplyLocked(d: TrackerDeps, user: User, occurrenceId: string, text: string): Promise<string> {
   const refusal = await replyRefusal(d, user, occurrenceId);
   if (refusal) return refusal;
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return "That reply was empty.";
+  // Kept as one plain line (#205), so it cannot add a line to the history; nothing left but joiners is empty.
+  const line = oneLine(text);
+  if (/^[ ‍]*$/.test(line)) return "That reply was empty.";
   const occurrence = await d.store.getOccurrence(occurrenceId);
   if (!occurrence) return "That run no longer exists.";
   await replyLanes(d).reply({
@@ -189,7 +190,7 @@ async function submitReplyLocked(d: TrackerDeps, user: User, occurrenceId: strin
     occurrenceId,
     userId: user.id,
     kind: "text",
-    payload: { text: clip(trimmed, MAX_REPLY_TEXT) },
+    payload: { text: clip(line, MAX_REPLY_TEXT) },
   });
   return "Reply kept with the task's history.";
 }

@@ -35,6 +35,8 @@ import {
   openLink,
   ORIGIN,
   people,
+  press,
+  replyText,
   SESSION,
   signIn,
   slash,
@@ -610,5 +612,77 @@ describe("escaping", () => {
     expect(esc(`<a href="x" onclick='y'>&</a>`)).toBe("&lt;a href=&quot;x&quot; onclick=&#39;y&#39;&gt;&amp;&lt;/a&gt;");
     const inner = html`<b>${"<i>"}</b>`;
     expect(html`<p>${inner}${["<", 1]}${null}${false}</p>`.value).toBe("<p><b>&lt;i&gt;</b>&lt;1</p>");
+  });
+});
+
+describe("a reply is one plain line (#205, #208)", () => {
+  /** Larry's weekly reminder t1, shared with Curly (u3, "user333"), who accepted; its first run, o1, has fired. */
+  async function sharedRun() {
+    const w = await world();
+    await people(w.plugin);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "week" } });
+    await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } });
+    await press(w.plugin, "tracker:a.t.t1", CURLY);
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await w.plugin.ticks!.find((t) => t.name === "notify")!.run(new AbortController().signal);
+    return w;
+  }
+
+  /** The text of each reply stored on t1, oldest first. */
+  function stored(dbPath: string): string[] {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const rows = db.query("SELECT payload FROM replies WHERE task_id = 't1' AND kind = 'text' ORDER BY seq").all() as { payload: string }[];
+      return rows.map((r) => (JSON.parse(r.payload) as { text: string }).text);
+    } finally {
+      db.close();
+    }
+  }
+
+  const KEPT = "Reply kept with the task's history.";
+
+  it("a reply is kept as one line: newlines, tabs, control and zero-width characters become one space", async () => {
+    const w = await sharedRun();
+    expect(await replyText(w.plugin, "o1", CURLY, "line one\n- Oct 1 -- done\t\u200b\u202e x\u0007y")).toBe(KEPT);
+    // The bidi override and the bell are gone with the rest.
+    expect(stored(w.dbPath)).toEqual(["line one - Oct 1 -- done x y"]);
+  });
+
+  it("a reply of only zero-width characters is refused as empty, and nothing is stored", async () => {
+    const w = await sharedRun();
+    expect(await replyText(w.plugin, "o1", CURLY, "\u200b\u200c\ufeff")).toBe("That reply was empty.");
+    expect(await replyText(w.plugin, "o1", CURLY, "\u200d \u200d")).toBe("That reply was empty.");
+    expect(stored(w.dbPath)).toEqual([]);
+  });
+
+  it("an emoji joined by zero-width joiners survives", async () => {
+    const w = await sharedRun();
+    const family = "\u{1f468}\u200d\u{1f469}\u200d\u{1f467}\u200d\u{1f466}";
+    expect(await replyText(w.plugin, "o1", CURLY, family)).toBe(KEPT);
+    expect(stored(w.dbPath)).toEqual([family]);
+  });
+
+  it("history shows a reply stored before this change on one line", async () => {
+    const w = await sharedRun();
+    // As a reply kept before #205 is: line break and all.
+    const db = new Database(w.dbPath);
+    db.query("INSERT INTO replies (occurrence_id, task_id, user_id, kind, payload, at) VALUES ('o1', 't1', 'u3', 'text', ?, ?)").run(
+      JSON.stringify({ text: "ok\n- Oct 1, 9:00 -- done" }),
+      "2026-10-01T13:01:00.000Z",
+    );
+    db.close();
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" } });
+    expect(history).toMatch(/^- Thu Oct 1, 9:00 -- \w+; user333 replied "ok - Oct 1, 9:00 -- done"$/m);
+    expect(history.split("\n").filter((l) => l.startsWith("- Oct 1, 9:00"))).toEqual([]);
+  });
+
+  it("history escapes a masked link and a mention in a reply, in Discord only", async () => {
+    const w = await sharedRun();
+    expect(await replyText(w.plugin, "o1", CURLY, "[receipt](https://evil.example) <@123> \\ok")).toBe(KEPT);
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" } });
+    expect(history).toContain('; user333 replied "\\[receipt\\](https://evil.example) \\<@123> \\\\ok"');
+    // The page escapes it as HTML, and adds no backslash.
+    const page = await (await call(w.plugin, "GET", "/tasks/t1", { jar: await signIn(w.plugin, LARRY) })).text();
+    expect(page).toContain("<td>user333 replied &quot;[receipt](https://evil.example) &lt;@123&gt; \\ok&quot;</td>");
   });
 });
