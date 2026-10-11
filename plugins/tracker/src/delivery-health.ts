@@ -34,11 +34,11 @@ import { seqOf } from "./store.js";
  * of it run out (about two hours) and it fails.
  *
  * A task is set active again only when no pause row is left on it and it is still `paused`, and
- * paused only while it is still `active`, each checked in the write itself (a compare-and-set,
- * `statusIf`), so a resume never undoes anything but this mechanism: an owner's delete landing
- * while a pause or a resume runs stands, and an owner's own pause takes this lock too (manage.ts).
- * Pausing and resuming run one at a time (a promise chain), so a resume landing while a pause is
- * still writing waits for it, and the rows and the tasks' statuses always agree.
+ * paused only while it is still `active`, each status checked in the write itself (a
+ * compare-and-set, `statusIf`), so a resume never undoes anything but this mechanism: an owner's
+ * delete landing while a pause or a resume runs stands, and an owner's own pause takes this lock
+ * too (manage.ts). Pausing and resuming run one at a time (a promise chain), so a resume landing
+ * while a pause is still writing waits for it, and the rows and the tasks' statuses always agree.
  */
 
 /** Consecutive refused DMs before a person's delivery pauses: the plan's three. */
@@ -127,7 +127,8 @@ export class DeliveryHealth {
 
   /**
    * Runs `fn` on the same lock as a pause and a resume, so it never interleaves with one: what
-   * forget-me's erasure uses (admin.ts), then `release`s the tasks it freed from inside `fn`.
+   * forget-me's erasure uses (admin.ts), then `release`s the tasks it freed from inside `fn`, and the
+   * owner's own pause (manage.ts `pauseTask`, after the task's lock).
    */
   exclusive<T>(fn: () => Promise<T>): Promise<T> {
     return this.locked(fn);
@@ -240,7 +241,10 @@ export class DeliveryHealth {
       // active again. The status and the row change together (one transaction, no await in it): the
       // row goes in when this paused the task (it may be there already, left by a pass that stopped
       // part way), and comes off when it did not, so no row of theirs is left on a task this
-      // mechanism did not pause.
+      // mechanism did not pause. The owner is read first, so their notice is on the list the moment
+      // the pause applies: a Store error after it would otherwise lose it for good, since the next
+      // pass finds the task paused and leaves it.
+      const owner = asRecipient ? await this.store.getUser(task.ownerId) : null;
       const paused = this.db.transaction((): boolean => {
         if (!this.statusIf(task.id, "active", "paused", at)) {
           this.db.query("DELETE FROM delivery_pauses WHERE task_id = ? AND user_id = ?").run(task.id, userId);
@@ -250,12 +254,9 @@ export class DeliveryHealth {
         return true;
       })();
       if (!paused) continue;
+      if (owner) notices.push({ owner, task, text: recipientPausedText(task, recipient, userId) });
       const detail = asRecipient ? recipientPauseDetail(userId) : PAUSE_DETAIL;
       await this.store.addTaskEvent({ taskId: task.id, actorId: null, kind: "paused", detail, at });
-      if (asRecipient) {
-        const owner = await this.store.getUser(task.ownerId);
-        if (owner) notices.push({ owner, task, text: recipientPausedText(task, recipient, userId) });
-      }
     }
   }
 
@@ -283,8 +284,10 @@ export class DeliveryHealth {
   /**
    * Sets a task active again once nothing holds it paused, and gives it its next run. Only from
    * inside the lock: `resume`, `resumeTask`, or `exclusive`. The write is a compare-and-set from
-   * `paused`: the lock is not the task's (locks.ts), so an owner's delete may land after the read,
-   * and it stands -- no `resumed` event, no next run.
+   * `paused`: the lock is not the task's (locks.ts), so an owner's delete landing between the read
+   * and the write stands -- no `resumed` event, no next run. One landing after the write stands too:
+   * the `resumed` event is already written, and a run `materialize` queued just before it stays,
+   * inert, on the archived task.
    */
   async release(taskId: string, actorId: string | null, detail: string, now: Date): Promise<boolean> {
     if (this.pausesFor(taskId).length > 0) return false;

@@ -186,6 +186,27 @@ describe("a resume racing an owner's delete (#168)", () => {
     expect(health.isPaused(s.friend.id)).toBe(false);
   });
 
+  it("a delete landing just after the resume's write stands too: no next run is queued for it", async () => {
+    const s = await pausedForFriend();
+    // Right after `release` writes its `resumed` event: the delete runs there, to its end.
+    const landed: { owners?: Promise<Done> } = {};
+    const store = Object.assign(Object.create(s.store) as SqliteStore, {
+      addTaskEvent: async (e: Parameters<SqliteStore["addTaskEvent"]>[0]) => {
+        const event = await s.store.addTaskEvent(e);
+        if (e.kind === "resumed") {
+          landed.owners ??= deleteTask(d, s.owner, s.task.id);
+          await landed.owners;
+        }
+        return event;
+      },
+    });
+    const health = new DeliveryHealth(s.db, store);
+    const d = s.deps(health);
+    expect((await health.resume(s.friend.id, s.clock.now()))?.tasks).toEqual([s.task.id]);
+    expect((await landed.owners)?.ok).toBe(true);
+    expect(await s.deleted()).toEqual(["archived", ["paused", "resumed", "archived"], 0]);
+  });
+
   it("a delete started with the person's resume, either first by a few microtasks, stays deleted and sends nothing more", async () => {
     const quiet = { info() {}, warn() {}, error() {} };
     for (const first of ["delete", "resume"] as const) {
@@ -777,8 +798,40 @@ describe("a send held for a paused person (#168): every task that still DMs them
         for (let i = 0; i < PAUSE_AFTER - 1; i++) await health.recordFailure(s.friend.id, HOST_CANNOT_MESSAGE, at);
         await expect(health.recordFailure(s.friend.id, HOST_CANNOT_MESSAGE, at)).rejects.toBe(broken);
       }
-      expect([via, told]).toEqual([via, [s.owner.id]]);
-      expect([via, health.pausesFor(s.task.id)]).toEqual([via, [s.friend.id]]);
+      // Both were paused before the throw (the second's event write is what threw): both are told.
+      expect([via, told]).toEqual([via, [s.owner.id, third.id]]);
+      expect([via, health.pausesFor(s.task.id), health.pausesFor(second.id)]).toEqual([via, [s.friend.id], [s.friend.id]]);
     }
+  });
+
+  it("a Store error just after a task's pause still tells its owner, once: the next pass finds the task paused and leaves it", async () => {
+    const s = await held();
+    s.pausedAtOnly();
+    const broken = new Error("disk I/O error");
+    let throws = 1;
+    const store = Object.assign(Object.create(s.store) as SqliteStore, {
+      addTaskEvent: async (e: Parameters<SqliteStore["addTaskEvent"]>[0]) => {
+        if (throws-- > 0) throw broken;
+        return s.store.addTaskEvent(e);
+      },
+    });
+    const told: string[] = [];
+    const health = new DeliveryHealth(s.db, store, { tellOwner: async (owner) => void told.push(owner.id) });
+    await expect(health.holdFor(s.friend.id, "2026-10-01T12:00:00.000Z")).rejects.toBe(broken);
+    expect((await s.store.getTask(s.task.id))?.status).toBe("paused");
+    expect(health.pausesFor(s.task.id)).toEqual([s.friend.id]);
+    expect(told).toEqual([s.owner.id]);
+    await health.holdFor(s.friend.id, "2026-10-01T12:01:00.000Z");
+    expect(told).toEqual([s.owner.id]);
+  });
+
+  it("a pass whose pause row cannot be written leaves the task active: the status and the row are one transaction", async () => {
+    const s = await held();
+    s.pausedAtOnly();
+    s.db.run("CREATE TRIGGER refuse_pause BEFORE INSERT ON delivery_pauses BEGIN SELECT RAISE(ABORT, 'x'); END");
+    await expect(s.health.holdFor(s.friend.id, "2026-10-01T12:00:00.000Z")).rejects.toThrow("x");
+    expect((await s.store.getTask(s.task.id))?.status).toBe("active");
+    expect(s.health.pausesFor(s.task.id)).toEqual([]);
+    expect(s.told).toEqual([]);
   });
 });
