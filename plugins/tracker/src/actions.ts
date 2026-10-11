@@ -120,7 +120,8 @@ export const NO_SUCH_TASK = "You have no task with that id. `/tasks` lists yours
 export function clip(text: string, max = MAX_ANSWER): string {
   if (text.length <= max) return text;
   let end = max - 3;
-  // Never half an emoji: a cut just after a high surrogate would leave it alone, so cut before it.
+  // Never splits a surrogate pair: a cut just after a high surrogate would leave it alone, so cut
+  // before it. (A sequence of several code points, a flag or a ZWJ emoji, can still be cut between them.)
   const last = text.charCodeAt(end - 1);
   if (last >= 0xd800 && last <= 0xdbff) end--;
   return `${text.slice(0, end)}...`;

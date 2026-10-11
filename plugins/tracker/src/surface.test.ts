@@ -79,9 +79,18 @@ type Options = {
   users?: Record<string, string>;
   client?: unknown;
   guildId?: string;
-  /** Collects the text of each ephemeral follow-up after the answer. */
-  followUps?: string[];
+  /** Collects what the command sent after deferring, in order: its answer's edit, then any follow-up. */
+  said?: Said[];
+  /** Makes every follow-up fail with this (an expired interaction). */
+  followUpFails?: Error;
 };
+
+/** One message a command sent after deferring: the edit of its answer, or a follow-up and its flags. */
+interface Said {
+  kind: "edit" | "followUp";
+  content: string;
+  flags?: unknown;
+}
 
 /** Runs a slash command as `userId` and returns the ephemeral answer's text. */
 async function slash(plugin: Plugin, name: string, userId: string, o: Options = {}): Promise<string> {
@@ -101,8 +110,14 @@ async function slash(plugin: Plugin, name: string, userId: string, o: Options = 
       getUser: (k: string) => (o.users?.[k] ? { id: o.users[k], bot: false } : null),
     },
     deferReply: async (x: unknown) => void (deferred = x),
-    editReply: async (x: { content: string }) => void edits.push(x),
-    followUp: async (x: { content: string }) => void o.followUps?.push(x.content),
+    editReply: async (x: { content: string }) => {
+      edits.push(x);
+      o.said?.push({ kind: "edit", content: x.content });
+    },
+    followUp: async (x: { content: string; flags?: unknown }) => {
+      if (o.followUpFails) throw o.followUpFails;
+      o.said?.push({ kind: "followUp", content: x.content, flags: x.flags });
+    },
   };
   await command.handle(interaction as unknown as ChatInputCommandInteraction);
   expect(deferred).toMatchObject({ flags: 64 });
@@ -712,30 +727,51 @@ describe("one message (#161, #205 discord-1)", () => {
     for (const i of firsts) expect(lines[i + 1]).toMatch(/^pot \d+ -- /);
   });
 
-  it("the first command after a pause answers a full /tasks whole, and tells of the resume in a second message", async () => {
-    const w = world();
-    await pausedForCurly(w);
-    await reminders(w, 40, porch);
+  /** Larry's own DMs fail for four days (his tasks pause), then work again. */
+  async function larryPausedAndBack(w: ReturnType<typeof world>) {
     w.unreachable.add(LARRY);
     for (const day of ["05", "06", "07", "08"]) {
       w.clock.set(`2026-10-${day}T13:00:00.000Z`);
       await tick(w.plugin);
     }
     w.unreachable.delete(LARRY);
-    const followUps: string[] = [];
-    const list = await slash(w.plugin, "tasks", LARRY, { followUps });
+  }
+
+  it("the first command after a pause answers a full /tasks uncut by the notice, and tells of the resume in a second message", async () => {
+    const w = world();
+    await pausedForCurly(w);
+    await reminders(w, 40, porch);
+    await larryPausedAndBack(w);
+    const said: Said[] = [];
+    const list = await slash(w.plugin, "tasks", LARRY, { said });
     expect(list.length).toBeLessThanOrEqual(2000);
     // The answer is the list alone, from its first task line to its paused one.
     expect(list).toMatch(/^`t\d+` water the plants on the back porch, pot \d+ -- /);
     expect(list).not.toContain("I could not DM you");
     expect(list).toMatch(/^\.\.\.and \d+ more active\.$/m);
     expect(list.endsWith(`\n${PAUSED_T1}`)).toBe(true);
-    expect(followUps).toHaveLength(1);
-    expect(followUps[0]).toContain(`I could not DM you ${PAUSE_AFTER} times in a row, so your reminders were paused.`);
+    // The answer first, then the notice, which only Larry sees, like the answer.
+    expect(said).toHaveLength(2);
+    expect(said[0]).toEqual({ kind: "edit", content: list });
+    expect(said[1]).toMatchObject({ kind: "followUp", flags: 64 });
+    expect(said[1]?.content).toContain(`I could not DM you ${PAUSE_AFTER} times in a row, so your reminders were paused.`);
     // Next time there is no notice, and nothing follows.
-    const again: string[] = [];
-    await slash(w.plugin, "tasks", LARRY, { followUps: again });
-    expect(again).toEqual([]);
+    const again: Said[] = [];
+    await slash(w.plugin, "tasks", LARRY, { said: again });
+    expect(again.map((m) => m.kind)).toEqual(["edit"]);
+  });
+
+  it("a follow-up that fails after the answer landed is logged, never thrown to the host", async () => {
+    const w = world();
+    await withLarry(w);
+    await reminders(w, 40, porch);
+    await larryPausedAndBack(w);
+    const said: Said[] = [];
+    // `slash` awaits the command's handle(): a rejection would fail the test here.
+    const list = await slash(w.plugin, "tasks", LARRY, { said, followUpFails: Object.assign(new Error("Unknown interaction"), { code: 10062 }) });
+    expect(said).toEqual([{ kind: "edit", content: list }]);
+    expect(list).toMatch(/^\.\.\.and \d+ more active\.$/m);
+    expect(w.warnings).toContain("could not send /tasks's resume notice as a follow-up: Unknown interaction");
   });
 
   it("a button pressed on a 2000-character DM keeps its status", async () => {

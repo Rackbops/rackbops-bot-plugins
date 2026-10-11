@@ -138,7 +138,13 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
       content = FAILED;
     }
     await interaction.editReply({ content, ...NO_MENTIONS });
-    if (notice) await interaction.followUp({ content: notice, ...EPHEMERAL });
+    if (!notice) return;
+    // The answer has landed; a follow-up that fails (an expired interaction) is logged, not thrown.
+    try {
+      await interaction.followUp({ content: notice, ...EPHEMERAL });
+    } catch (err) {
+      w.log.warn(`could not send /${interaction.commandName}'s resume notice as a follow-up: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   const commands: PluginCommand[] = [

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fitTaskList, listTasks, MAX_ANSWER, type TrackerDeps, withNotice } from "./actions.js";
+import { clip, fitTaskList, listTasks, MAX_ANSWER, type TrackerDeps, withNotice } from "./actions.js";
 import { admit } from "./people.js";
 import { openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
@@ -74,6 +74,12 @@ describe("fitTaskList", () => {
     const both = fitTaskList(activeLines(5), paused, false);
     expect(both.length).toBeLessThanOrEqual(MAX_ANSWER);
     expect(both.split("\n")).toEqual(["...and 5 more active.", ...paused.slice(0, shown), `...and ${40 - shown} more paused.`]);
+
+    // With the web area set up, paused ones left out are pointed to /web too.
+    const withWeb = fitTaskList([], paused, true);
+    expect(withWeb.length).toBeLessThanOrEqual(MAX_ANSWER);
+    expect(withWeb).toMatch(/\n\.\.\.and \d+ more paused\.\n/);
+    expect(withWeb.endsWith(`\n${WEB}`)).toBe(true);
   });
 
   it("the closing line points to /web only when the web area is set up, and is not there without it", () => {
@@ -110,7 +116,7 @@ describe("fitTaskList", () => {
 describe("listTasks's paused lines", () => {
   const AT = "2026-10-01T12:00:00.000Z";
 
-  /** An owner with three paused tasks, held for 10, 3 and no people; `/tasks` as they see it. */
+  /** An owner with four paused tasks, held for 10, 3, no and 4 people; `/tasks` as they see it. */
   async function setup() {
     const store = new SqliteStore(openDatabase(":memory:"));
     const now = new Date(AT);
@@ -122,7 +128,8 @@ describe("listTasks's paused lines", () => {
       held.push(person.id);
     }
     const pauses: Record<string, string[]> = {};
-    for (const [title, who] of [["bins out", held], ["stretch", held.slice(0, 3)], ["water", []]] as const) {
+    const four = held.slice(0, 4);
+    for (const [title, who] of [["bins out", held], ["stretch", held.slice(0, 3)], ["water", []], ["sweep", four]] as const) {
       const task = await store.createTask({
         ownerId: owner.id,
         type: "reminder",
@@ -146,7 +153,27 @@ describe("listTasks's paused lines", () => {
       "Paused: `t1` bins out -- I could not DM Person 1, Person 2, Person 3 and 7 more; `/task resume t1` goes on without them.",
       "Paused: `t2` stretch -- I could not DM Person 1, Person 2, Person 3; `/task resume t2` goes on without them.",
       "Paused: `t3` water",
+      "Paused: `t4` sweep -- I could not DM Person 1, Person 2, Person 3 and 1 more; `/task resume t4` goes on without them.",
     ]);
+  });
+});
+
+describe("clip", () => {
+  /** A UTF-16 unit of a pair standing alone: what a cut through an emoji leaves, shown as a broken character. */
+  const LONE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+  it("keeps a whole emoji that ends right at the cut", () => {
+    const cut = clip(`${"x".repeat(1995)}${"😀".repeat(3)}`);
+    expect(cut).toBe(`${"x".repeat(1995)}😀...`);
+    expect(cut).not.toMatch(LONE);
+  });
+
+  it("cuts before a pair the cut would split, at either end of the high surrogates' range", () => {
+    for (const cp of [0x10000, 0x1f600, 0x10ffff]) {
+      const cut = clip(`${"x".repeat(1996)}${String.fromCodePoint(cp)}xxx`);
+      expect(cut).toBe(`${"x".repeat(1996)}...`);
+      expect(cut).not.toMatch(LONE);
+    }
   });
 });
 

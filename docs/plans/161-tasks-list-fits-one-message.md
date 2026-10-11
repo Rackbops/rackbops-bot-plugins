@@ -93,13 +93,13 @@ Written 2026-10-11 against `main` at `2949dbe`; re-find each cite by function na
 ## CHANGELOG bullet (for the PR body)
 
 `/tasks` no longer cuts its answer in the middle of a line at Discord's 2000 characters: a long list
-keeps whole lines, keeps your paused tasks in preference to active ones that do not fit (whose ids
-`/task resume` needs; any that still do not fit are counted), says how many active ones it left out,
-and points to `/web` when the web area is set up. A paused task's line names at most three people it
-could not DM, then how many more. When the notice that your reminders are back on would push a
-command's answer past one message, it comes as a second message instead. Pressing a button on a DM
-near 2000 characters now shows its status line instead of cutting it off, and no cut answer ends in
-half an emoji (#161, #205).
+keeps whole lines, keeps your paused tasks, whose ids `/task resume` needs, in preference to active
+ones that do not fit (paused ones that still do not fit are counted), says how many active ones it
+left out, and points to `/web` when the web area is set up. A paused task's line names at most three
+people it could not DM, then how many more. When the notice that your reminders are back on would
+push a command's answer past one message, it comes as a second message instead. Pressing a button on
+a DM near 2000 characters now shows its status line instead of cutting it off, and an answer cut at
+the limit no longer ends in a broken `�` character, half of an emoji (#161, #205).
 
 ## Deviations as implemented
 
@@ -133,9 +133,10 @@ half an emoji (#161, #205).
    notice follows as an ephemeral follow-up (as `onButton` already does); otherwise the combined
    answer is unchanged. This holds for every command. The rule is `withNotice` (`actions.ts`, next
    to `enter`), which `run` calls. Tests: `surface.test.ts` "the first command after a pause answers
-   a full /tasks whole, and tells of the resume in a second message" (A's scenario: 40 reminders,
-   `t1` paused for Curly, Larry paused for four days, then back; its `slash` helper gained a
-   `followUps` collector), and `actions.test.ts` "withNotice" at the exact boundary (see 16).
+   a full /tasks uncut by the notice, and tells of the resume in a second message" (A's scenario:
+   40 reminders, `t1` paused for Curly, Larry paused for four days, then back; its `slash` helper
+   gained a `followUps` collector, now the `said` log of item 20), and `actions.test.ts`
+   "withNotice" at the exact boundary (see 16).
    README's pause paragraph says so.
 7. **(B, Major) The CHANGELOG bullet's "always keeps your paused tasks" was false** (paused lines
    alone over the limit are counted, not shown). Reworded as the coordinator gave it: "keeps your
@@ -180,3 +181,33 @@ half an emoji (#161, #205).
     two characters of 2000, so an off-by-one there could not be caught either. The rule moved into
     `withNotice` so it is tested to the character: notice + blank line + answer of exactly 2000
     stays one message, 2001 splits.
+
+### Review gate round 2
+
+17. **(A, Minor) A failed follow-up was thrown to the host.** In `run`, `followUp` had no catch: an
+    expired interaction (10062) rejected `handle()` after the answer had landed, and the host logged
+    it as an interaction error. It is now caught and logged as a warning, like `failed()` in
+    `interactions.ts`. Test: `surface.test.ts` "a follow-up that fails after the answer landed is
+    logged, never thrown to the host" (the follow-up rejects; `handle()` resolves, the answer was
+    edited, the warning is logged).
+18. **(B, Major K2; K6/K11) `clip`'s surrogate check was pinned only end to end, where the cut
+    always split a pair.** Direct `clip` tests in `actions.test.ts`: a whole emoji ending right at
+    the cut is kept (a low surrogate there must not step back), and U+10000, U+1F600 and U+10FFFF
+    across the cut each step back (both ends of the high-surrogate range).
+19. **(B, Major C2) The `/web` line when only paused lines are left out was untested.** "paused
+    tasks alone over the limit ..." now also checks `fitTaskList([], pausedLines(40), true)` ends
+    with the `/web` line.
+20. **(B, Major R3; A + B, R4) The follow-up's flags and its order were unchecked.** `slash` in
+    `surface.test.ts` now records the edit and every follow-up in one ordered log (`said`), with
+    each follow-up's flags. The first-command-after-a-pause test asserts the edit comes first and the
+    follow-up carries `{ flags: 64 }` (ephemeral).
+21. **(B, H8/H9) A task held for exactly four people** is added to "listTasks's paused lines":
+    "Person 1, Person 2, Person 3 and 1 more" (the 3 and 10 cases stay).
+22. **(A + B) Wording.** `clip`'s comment says it never splits a surrogate pair (a flag or a ZWJ
+    emoji can still be cut between its code points); the bullet says a cut answer no longer ends in a
+    broken `�` character. The bullet's parenthetical is B's: "keeps your paused tasks, whose ids
+    `/task resume` needs, in preference to active ones that do not fit (paused ones that still do
+    not fit are counted)".
+23. **(B) Test name.** "the first command after a pause answers a full /tasks whole, ..." is now
+    "... answers a full /tasks uncut by the notice, and tells of the resume in a second message"
+    (the list is still fitted, not whole); item 6 quotes the new name.
