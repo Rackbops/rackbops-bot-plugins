@@ -128,3 +128,12 @@ Only a Windows run shows that.
    assertion, fails every call still out and every later one; the test then awaits the run, so
    `dispose()` has nothing to wait for. Later calls fail too because in the second test the run had
    not yet called city-hall by its last assertion.
+5. **`scout.test.ts` calls `cleanup()` in a test body** ("is offered on the web only while the model
+   runner is set up"), not only as an `afterEach`, so the signature change did need a caller
+   updated: it now awaits it. Unawaited, the async `cleanup()` went on after the test's next
+   `world()` had pushed its directory, and removed that directory under the second plugin's open
+   database (on `main` the same call removed the first plugin's directory while it was still open).
+   Found on Linux by listing `/proc/self/fd` inside `removeDir` before each removal, over a full
+   `bun test plugins/tracker`: this was the one directory removed with a file in it still open. So
+   that a forgotten `await` cannot do this again, `cleanup()` also takes the plugins and directories
+   made before the call, and leaves any made while it awaits for the next call.

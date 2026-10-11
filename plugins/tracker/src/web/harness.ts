@@ -33,11 +33,14 @@ const plugins: Plugin[] = [];
  * only then removes the directories its tests made. Windows refuses to delete a file still open
  * (#232), where Linux does not care, so it is this order that keeps the suite green on Windows. A
  * plugin its test already disposed is disposed again, which does nothing (index.ts nulls its handle
- * on the first).
+ * on the first). It takes only what was made before the call: a world made while it awaits is left
+ * for the next one.
  */
 export async function cleanup(): Promise<void> {
-  for (const p of plugins.splice(0)) await p.dispose?.();
-  for (const d of dirs.splice(0)) removeDir(d);
+  const disposing = plugins.splice(0);
+  const removing = dirs.splice(0);
+  for (const p of disposing) await p.dispose?.();
+  for (const d of removing) removeDir(d);
 }
 
 export function clockAt(iso: string) {
