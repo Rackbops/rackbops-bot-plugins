@@ -70,9 +70,14 @@ export function changeView(e: TaskEvent, viewer: User, now: Date, names: Readonl
   return { at: formatInstant(e.at, viewer.timeZone, now), kind: e.kind.replaceAll("_", " "), detail };
 }
 
-/** Shown as typed in Discord: a backslash before each `\`, `[`, `]` and `<`, so no masked link, mention or timestamp renders. */
+/**
+ * Shown as typed in Discord: a backslash before each `\`, `[`, `]`, `<`, `|` and backtick, and before
+ * a `(` right after a `]` -- Discord's link text ignores escapes, so a `[` elsewhere on the message (a
+ * title, another line) could still pair with an escaped `]`. No masked link, mention, timestamp,
+ * spoiler or code renders from a reply.
+ */
 function discordPlain(text: string): string {
-  return text.replace(/[\\[\]<]/g, "\\$&");
+  return text.replace(/[\\[\]<|`]|(?<=\])\(/g, "\\$&");
 }
 
 function runLine(v: RunView): string {

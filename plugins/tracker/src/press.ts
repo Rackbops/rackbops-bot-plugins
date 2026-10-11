@@ -170,6 +170,12 @@ export async function replyRefusal(d: TrackerDeps, user: User, occurrenceId: str
   return mine?.state === "accepted" ? null : "That is not yours to reply to.";
 }
 
+/**
+ * A reply with nothing to see: spaces, control and format characters, marks with nothing to mark, and
+ * the blank fillers (Hangul U+115F, U+1160, U+3164, U+FFA0; braille U+2800).
+ */
+const BLANK = /^[\s\p{Cc}\p{Cf}\p{M}\u115f\u1160\u3164\uffa0\u2800]*$/u;
+
 /** The Reply modal's submit: the text is kept on the task, against the run it answers, under the task's lock. */
 export async function submitReply(d: TrackerDeps, user: User, occurrenceId: string, text: string): Promise<string> {
   const taskId = (await d.store.getOccurrence(occurrenceId))?.taskId;
@@ -180,9 +186,9 @@ export async function submitReply(d: TrackerDeps, user: User, occurrenceId: stri
 async function submitReplyLocked(d: TrackerDeps, user: User, occurrenceId: string, text: string): Promise<string> {
   const refusal = await replyRefusal(d, user, occurrenceId);
   if (refusal) return refusal;
-  // Kept as one plain line (#205), so it cannot add a line to the history; nothing left but joiners is empty.
+  // Kept as one plain line (#205), so it cannot add a line to the history.
   const line = oneLine(text);
-  if (/^[ ‍]*$/.test(line)) return "That reply was empty.";
+  if (BLANK.test(line)) return "That reply was empty.";
   const occurrence = await d.store.getOccurrence(occurrenceId);
   if (!occurrence) return "That run no longer exists.";
   await replyLanes(d).reply({
