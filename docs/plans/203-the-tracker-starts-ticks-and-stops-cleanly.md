@@ -237,5 +237,16 @@ and deviation 3's Why (corrected); each change is listed here.
     vacuum, admins, `recover()`)", not "(migrations, admins, `recover()`)"; the migrations run in
     `openDatabase`, before it.
 13. **Declined as harmless or equivalent:** survivors S2b, S8, S9, S11, S12 and S13, for the reasons
-    reviewer B gave in round 1. S2b (`DISPOSE_WAIT_MS` = 1 900) is still under the host's 2 s bound;
-    item 10's pin now fails it anyway.
+    reviewer B gave in round 1:
+    - S2b (`DISPOSE_WAIT_MS` = 1 900): still under the host's 2 s bound. It no longer survives:
+      item 10's pin fails it (expected 1 500, received 1 900).
+    - S8 (`executeLane` assigned part way): equivalent through ticks, since `startExecute` checks
+      `store` first.
+    - S9 (`lastExecute` set before the `executeRun`/`store` guard): harmless and unchanged from
+      `main`; with the floor, the next host tick still starts the lane.
+    - S11 (`inbox`, `delivery` or `jobRecords` assigned part way): harmless, as they are read only by
+      ticks that check `store` first, or through `deps`.
+    - S12 (`db` assigned part way): harmless, as only `dispose` reads it and the host never disposes
+      a plugin whose `activate` threw.
+    - S13 (`dispose` nulls `store` after the close): not changed by this PR, and harmless, since the
+      host starts no tick once a stop is under way.
