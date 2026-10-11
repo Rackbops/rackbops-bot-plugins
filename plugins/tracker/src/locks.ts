@@ -16,9 +16,11 @@ export const TASK_BUSY = "That task is with the model runner right now; try agai
  * waits for another task's while holding one. The one exception is the execute tick
  * (execute-lane.ts), which holds the locks of every task with an execute-lane run due, taken in id
  * order (one global order), and never enters the queue. No tick pass enters the queue, and nothing
- * that holds DeliveryHealth's lock (delivery-health.ts) waits for a task's lock (a pause or a
- * resume there changes a task's status without it, which is safe: each Store write is one
- * statement).
+ * that holds DeliveryHealth's lock (delivery-health.ts) waits for a task's lock: a pause or a
+ * resume there changes a task's status without it, which is safe because each such write is a
+ * compare-and-set (active to paused, paused to active), so an owner's delete that lands meanwhile
+ * stands. The owner's own pause (manage.ts) checks and writes on DeliveryHealth's lock, taken after
+ * the task's as their resume takes it, so a pause there never lands between the two.
  *
  * The cost: a queue turn about task T waits for T's notify pass when one is in flight -- one task's
  * run and its DMs, or for a price its one page read -- and holds the queue meanwhile. That is rare

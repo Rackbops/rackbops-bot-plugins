@@ -5,7 +5,7 @@ import type { TrackerDeps } from "./actions.js";
 import { decidePause, DeliveryHealth, PAUSE_AFTER, recipientPauseDetail } from "./delivery-health.js";
 import { TRACKER_TYPES } from "./index.js";
 import { TaskLocks } from "./locks.js";
-import { deleteTask, pauseTask, resumeTask } from "./manage.js";
+import { deleteTask, type Done, pauseTask, resumeTask } from "./manage.js";
 import { createDmNotifier, HOST_CANNOT_MESSAGE, isButtonRefusal } from "./notifier.js";
 import { runNotifyTick } from "./notify-lane.js";
 import { admit } from "./people.js";
@@ -145,6 +145,77 @@ describe("a paused task (docket 0.4.0 holds it: no run starts, its owed sends wa
     await runNotifyTick(deps);
     expect(sent).toEqual([OWNER]);
     expect((await row())?.status).toBe("sent");
+  });
+});
+
+describe("a resume racing an owner's delete (#168)", () => {
+  /** The friend's failures paused the task for them; the owner's delete goes through `deps`. */
+  async function pausedForFriend() {
+    const s = await setup();
+    await s.store.setRecipient(s.task.id, s.friend.id, "accepted", "2026-10-01T12:00:00.000Z");
+    for (let i = 0; i < PAUSE_AFTER; i++) await s.health.recordFailure(s.friend.id, HOST_CANNOT_MESSAGE, "2026-10-01T12:00:00.000Z");
+    expect((await s.store.getTask(s.task.id))?.status).toBe("paused");
+    expect(s.health.pausesFor(s.task.id)).toEqual([s.friend.id]);
+    const deps = (health: DeliveryHealth) => ({ store: s.store, health, clock: s.clock, locks: new TaskLocks() }) as unknown as TrackerDeps;
+    /** What the delete must leave: archived, no `resumed` event, no run to come. */
+    const deleted = async () => [
+      (await s.store.getTask(s.task.id))?.status,
+      (await s.store.listTaskEvents(s.task.id)).map((e) => e.kind),
+      (await s.store.listOccurrences({ taskId: s.task.id, status: "queued" })).length,
+    ];
+    return { ...s, deps, deleted };
+  }
+
+  it("a delete landing between the resume's read of the task and its write stays deleted, with no new run", async () => {
+    const s = await pausedForFriend();
+    // `release`'s read of the task: the delete runs there, to its end, before its write.
+    const landed: { owners?: Promise<Done> } = {};
+    const store = Object.assign(Object.create(s.store) as SqliteStore, {
+      getTask: async (id: string) => {
+        const task = await s.store.getTask(id);
+        landed.owners ??= deleteTask(d, s.owner, s.task.id);
+        await landed.owners;
+        return task;
+      },
+    });
+    const health = new DeliveryHealth(s.db, store);
+    const d = s.deps(health);
+    expect((await health.resume(s.friend.id, s.clock.now()))?.tasks).toEqual([]);
+    expect((await landed.owners)?.ok).toBe(true);
+    expect(await s.deleted()).toEqual(["archived", ["paused", "archived"], 0]);
+    expect(health.isPaused(s.friend.id)).toBe(false);
+  });
+
+  it("a delete started with the person's resume, either first by a few microtasks, stays deleted and sends nothing more", async () => {
+    const quiet = { info() {}, warn() {}, error() {} };
+    for (const first of ["delete", "resume"] as const) {
+      for (let ahead = 0; ahead <= (first === "delete" ? 10 : 4); ahead++) {
+        const s = await pausedForFriend();
+        const d = s.deps(s.health);
+        const del = () => deleteTask(d, s.owner, s.task.id);
+        const resume = () => s.health.resume(s.friend.id, s.clock.now());
+        const [a, b] = first === "delete" ? [del, resume] : [resume, del];
+        const started = a();
+        for (let i = 0; i < ahead; i++) await Promise.resolve();
+        await Promise.all([started, b()]);
+        // A run the resume queued just before the delete stays queued: docket runs none of an
+        // archived task's runs, so nothing goes out.
+        const sent: string[] = [];
+        s.clock.set("2026-10-03T13:00:00.000Z");
+        await runNotifyTick({
+          store: s.store,
+          clock: s.clock,
+          types: TRACKER_TYPES,
+          dm: async (userId) => {
+            sent.push(userId);
+            return { guildId: null, channelId: "c", messageId: "m" };
+          },
+          log: quiet,
+          health: s.health,
+        });
+        expect([first, ahead, (await s.deleted())[0], sent]).toEqual([first, ahead, "archived", []]);
+      }
+    }
   });
 });
 
@@ -579,68 +650,109 @@ describe("a send held for a paused person (#168): every task that still DMs them
   });
 
   // The pass reads the tasks, then writes each one's pause without that task's lock (locks.ts): an
-  // owner's delete or pause that lands in between stands, and the person's resume leaves it.
-  for (const act of ["deleteTask", "pauseTask"] as const) {
-    const want = act === "deleteTask" ? "archived" : "paused";
-    const theirs = act === "deleteTask" ? ["archived", "deleted by the owner"] : ["paused", "paused by the owner"];
-    for (const left of [false, true]) {
-      const row = left ? " (and a row a pause stopped part way left on it goes)" : "";
-      it(`an owner's ${act} landing between a held send's read of the tasks and its write stands${row}; the recipient's resume leaves it`, async () => {
-        const s = await held();
-        s.pausedAtOnly();
-        if (left) s.db.query("INSERT INTO delivery_pauses (task_id, user_id, at) VALUES (?, ?, ?)").run(s.task.id, s.friend.id, "2026-10-01T12:00:00.000Z");
-        const d = { store: s.store, health: s.health, clock: s.clock, locks: new TaskLocks() } as unknown as TrackerDeps;
-        // The pass's first read after `listTasks` is a task's recipients: the owner's act runs there, to its end.
-        const landed: { owners?: Promise<{ ok: boolean }> } = {};
-        const store = Object.assign(Object.create(s.store) as SqliteStore, {
-          listRecipients: async (taskId: string) => {
-            landed.owners ??= (act === "deleteTask" ? deleteTask : pauseTask)(d, s.owner, s.task.id);
-            await landed.owners;
-            return s.store.listRecipients(taskId);
-          },
-        });
-        const told: string[] = [];
-        const health = new DeliveryHealth(s.db, store, { tellOwner: async (owner) => void told.push(owner.id) });
-        await health.holdFor(s.friend.id, s.clock.now().toISOString());
-        expect((await landed.owners)?.ok).toBe(true);
-        expect((await s.store.getTask(s.task.id))?.status).toBe(want);
-        expect(health.pausesFor(s.task.id)).toEqual([]);
-        expect((await s.store.listTaskEvents(s.task.id)).map((e) => [e.kind, e.detail])).toEqual([theirs]);
-        expect(told).toEqual([]);
-        // The friend comes back: what the owner did stands.
-        await health.resume(s.friend.id, s.clock.now());
-        expect((await s.store.getTask(s.task.id))?.status).toBe(want);
-      });
-    }
-  }
-
-  it("an owner's delete started with a held send's pass, or queued behind the owner's own resume as `enter` runs it, stays deleted after the recipient's resume", async () => {
-    type Race = (s: Awaited<ReturnType<typeof held>>, del: () => Promise<unknown>, hold: () => Promise<unknown>) => Promise<unknown>;
-    const races: [string, Race][] = [];
-    for (let ahead = 0; ahead <= 8; ahead++) {
-      races.push([
-        `started together, the delete ${ahead} microtask(s) ahead`,
-        async (_s, del, hold) => {
-          const first = del();
-          for (let i = 0; i < ahead; i++) await Promise.resolve();
-          await Promise.all([first, hold()]);
-        },
-      ]);
-    }
-    races.push(["queued behind the owner's own resume", (s, del, hold) => Promise.all([s.health.resume(s.owner.id, s.clock.now()).then(del), hold()])]);
-    for (const [how, race] of races) {
+  // owner's delete that lands in between stands, and the person's resume leaves it.
+  for (const left of [false, true]) {
+    const row = left ? " (and a row a pause stopped part way left on it goes)" : "";
+    it(`an owner's deleteTask landing between a held send's read of the tasks and its write stands${row}; the recipient's resume leaves it`, async () => {
       const s = await held();
       s.pausedAtOnly();
-      const d = { store: s.store, health: s.health, clock: s.clock, locks: new TaskLocks() } as unknown as TrackerDeps;
-      await race(
-        s,
-        () => deleteTask(d, s.owner, s.task.id),
-        () => s.health.holdFor(s.friend.id, s.clock.now().toISOString()),
-      );
-      await s.health.resume(s.friend.id, s.clock.now());
-      expect([how, (await s.store.getTask(s.task.id))?.status]).toEqual([how, "archived"]);
-    }
+      if (left) s.db.query("INSERT INTO delivery_pauses (task_id, user_id, at) VALUES (?, ?, ?)").run(s.task.id, s.friend.id, "2026-10-01T12:00:00.000Z");
+      // The pass's first read after `listTasks` is a task's recipients: the delete runs there, to its end.
+      const landed: { owners?: Promise<Done> } = {};
+      const store = Object.assign(Object.create(s.store) as SqliteStore, {
+        listRecipients: async (taskId: string) => {
+          landed.owners ??= deleteTask(d, s.owner, s.task.id);
+          await landed.owners;
+          return s.store.listRecipients(taskId);
+        },
+      });
+      const told: string[] = [];
+      const health = new DeliveryHealth(s.db, store, { tellOwner: async (owner) => void told.push(owner.id) });
+      const d = { store: s.store, health, clock: s.clock, locks: new TaskLocks() } as unknown as TrackerDeps;
+      await health.holdFor(s.friend.id, s.clock.now().toISOString());
+      expect((await landed.owners)?.ok).toBe(true);
+      expect((await s.store.getTask(s.task.id))?.status).toBe("archived");
+      expect(health.pausesFor(s.task.id)).toEqual([]);
+      expect((await s.store.listTaskEvents(s.task.id)).map((e) => [e.kind, e.detail])).toEqual([["archived", "deleted by the owner"]]);
+      expect(told).toEqual([]);
+      // The friend comes back: the delete stands.
+      await health.resume(s.friend.id, s.clock.now());
+      expect((await s.store.getTask(s.task.id))?.status).toBe("archived");
+    });
+  }
+
+  it("an owner's pauseTask started between a held send's read of the tasks and its write waits for the pass, on the one lock: it is refused, never a pause the recipient's resume undoes", async () => {
+    const s = await held();
+    s.pausedAtOnly();
+    const landed: { owners?: Promise<Done> } = {};
+    const store = Object.assign(Object.create(s.store) as SqliteStore, {
+      listRecipients: async (taskId: string) => {
+        // Started, not awaited: it waits for DeliveryHealth's lock, which the pass holds.
+        landed.owners ??= pauseTask(d, s.owner, s.task.id);
+        return s.store.listRecipients(taskId);
+      },
+    });
+    const told: string[] = [];
+    const health = new DeliveryHealth(s.db, store, { tellOwner: async (owner) => void told.push(owner.id) });
+    const d = { store: s.store, health, clock: s.clock, locks: new TaskLocks() } as unknown as TrackerDeps;
+    await health.holdFor(s.friend.id, s.clock.now().toISOString());
+    // The pass paused it for the friend first: the owner hears so, as if they had come a moment later.
+    expect(await landed.owners).toEqual({ ok: false, error: "That task is paused, not active." });
+    expect((await s.store.getTask(s.task.id))?.status).toBe("paused");
+    expect(health.pausesFor(s.task.id)).toEqual([s.friend.id]);
+    expect((await s.store.listTaskEvents(s.task.id)).map((e) => [e.kind, e.detail])).toEqual([["paused", recipientPauseDetail(s.friend.id)]]);
+    expect(told).toEqual([s.owner.id]);
   });
+
+  // The same races at their natural timings: the owner's act and the pass started together, either
+  // first by a few microtasks, and the act queued behind the owner's own resume, the order `enter`
+  // gives a command. Whatever the order, what the owner did stands; a pause the pass got to first is
+  // refused, and then the person's resume sets the task going.
+  for (const act of ["deleteTask", "pauseTask"] as const) {
+    const want = act === "deleteTask" ? "archived" : "paused";
+    it(`an owner's ${act} started with a held send's pass, or queued behind the owner's own resume as \`enter\` runs it, is never undone by the recipient's resume`, async () => {
+      type Race = (s: Awaited<ReturnType<typeof held>>, own: () => Promise<Done>, hold: () => Promise<void>) => Promise<Done>;
+      const races: [string, Race][] = [];
+      for (let ahead = 0; ahead <= 8; ahead++) {
+        races.push([
+          `started together, the owner's act ${ahead} microtask(s) ahead`,
+          async (_s, own, hold) => {
+            const first = own();
+            for (let i = 0; i < ahead; i++) await Promise.resolve();
+            return (await Promise.all([first, hold()]))[0];
+          },
+        ]);
+      }
+      for (let ahead = 0; ahead <= 4; ahead++) {
+        races.push([
+          `started together, the pass ${ahead} microtask(s) ahead`,
+          async (_s, own, hold) => {
+            const first = hold();
+            for (let i = 0; i < ahead; i++) await Promise.resolve();
+            return (await Promise.all([own(), first]))[0];
+          },
+        ]);
+      }
+      races.push([
+        "queued behind the owner's own resume",
+        async (s, own, hold) => (await Promise.all([s.health.resume(s.owner.id, s.clock.now()).then(own), hold()]))[0],
+      ]);
+      for (const [how, race] of races) {
+        const s = await held();
+        s.pausedAtOnly();
+        const d = { store: s.store, health: s.health, clock: s.clock, locks: new TaskLocks() } as unknown as TrackerDeps;
+        const done = await race(
+          s,
+          () => (act === "deleteTask" ? deleteTask : pauseTask)(d, s.owner, s.task.id),
+          () => s.health.holdFor(s.friend.id, s.clock.now().toISOString()),
+        );
+        if (act === "deleteTask") expect([how, done.ok]).toEqual([how, true]);
+        if (!done.ok) expect([how, done.error]).toEqual([how, "That task is paused, not active."]);
+        await s.health.resume(s.friend.id, s.clock.now());
+        expect([how, (await s.store.getTask(s.task.id))?.status]).toEqual([how, done.ok ? want : "active"]);
+      }
+    });
+  }
 
   it("a pass that throws part way still tells the owners of the tasks it paused before, and the error still reaches the caller", async () => {
     for (const via of ["holdFor", "recordFailure"] as const) {

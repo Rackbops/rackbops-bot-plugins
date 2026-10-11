@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { materialize, type Store, type Task, type User } from "@rackbops/docket-core";
+import { materialize, type Store, type Task, type TaskStatus, type User } from "@rackbops/docket-core";
 import type { PluginLog } from "../../../packages/api/contract.js";
 import { seqOf } from "./store.js";
 
@@ -33,10 +33,12 @@ import { seqOf } from "./store.js";
  * research answer, say) is not held: a finished task is never paused, so docket's eight deferrals
  * of it run out (about two hours) and it fails.
  *
- * A task is set active again only when no pause row is left on it and it is still `paused`, so a
- * resume never undoes anything but this mechanism. Pausing and resuming run one at a time (a
- * promise chain), so a resume landing while a pause is still writing waits for it, and the rows and
- * the tasks' statuses always agree.
+ * A task is set active again only when no pause row is left on it and it is still `paused`, and
+ * paused only while it is still `active`, each checked in the write itself (a compare-and-set,
+ * `statusIf`), so a resume never undoes anything but this mechanism: an owner's delete landing
+ * while a pause or a resume runs stands, and an owner's own pause takes this lock too (manage.ts).
+ * Pausing and resuming run one at a time (a promise chain), so a resume landing while a pause is
+ * still writing waits for it, and the rows and the tasks' statuses always agree.
  */
 
 /** Consecutive refused DMs before a person's delivery pauses: the plan's three. */
@@ -240,7 +242,7 @@ export class DeliveryHealth {
       // part way), and comes off when it did not, so no row of theirs is left on a task this
       // mechanism did not pause.
       const paused = this.db.transaction((): boolean => {
-        if (!this.pauseIfActive(task.id, at)) {
+        if (!this.statusIf(task.id, "active", "paused", at)) {
           this.db.query("DELETE FROM delivery_pauses WHERE task_id = ? AND user_id = ?").run(task.id, userId);
           return false;
         }
@@ -258,13 +260,14 @@ export class DeliveryHealth {
   }
 
   /**
-   * Pauses the task only while it is still `active`: one `UPDATE` with the status in its `WHERE`,
-   * setting the columns `store.ts`'s `updateTask` changes for a status (`status`, `updated_at`).
-   * True when it did. docket's Store port has no compare-and-set for a task (only
-   * `updateOccurrenceIf`), so it runs on the tracker's own table.
+   * Sets the task's status from `from` to `to` only while it is still `from`: one `UPDATE` with the
+   * status in its `WHERE`, setting the columns `store.ts`'s `updateTask` changes for a status
+   * (`status`, `updated_at`). True when it did. docket's Store port has no compare-and-set for a
+   * task (only `updateOccurrenceIf`), so it runs on the tracker's own table. The pause and the
+   * resume here write a task's status without its lock (locks.ts), so both go through this.
    */
-  private pauseIfActive(taskId: string, at: string): boolean {
-    const { changes } = this.db.query("UPDATE tasks SET status = 'paused', updated_at = ? WHERE seq = ? AND status = 'active'").run(at, seqOf("t", taskId));
+  private statusIf(taskId: string, from: TaskStatus, to: TaskStatus, at: string): boolean {
+    const { changes } = this.db.query("UPDATE tasks SET status = ?, updated_at = ? WHERE seq = ? AND status = ?").run(to, at, seqOf("t", taskId), from);
     return changes === 1;
   }
 
@@ -279,17 +282,21 @@ export class DeliveryHealth {
 
   /**
    * Sets a task active again once nothing holds it paused, and gives it its next run. Only from
-   * inside the lock: `resume`, `resumeTask`, or `exclusive`.
+   * inside the lock: `resume`, `resumeTask`, or `exclusive`. The write is a compare-and-set from
+   * `paused`: the lock is not the task's (locks.ts), so an owner's delete may land after the read,
+   * and it stands -- no `resumed` event, no next run.
    */
   async release(taskId: string, actorId: string | null, detail: string, now: Date): Promise<boolean> {
     if (this.pausesFor(taskId).length > 0) return false;
     const task = await this.store.getTask(taskId);
     if (!task || task.status !== "paused") return false;
     const at = now.toISOString();
-    const active = await this.store.updateTask(taskId, { status: "active", at });
+    if (!this.statusIf(taskId, "paused", "active", at)) return false;
     await this.store.addTaskEvent({ taskId, actorId, kind: "resumed", detail, at });
     const owner = await this.store.getUser(task.ownerId);
-    if (owner) await materialize(this.store, active, owner, now);
+    // Read again for its run: `materialize` gives none to a task deleted since.
+    const active = await this.store.getTask(taskId);
+    if (owner && active) await materialize(this.store, active, owner, now);
     return true;
   }
 
