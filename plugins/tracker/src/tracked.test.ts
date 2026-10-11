@@ -43,6 +43,8 @@ function world() {
   };
   const shop = {
     price: 100 as number | null,
+    /** A page to serve as sent instead of `page(price)`'s, for a price only `near` can find. */
+    body: null as string | null,
     status: 200,
     reads: [] as string[],
     refuse: null as string | null,
@@ -53,7 +55,7 @@ function world() {
       shop.reads.push(url);
       shop.onRead?.();
       if (shop.refuse) throw new FetchRefusedError(shop.refuse);
-      return { status: shop.status, body: page(shop.price), headers: {} };
+      return { status: shop.status, body: shop.body ?? page(shop.price), headers: {} };
     },
   };
   const plugin = createPlugin(
@@ -295,6 +297,21 @@ describe("/price", () => {
     expect(new RegExp(pattern, "i").exec("<b>Our price (today):</b> $1,299.99")?.[1]).toBe("1,299.99");
     w.shop.price = null; // no structured price: only `near` can find one, and here it does not
     expect(await slash(w.plugin, "price", LARRY, { strings: { url: SHOP, near: "Our price" } })).toContain("I found no price after that `near` text");
+  });
+
+  it("near reads a price followed by a comma as written, and keeps it as the first price (#164)", async () => {
+    const w = world();
+    await withLarry(w);
+    w.shop.body = "<html><body><p>Price: 19.99, free shipping</p></body></html>";
+    const set = await slash(w.plugin, "price", LARRY, { strings: { url: SHOP, near: "Price:", baseline: "first" } });
+    expect(set).toContain("Tracking `t1`: shop.example/widget. I read 19.99 just now.");
+    await pollTick(w.plugin);
+    expect(w.sent).toHaveLength(1);
+    expect(w.sent[0]?.message.content).toContain("Now tracking shop.example/widget at 19.99.");
+    expect(w.sent[0]?.message.content).toContain("from the first price seen");
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" } });
+    expect(history).toContain("Last check: baseline 19.99");
+    expect(history).toContain("Prices: 1 read, low 19.99, high 19.99");
   });
 });
 

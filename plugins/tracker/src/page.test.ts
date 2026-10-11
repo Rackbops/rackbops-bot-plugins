@@ -59,3 +59,38 @@ describe("pageForExtraction", () => {
     }
   });
 });
+
+/**
+ * A `near` price ends at its last digit (#164): a `.` or `,` right after the number is punctuation,
+ * and captured it would hide the decimal part from `parsePrice` ("19.99," read as 1999).
+ */
+describe("nearPattern on a page", () => {
+  const nearPrice = (html: string, near: string) => extractPrice(pageForExtraction(html), nearPattern(near));
+
+  it("a price followed by a comma is read as written", () => {
+    expect(nearPrice("<p>Price: 19.99, free shipping</p>", "Price:")).toEqual({ value: 19.99 });
+  });
+
+  it("a price that ends a sentence is read as written", () => {
+    expect(nearPrice("<p>Now 49.90. Order today</p>", "Now")).toEqual({ value: 49.9 });
+  });
+
+  it("a JSON price followed by its next key is read as written", () => {
+    const html = '<html><body><p>Widget</p><script>window.product = {"price":19.99,"currency":"EUR"};</script></body></html>';
+    expect(nearPrice(html, '"price":')).toEqual({ value: 19.99 });
+  });
+
+  it("a thousands separator is kept", () => {
+    expect(nearPrice("<p>Total: 1,299.99, with tax</p>", "Total:")).toEqual({ value: 1299.99 });
+    expect(nearPrice("<p>Total: 1.299,99. Mit MwSt.</p>", "Total:")).toEqual({ value: 1299.99 });
+  });
+
+  it("a one-digit price is read", () => {
+    expect(nearPrice("<p>Price: 7, today</p>", "Price:")).toEqual({ value: 7 });
+  });
+
+  it("the capture stays bounded", () => {
+    const digits = "1234567890".repeat(4);
+    expect(new RegExp(nearPattern("x"), "i").exec(`x ${digits}`)?.[1]).toBe(digits.slice(0, 16));
+  });
+});
