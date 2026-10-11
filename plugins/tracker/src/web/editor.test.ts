@@ -823,7 +823,7 @@ describe("a send held for a paused person (#168)", () => {
     await notifyTick(w.plugin);
     w.delivery.refuse = false;
     expect(deliveryPausedAt(w.dbPath, "u2")).not.toBeNull();
-    // The web resumes no one: Larry makes a reminder there while his delivery is still paused.
+    // Making a task on the web resumes no one: Larry makes a reminder there while his delivery is still paused.
     const res = await post(w.plugin, w.larry, w.csrf, "/new/reminder", { text: "made on the web", when: "in 5 minutes", repeat: "none" });
     expect(res.headers.get("location")).toBe("/tracker/tasks/t4?done=created");
     expect(deliveryPausedAt(w.dbPath, "u2")).not.toBeNull();

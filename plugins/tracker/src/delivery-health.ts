@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { materialize, type Store, type Task, type User } from "@rackbops/docket-core";
 import type { PluginLog } from "../../../packages/api/contract.js";
+import { seqOf } from "./store.js";
 
 /**
  * Pause after repeated delivery failures (plan 5.5: "After three consecutive delivery failures (DMs
@@ -24,13 +25,13 @@ import type { PluginLog } from "../../../packages/api/contract.js";
  *   command, which resumes them (`resume`).
  *
  * A task can still come to DM a person while they stay paused: one they make on the web or through
- * the task API (nothing there resumes them); one its owner had paused, which the pass leaves alone,
- * and resumes by hand; one a pause stopped part way never reached (the pass is a run of Store
- * writes, not one transaction). The notifier never DMs a paused person: it runs the same pass first
- * (`holdFor`), so that task pauses too, then defers the send, which docket's next tick holds with
- * its task until the resume (notifier.ts). Only a send for a task already finished (a research
- * answer, say) is not held: a finished task is never paused, so docket's eight deferrals of it run
- * out (about two hours) and it fails.
+ * the task API (making a task there resumes no one); one its owner had paused, which the pass
+ * leaves alone, and resumes by hand; one a pause stopped part way never reached (the pass is a run
+ * of Store writes, not one transaction). The notifier never DMs a paused person: it runs the same
+ * pass first (`holdFor`), so that task pauses too, then defers the send, which docket's next tick
+ * holds with its task until the resume (notifier.ts). Only a send for a task already finished (a
+ * research answer, say) is not held: a finished task is never paused, so docket's eight deferrals
+ * of it run out (about two hours) and it fails.
  *
  * A task is set active again only when no pause row is left on it and it is still `paused`, so a
  * resume never undoes anything but this mechanism. Pausing and resuming run one at a time (a
@@ -159,9 +160,13 @@ export class DeliveryHealth {
    */
   private async lockedThenTell<T>(fn: (notices: Notice[]) => Promise<T>): Promise<T> {
     const notices: Notice[] = [];
-    const result = await this.locked(() => fn(notices));
-    for (const n of notices) await this.tellOwner(n);
-    return result;
+    try {
+      return await this.locked(() => fn(notices));
+    } finally {
+      // After a throw part way too: the tasks paused before it stay paused, so their owners are told,
+      // and the error still reaches the caller (`tellOwner` never throws).
+      for (const n of notices) await this.tellOwner(n);
+    }
   }
 
   /** A DM the host refused as undeliverable. Pauses on the `PAUSE_AFTER`th in a row. */
@@ -194,9 +199,10 @@ export class DeliveryHealth {
    * that would still DM them pauses, as at the pause itself (`pauseAffected`) -- one made on the web
    * or through the task API since, one its owner had paused and resumed by hand, one the pause
    * stopped before reaching -- so docket holds the send with its task until the resume instead of
-   * running out its deferrals. Run on every held send; a task already paused for them is left as it
-   * is, so its owner is told only the first time. Does nothing when they were resumed (or forgotten:
-   * the erasure deletes their row) since the notifier looked.
+   * running out its deferrals (all but a send for a task already finished). Run on every held send;
+   * a task already paused for them is left as it is, so its owner is told only the first time. Does
+   * nothing when they were resumed (or forgotten: the erasure deletes their row) since the notifier
+   * looked.
    */
   holdFor(userId: string, at: string): Promise<void> {
     return this.lockedThenTell(async (notices) => {
@@ -218,13 +224,30 @@ export class DeliveryHealth {
 
   private async pauseAffected(userId: string, at: string, notices: Notice[]): Promise<void> {
     const recipient = await this.store.getUser(userId);
+    const hold = this.db.query("INSERT INTO delivery_pauses (task_id, user_id, at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING");
     for (const { task, asRecipient } of await this.affected(userId)) {
       // Only an active task, or one this mechanism already paused for someone else.
       if (task.status !== "active" && this.pausesFor(task.id).length === 0) continue;
-      this.db.query("INSERT INTO delivery_pauses (task_id, user_id, at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING").run(task.id, userId, at);
-      // Still active with its row already there: a pass that stopped between the two, finished now.
-      if (task.status !== "active") continue;
-      await this.store.updateTask(task.id, { status: "paused", at });
+      if (task.status !== "active") {
+        hold.run(task.id, userId, at);
+        continue;
+      }
+      // `task` was read before the awaits above, without the task's lock (locks.ts): an owner's
+      // pause or delete, or docket finishing it, may have landed since. So the pause is a
+      // compare-and-set, and what landed stands; written over, the person's resume would set it
+      // active again. The status and the row change together (one transaction, no await in it): the
+      // row goes in when this paused the task (it may be there already, left by a pass that stopped
+      // part way), and comes off when it did not, so no row of theirs is left on a task this
+      // mechanism did not pause.
+      const paused = this.db.transaction((): boolean => {
+        if (!this.pauseIfActive(task.id, at)) {
+          this.db.query("DELETE FROM delivery_pauses WHERE task_id = ? AND user_id = ?").run(task.id, userId);
+          return false;
+        }
+        hold.run(task.id, userId, at);
+        return true;
+      })();
+      if (!paused) continue;
       const detail = asRecipient ? recipientPauseDetail(userId) : PAUSE_DETAIL;
       await this.store.addTaskEvent({ taskId: task.id, actorId: null, kind: "paused", detail, at });
       if (asRecipient) {
@@ -232,6 +255,17 @@ export class DeliveryHealth {
         if (owner) notices.push({ owner, task, text: recipientPausedText(task, recipient, userId) });
       }
     }
+  }
+
+  /**
+   * Pauses the task only while it is still `active`: one `UPDATE` with the status in its `WHERE`,
+   * setting the columns `store.ts`'s `updateTask` changes for a status (`status`, `updated_at`).
+   * True when it did. docket's Store port has no compare-and-set for a task (only
+   * `updateOccurrenceIf`), so it runs on the tracker's own table.
+   */
+  private pauseIfActive(taskId: string, at: string): boolean {
+    const { changes } = this.db.query("UPDATE tasks SET status = 'paused', updated_at = ? WHERE seq = ? AND status = 'active'").run(at, seqOf("t", taskId));
+    return changes === 1;
   }
 
   private async tellOwner({ owner, task, text }: Notice): Promise<void> {
