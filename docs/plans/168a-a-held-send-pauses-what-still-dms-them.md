@@ -114,7 +114,8 @@ not reached yet: the first held DM pauses that task too. Pausing such a task als
 recipients' later copies until the person comes back or the owner runs `/task resume`, and the owner
 is told, as at any pause. Before, such a DM was retried for about two hours and then dropped without
 a word. A DM for a task that has already finished, a research answer say, is still not held: it
-fails after about two hours, as before (#168).
+fails after about two hours, as before. An owner's own pause or delete is no longer undone by a
+delivery pause or resume running at the same moment (#168).
 
 ## Deviations as implemented
 
@@ -159,7 +160,8 @@ fails after about two hours, as before (#168).
 
 ### Review gate round 1
 
-Fixes on `ac1ce52` (code, tests, wording); this record and the bullet in the next commit.
+Fixes on `ac1ce52` (code, tests, wording), this record and the bullet in `cd507f9`; items 10 to 12,
+on the orchestrator's decision to close both races found while testing, on `e81f1a5`.
 
 1. **(A) The pass could write over an owner's delete or pause, and the person's resume then set
    the task active.** docket's Store port has no compare-and-set for a task (`ports.d.ts`:
@@ -184,7 +186,7 @@ Fixes on `ac1ce52` (code, tests, wording); this record and the bullet in the nex
      harness hits the window with the delete 3 to 5 microtasks ahead (active after the resume
      without the fix); started exactly together, or behind the owner's resume, the pass runs first
      and the delete after, which ends archived with or without the fix.
-   - **Found while testing, not fixed (for round 2): the other order, for `pauseTask`.**
+   - **Found while testing (fixed in item 10): the other order, for `pauseTask`.**
      `pauseLocked` reads the task (`ownLiveTask`), then writes `paused` with a plain `updateTask`,
      with awaits between. A pass whose compare-and-set lands between the two pauses the task for the
      person (row, `paused` event, owner notice); the owner's write then lands on a mechanism pause
@@ -198,7 +200,7 @@ Fixes on `ac1ce52` (code, tests, wording); this record and the bullet in the nex
      the health lock), or make its write a compare-and-set. A delete in that order is harmless:
      archived stands, since `release` sets only a `paused` task active. Until then the header's "a
      resume never undoes anything but this mechanism" is untrue in that one order.
-   - **Also found, as it is on `main` (not this change's):** `release`, which a resume runs, reads
+   - **Also found, as it is on `main` (fixed in item 11):** `release`, which a resume runs, reads
      the task (`getTask`) and then writes `active` with a plain `updateTask`, an await between and
      no task lock, so an owner's delete landing between the two comes back active, with a `resumed`
      event (reproduced with the delete 6 microtasks ahead of the person's resume). A compare-and-set
@@ -234,6 +236,57 @@ Fixes on `ac1ce52` (code, tests, wording); this record and the bullet in the nex
 9. **(A and B)** The CHANGELOG bullet above now carries both facts, in the words given, the rest
    kept.
 
+10. **The other order for an owner's pause (item 1's first finding).** `pauseTask` now runs
+    `pauseLocked` inside `d.health.exclusive`, taken after the task's lock, the order `resumeLocked`
+    already takes (task lock, then health lock); `exclusive` fits: nothing that holds the health
+    lock waits for a task's lock or the queue (the pass, `resume`, `resumeTask`, forget-me's erasure
+    in `admin.ts`), and `pauseLocked` calls nothing on that lock, so it does not re-enter it. The
+    pass and the owner's pause now run one after the other: whichever is first wins, and a pause
+    that finds the task already paused for failed DMs is refused ("That task is paused, not
+    active."), as it would be a moment later. Tests:
+    - "an owner's pauseTask started between a held send's read of the tasks and its write waits
+      for the pass, on the one lock: it is refused, never a pause the recipient's resume undoes"
+      (replaces item 1's forced pause test, which ran the owner's act to its end inside the pass:
+      with one `DeliveryHealth` it now waits on the pass's lock, so the hook starts it and does not
+      await it. Item 1's forced tests had given the owner's act a second `DeliveryHealth`, whose
+      lock was not the pass's; they now share one, as production does);
+    - "an owner's {deleteTask, pauseTask} started with a held send's pass, or queued behind the
+      owner's own resume as `enter` runs it, is never undone by the recipient's resume": the owner's
+      act 0 to 8 microtasks ahead, the pass 0 to 4 ahead, and the act queued behind `resume(owner)`.
+      What the owner did stands, and a refused pause leaves the person's resume to set the task
+      going. Without the fix six of these go red for the pause: the act 0 ahead, the pass 0 to 3
+      ahead, and queued behind the owner's resume.
+11. **`release` wrote `active` over an owner's delete (item 1's second finding, as on `main`).**
+    `pauseIfActive` became `statusIf(taskId, from, to, at)`, the same one-statement
+    compare-and-set; `release` sets the task active only from `paused`, and adds the `resumed` event
+    and gives the next run only when that applied. It reads the task again for `materialize`, which
+    gives no run to a task that is no longer active. Tests: "a delete landing between the resume's
+    read of the task and its write stays deleted, with no new run" (a store whose `getTask`,
+    `release`'s read, runs the delete to its end before returning): `resume` resumes no task, the
+    task is `archived` with no `resumed` event and no queued run. "A delete started with the
+    person's resume, either first by a few microtasks, stays deleted and sends nothing more" (the
+    delete 0 to 10 ahead, the resume 0 to 4): `archived`, and a notify tick two days on sends
+    nothing. When the resume's compare-and-set goes first and the delete lands just after it, the
+    delete can drop the queued runs before `materialize` queues the next, which then stays queued
+    on the archived task (the delete 2 or 3 microtasks ahead). docket runs none of an archived
+    task's runs (`due`), so nothing goes out; the row is inert, as it was on `main`. Not closed:
+    `release` would need the task's lock, which nothing on the health lock may wait for.
+12. **`locks.ts`'s "which is safe: each Store write is one statement" was not true of the pause.**
+    It now says why the pause and the resume may write a task's status without its lock: each such
+    write is a compare-and-set (active to paused, paused to active), so an owner's delete landing
+    meanwhile stands, and the owner's own pause checks and writes on the health lock, taken after
+    the task's, so a pause there never lands between the two. `manage.ts`'s header, the
+    `delivery-health.ts` header ("a resume never undoes anything but this mechanism", now true in
+    both orders) and the `release` and `statusIf` docstrings say the same. The CHANGELOG bullet
+    adds one sentence a user could notice: an owner's own pause or delete is no longer undone by a
+    delivery pause or resume running at the same moment.
+
+    Left as it is: a `delivery_pauses` row left on an active task by a crash in older code (row
+    written, status not; `7eedddf` and `main` wrote them apart, `ac1ce52` writes them in one
+    transaction). If the owner pauses that task before any pass reaches it, the row stays, and the
+    person's resume sets the owner's pause going. It takes a crash between two statements, and no
+    new one can arise; it is not a race, so the bullet's sentence holds.
+
 Declined, as decided: narrowing `affected()` for cost (A): its cost is bounded, and not this
 change's concern. B's M5 and M6: near-equivalent, given `holdFor`. B's M9 and M15: survivors on
 unchanged lines, noted only.
@@ -251,6 +304,24 @@ Mutations, each alone in a scratch worktree on `ac1ce52`, `bun test plugins/trac
 
 M23 on the skip and the branch alone, the compare-and-set unchanged, is equivalent (green on
 `delivery-health.test.ts`): the compare-and-set refuses a `done` task.
+
+Mutations again on `e81f1a5`, each alone in a scratch worktree, `bun test plugins/tracker` (520
+tests):
+
+| Mutation | Red |
+|---|---|
+| Item 10: `pauseTask` without `d.health.exclusive` | 2: "an owner's pauseTask started between ... waits for the pass ..." and "an owner's pauseTask started with a held send's pass, or queued behind ..." |
+| Item 11: `release` writes a plain `updateTask` in place of `statusIf` | 2: "a delete landing between the resume's read ..." and "a delete started with the person's resume ..." |
+| The pass as the old code: row, then `await this.store.updateTask(...)`, no transaction | 3: the two "an owner's deleteTask landing between ..." and "an owner's deleteTask started with a held send's pass ..." |
+| The pass's compare-and-set alone dropped (an unconditional `UPDATE` in the transaction) | the same 3 |
+| `finally` dropped in `lockedThenTell` | 1: "a pass that throws part way ..." |
+| M23 (`done` in the skip, the branch and the compare-and-set) | 1: "a send for a task already finished ... is not paused ..." |
+| M3: `holdFor` tells the owners inside the lock | 2: "owner notices ... (holdFor)" and "a pass that throws part way ..." |
+| (extra; `delivery-health.test.ts` only) The leftover row's `DELETE` dropped | 1: "an owner's deleteTask landing between ... (and a row ... goes) ..." |
+
+The pause's races no longer depend on the pass's compare-and-set: the health lock keeps them
+apart. So the compare-and-set's mutations now redden only the delete's tests, and dropping the
+`DELETE` only the delete's leftover-row test.
 
 ## Review gate round 1: fixes to make (orchestrator, 2026-10-11; execute as written)
 
