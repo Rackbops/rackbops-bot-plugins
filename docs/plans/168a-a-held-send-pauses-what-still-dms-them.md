@@ -110,8 +110,11 @@ An active task can DM a paused person in these cases:
 A DM to someone whose delivery is paused is now held until they come back for every task not yet
 finished that would DM them, including tasks they made on the web or through the task API while
 paused, a task its owner resumed by hand while a recipient was still paused, and a task a pause had
-not reached yet: the first held DM pauses that task too. Before, such a DM was retried for about two
-hours and then dropped without a word (#168).
+not reached yet: the first held DM pauses that task too. Pausing such a task also holds its other
+recipients' later copies until the person comes back or the owner runs `/task resume`, and the owner
+is told, as at any pause. Before, such a DM was retried for about two hours and then dropped without
+a word. A DM for a task that has already finished, a research answer say, is still not held: it
+fails after about two hours, as before (#168).
 
 ## Deviations as implemented
 
@@ -153,3 +156,181 @@ hours and then dropped without a word (#168).
    `failed`, comes about 123 minutes after the first (checked with one-minute ticks and the pass
    removed). The comments, README and the CHANGELOG bullet say about two hours; "What is wrong"
    above is left as written.
+
+### Review gate round 1
+
+Fixes on `ac1ce52` (code, tests, wording); this record and the bullet in the next commit.
+
+1. **(A) The pass could write over an owner's delete or pause, and the person's resume then set
+   the task active.** docket's Store port has no compare-and-set for a task (`ports.d.ts`:
+   `updateOccurrenceIf` only; `store.ts`'s `updateTask` reads the row and rewrites every column), so
+   `pauseAffected` pauses through a new `pauseIfActive`: `UPDATE tasks SET status = 'paused',
+   updated_at = ? WHERE seq = ? AND status = 'active'` on `this.db` -- the two columns `updateTask`
+   changes for a status patch (the rest it rewrites with their current values) -- with the id's row
+   number from `store.ts`'s `seqOf`, now exported. The status write and the `delivery_pauses` row
+   change in one `db.transaction` (two synchronous statements, no await in it, as `resume` already
+   does), so no crash can leave one without the other: the row goes in only when the task was
+   paused, and this person's row comes off it when it was not (one a pass that stopped part way
+   left, which would otherwise let their resume set an owner's pause back to active). The `paused`
+   event and the owner notice follow only when it applied. A task the snapshot shows paused for
+   someone else gets its row as before.
+   - Tests: "an owner's {deleteTask, pauseTask} landing between a held send's read of the tasks and
+     its write stands (and a row a pause stopped part way left on it goes); the recipient's resume
+     leaves it" -- a store whose `listRecipients`, the pass's first read after `listTasks`, runs the
+     owner's act to its end, so it lands in the window every run -- and "an owner's delete started
+     with a held send's pass, or queued behind the owner's own resume as `enter` runs it, stays
+     deleted after the recipient's resume": the delete started 0 to 8 microtasks ahead of `holdFor`,
+     and after `resume(owner)` with `holdFor` queued behind it on the lock. At natural timings this
+     harness hits the window with the delete 3 to 5 microtasks ahead (active after the resume
+     without the fix); started exactly together, or behind the owner's resume, the pass runs first
+     and the delete after, which ends archived with or without the fix.
+   - **Found while testing, not fixed (for round 2): the other order, for `pauseTask`.**
+     `pauseLocked` reads the task (`ownLiveTask`), then writes `paused` with a plain `updateTask`,
+     with awaits between. A pass whose compare-and-set lands between the two pauses the task for the
+     person (row, `paused` event, owner notice); the owner's write then lands on a mechanism pause
+     and adds "paused by the owner", and the person's resume sets it active: the owner's pause is
+     lost, as in A's finding. It reproduces with the owner's pause and `holdFor` started together
+     (the pause first, or `holdFor` up to 3 microtasks first) and with the pause queued behind the
+     owner's own resume, the order a Discord command takes (`enter`). So "start both together" is in
+     the test for the delete only: for the pause it would be red. The compare-and-set cannot cover
+     it: the stale write is the owner's. A fix would run `pauseLocked`'s read and write on the health
+     lock too (`d.health.exclusive`, in the order `resumeLocked` already takes: the task's lock, then
+     the health lock), or make its write a compare-and-set. A delete in that order is harmless:
+     archived stands, since `release` sets only a `paused` task active. Until then the header's "a
+     resume never undoes anything but this mechanism" is untrue in that one order.
+   - **Also found, as it is on `main` (not this change's):** `release`, which a resume runs, reads
+     the task (`getTask`) and then writes `active` with a plain `updateTask`, an await between and
+     no task lock, so an owner's delete landing between the two comes back active, with a `resumed`
+     event (reproduced with the delete 6 microtasks ahead of the person's resume). A compare-and-set
+     from `paused` to `active` would close it; not done here.
+2. **(A and B) A pass that threw part way dropped the notices it had collected.** `lockedThenTell`
+   now tells them in a `finally`, then the error goes on to the caller (`tellOwner` catches its
+   own). Test: "a pass that throws part way still tells the owners of the tasks it paused before,
+   and the error still reaches the caller", through `holdFor` and `recordFailure`: the friend
+   receives two tasks with different owners and the second's `addTaskEvent` throws; the first's
+   owner is told, and the call rejects with that error.
+3. **(B, survivor M23)** Test "a send for a task already finished ... is not paused with a paused
+   person: their copy fails after docket's eight deferrals, about two hours on": a notify-lane type
+   whose run completes its task (as a research answer does), made while its owner is paused, the
+   friend receiving it. The friend's copy goes, the task is `done`, and the owner's copy, deferred,
+   settles `failed` with `deferrals` 8 exactly 123 one-minute ticks after the first; the task stays
+   `done` with only its `completed` event, no `delivery_pauses` row, and no owner told.
+4. **(B, survivor M3)** "owner notices" runs through `recordFailure` and `holdFor` (the person
+   paused with no pass run yet, so the held send's pass pauses the task): a resume on the lock
+   finishes while the owner's DM is still in flight.
+5. **(B) A false comment.** `delivery-health.ts`'s header now says "(making a task there resumes no
+   one)", and `web/editor.test.ts`'s comment "Making a task on the web resumes no one".
+6. **(B) A false clause in deviation 3.** A hand-written `BEGIN`/`COMMIT` would not make
+   `roster.ts`'s `db.transaction` throw: bun:sqlite runs a `db.transaction` opened inside another as
+   a savepoint (checked: no throw, and the outer `ROLLBACK` undoes the inner write too). The reason
+   that holds is the other one: on the one shared connection, whatever the rest of the event loop
+   writes between the pass's awaits would be taken into its transaction, and rolled back with it.
+   Deviation 3 is left as written. Item 1's transaction is not that: two synchronous statements,
+   no await between them.
+7. **(B)** The comment in `notifier.ts`'s `sendDm` and the `holdFor` docstring now carry "(all but a
+   send for a task already finished)"; `notifier.ts`'s header used other words for the same
+   exception and now uses these.
+8. **(B)** README: "Only a send for a task already finished (a research answer, say) is not held".
+9. **(A and B)** The CHANGELOG bullet above now carries both facts, in the words given, the rest
+   kept.
+
+Declined, as decided: narrowing `affected()` for cost (A): its cost is bounded, and not this
+change's concern. B's M5 and M6: near-equivalent, given `holdFor`. B's M9 and M15: survivors on
+unchanged lines, noted only.
+
+Mutations, each alone in a scratch worktree on `ac1ce52`, `bun test plugins/tracker` (518 tests):
+
+| Mutation | Red |
+|---|---|
+| Compare-and-set dropped: `WHERE seq = ?` without `AND status = 'active'` | 5: the four "landing between ..." tests and "an owner's delete started with ..." |
+| The same as the old code: row, then `await this.store.updateTask(...)`, no transaction | the same 5 |
+| `finally` dropped in `lockedThenTell` (tell after the lock, skipped on a throw) | 1: "a pass that throws part way ..." |
+| M23: `done` treated as `active` in the skip, the branch and the compare-and-set | 1: "a send for a task already finished ... is not paused ..." |
+| M3: `holdFor` tells the owners inside the lock | 2: "owner notices ... (holdFor)", and "a pass that throws part way ..." |
+| (extra; `delivery-health.test.ts` only) The leftover row's `DELETE` dropped | 2: the two "... (and a row a pause stopped part way left on it goes) ..." |
+
+M23 on the skip and the branch alone, the compare-and-set unchanged, is equivalent (green on
+`delivery-health.test.ts`): the compare-and-set refuses a `done` task.
+
+## Review gate round 1: fixes to make (orchestrator, 2026-10-11; execute as written)
+
+Round 1, on `7eedddf`: reviewer A **SOUND**, with Minor findings only; reviewer B **NOT SOUND**, on
+three Majors (two false claims and one survivor). Make every fix below as new commits on top. Then
+record each as a numbered item under a `### Review gate round 1` heading at the end of "Deviations
+as implemented": the finding, then what you did.
+
+**Code (a behaviour change, so the orchestrator re-runs a narrow round 2 on it):**
+
+1. **(A) The pass can overwrite an owner's delete or pause, and the person's resume then restores
+   the task.** `pauseAffected` decides from the `listTasks()` snapshot and then writes
+   `updateTask(..., paused)` without that task's lock. An owner's `deleteTask` or `pauseTask`
+   landing in between is overwritten: archived becomes paused, the resume makes it active again,
+   and the deleted task comes back.
+   - **Fix:** make the status change a compare-and-set, so it applies only while the task is still
+     `active`.
+   - **How:** first look for a conditional update on the Store (docket has `updateOccurrenceIf` for
+     occurrences; check for a task equivalent in `store.ts` or docket's `Store` port). If there is
+     none, run a direct `UPDATE ... SET status = 'paused', updated_at = ? WHERE <id> = ? AND
+     status = 'active'` on the tracker's own `tasks` table through `this.db`. Mirror exactly the
+     columns `store.ts` `updateTask` writes for a status change; read it.
+   - **After the write:** add the `paused` event and the owner notice only when the row changed.
+     Insert the `delivery_pauses` row as today, but if the compare-and-set did not apply and the
+     task is not paused for this person, delete the row again (or insert it only after the status
+     write succeeds; pick the order that keeps the rows and the statuses agreeing).
+   - **Test:** an owner's `deleteTask` (and `pauseTask`) racing the pass leaves the task archived
+     (or owner-paused). After the person's resume it is still archived (or paused by the owner),
+     not active. Drive the race with the same interleaving A used: start both together, and also
+     with the delete queued behind `enter`'s resume. Confirm the mutation "plain `updateTask`
+     without the condition" turns the test red.
+2. **(A and B) A pass that throws part way drops the notices it already collected.**
+   `lockedThenTell` must still send the notices collected before the throw, then rethrow (use a
+   `finally` for the telling). **Test:** a pass whose second task's write throws still tells the
+   first task's owner, and the error still reaches the caller.
+
+**Tests:**
+
+3. **(B, Major: survivor M23, "also pause `done` tasks").** Add a test: a `done` task with an owed
+   copy to a paused person. Assert the task stays `done`, it has no `paused` event, and the copy
+   settles `failed` after about 123 one-minute ticks (`deferrals` 8). This pins the README's "about
+   two hours" and deviation 5.
+4. **(B, survivor M3, `holdFor` tells owners inside the lock).** Run the existing owner-notices test
+   (or a copy of it) through `holdFor` as well as `recordFailure`.
+
+**Wording (keep each sentence true of the code):**
+
+5. **(B, Major) A false comment.** `delivery-health.ts` ~27 says a task made "on the web or through
+   the task API (nothing there resumes them)". That is false: the web's Resume, the API's
+   `POST /tasks/<id>/resume` (`manage.ts` `resumeLocked`) and the admin's "Resume delivery" all
+   resume a paused person. Reword it to "(making a task there resumes no one)". Fix the same claim
+   in the `web/editor.test.ts` comment ("Making a task on the web resumes no one").
+6. **(B, Major) A false clause in deviation 3.** It says a hand-written `BEGIN`/`COMMIT` "would
+   make `roster.ts`'s own `db.transaction` throw". It would not: bun:sqlite nests it as a
+   savepoint. Correct it in this round's item, not by rewriting deviation 3: the reason that holds
+   is that writes from the rest of the event loop would be taken into the transaction.
+7. **(B) The finished-task exception is missing in two comments.** The `notifier.ts` comment
+   ("is held, not failed ... holds it with its task until the resume") and the `holdFor` docstring
+   both need it: "(all but a send for a task already finished)".
+8. **(B) README.md ~75 is narrower than the code.** It says "only a finished task's last DM". Use
+   the header's wording, "a send for a task already finished".
+9. **(A and B) The CHANGELOG bullet.** Rewrite it in this plan doc (you may edit that section) to
+   add the two facts below, keeping the rest:
+   - "Pausing such a task also holds its other recipients' later copies until the person comes back
+     or the owner runs `/task resume`, and the owner is told, as at any pause."
+   - "A DM for a task that has already finished, a research answer say, is still not held: it fails
+     after about two hours, as before."
+
+**Declined (record the reason under the round-1 heading):**
+
+- Narrowing `affected()` for cost (A): bounded, and not this change's concern.
+- B's M5 and M6 (near-equivalent, given `holdFor`).
+- B's M9 and M15 (survivors on unchanged lines; noted only).
+
+**Checks:** lint, check, build, `generate-index -- --check`, `bun test plugins/tracker`, `bun test`.
+Then run, in a scratch worktree:
+
+- the compare-and-set mutation (plain update);
+- dropping the `finally` (notices lost);
+- M23;
+- M3.
+
+Each must be red. Report the new SHAs, the checks and these mutation results.
