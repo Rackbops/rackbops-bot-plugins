@@ -114,10 +114,10 @@ wait for the resume, so without a way to resume on the web they wait for good.
 ## CHANGELOG bullet (for the PR body)
 
 The web area now tells a person whose DMs are paused, on every page, and resumes them, with the
-tasks that DM them, from its "Resume DMs" button. Before, only a Discord command, an admin, or
-resuming a paused task of their own could, and nothing told someone who used only the web area or
-the task API that they were paused. Viewing pages, editing on the web and the task API's other
-calls still resume no one (#168).
+tasks that DM them, from its "Resume DMs" button. Before, only a Discord command or button, an
+admin, or resuming a paused task of their own could, and on the web only a paused task's history
+(and, for an admin, the admin view) said why. Viewing pages, editing on the web and the task API's
+other calls still resume no one (#168).
 
 ## Deviations as implemented
 
@@ -149,3 +149,59 @@ calls still resume no one (#168).
    the task API stayed paused without knowing it. Viewing pages, editing on the web and the task
    API still resume no one (#168)." Why: every sentence true of the code. The owner's "Task API
    calls resume no one" may have meant this path too; that is theirs to decide, not changed here.
+
+### Review gate round 1
+
+On `303bdd1`: reviewer A (correctness and failure modes) SOUND with two cosmetic Minors; reviewer B
+(claims against the code) SOUND with four wording Minors and one test gap. All fixed but item 11's.
+
+4. **(A Minor 1) An admin who resumed their own delivery from their admin page still saw the
+   banner.** `adminPost`'s act renders the person page with `a.v`, whose `deliveryPaused` was read
+   before the act. Fix: the act's result page is rendered with the viewer's pause read again
+   (`{ ...a.v, deliveryPaused: a.d.health.isPaused(a.v.user.id) }`, web/admin.ts), the smaller of
+   the two fixes offered: it is the one POST that renders a page after it can lift the viewer's own
+   pause (Resume DMs and a task's Resume both redirect on success, and fail before any resume).
+   Test: "an admin who resumes their own delivery from their admin page sees no banner on the
+   result".
+5. **(A Minor 2) `/?done=resumed-dms` said "DMs resumed." to a viewer still paused** (an old tab, a
+   crafted link). Fix: no notice for it while `v.deliveryPaused` (the banner says what is true), and
+   the held count is dropped. Test: "Resume DMs resumes the person ..." loads that address while
+   Larry is still paused: the banner, and no "DMs resumed.".
+6. **(B Minor 1) The banner's "what they owe you waits" is not true of a finished task's DM**, which
+   fails after about two hours (README, Pause after failed DMs). Fix: "... so the tasks that DM you
+   are paused too, and their DMs wait. Only a DM for a task already finished, such as a research
+   answer, does not wait: it fails if you are still paused about two hours on (a research answer's
+   claims stay on its task page). ..." Checked: notifier.ts defers every send to a paused person,
+   and only a paused task's owed rows are held by docket, so a `done` task's copy runs out its eight
+   deferrals (part 1's deviation 5); a passed research answer's claims are stored as findings when
+   its run's outcome is applied (docket's `apply`), before its DM, and shown on its task page
+   (pages.ts `findingsSection`). The README's sentence on the finished-task exception says the
+   claims stay too. The tests compare the escaped banner (`esc(DMS_PAUSED)`), since the text now
+   carries an apostrophe.
+7. **(B Minor 2) The CHANGELOG bullet's "Before ..." sentence**, replaced with the reviewer's
+   wording, each clause checked: a command (discord.ts `run`) or a button (interactions.ts, all but
+   Decline and opt-out) resumes through `enter`; an admin through `resumeDelivery`; a task's Resume
+   through manage.ts `resumeLocked`. "On the web only a paused task's history said why" was true for
+   everyone but an admin, whose admin view showed their own "paused since" (`/admin/people/<id>`)
+   and failed DMs (`/admin/deliveries`): "(and, for an admin, the admin view)" is added.
+8. **(B Minor 3) README: which buttons resume, and what else does not.** Fix: "by the next command
+   or button they use (all but Decline and opt-out), which tells them why", and "Nothing else on the
+   web or through the task API resumes them." -- true: on the web only Resume DMs, a task's Resume
+   and an admin's Resume delivery call `DeliveryHealth.resume`, and in the task API only a task's
+   resume does.
+9. **(B Minor 4) `resume`'s docstring** now names every caller: "they used a command or button,
+   pressed the web's Resume DMs, or resumed a paused task of their own (manage.ts `resumeLocked`), so
+   they are here; or an admin resumed them".
+10. **(B Minor 5) Two test gaps.**
+    - H3, the count's key: "Resume DMs resumes the person ..." signs Curly in at the start and has
+      him load `/?done=resumed-dms` before Larry: he sees "DMs resumed." with no count, and Larry
+      then sees "DMs resumed. 2 task(s) are back on.". Red when `resumedBack` uses a constant key.
+    - H10, a press that changes nothing writes nothing: "pressing Resume DMs when not paused changes
+      nothing" puts a failure on Larry's `delivery_health` row before each press (one before the
+      first, some after the resume before the second) and asserts the whole row is unchanged.
+11. **Declined.**
+    - H2 (a resume outside `w.queue` is untested): the same holds for every web write; `resume`
+      takes the health lock itself, and reviewer A checked the order (the queue turn, then the
+      health lock).
+    - H9a, H11, H12, H14: declined for reviewer B's reasons, in that order: harmless; no effect;
+      cosmetic; a pre-existing untested branch.
