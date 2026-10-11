@@ -169,8 +169,6 @@ still open) and four Minor gaps, closed here:
 Mutations the auditor ran that survive, and are equivalent for the reasons given:
 
 - `removeDir` calling `rm` with `force: false`: every directory it is given exists.
-- `cleanup()` not awaiting `dispose()`: `index.ts` closes the database synchronously today when no
-  execute run is in flight, and the execute-lane tests now end theirs before `cleanup()`.
 - `cleanup()` emptying its lists after its awaits rather than before: that only matters to a call
   that is not awaited, and none is left.
 - `scout.test.ts`'s mid-test `cleanup()` left unawaited: with the lists taken at the call, it removes
@@ -178,3 +176,12 @@ Mutations the auditor ran that survive, and are equivalent for the reasons given
 - `index.test.ts` and `store.test.ts` skipping the plugin dispose in their cleanup on a passing run:
   every such test disposes its own plugin before it ends, so the cleanup's dispose is a second one.
 - No `await` after `hangUp()`: `dispose()` waits for the run in flight itself.
+
+10. **`cleanup()` not awaiting `dispose()` is no longer equivalent, so it is pinned.** The auditor
+    found it equivalent because `dispose()` closes synchronously when no execute run is in flight.
+    Item 8 dropped the execute-lane tests' own `await Promise.all(started)`, so at `cleanup()`
+    their run is now still in flight, and `dispose()` closes only after waiting for it: with the
+    `await` removed, the `/proc/self/fd` check showed those two directories removed with the
+    database open. A second harness test, "cleanup waits for an execute run still in flight before
+    it removes the directory", has city-hall answer 200 ms late, checks the run is still out when
+    `cleanup()` starts, and checks the `-wal` is gone when the directory is removed.

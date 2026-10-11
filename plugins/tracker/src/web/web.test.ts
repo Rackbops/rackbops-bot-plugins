@@ -9,6 +9,7 @@ import { createPlugin } from "../index.js";
 import { lookupMembership } from "../discord-common.js";
 import { LEFT_SERVER, lookupWithin, MEMBER_GRACE_MS, MEMBER_RECHECK_MS, MEMBER_RETRY_MS, RECHECK_FAILED } from "./app.js";
 import { WEB_NOT_CONFIGURED } from "./command.js";
+import { CITY_HALL } from "./execute-harness.js";
 import { parseWebUrl, WEB_URL_FORMAT } from "./config.js";
 import { esc, html } from "./html.js";
 import { sha256 } from "./secrets.js";
@@ -635,5 +636,30 @@ describe("the harness (#232)", () => {
       expect(await (await call(w.plugin, "GET", "/healthz")).json()).toMatchObject({ status: "inactive" });
       expect(existsSync(dirname(w.dbPath))).toBe(false);
     }
+  });
+
+  it("cleanup waits for an execute run still in flight before it removes the directory", async () => {
+    // city-hall answers each call 200 ms late (busy), so the run is still out when cleanup starts:
+    // dispose() waits for it before it closes the database.
+    const late = (async () => {
+      await new Promise((r) => setTimeout(r, 200));
+      return new Response("busy", { status: 503 });
+    }) as unknown as typeof fetch;
+    const runs: Promise<void>[] = [];
+    const w = await world({ env: CITY_HALL, cityHallFetch: late, executeStarted: (p) => void runs.push(p) });
+    await people(w.plugin);
+    await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?" } });
+    await w.plugin.ticks?.find((t) => t.name === "execute")?.run(new AbortController().signal);
+    expect(runs).toHaveLength(1);
+    let ended = false;
+    void Promise.all(runs).finally(() => (ended = true));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(ended).toBe(false);
+    const walAtRemoval: boolean[] = [];
+    await cleanup((dir) => {
+      walAtRemoval.push(existsSync(join(dir, "tracker.sqlite-wal")));
+      removeDir(dir);
+    });
+    expect(walAtRemoval).toEqual([false]);
   });
 });
