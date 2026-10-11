@@ -84,3 +84,21 @@ A `/price` tracker made with `near` now reads a price followed by a comma or a f
 or "49.90.") as written; it used to read it as 1999 or 4990, so the first reading was 100 times too
 high and a correct later one looked like a 99% drop. Trackers made before this keep the pattern they
 were made with: delete and remake one that shows a price 100 times too high (#164).
+
+## Deviations as implemented
+
+None changes a decision above or the CHANGELOG bullet; both are about where and how the tests sit.
+
+1. **The flow test needed a page only `near` can read.** `tracked.test.ts`'s `world()` page reader
+   served only `page(price)`, a JSON-LD page, and the existing `near` test there covers only the
+   "no price found" path. The reader gained `shop.body` (a page served as sent instead), and the flow
+   is a new test beside the existing one: "near reads a price followed by a comma as written, and
+   keeps it as the first price (#164)". It makes `/price ... near: Price: baseline: first` on
+   `<p>Price: 19.99, free shipping</p>` and checks the reply ("I read 19.99"), the poll's baseline
+   DM ("Now tracking ... at 19.99."), and `/task history` ("Prices: 1 read, low 19.99, high 19.99").
+2. **The capture tests are their own `describe("nearPattern on a page")` at the end of
+   `page.test.ts`**, not inside `describe("pageForExtraction")`: they test the pattern, not the page
+   reduction. Each runs `extractPrice(pageForExtraction(html), nearPattern(near))`, as the existing
+   `near` cases do, so the plan's texts are wrapped in HTML (`<p>...</p>`; the JSON case in a plain
+   `<script>`), and the thousands-separator texts carry words after the trailing separator
+   (`1,299.99, with tax`, `1.299,99. Mit MwSt.`) so the separator is punctuation, not the page's end.
