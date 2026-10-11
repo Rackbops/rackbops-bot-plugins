@@ -183,5 +183,8 @@ Mutations the auditor ran that survive, and are equivalent for the reasons given
     their run is now still in flight, and `dispose()` closes only after waiting for it: with the
     `await` removed, the `/proc/self/fd` check showed those two directories removed with the
     database open. A second harness test, "cleanup waits for an execute run still in flight before
-    it removes the directory", has city-hall answer 200 ms late, checks the run is still out when
-    `cleanup()` starts, and checks the `-wal` is gone when the directory is removed.
+    it removes the directory", holds city-hall's answer behind a gate the test opens: it starts
+    `cleanup()` without awaiting it, yields a few turns and checks nothing was removed yet (dispose
+    is waiting on the run), then opens the gate (in a `finally`, so a failed test never leaves
+    dispose its 5 s wait), awaits `cleanup()`, and checks the run ended and the `-wal` was gone when
+    the directory was removed. No timer decides the outcome.

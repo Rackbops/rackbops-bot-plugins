@@ -639,27 +639,39 @@ describe("the harness (#232)", () => {
   });
 
   it("cleanup waits for an execute run still in flight before it removes the directory", async () => {
-    // city-hall answers each call 200 ms late (busy), so the run is still out when cleanup starts:
-    // dispose() waits for it before it closes the database.
-    const late = (async () => {
-      await new Promise((r) => setTimeout(r, 200));
+    // city-hall answers (busy) only once the test opens `gate`, so the run is still out while
+    // cleanup runs: dispose() waits for it before it closes the database.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const gated = (async () => {
+      await gate;
       return new Response("busy", { status: 503 });
     }) as unknown as typeof fetch;
     const runs: Promise<void>[] = [];
-    const w = await world({ env: CITY_HALL, cityHallFetch: late, executeStarted: (p) => void runs.push(p) });
-    await people(w.plugin);
-    await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?" } });
-    await w.plugin.ticks?.find((t) => t.name === "execute")?.run(new AbortController().signal);
-    expect(runs).toHaveLength(1);
-    let ended = false;
-    void Promise.all(runs).finally(() => (ended = true));
-    await new Promise((r) => setTimeout(r, 10));
-    expect(ended).toBe(false);
     const walAtRemoval: boolean[] = [];
-    await cleanup((dir) => {
-      walAtRemoval.push(existsSync(join(dir, "tracker.sqlite-wal")));
-      removeDir(dir);
-    });
+    let ended = false;
+    let done: Promise<void> | null = null;
+    try {
+      const w = await world({ env: CITY_HALL, cityHallFetch: gated, executeStarted: (p) => void runs.push(p) });
+      await people(w.plugin);
+      await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?" } });
+      await w.plugin.ticks?.find((t) => t.name === "execute")?.run(new AbortController().signal);
+      expect(runs).toHaveLength(1);
+      void Promise.all(runs).finally(() => (ended = true));
+      done = cleanup((dir) => {
+        walAtRemoval.push(existsSync(join(dir, "tracker.sqlite-wal")));
+        removeDir(dir);
+      });
+      for (let i = 0; i < 3; i++) await Bun.sleep(0);
+      // Nothing removed yet: dispose() is still waiting on the run.
+      expect(walAtRemoval).toEqual([]);
+      expect(ended).toBe(false);
+    } finally {
+      // However the test ended, the run ends, so dispose() never waits out its 5 s.
+      release();
+    }
+    await done;
+    expect(ended).toBe(true);
     expect(walAtRemoval).toEqual([false]);
   });
 });
