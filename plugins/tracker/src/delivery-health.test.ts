@@ -1,8 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { ExecutorUnavailableError, materialize, type Clock } from "@rackbops/docket-core";
 import type { HostApi, HostMessage } from "../../../packages/api/contract.js";
-import { decidePause, DeliveryHealth, PAUSE_AFTER } from "./delivery-health.js";
+import type { TrackerDeps } from "./actions.js";
+import { decidePause, DeliveryHealth, PAUSE_AFTER, recipientPauseDetail } from "./delivery-health.js";
 import { TRACKER_TYPES } from "./index.js";
+import { TaskLocks } from "./locks.js";
+import { pauseTask, resumeTask } from "./manage.js";
 import { createDmNotifier, HOST_CANNOT_MESSAGE, isButtonRefusal } from "./notifier.js";
 import { runNotifyTick } from "./notify-lane.js";
 import { admit } from "./people.js";
@@ -355,5 +358,151 @@ describe("owner notices", () => {
     release();
     expect((await failure).paused).toBe(true);
     expect(told).toEqual([s.owner.id]);
+  });
+});
+
+describe("a send held for a paused person (#168): every task that still DMs them pauses", () => {
+  const quiet = { info() {}, warn() {}, error() {} };
+
+  /** The setup with the friend receiving the task, a health that collects the owners' notices, and a tick that DMs anyone. */
+  async function held() {
+    const s = await setup();
+    await s.store.setRecipient(s.task.id, s.friend.id, "accepted", "2026-10-01T12:00:00.000Z");
+    const told: string[] = [];
+    const health = new DeliveryHealth(s.db, s.store, { tellOwner: async (owner) => void told.push(owner.id) });
+    const sent: string[] = [];
+    const dm: NonNullable<HostApi["dm"]> = async (userId) => {
+      sent.push(userId);
+      return { guildId: null, channelId: "c", messageId: `m${sent.length}` };
+    };
+    const deps = { store: s.store, clock: s.clock, types: TRACKER_TYPES, dm, log: quiet, health };
+    const notifier = createDmNotifier({ store: s.store, dm, clock: s.clock, log: quiet, health });
+    /** Each copy of the task's runs: who, and how it stands. */
+    const copies = async (taskId = s.task.id) => {
+      const out: [string, string][] = [];
+      for (const o of await s.store.listOccurrences({ taskId })) {
+        for (const d of await s.store.listDeliveries({ occurrenceId: o.id })) out.push([d.userId, d.status]);
+      }
+      return out;
+    };
+    /** The friend's delivery paused as a crash part way would leave it: `paused_at` written, nothing paused yet. */
+    const pausedAtOnly = () =>
+      s.db
+        .query("INSERT INTO delivery_health (user_id, failures, last_error, last_failed_at, paused_at) VALUES (?, ?, ?, ?, ?)")
+        .run(s.friend.id, PAUSE_AFTER, HOST_CANNOT_MESSAGE, "2026-10-01T12:00:00.000Z", "2026-10-01T12:00:00.000Z");
+    return { ...s, health, told, sent, deps, notifier, copies, pausedAtOnly };
+  }
+
+  for (const stopped of ["before any task", "between a task's row and its status"] as const) {
+    it(`a pause that stopped part way (${stopped}) completes on the next held send, and the DM waits for the resume`, async () => {
+      const s = await held();
+      s.pausedAtOnly();
+      if (stopped !== "before any task") s.db.query("INSERT INTO delivery_pauses (task_id, user_id, at) VALUES (?, ?, ?)").run(s.task.id, s.friend.id, "2026-10-01T12:00:00.000Z");
+      expect((await s.store.getTask(s.task.id))?.status).toBe("active");
+      s.clock.set("2026-10-01T13:00:00.000Z");
+      await runNotifyTick(s.deps);
+      // The owner's copy of the run went; the friend's waits, and the task waits with it.
+      expect(s.sent).toEqual([OWNER]);
+      expect((await s.store.getTask(s.task.id))?.status).toBe("paused");
+      expect(s.health.pausesFor(s.task.id)).toEqual([s.friend.id]);
+      expect((await s.store.listTaskEvents(s.task.id)).map((e) => [e.kind, e.detail])).toEqual([["paused", recipientPauseDetail(s.friend.id)]]);
+      expect(s.told).toEqual([s.owner.id]);
+      // Hours on, it is still owed, not failed.
+      for (let hour = 14; hour <= 20; hour++) {
+        s.clock.set(`2026-10-01T${hour}:00:00.000Z`);
+        await runNotifyTick(s.deps);
+      }
+      expect(await s.copies()).toEqual([
+        [s.owner.id, "sent"],
+        [s.friend.id, "deferred"],
+      ]);
+      expect((await s.health.resume(s.friend.id, s.clock.now()))?.tasks).toEqual([s.task.id]);
+      await runNotifyTick(s.deps);
+      expect(s.sent).toEqual([OWNER, FRIEND]);
+      expect(await s.copies()).toEqual([
+        [s.owner.id, "sent"],
+        [s.friend.id, "sent"],
+      ]);
+    });
+  }
+
+  it("a task its owner paused, then resumed by hand while a recipient is still paused, pauses again at its next send", async () => {
+    const s = await held();
+    const d = { store: s.store, health: s.health, clock: s.clock, locks: new TaskLocks() } as unknown as TrackerDeps;
+    expect((await pauseTask(d, s.owner, s.task.id)).ok).toBe(true);
+    // The friend's delivery pauses meanwhile; the owner's own pause is left alone.
+    for (let i = 0; i < PAUSE_AFTER; i++) await s.health.recordFailure(s.friend.id, HOST_CANNOT_MESSAGE, "2026-10-01T12:00:00.000Z");
+    expect(s.health.pausesFor(s.task.id)).toEqual([]);
+    expect(s.told).toEqual([]);
+    expect(await resumeTask(d, s.owner, s.task.id)).toEqual({ ok: true, text: `Resumed \`${s.task.id}\`.` });
+    expect((await s.store.getTask(s.task.id))?.status).toBe("active");
+
+    s.clock.set("2026-10-01T13:00:00.000Z");
+    await runNotifyTick(s.deps);
+    expect(s.sent).toEqual([OWNER]);
+    expect((await s.store.getTask(s.task.id))?.status).toBe("paused");
+    expect(s.health.pausesFor(s.task.id)).toEqual([s.friend.id]);
+    expect(s.told).toEqual([s.owner.id]);
+    expect(await s.copies()).toEqual([
+      [s.owner.id, "sent"],
+      [s.friend.id, "deferred"],
+    ]);
+  });
+
+  it("the owner of a task paused for a recipient is told once, not on every held send", async () => {
+    const s = await held();
+    s.pausedAtOnly();
+    s.clock.set("2026-10-01T13:00:00.000Z");
+    await runNotifyTick(s.deps);
+    expect(s.told).toEqual([s.owner.id]);
+    // The friend's own task, made since (on the web, say): its run is a held send too.
+    const theirs = await s.store.createTask({ ...s.task, ownerId: s.friend.id, title: "theirs", config: { text: "theirs" }, state: null, at: "2026-10-01T13:00:00.000Z" });
+    await materialize(s.store, theirs, s.friend, s.clock.now());
+    s.clock.set("2026-10-02T13:00:00.000Z");
+    await runNotifyTick(s.deps);
+    await expect(s.notifier.sendDm(s.friend.id, { text: "and another" })).rejects.toBeInstanceOf(ExecutorUnavailableError);
+    expect((await s.store.getTask(theirs.id))?.status).toBe("paused");
+    expect(s.health.pausesFor(theirs.id)).toEqual([s.friend.id]);
+    expect(await s.copies(theirs.id)).toEqual([[s.friend.id, "deferred"]]);
+    expect(s.told).toEqual([s.owner.id]);
+  });
+
+  it("a held send's pass and a resume, in either order, never leave a task paused for someone who is not", async () => {
+    for (const order of ["hold-first", "resume-first"] as const) {
+      const s = await held();
+      s.pausedAtOnly();
+      const now = s.clock.now();
+      const both =
+        order === "hold-first"
+          ? [s.health.holdFor(s.friend.id, now.toISOString()), s.health.resume(s.friend.id, now)]
+          : [s.health.resume(s.friend.id, now), s.health.holdFor(s.friend.id, now.toISOString())];
+      await Promise.all(both);
+      expect(s.health.isPaused(s.friend.id)).toBe(false);
+      expect(s.health.pausesFor(s.task.id)).toEqual([]);
+      expect((await s.store.getTask(s.task.id))?.status).toBe("active");
+    }
+  });
+
+  it("a pass that fails is logged, and the send is still only deferred", async () => {
+    const s = await held();
+    s.pausedAtOnly();
+    const broken = new Error("database is locked");
+    const health = Object.assign(Object.create(s.health) as DeliveryHealth, {
+      holdFor: async () => {
+        throw broken;
+      },
+    });
+    const errors: unknown[] = [];
+    const notifier = createDmNotifier({
+      store: s.store,
+      dm: async () => {
+        throw new Error("never called: the person is paused");
+      },
+      clock: s.clock,
+      log: { info() {}, warn() {}, error: (_m: string, e?: unknown) => void errors.push(e) },
+      health,
+    });
+    await expect(notifier.sendDm(s.friend.id, { text: "hi" })).rejects.toBeInstanceOf(ExecutorUnavailableError);
+    expect(errors).toEqual([broken]);
   });
 });

@@ -69,7 +69,11 @@ A pressed DM is edited to say what happened.
 
 **Pause after failed DMs** (plan 5.5). Three DMs in a row that the host says cannot be delivered
 pause the person's delivery and every active task that would DM them, theirs and the ones they
-receive (a `paused` event in each task's history); a DM to them still owed is deferred, not failed.
+receive (a `paused` event in each task's history); a DM to them still owed waits for the resume.
+A task that comes to DM them while they stay paused -- one made on the web or through the task API,
+one its owner had paused and resumes by hand, one a pause stopped part way never reached -- pauses
+the same way at its first DM, which then waits too. Only a finished task's last DM (a research answer, say) is not
+held: docket's eight deferrals of it run out (about two hours), and it fails.
 The owner of a task paused for a recipient is DMed once and sees why in `/tasks`; the task
 resumes when the recipient next uses the tracker, or `/task resume` goes on without them. A person
 paused for their own DMs is told, and resumed, the next time they use a command or button. A DM

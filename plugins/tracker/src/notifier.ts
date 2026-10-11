@@ -15,7 +15,9 @@ import type { DeliveryHealth } from "./delivery-health.js";
  * - `DeliveryFailedError(message)`: the host refused this message before sending anything (its own
  *   checks of the id, the content, the buttons). docket tries twice more, then gives up.
  * - `ExecutorUnavailableError`: the person's delivery is paused (delivery-health.ts). Nothing went
- *   out and no attempt is counted; docket defers the send, and holds it while the task is paused.
+ *   out and no attempt is counted; every task that would still DM them is paused first
+ *   (`DeliveryHealth.holdFor`), so docket defers the send and then holds it while its task is
+ *   paused, until the resume (all but a finished task's send: delivery-health.ts).
  * - anything else (a Discord API error, a timeout): it may have gone out. docket settles it
  *   `unconfirmed` and never resends it; this logs it once, as the admin's notice (plan 5.5).
  *
@@ -138,9 +140,19 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
       const hostMessage = toHostMessage(message);
       if (!hostMessage) throw new DeliveryFailedError("the message has no text");
 
-      // A person whose delivery paused (earlier in this tick, or before) is held, not failed: docket
-      // defers the send, and once their tasks are paused it waits there for the resume.
-      if (d.health?.isPaused(userId)) throw new ExecutorUnavailableError(`delivery to ${userId} is paused`);
+      // A person whose delivery paused (earlier in this tick, or before) is held, not failed: every
+      // task that would still DM them pauses first (`holdFor`: one made on the web since, one its
+      // owner had paused and resumed, one the pause never reached), then docket defers the send and
+      // its next tick holds it with its task until the resume. A failure of that pass is logged,
+      // never in place of the deferral.
+      if (d.health?.isPaused(userId)) {
+        try {
+          await d.health.holdFor(userId, d.clock.now().toISOString());
+        } catch (holdErr) {
+          d.log.error(`could not pause the tasks that still DM ${userId}`, holdErr);
+        }
+        throw new ExecutorUnavailableError(`delivery to ${userId} is paused`);
+      }
 
       const buttons = hostButtons(message);
       let delivery: HostDelivery;
