@@ -3,7 +3,7 @@ import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { ChatInputCommandInteraction, MessageComponentInteraction } from "discord.js";
 import type { HostApi, HostMessage, Plugin } from "../../../packages/api/contract.js";
 import { makeFakeHost } from "../../../packages/testkit/index.js";
-import { FetchRefusedError } from "./fetch.js";
+import { createPageFetch, FetchRefusedError } from "./fetch.js";
 import { createPlugin } from "./index.js";
 import { FETCH_TYPES, takesType } from "./notify-lane.js";
 import { MAX_PRICE_TASKS, nearPattern } from "./price.js";
@@ -32,7 +32,8 @@ function page(price: number | null): string {
   return `<html><head><script type="application/ld+json">${JSON.stringify(ld)}</script></head><body>Widget</body></html>`;
 }
 
-function world() {
+/** `reader`, when given, replaces the fake page reader (for the real `createPageFetch` over a fake network). */
+function world(reader?: Fetch) {
   const clock = clockAt(START);
   const sent: { userId: string; message: HostMessage }[] = [];
   let n = 0;
@@ -58,7 +59,7 @@ function world() {
   };
   const plugin = createPlugin(
     makeFakeHost({ name: "tracker", env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN }, log: { info() {}, warn() {}, error() {} }, dm }),
-    { clock, dbPath: ":memory:", fetch: () => fetch, digest: false },
+    { clock, dbPath: ":memory:", fetch: () => reader ?? fetch, digest: false },
   );
   return { plugin, clock, sent, shop };
 }
@@ -269,6 +270,18 @@ describe("/price", () => {
     w.shop.status = 200;
     w.shop.refuse = "shop.example is not on the public internet";
     expect(await slash(w.plugin, "price", LARRY, { strings: { url: SHOP } })).toBe("I cannot read that page: shop.example is not on the public internet.");
+    expect(await slash(w.plugin, "tasks", LARRY)).not.toContain("t1");
+  });
+
+  it("refuses a page that redirects to something that is not a web address, and creates nothing", async () => {
+    // The real page reader over a fake network: the shop's page answers a redirect to `http://[`.
+    const reader = createPageFetch({
+      resolve: async () => ["93.184.215.14"],
+      fetchImpl: (async () => new Response(null, { status: 302, headers: { location: "http://[" } })) as unknown as typeof fetch,
+    });
+    const w = world(reader);
+    await withLarry(w);
+    expect(await slash(w.plugin, "price", LARRY, { strings: { url: SHOP } })).toBe("I cannot read that page: it redirects to something that is not a web address.");
     expect(await slash(w.plugin, "tasks", LARRY)).not.toContain("t1");
   });
 
