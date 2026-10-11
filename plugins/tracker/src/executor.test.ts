@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { ExecutorUnavailableError, JobPendingError, type JobSpec } from "@rackbops/docket-core";
+import { ExecutorUnavailableError, JobPendingError, type JobResult, type JobSpec } from "@rackbops/docket-core";
 import {
   createCityHallExecutor,
   DATABASE_ID_KEY,
@@ -182,6 +182,24 @@ describe("the city-hall Executor (docket's Executor port, city-hall#18's source 
     status = "done";
     extra = { result: { kind: "success" } };
     expect(await w.executor.run(null, "o7", "o7:1")).toEqual({ kind: "error", detail: "city-hall returned a result the tracker could not read", durationMs: 0 });
+  });
+
+  it("a job city-hall failed at its requeue cap answers its stored usage_limit result, so docket's usage-limit pause applies", async () => {
+    // city-hall's outcome() stores each claim's result, a requeued one's too, and past
+    // CITY_HALL_MAX_REQUEUES (default 10) fails the job with the last one kept and this error.
+    const stored: JobResult[] = [
+      { kind: "usage_limit", detail: "usage limit reached", resetsAt: "2026-10-01T15:00:00.000Z", durationMs: 800 },
+      { kind: "auth_failed", detail: "the runner's token was refused", durationMs: 300 },
+    ];
+    for (const result of stored) {
+      let body: unknown = { job: job("queued", { attempts: 10, lastOutcome: result.kind, result }), runs: [] };
+      const w = setup(() => json(200, body));
+      w.records.put("o7", "o7", "j-1", NOW.toISOString());
+      // Requeued: the stored result is not answered.
+      expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+      body = { job: job("failed", { attempts: 11, lastOutcome: result.kind, result, error: "requeued 10 times after auth_failed or usage_limit" }), runs: [] };
+      expect(await w.executor.run(null, "o7", "o7")).toEqual(result);
+    }
   });
 
   it("a key city-hall already knows (200) answers that job's result at once", async () => {
