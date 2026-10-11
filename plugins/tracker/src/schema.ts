@@ -11,9 +11,9 @@ import { Database } from "bun:sqlite";
  * id is a one-letter prefix plus that number (`u1`, `t12`, the same shape as docket's MemoryStore),
  * which carries no dot, so it fits a reply reference, and AUTOINCREMENT never reuses a number after
  * a delete. `task_recipients`, `deliveries` and `want_inbox` have a `seq` too, for order only; the
- * rest are keyed by what they describe (a person, a task and person, a token's hash, a Job or
- * notice key). Instants are ISO-8601 UTC strings, compared as text, exactly as MemoryStore compares
- * them. JSON columns hold `JSON.stringify` output.
+ * rest are keyed by what they describe (a person, a task and person, a token's hash, a Job, notice
+ * or `tracker_meta` key). Instants are ISO-8601 UTC strings, compared as text, exactly as
+ * MemoryStore compares them. JSON columns hold `JSON.stringify` output.
  */
 export const MIGRATIONS: readonly string[] = [
   `

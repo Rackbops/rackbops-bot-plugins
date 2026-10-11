@@ -3,12 +3,13 @@ import { isTimeZone, type Store, type User } from "@rackbops/docket-core";
 /**
  * People (plan 5.8, rev17, item 40): each person is a row in the tracker's own store -- Discord id,
  * preferred hour, time zone, admin flag -- not a usr account, and nothing here calls usr or recall
- * (items 37, 40). Since 0.20.0, while the usr link is on, a person may also be linked to a usr
- * account (`users.usr_subject`): that link lives in usr.ts and usr-links.ts, and `/allow`,
- * `/register` (0.21.0) and the web sign-in (0.22.0, usr-identity.ts) go by it, not this file. The
- * admin flag is the tracker's one admin definition (5.10); the first admin comes from the instance's
- * configuration (`TRACKER_ADMIN_DISCORD_IDS`), and later admins are granted and revoked from the web
- * area's admin view (admin.ts).
+ * (items 37, 40). Since 0.20.0, while the usr link is on, a person may also carry a usr account's id
+ * (`users.usr_subject`); that link lives in usr.ts and usr-links.ts, not here. `/allow` and
+ * `/register` admit and register through this file and, since 0.21.0, make and use the link too;
+ * the web sign-in (0.22.0, usr-identity.ts) finds the person by it. The admin flag is the tracker's
+ * one admin definition (5.10); the first admin comes from the instance's configuration
+ * (`TRACKER_ADMIN_DISCORD_IDS`), and later admins are granted and revoked from the web area's admin
+ * view (admin.ts).
  */
 
 /** The tracker's default zone until a person sets one (plan 1.1, 5.2: US Eastern). */
@@ -39,9 +40,9 @@ export function parseAdminIds(raw: string | undefined): string[] {
 
 /**
  * Admits the person with this Discord id: returns their row, creating it with the tracker's
- * defaults when absent. What `/allow` will call (rackbops-bot-plugins#79). The tracker's store
- * rejects a second user with the same Discord id (store.ts), so two admissions racing each other
- * leave one row: the loser's create throws, and it reads back the winner's.
+ * defaults when absent. What `/allow` calls (actions.ts's `allowPerson`, rackbops-bot-plugins#79).
+ * The tracker's store rejects a second user with the same Discord id (store.ts), so two admissions
+ * racing each other leave one row: the loser's create throws, and it reads back the winner's.
  */
 export async function admit(store: Store, discordId: string, now: Date, options: { admin?: boolean } = {}): Promise<User> {
   if (!SNOWFLAKE.test(discordId)) throw new PeopleError(`"${discordId}" is not a Discord user id`);
@@ -84,7 +85,7 @@ export interface Preferences {
   preferredHour?: number;
 }
 
-/** Sets a person's zone and hour (what `/register` will write), refusing a bad value by name. */
+/** Sets a person's zone and hour (what `/register`, `/settings hour` and the web settings form write, actions.ts), refusing a bad value by name. */
 export async function setPreferences(store: Store, userId: string, prefs: Preferences): Promise<User> {
   if (prefs.timeZone !== undefined && !isTimeZone(prefs.timeZone)) {
     throw new PeopleError(`"${prefs.timeZone}" is not a time zone (use an IANA name such as America/New_York)`);

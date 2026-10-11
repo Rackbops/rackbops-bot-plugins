@@ -87,3 +87,28 @@ None: comments and dead code only, nothing a user or operator sees.
 Change 3 kept "and nothing else": with the `TRACKER_USR_*` settings and `TRACKER_BGG_TOKEN` added,
 the list covers all 14 settings in the tracker's `botPlugin.env`, each read at the top of
 `createPlugin`, which is the plan's condition for keeping it.
+
+### Audit
+
+The single auditor found the change SOUND with five Minors. Each was checked against the code and
+applied as worded:
+
+4. **people.ts, `admit`'s doc: "What `/allow` will call" is future tense for a command that
+   exists -> "What `/allow` calls (actions.ts's `allowPerson`, rackbops-bot-plugins#79)".**
+   `allowPerson` calls `admit` (actions.ts).
+5. **people.ts, `setPreferences`'s doc: "what `/register` will write" -> "what `/register`,
+   `/settings hour` and the web settings form write, actions.ts".** Its callers are
+   `registerSettings` (`/register`), `setHour` (`/settings hour`, discord.ts) and `saveSettings`
+   (web/app.ts's `settingsPost`), all in actions.ts.
+6. **limits.ts header: it called the file "the length limits", but it also holds `MAX_LIVE_TASKS`,
+   a count -> the header names the cap (last in the file, checked by actions.ts's `liveTaskCap`)
+   and says "A length limit is on the trimmed text".**
+7. **people.ts header: "`/allow`, `/register` ... go by it, not this file" contradicted 4 and 5,
+   and 0.20.0 made no links ("Nothing calls usr yet"; `/allow` links from 0.21.0) -> the person
+   may carry a usr account's id since 0.20.0, and the link lives in usr.ts and usr-links.ts. `/allow`
+   and `/register` admit and register through this file and, since 0.21.0, make and use the link
+   too. The web sign-in (0.22.0) finds the person by it.** `/allow` makes the link
+   (`usr.links.link`), `/register` uses it (`subjectOf`, `unlink`) and web/app.ts reads it with
+   `userOfSubject`.
+8. **schema.ts header: "a Job or notice key" left out `tracker_meta` -> "a Job, notice or
+   `tracker_meta` key".** `tracker_meta` is `key TEXT PRIMARY KEY` (schema.ts, `vacuumOnce`).
