@@ -60,6 +60,23 @@ describe("pageForExtraction", () => {
     expect(extractPrice(pageForExtraction('<HEAD><META PROPERTY="product:price:amount" CONTENT="42.50"></HEAD>'))).toEqual({ value: 42.5 });
     const ld = '{"@type":"Product","offers":{"price":"12.00","priceCurrency":"EUR"}}';
     expect(extractPrice(pageForExtraction(`<SCRIPT TYPE="APPLICATION/LD+JSON">${ld}</SCRIPT>`))).toEqual({ value: 12, currency: "EUR" });
+    // A style's text is skipped to its own `</STYLE>`: the meta inside it is not a tag.
+    const style = `<STYLE>.x{content:"<meta property='product:price:amount' content='1.00'>"}</STYLE><META PROPERTY="product:price:amount" CONTENT="8.00">`;
+    expect(extractPrice(pageForExtraction(style))).toEqual({ value: 8 });
+  });
+
+  it("reads each tag as what it is", () => {
+    const meta8 = '<meta property="product:price:amount" content="8.00">';
+    // A script of another type is no JSON-LD block, so its price is not read.
+    expect(extractPrice(pageForExtraction(`<script type="application/json">{"price":"1.00"}</script>${meta8}`))).toEqual({ value: 8 });
+    // An empty script ends at its own close, not at the next block's.
+    expect(extractPrice(pageForExtraction('<script></script><script type="application/ld+json">{"offers":{"price":"5.00"}}</script>'))).toEqual({ value: 5 });
+    // A meta written inside a script's code is script data, not a tag.
+    expect(extractPrice(pageForExtraction(`<script>document.write('<meta property="product:price:amount" content="1.00">')</script>${meta8}`))).toEqual({ value: 8 });
+    // A stray < in the text before a meta does not swallow it: the tag is the last < before the >.
+    expect(extractPrice(pageForExtraction(`<p>Deals <30 EUR ${meta8}</p>`))).toEqual({ value: 8 });
+    // A type with spaces around = and no quotes is still JSON-LD.
+    expect(extractPrice(pageForExtraction('<script type = application/ld+json>{"offers":{"price":"3.00"}}</script>'))).toEqual({ value: 3 });
   });
 
   it("keeps the first MAX_BLOCKS JSON-LD blocks, in page order", () => {
@@ -100,6 +117,8 @@ describe("pageForExtraction", () => {
   });
 
   it("stays fast on pages built to make the extraction patterns backtrack (3 MB)", () => {
+    // Well-formed JSON-LD blocks, thousands more than MAX_BLOCKS: the walk keeps the first ones and moves on.
+    const manyBlocks = '<script type="application/ld+json">{"@type":"Product","name":"x"}</script>'.repeat(MB3 / 74);
     for (const body of [
       "<meta ".repeat(MB3 / 6),
       "<script ".repeat(MB3 / 8),
@@ -110,12 +129,18 @@ describe("pageForExtraction", () => {
       "<style>".repeat(MB3 / 7),
       "<>".repeat(MB3 / 2),
       `${"<meta ".repeat(MB3 / 12)}>${"<meta ".repeat(MB3 / 12)}`,
-      // Well-formed JSON-LD blocks, thousands more than MAX_BLOCKS: the walk keeps the first ones and moves on.
-      '<script type="application/ld+json">{"@type":"Product","name":"x"}</script>'.repeat(MB3 / 74),
+      manyBlocks,
+      // Tag starts inside JSON-LD data and inside a JSON body: kept only with every < escaped.
+      Array.from({ length: 200 }, () => `<script type="application/ld+json">${JSON.stringify({ d: "<meta ".repeat(2600) })}</script>`).join(""),
+      JSON.stringify({ note: "<meta ".repeat(MB3 / 6 - 10) }),
+      // Upper and mixed case, which the fold lower-cases.
+      "<sCrIpT a>".repeat(MB3 / 10),
+      "Aa".repeat(MB3 / 2),
     ]) {
       const { ms, found } = timed(body);
       expect(found).toBeNull();
       expect(ms).toBeLessThan(2000);
     }
+    expect(jsonLdBlocks(pageForExtraction(manyBlocks))).toHaveLength(MAX_BLOCKS);
   });
 });

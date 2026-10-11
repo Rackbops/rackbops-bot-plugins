@@ -96,11 +96,12 @@ Written 2026-10-11 against `main` at `2949dbe`; re-find each cite by function na
 
 ## CHANGELOG bullet (for the PR body)
 
-A page whose text has a letter that changes length when lower-cased (the Turkish `İ`, for one)
-before its price data no longer loses that data: the tags after it were read one character off and
-dropped, so a `/price` preview found no price and a `/want` page watch found no listings. A page
-watch now reads up to 200 JSON-LD blocks instead of 20, so a shop search page with one block per
-product shows listings past the twentieth (#163, #208).
+A page whose text has a letter that changes length when lower-cased (the Turkish `İ`, the only
+such letter) before its price data no longer loses that data: the tags after it were read one
+character off and dropped, so a `/price` preview found no price and a `/want` page watch found no
+listings. A page watch now reads up to 200 JSON-LD blocks instead of 20, so a shop search page with
+one block per product shows listings past the twentieth (a look still sends at most 20 new ones;
+the rest follow on the next look) (#163, #208).
 
 ## Deviations as implemented
 
@@ -127,3 +128,47 @@ product shows listings past the twentieth (#163, #208).
    ASCII fold, since the row describes how the body is rebuilt.
 4. **The 3 MB case's JSON-LD blocks carry no price** (`{"@type":"Product","name":"x"}`, about 42,500
    of them), so the page fits the loop's existing `found` is null assertion beside the time bound.
+
+### Review gate round 1
+
+Reviewer A (correctness) and reviewer B (claims against code) both found the change sound. All the
+findings below are tests, comments or wording; none changes the code's behaviour.
+
+5. **Escaping `<` is now pinned (B, Major, a gap older than this change).** Nothing failed when
+   `escapeLt` was the identity, when blocks were kept unescaped, or when a JSON body was kept
+   unescaped or raw, and each of those brings back #81's slow scans (B measured 50.8 s and 87.8 s).
+   The 3 MB loop gains two bodies: 200 JSON-LD blocks whose data is `<meta ` repeated, and a JSON
+   body of `<meta ` repeated (about 110 ms and 45 ms on this branch).
+6. **Upper case in the timing cases (A, Minor).** The 3 MB loop gains `"<sCrIpT a>"` and `"Aa"`
+   repeated to 3 MB, so the fold itself runs under the time bound.
+7. **The 3 MB JSON-LD case asserts the cap (B).** `jsonLdBlocks(pageForExtraction(manyBlocks))`
+   has exactly `MAX_BLOCKS` entries, which the keep-the-first test cannot pin for a cap above its
+   own `MAX_BLOCKS + 10` blocks.
+8. **An upper-case `<STYLE>` case (B).** "upper-case tags are still read" gains a `<STYLE>` whose
+   text holds a price meta (1.00) before a real `<META>` (8.00): the style must be skipped to its own
+   `</STYLE>`.
+9. **Five one-line cases for older gaps (B),** in a new "reads each tag as what it is" test, each
+   with a short comment: a script of `type="application/json"` is not JSON-LD; an empty script ends
+   at its own close; a meta inside a script's code is not a tag; a stray `<` before a meta does not
+   swallow it; a `type = application/ld+json` with spaces and no quotes is JSON-LD.
+10. **Comments (B1, B2).** `page.ts`'s header said a JSON body's `<` is "escaped as `<`"; it now
+    says `\u003c`, which is what `escapeLt` writes. `asciiLower`'s comment now gives both ways a
+    length change broke the walk: a tag sliced at a page offset and read in the lowered text starts
+    one character early and is dropped, and a `</script` found in the lowered text cuts the page's
+    block one character late, keeping the `<`, so its JSON no longer parses.
+11. **The cap's reason cites docket's own caps (A2, B4).** `page.ts`'s header and the README row
+    dropped "about 100-120 cards at most" and now say that docket-types' `page` source keeps at most
+    100 listings a page (`MAX_LISTINGS`, `want-sources.js`) and a look takes at most 20 new ones
+    (`MAX_NEW_PER_RUN`, `wantlist.js`), the rest on the next look.
+12. **`fetch.ts` names the `page` source too (B7).** Its header said the Fetch port was the price
+    tracker's and its body only what price extraction reads; both now name the want-list's `page`
+    source, matching the README. `page.ts`'s first line ("The page the price type is handed") names
+    it as well.
+13. **The CHANGELOG bullet (edited, as allowed).** "(the Turkish `İ`, for one)" is now "(the Turkish
+    `İ`, the only such letter)": B scanned every code point, and U+0130 is the only one whose
+    `toLowerCase` has a different length. After "shows listings past the twentieth" it adds "(a look
+    still sends at most 20 new ones; the rest follow on the next look)".
+14. **Declined as equivalent or out of reach,** for the reasons in reviewer B's round-1 report
+    (B's mutation ids, not this plan's coverage rows): F2/F3; the letters in `[A-Z]` that appear in
+    no name the walk matches (dropping one from the class changes nothing it finds); N2/N3 (a dead
+    branch); R3/R5/E4; T4/T7; R1/R2; C9-C11; J1/J3.
