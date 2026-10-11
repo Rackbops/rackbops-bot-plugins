@@ -454,7 +454,8 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     case "tasks": {
       let flash = notice(done);
       if (done === RESUMED_DMS) {
-        flash = resumedDmsNotice(resumedBack.get(auth.user.id));
+        // Still paused (an old tab, a crafted link): the banner says so, and no notice says otherwise.
+        flash = v.deliveryPaused ? null : resumedDmsNotice(resumedBack.get(auth.user.id));
         resumedBack.delete(auth.user.id);
       }
       return htmlResponse(tasksPage(v, await loadTaskList(d, auth.user), now, flash, d.research === true));

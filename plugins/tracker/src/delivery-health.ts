@@ -305,9 +305,10 @@ export class DeliveryHealth {
   }
 
   /**
-   * Resumes a paused person (they used a command or pressed the web's Resume DMs, so they are here;
-   * or an admin resumed them): clears the count and their pause rows, and sets active every task
-   * nothing else still holds. Null when they were not paused.
+   * Resumes a paused person (they used a command or button, pressed the web's Resume DMs, or resumed
+   * a paused task of their own (manage.ts `resumeLocked`), so they are here; or an admin resumed
+   * them): clears the count and their pause rows, and sets active every task nothing else still
+   * holds. Null when they were not paused.
    */
   resume(userId: string, now: Date): Promise<Resumed | null> {
     return this.locked(async () => {

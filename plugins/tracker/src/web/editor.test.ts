@@ -10,6 +10,7 @@ import { MAX_PRICE_TASKS, nearPattern } from "../price.js";
 import { MAX_FORM_BYTES } from "./app.js";
 import { READING } from "./editor.js";
 import { ADMIN, api, call, cleanup, csrfOf, CURLY, hidden, type Jar, LARRY, makeToken, ORIGIN, people, press, signIn, slash, world } from "./harness.js";
+import { esc } from "./html.js";
 import { DMS_PAUSED } from "./pages.js";
 
 /**
@@ -847,6 +848,9 @@ describe("a send held for a paused person (#168)", () => {
   });
 });
 
+/** The banner's text as a page carries it, escaped. */
+const BANNER = esc(DMS_PAUSED);
+
 /** The banner's Resume DMs form, with the session's CSRF token. */
 function resumeForm(csrf: string): string {
   return `<form method="post" action="/tracker/resume-dms"><input type="hidden" name="csrf" value="${csrf}"><button class="rb-btn rb-btn--accent rb-btn--sm" type="submit">Resume DMs</button></form>`;
@@ -871,29 +875,47 @@ async function pauseLarry(w: Awaited<ReturnType<typeof setup>>): Promise<void> {
   expect(deliveryPausedAt(w.dbPath, "u2")).not.toBeNull();
 }
 
+/** One run of Larry's the host cannot deliver: a count of one, short of the pause. */
+async function failOnce(w: Awaited<ReturnType<typeof setup>>, text: string): Promise<void> {
+  await slash(w.plugin, "remind", LARRY, { strings: { text, when: "in 5 minutes" } });
+  w.delivery.unreachable.add(LARRY);
+  w.clock.advance(10 * 60 * 1000);
+  await notifyTick(w.plugin);
+  w.delivery.unreachable.delete(LARRY);
+}
+
+/** A person's `delivery_health` row as stored, every column. */
+function healthRow(dbPath: string, userId: string): Record<string, unknown> | null {
+  const db = new Database(dbPath, { readonly: true });
+  const row = db.query("SELECT * FROM delivery_health WHERE user_id = ?").get(userId) as Record<string, unknown> | null;
+  db.close();
+  return row;
+}
+
 describe("Resume DMs on the web (#168)", () => {
   it("a paused person sees the banner on every page, with a Resume DMs form", async () => {
     const w = await setup();
     await slash(w.plugin, "remind", LARRY, { strings: { text: "stretch", repeat: "day" } });
     const curly = await signIn(w.plugin, CURLY);
-    for (const path of ["/", "/tasks/t1", "/settings"]) expect(await page(w.plugin, w.larry, path)).not.toContain(DMS_PAUSED);
+    for (const path of ["/", "/tasks/t1", "/settings"]) expect(await page(w.plugin, w.larry, path)).not.toContain(BANNER);
     await pauseLarry(w);
     expect(tasks(w.dbPath)[0]?.status).toBe("paused");
     for (const path of ["/", "/tasks/t1", "/settings"]) {
       const body = await page(w.plugin, w.larry, path);
-      expect(body).toContain(DMS_PAUSED);
+      expect(body).toContain(BANNER);
       expect(body).toContain(resumeForm(w.csrf));
     }
     // Curly is not paused: no banner and no button.
     for (const path of ["/", "/settings"]) {
       const body = await page(w.plugin, curly, path);
-      expect(body).not.toContain(DMS_PAUSED);
+      expect(body).not.toContain(BANNER);
       expect(body).not.toContain("/resume-dms");
     }
   });
 
   it("Resume DMs resumes the person and their tasks, and says how many are back on", async () => {
     const w = await setup();
+    const curly = await signIn(w.plugin, CURLY);
     // He receives Curly's daily reminder (accepted before his DMs fail: a press is a use, which
     // resumes), and his copy of three runs in a row cannot be delivered.
     await slash(w.plugin, "remind", CURLY, { strings: { text: "curly-plants", when: "9am", repeat: "day" } });
@@ -916,6 +938,10 @@ describe("Resume DMs on the web (#168)", () => {
     expect(tasks(w.dbPath).map((t) => t.status)).toEqual(["paused", "paused"]);
     expect(holds(w.dbPath, "t2")).toEqual({ pauses: ["u2"], deliveries: [{ user: "u2", status: "deferred" }] });
     const sentBefore = w.sent.length;
+    // An old tab's address while he is still paused: the banner, and no word of a resume.
+    const stale = await page(w.plugin, w.larry, "/?done=resumed-dms");
+    expect(stale).toContain(BANNER);
+    expect(stale).not.toContain("DMs resumed.");
 
     const res = await post(w.plugin, w.larry, w.csrf, "/resume-dms");
     expect(res.status).toBe(303);
@@ -923,9 +949,13 @@ describe("Resume DMs on the web (#168)", () => {
     expect(deliveryPausedAt(w.dbPath, "u2")).toBeNull();
     expect(tasks(w.dbPath).map((t) => t.status)).toEqual(["active", "active"]);
     for (const id of ["t1", "t2"]) expect(events(w.dbPath, id).at(-1)).toBe("resumed: delivery resumed");
+    // The count is Larry's: Curly at the same address first sees no count, and takes none.
+    const curlys = await page(w.plugin, curly, "/?done=resumed-dms");
+    expect(curlys).toContain("DMs resumed.");
+    expect(curlys).not.toContain("back on");
     const home = await page(w.plugin, w.larry, "/?done=resumed-dms");
     expect(home).toContain("DMs resumed. 2 task(s) are back on.");
-    expect(home).not.toContain(DMS_PAUSED);
+    expect(home).not.toContain(BANNER);
     // The count is shown once; a reload says only that DMs resumed.
     const reloaded = await page(w.plugin, w.larry, "/?done=resumed-dms");
     expect(reloaded).toContain("DMs resumed.");
@@ -960,19 +990,30 @@ describe("Resume DMs on the web (#168)", () => {
   it("pressing Resume DMs when not paused changes nothing", async () => {
     const w = await setup();
     await slash(w.plugin, "remind", LARRY, { strings: { text: "stretch", repeat: "day" } });
+    // One failure on record, so a write to his row would show.
+    await failOnce(w, "x");
+    const counted = healthRow(w.dbPath, "u2");
+    expect(counted).toMatchObject({ failures: 1, paused_at: null });
     const never = await post(w.plugin, w.larry, w.csrf, "/resume-dms");
     expect(never.status).toBe(303);
     expect(never.headers.get("location")).toBe("/tracker/");
     expect(events(w.dbPath, "t1")).toEqual(["created"]);
+    expect(healthRow(w.dbPath, "u2")).toEqual(counted);
     // A second press, after the first resumed him: the same.
     await pauseLarry(w);
     expect((await post(w.plugin, w.larry, w.csrf, "/resume-dms")).headers.get("location")).toBe("/tracker/?done=resumed-dms");
     const resumed = events(w.dbPath, "t1");
     expect(resumed.at(-1)).toBe("resumed: delivery resumed");
+    await failOnce(w, "y");
+    // Failures on record again, short of a pause, so a write to his row would show.
+    const recounted = healthRow(w.dbPath, "u2");
+    expect(recounted?.paused_at).toBeNull();
+    expect(Number(recounted?.failures)).toBeGreaterThan(0);
     const again = await post(w.plugin, w.larry, w.csrf, "/resume-dms");
     expect(again.status).toBe(303);
     expect(again.headers.get("location")).toBe("/tracker/");
     expect(events(w.dbPath, "t1")).toEqual(resumed);
+    expect(healthRow(w.dbPath, "u2")).toEqual(recounted);
     expect(tasks(w.dbPath)[0]?.status).toBe("active");
     expect(await page(w.plugin, w.larry, "/")).not.toContain('role="status"');
   });
@@ -983,14 +1024,14 @@ describe("Resume DMs on the web (#168)", () => {
     await slash(w.plugin, "remind", LARRY, { strings: { text: "stretch", repeat: "day" } });
     await pauseLarry(w);
     const pausedAt = deliveryPausedAt(w.dbPath, "u2");
-    for (const path of ["/", "/tasks/t1", "/tasks/t1/edit", "/settings", "/tokens"]) expect(await page(w.plugin, w.larry, path)).toContain(DMS_PAUSED);
+    for (const path of ["/", "/tasks/t1", "/tasks/t1/edit", "/settings", "/tokens"]) expect(await page(w.plugin, w.larry, path)).toContain(BANNER);
     const saved = await post(w.plugin, w.larry, w.csrf, "/tasks/t1/edit", { text: "stretch more", when: "", repeat: "day" });
     expect(saved.headers.get("location")).toBe("/tracker/tasks/t1?done=saved");
     expect((await api(w.plugin, "POST", "/tasks", { token, body: { type: "reminder", text: "from the api", when: "tomorrow 9am" } })).status).toBe(201);
     expect((await api(w.plugin, "GET", "/tasks", { token })).status).toBe(200);
     expect(deliveryPausedAt(w.dbPath, "u2")).toBe(pausedAt);
     expect(tasks(w.dbPath)[0]).toMatchObject({ title: "stretch more", status: "paused" });
-    expect(await page(w.plugin, w.larry, "/")).toContain(DMS_PAUSED);
+    expect(await page(w.plugin, w.larry, "/")).toContain(BANNER);
   });
 
   it("an admin's own banner is theirs alone", async () => {
@@ -998,10 +1039,30 @@ describe("Resume DMs on the web (#168)", () => {
     await pauseLarry(w);
     const admin = await signIn(w.plugin, ADMIN);
     const theirs = await page(w.plugin, admin, "/admin/people/u2");
-    expect(theirs).not.toContain(DMS_PAUSED);
+    expect(theirs).not.toContain(BANNER);
     expect(theirs).not.toContain("/resume-dms");
     expect(theirs).toContain('action="/tracker/admin/people/u2/resume-delivery"');
     expect(theirs).toContain(">Resume delivery</button>");
-    expect(await page(w.plugin, w.larry, "/")).toContain(DMS_PAUSED);
+    expect(await page(w.plugin, w.larry, "/")).toContain(BANNER);
+  });
+
+  it("an admin who resumes their own delivery from their admin page sees no banner on the result", async () => {
+    const w = await setup();
+    const admin = await signIn(w.plugin, ADMIN);
+    const csrf = await csrfOf(w.plugin, admin);
+    for (const text of ["a", "b", "c"]) await slash(w.plugin, "remind", ADMIN, { strings: { text, when: "in 5 minutes" } });
+    w.delivery.unreachable.add(ADMIN);
+    w.clock.advance(10 * 60 * 1000);
+    await notifyTick(w.plugin);
+    w.delivery.unreachable.delete(ADMIN);
+    expect(deliveryPausedAt(w.dbPath, "u1")).not.toBeNull();
+    expect(await page(w.plugin, admin, "/admin/people/u1")).toContain(BANNER);
+    const res = await post(w.plugin, admin, csrf, "/admin/people/u1/resume-delivery");
+    expect(res.status).toBe(200);
+    const result = await res.text();
+    expect(result).toContain("resumed; 3 task(s) back on.");
+    expect(result).not.toContain(BANNER);
+    expect(result).not.toContain("/resume-dms");
+    expect(deliveryPausedAt(w.dbPath, "u1")).toBeNull();
   });
 });

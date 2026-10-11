@@ -24,7 +24,9 @@ function name(u: User): string {
 }
 
 export const DMS_PAUSED =
-  `DMs to you are paused: the bot could not DM you ${PAUSE_AFTER} times in a row, so the tasks that DM you are paused too, and what they owe you waits. ` +
+  `DMs to you are paused: the bot could not DM you ${PAUSE_AFTER} times in a row, so the tasks that DM you are paused too, and their DMs wait. ` +
+  "Only a DM for a task already finished, such as a research answer, does not wait: it fails if you are still paused about two hours on " +
+  "(a research answer's claims stay on its task page). " +
   "Check that you accept DMs from members of a server you share with the bot, then resume.";
 
 /** The banner above every page while the viewer's DMs are paused; its one button posts to `/resume-dms` (app.ts). */

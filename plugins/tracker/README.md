@@ -74,14 +74,14 @@ A task that comes to DM them while they stay paused -- one made on the web or th
 one its owner had paused and resumes by hand, one a pause stopped part way never reached -- pauses
 the same way at its first DM, which then waits too. Only a send for a task already finished (a
 research answer, say) is not held: docket's eight deferrals of it run out (about two hours), and it
-fails.
+fails; a research answer's claims are still on its task page (Findings, below).
 The owner of a task paused for a recipient is DMed once and sees why in `/tasks`; the task
 resumes when the recipient next uses the tracker, or `/task resume` goes on without them. A person
 paused for their own DMs is resumed, with every task nothing else holds, by the next command or
-button they use, which tells them why; by Resume DMs, on the banner every web page shows them while
-they are paused; by resuming a paused task of their own (`/task resume`, or Resume on the web or
-through the task API); or by an admin's Resume delivery. Viewing a web page, a web edit and every
-other task API call resume no one.
+button they use (all but Decline and opt-out), which tells them why; by Resume DMs, on the banner
+every web page shows them while they are paused; by resuming a paused task of their own
+(`/task resume`, or Resume on the web or through the task API); or by an admin's Resume delivery.
+Nothing else on the web or through the task API resumes them.
 A DM that goes through clears the count. Only a DM the host says cannot reach that person (Discord's
 50007, or 10013 for an account that is gone) counts, once per run: docket fails it for good at once. A DM refused for
 its content is retried by docket (three tries, a minute apart and doubling) and does not count; nor
