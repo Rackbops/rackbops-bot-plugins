@@ -654,8 +654,9 @@ describe("a reply is one plain line (#205, #208)", () => {
     expect(stored(w.dbPath)).toEqual(["line one - Oct 1 -- done x y z"]);
   });
 
-  it("a reply of only zero-width characters is refused as empty, and nothing is stored", async () => {
+  it("a reply of only spaces, line breaks or zero-width characters is refused as empty, and nothing is stored", async () => {
     const w = await sharedRun();
+    expect(await replyText(w.plugin, "o1", CURLY, " \n\t ")).toBe(EMPTY);
     expect(await replyText(w.plugin, "o1", CURLY, "\u200b\u200c\ufeff")).toBe(EMPTY);
     expect(await replyText(w.plugin, "o1", CURLY, "\u200d \u200d")).toBe(EMPTY);
     expect(stored(w.dbPath)).toEqual([]);
@@ -675,8 +676,9 @@ describe("a reply is one plain line (#205, #208)", () => {
   it("a reply of only unassigned invisible code points is refused as empty; one between letters is a space", async () => {
     const w = await sharedRun();
     for (const unassigned of ["\u{e0080}", "\u2065"]) expect(await replyText(w.plugin, "o1", CURLY, unassigned)).toBe(EMPTY);
-    expect(await replyText(w.plugin, "o1", CURLY, "a\u{e0080}b")).toBe(KEPT);
-    expect(stored(w.dbPath)).toEqual(["a b"]);
+    // One from each unassigned range; the variation selector U+E0100 is assigned and stays.
+    expect(await replyText(w.plugin, "o1", CURLY, "a\u2065b\ufff8c\u{e0000}d\u{e001f}e\u{e0080}f\u{e0fff}g\u{e0100}")).toBe(KEPT);
+    expect(stored(w.dbPath)).toEqual(["a b c d e f g\u{e0100}"]);
   });
 
   it("an emoji joined by zero-width joiners survives", async () => {
@@ -688,11 +690,14 @@ describe("a reply is one plain line (#205, #208)", () => {
 
   it("the format characters real text needs survive; a bidi override and a zero-width space between letters do not", async () => {
     const w = await sharedRun();
-    // Persian "I want", with its zero-width non-joiner; German with a soft hyphen.
+    // Persian "I want", with its zero-width non-joiner; German with a soft hyphen; every kept number sign before a 1.
     const persian = "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645";
     const german = "Zusammen\u00adarbeit";
-    for (const text of [persian, german, "a\u202eb\u200bc"]) expect(await replyText(w.plugin, "o1", CURLY, text)).toBe(KEPT);
-    expect(stored(w.dbPath)).toEqual([persian, german, "a b c"]);
+    const signs = ["\u0600", "\u0601", "\u0602", "\u0603", "\u0604", "\u0605", "\u06dd", "\u070f", "\u0890", "\u0891", "\u08e2", "\u{110bd}", "\u{110cd}"]
+      .map((sign) => `${sign}1`)
+      .join(" ");
+    for (const text of [persian, german, signs, "a\u202eb\u200bc"]) expect(await replyText(w.plugin, "o1", CURLY, text)).toBe(KEPT);
+    expect(stored(w.dbPath)).toEqual([persian, german, signs, "a b c"]);
   });
 
   it("history shows a reply stored before this change on one line", async () => {
