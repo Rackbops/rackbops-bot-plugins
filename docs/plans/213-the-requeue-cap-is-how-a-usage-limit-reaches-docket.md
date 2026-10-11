@@ -124,13 +124,14 @@ this branch.
    city-hall's cap counts claims, not time (`jobs.ts:161-162`), and a requeued job can be claimed
    at once (`claim()`, `jobs.ts:97-129`), so how soon the eleventh such claim comes is how often
    the runner claims again: docket-runner's code, in neither repo. -> Not written. -> The plan says
-   to say it only if the code shows it. For the auditor: a cap reached after the tracker's hold
-   has run out is never collected. Past `PAUSED_CAP_MS` the Job answers pending
-   (`executor.ts:514-519`) and docket's give-up, counted from the submission, ends the run on that
-   ask (docket-core 0.7.0 `dist/dispatch.js`, `collect()`, `:917-929`). So "reaches docket" holds
-   while docket still asks; a runner that waited out a five-hour window before each new claim
-   would reach the default cap after the hold. The docs do not say this, since it turns on the
-   runner; a reviewer may want it raised.
+   to say it only if the code shows it. For the auditor: a cap reached after the tracker's hold has
+   run out is not collected unless the job has already failed when docket first asks after the hold
+   (`executor.ts:513` answers a failed job before the cap check at `:514`). Past `PAUSED_CAP_MS`
+   the Job answers pending (`executor.ts:514-519`) and docket's give-up, counted from the
+   submission, ends the run on that ask (docket-core 0.7.0 `dist/dispatch.js`, `collect()`,
+   `:917-929`). So "reaches docket" holds while docket still asks; a runner that waited out a
+   five-hour window before each new claim would reach the default cap after the hold. The docs do
+   not say this, since it turns on the runner; a reviewer may want it raised.
 6. **The test also asks once while the job is still queued, and covers `auth_failed`.** The plan's
    test answers `failed` only. -> The new test first answers the job `queued` with the same result
    stored and `lastOutcome` set, as city-hall does after a requeue, and checks it is unavailable;
@@ -146,3 +147,25 @@ this branch.
    eleventh (1 above). -> Reworded, same sense otherwise.
 8. **The header's `queued` bullet is rewrapped.** Its words after the changed parenthetical are
    unchanged (`git diff --word-diff` moves only the `*` markers).
+
+### Audit
+
+The single auditor found the change sound, with four Minors, fixed in one follow-up commit.
+
+9. **The requeue-cap sentence said the tracker answers docket with the result unconditionally.**
+   Past the 48-hour hold docket has given the run up (5 above). -> The README adds ", if docket is
+   still asking (within the 48-hour hold above)" after "the tracker answers docket with that
+   result"; the `executor.ts` header adds "(while docket still asks)" after "so a `usage_limit`
+   reaches docket".
+10. **Deviation 5 said a cap reached after the hold is "never collected".** A job that has already
+    failed when docket first asks after the hold is still answered: `executor.ts:513` hands a
+    `failed` job to `answerFor` before the cap check at `:514`. -> Now "not collected unless the
+    job has already failed when docket first asks after the hold".
+11. **"whose last claim ended that way" now pointed back at the cap sentence's "ends that way"**,
+    which is `usage_limit` or `auth_failed` only, but the tracker also treats an expired lease as a
+    pause (`REQUEUED_OUTCOMES`, `executor.ts:111`). -> The README says "whose last claim ended in
+    any of those ways (`usage_limit`, `auth_failed` or an expired lease)".
+12. **The README paragraph had a 37-character stub line** ("city-hall's `job.lastOutcome`, or the").
+    -> Rewrapped from "default, `CITY_HALL_MAX_EXPIRED_LEASES`)" to "docket counts its" at the
+    paragraph's width (at most 99 columns, as its longest line already was), words otherwise
+    unchanged.

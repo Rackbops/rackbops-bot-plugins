@@ -113,11 +113,11 @@ docket does not see that result then and the job reads `queued` again. Both are 
 city-hall has requeued a job after `usage_limit` or `auth_failed` its configured maximum number of
 times (ten by default, `CITY_HALL_MAX_REQUEUES`), the next claim that ends that way fails the job
 instead, as does the expiry that brings its expired leases to their configured maximum (three by
-default, `CITY_HALL_MAX_EXPIRED_LEASES`). The tracker reads how the last claim ended --
-city-hall's `job.lastOutcome`, or the
-last entry of `runs` where the field is absent -- and treats a queued job whose last claim ended
-that way as "unavailable", not "pending": the run is held and asked again, never given up after
-six hours while the runner is paused, and nothing new is submitted meanwhile. docket counts its
+default, `CITY_HALL_MAX_EXPIRED_LEASES`). The tracker reads how the last claim ended -- city-hall's
+`job.lastOutcome`, or the last entry of `runs` where the field is absent -- and treats a queued job
+whose last claim ended in any of those ways (`usage_limit`, `auth_failed` or an expired lease) as
+"unavailable", not "pending": the run is held and asked again, never given up after six hours while
+the runner is paused, and nothing new is submitted meanwhile. docket counts its
 six hours from the submission, so once a Job has been seen paused (`executor_jobs.paused_at`) every
 unfinished answer for it -- queued or running -- stays "unavailable": a runner that resumes after
 six hours is collected, not given up and run a second time. That hold is capped at 48 hours from
@@ -128,9 +128,9 @@ usage-limit pause (which waits for the reset the CLI named) applies only to a `u
 that reaches docket, and that happens only when the job ends failed with that result still stored.
 Mainly, that is the requeue cap (`CITY_HALL_MAX_REQUEUES`): the job fails with the `usage_limit`
 (or `auth_failed`) result of the claim that went past it, and the tracker answers docket with that
-result. The other way is the lease cap (`CITY_HALL_MAX_EXPIRED_LEASES`), when a job requeued after
-`usage_limit` or `auth_failed` later fails at its maximum of expired leases with that earlier
-claim's result still stored.
+result, if docket is still asking (within the 48-hour hold above). The other way is the lease cap
+(`CITY_HALL_MAX_EXPIRED_LEASES`), when a job requeued after `usage_limit` or `auth_failed` later
+fails at its maximum of expired leases with that earlier claim's result still stored.
 The plugin never calls a model, holds no Claude credential and no `ANTHROPIC_*` variable; model
 output is data, cleaned by docket before it reaches a DM or a finding, and every research DM goes
 out with no allowed mentions: the host sends every `dm` with `allowedMentions: { parse: [] }`

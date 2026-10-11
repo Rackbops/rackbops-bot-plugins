@@ -38,8 +38,8 @@ import { META_TABLE } from "./schema.js";
  *   city-hall fails a job, keeping the last result stored for it, if any, once more than
  *   `CITY_HALL_MAX_REQUEUES` of its claims (city-hall's default 10) have ended in `usage_limit` or
  *   `auth_failed`, or once `CITY_HALL_MAX_EXPIRED_LEASES` of its leases (default 3) have expired:
- *   `failed` then answers that result (`answerFor`), so a `usage_limit` reaches docket and docket's
- *   usage-limit pause applies;
+ *   `failed` then answers that result (`answerFor`), so a `usage_limit` reaches docket (while
+ *   docket still asks) and docket's usage-limit pause applies;
  * - `queued` after a claim that ended in `usage_limit`, `auth_failed` or an expired lease (city-hall
  *   requeues those, so docket does not see that result while the job is requeued):
  *   `ExecutorUnavailableError`, not pending, and so is every unfinished answer (`queued` or
