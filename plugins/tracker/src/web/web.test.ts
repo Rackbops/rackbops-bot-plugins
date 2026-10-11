@@ -647,11 +647,11 @@ describe("a reply is one plain line (#205, #208)", () => {
   const KEPT = "Reply kept with the task's history.";
   const EMPTY = "That reply was empty.";
 
-  it("a reply is kept as one line: newlines, tabs, control and zero-width characters become one space", async () => {
+  it("a reply is kept as one line: line breaks of every kind, tabs, control and zero-width characters become one space, trimmed", async () => {
     const w = await sharedRun();
-    expect(await replyText(w.plugin, "o1", CURLY, "line one\n- Oct 1 -- done\t\u200b\u202e x\u0007y")).toBe(KEPT);
-    // The bidi override and the bell are gone with the rest.
-    expect(stored(w.dbPath)).toEqual(["line one - Oct 1 -- done x y"]);
+    expect(await replyText(w.plugin, "o1", CURLY, " line one\r\n- Oct 1 -- done\t\u200b\u202e x\u0007y\u2028z\u2029 ")).toBe(KEPT);
+    // The bidi override and the bell are gone with the rest; so are the line and paragraph separators.
+    expect(stored(w.dbPath)).toEqual(["line one - Oct 1 -- done x y z"]);
   });
 
   it("a reply of only zero-width characters is refused as empty, and nothing is stored", async () => {
@@ -688,16 +688,16 @@ describe("a reply is one plain line (#205, #208)", () => {
 
   it("history shows a reply stored before this change on one line", async () => {
     const w = await sharedRun();
-    // As a reply kept before #205 is: line break and all.
+    // As a reply kept before #205 is: line breaks and all.
     const db = new Database(w.dbPath);
     db.query("INSERT INTO replies (occurrence_id, task_id, user_id, kind, payload, at) VALUES ('o1', 't1', 'u3', 'text', ?, ?)").run(
-      JSON.stringify({ text: "ok\n- Oct 1, 9:00 -- done" }),
+      JSON.stringify({ text: "ok\n- Oct 1, 9:00 -- done\u2028- Oct 1, 9:00 -- done\r" }),
       "2026-10-01T13:01:00.000Z",
     );
     db.close();
     const said = await history(w);
-    expect(said).toMatch(/^- Thu Oct 1, 9:00 -- \w+; user333 replied "ok - Oct 1, 9:00 -- done"$/m);
-    expect(said.split("\n").filter((l) => l.startsWith("- Oct 1, 9:00"))).toEqual([]);
+    expect(said).toMatch(/^- Thu Oct 1, 9:00 -- \w+; user333 replied "ok - Oct 1, 9:00 -- done - Oct 1, 9:00 -- done"$/m);
+    expect(said.split(/\r\n?|[\n\u2028\u2029]/).filter((l) => l.startsWith("- Oct 1, 9:00"))).toEqual([]);
   });
 
   it("history escapes a masked link and a mention in a reply, in Discord only", async () => {
