@@ -68,10 +68,11 @@ it and record why under Deviations.**
 
 ## CHANGELOG bullet (for the PR body)
 
-Docs: the README now says that a zone or hour change waits for a task the model runner holds (and
+Docs: the README now says that a zone or hour change waits for a scout the model runner holds (and
 holds up the commands behind it). It no longer lists the Discord-role gate as not done, and it names
-scouts and want-list watches among what the task API makes. `TRACKER_GUILD_ID`'s description now
-says that declining and opting out skip the membership check (#204).
+scouts and want-list watches among what the task API makes. It also says that `null` clears a
+want-list watch's top price in a task API `PATCH`. `TRACKER_GUILD_ID`'s description now says that
+declining and opting out skip the membership check (#204).
 
 ## Deviations as implemented
 
@@ -84,3 +85,23 @@ says that declining and opting out skip the membership check (#204).
    recurring task that follows the zone or hour and may skip none", and that the wait happens for
    the owner of a scout the execute tick holds, rather than for "a task the execute tick holds" in
    general. -> Both claims as the plan worded them were broader than the code.
+
+### Audit
+
+The single auditor found the change sound, with these Minors, all applied:
+
+2. The `POST /api/v1/tasks` row's `type` list left out `wantlist`, which `NEW_TYPES`
+   (`web/editor-pages.ts`) takes. -> It reads "`reminder`, `renewal`, `price`, `research`, `scout`
+   or `wantlist`".
+3. **One task at a time** bounded only city-hall calls, but a judged watch's page reads run in the
+   same execute pass (`ExecuteLane`'s `fetch`, `createPageFetch`, `fetch.ts` `TIMEOUT_MS` =
+   15 s). -> "each city-hall call or page read in it bounded at 15 seconds".
+4. This plan's CHANGELOG bullet said "a task the model runner holds", broader than deviation 1. ->
+   "a scout the model runner holds".
+5. **Requests** said "`null` is never a value", but `asFields` (`web/api-tasks.ts`) takes `null` for
+   `max` in a `PATCH` of a `wantlist` or `wantjudge` and clears the top price (`want.test.ts`,
+   `wantjudge.test.ts`; `CHANGELOG.md` [0.16.0]). -> "`null` is a value only for a want-list
+   watch's `max` in a `PATCH`, where it clears the top price; anywhere else it is refused as the
+   wrong JSON type (send `""` to clear a note)", and a sentence for it in the CHANGELOG bullet.
+6. The execute-lane paragraph's edited line ran past 100 characters. -> Rewrapped to the
+   paragraph's end; the words are unchanged.
