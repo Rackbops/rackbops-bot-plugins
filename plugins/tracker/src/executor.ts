@@ -34,16 +34,21 @@ import { META_TABLE } from "./schema.js";
  *   never prepares a Job that is out again) finds the Job by key. A later ask with no stored id
  *   throws a plain Error: docket holds the run like a pending one and gives up after six hours;
  * - `queued` or `running`: `JobPendingError`; `done`: the result, read as a docket JobResult;
- *   `failed`: its result when it reads as one, else an `error` result carrying city-hall's error;
+ *   `failed`: its result when it reads as one, else an `error` result carrying city-hall's error.
+ *   city-hall fails a job, keeping the last result stored for it, if any, once more than
+ *   `CITY_HALL_MAX_REQUEUES` of its claims (city-hall's default 10) have ended in `usage_limit` or
+ *   `auth_failed`, or once `CITY_HALL_MAX_EXPIRED_LEASES` of its leases (default 3) have expired:
+ *   `failed` then answers that result (`answerFor`), so a `usage_limit` reaches docket and docket's
+ *   usage-limit pause applies;
  * - `queued` after a claim that ended in `usage_limit`, `auth_failed` or an expired lease (city-hall
- *   requeues those, so docket never sees that result): `ExecutorUnavailableError`, not pending,
- *   and so is every unfinished answer (`queued` or `running`) for that Job from then on, since
- *   docket counts its six hours from the submission: a runner that resumes after six hours is
- *   collected, not given up and run again. The first sight is kept in `executor_jobs.paused_at`;
- *   after `PAUSED_CAP_MS` (48 h) from it the Job answers pending again, so docket's give-up
- *   applies, and the admins are told once. A pause is logged once an hour per Job and told to the
- *   admins once per Job and outcome (`requeuedBy`). How the claim ended is `job.lastOutcome`, else
- *   the last of `runs`;
+ *   requeues those, so docket does not see that result while the job is requeued):
+ *   `ExecutorUnavailableError`, not pending, and so is every unfinished answer (`queued` or
+ *   `running`) for that Job from then on, since docket counts its six hours from the submission: a
+ *   runner that resumes after six hours is collected, not given up and run again. The first sight
+ *   is kept in `executor_jobs.paused_at`; after `PAUSED_CAP_MS` (48 h) from it the Job answers
+ *   pending again, so docket's give-up applies, and the admins are told once. A pause is logged
+ *   once an hour per Job and told to the admins once per Job and outcome (`requeuedBy`). How the
+ *   claim ended is `job.lastOutcome`, else the last of `runs`;
  * - the key is `rackbops-tracker:<database id>:<docket's Job key>` (`jobKeyFor`), and a `200` to a
  *   submit (a key city-hall knew) must hold this Job's prompt, or it is refused with a plain Error;
  * - city-hall unreachable, a timeout, a 5xx, a 429, or an answer that is not city-hall's (a
