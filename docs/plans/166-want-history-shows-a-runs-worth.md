@@ -104,3 +104,148 @@ area lists them all, when it is set up), so the DM's "`/task history` lists them
    stopping at the first count that does not fit (the note on one left out is longer than a short
    oldest line, so all 20 can fit where 19 and the note do not). The added test sweeps the lines'
    length across the edge for both, and the shared check asserts every larger count would not fit.
+
+### Revision 2, as implemented
+
+Rebased onto `ccr-de9d9c44-hgkav1-161` at `a6914ef` with no conflict (the two branches change
+different README rows). What differs from revision 2, or what it left open:
+
+1. **The shape is confined to the plain path.** `Parts` (`{ content, more }`, actions.ts) is one more
+   kind of `Step`; an `outside`/`finish` Step still finishes with a string. `/task history` is the
+   only command that returns it.
+2. **The follow-ups mention no one** (`NO_MENTIONS`, as the answer's edit), the resume notice's too:
+   the findings were sent under it inside the answer before, and a listing's name is a shop's text.
+   The notice is fixed text, so for it nothing changes.
+3. **The README's resume-notice sentence (from #161) changes too.** It said the notice comes "in a
+   second message"; for a want watch's `/task history` it comes after the findings, so a third. It
+   now says "in a message of its own after it".
+4. **A finding whose line alone passes a message** (a source URL of about 1,800 characters or more,
+   since only the text is clipped to 200) makes K 0 when it is the newest: the second message is
+   `Findings (newest 0 of N):` and the note. A line is never cut, and an older one is not listed in
+   its place (K counts the newest). Pinned by a test.
+5. **`historyWithSeries` reads the task and its findings once more for a want watch** (`wantFindings`
+   is its own read, after `seriesLines`), so `seriesLines` keeps `main`'s shape; both reads run in
+   the same queue turn.
+6. **The web harness's `slash` (`web/harness.ts`) gained `said`, `followUpFails` and a `followUp`**,
+   as #161 gave `surface.test.ts`'s, so the end-to-end tests are in `want.test.ts`, where a watch
+   can read a shop. Before, a follow-up there would have thrown a `TypeError` (caught and logged).
+   The first `/want` test now reads its Nesting Box line from the follow-up.
+7. **A failed follow-up of `more` is logged** as `could not send /task's answer's message 2 as a
+   follow-up: <error>`; the notice's wording is unchanged.
+8. **Tests beyond revision 2's list:** the first implementation's sweep "at and around the limit",
+   moved to the second message (its second case now lengthens the newest line from 0 to 99
+   characters past 60-character middle lines, so all 20 fit where the newest 19 and the note do
+   not); "a want watch with no findings yet answers in one message"; and the case in 4.
+9. **Not pinned by a test: `more` before the resume notice's follow-up.** The notice is a follow-up
+   only when it and the answer pass 2,000 characters together, and a want watch's first message
+   (header, count, at most 10 runs and 5 changes) stays far below that in the test harness; the
+   order is the code's (`run`, discord.ts), and a mutation swapping it survives.
+
+## Plan, revision 2 (execute as written; supersedes the one-message fitting above)
+
+Written 2026-10-11 after the review gate on `da696ba`. **Owner decision (roshne, 2026-10-11,
+comment on #166):** the findings go in a second message.
+
+### Why the first plan was dropped
+
+The gate measured real lines. A judged watch's finding line is about 230 to 270 characters, and a
+plain page watch's about 110 to 180. So only about 6 to 12 of 20 fit in one message, and fitting
+even those pushed the history's runs and changes out entirely. That is a regression: today those
+show. The bullet's "so the DM's 'lists them all' holds" was false whenever the lines did not all
+fit, which is the usual case.
+
+### Decisions
+
+- **Stacked on #161 (PR #274).** That PR's `run` (`discord.ts`) already sends an ephemeral
+  follow-up after the answer, with a caught and logged failure. This branch is rebased onto
+  `ccr-de9d9c44-hgkav1-161`, and its PR's base is that branch. Once #274 merges, the base becomes
+  `main` and `main` is merged in.
+- **`run` learns to send extra messages.** A command's result may be a string, as today, or
+  `{ content: string; more: string[] }`. `run` edits the reply with `content`, combined with the
+  resume notice by `withNotice` exactly as now. It then sends each `more` entry as an ephemeral
+  follow-up, in order, before the resume-notice follow-up when there is one. Each follow-up is
+  caught and logged like the notice's. Every other command's behaviour is unchanged. Keep the type
+  change small: wherever a `Step`'s `finish` returns a string, it may return this shape too, or
+  confine the shape to the plain-function path if that is all `/task history` needs.
+- **A want watch's `/task history` (`wantlist`, `wantjudge`):**
+  - **First message:** the history as `main` builds it today (header, `Findings: N`, then the runs
+    and changes, clipped as today), but without the finding lines themselves. The `Findings: N`
+    line stays in it.
+  - **Second message, only when there is at least one finding:**
+    - a header line, `Findings (newest K of N):`;
+    - the newest K findings, oldest to newest, as whole lines in the existing per-finding format
+      (`- <text clipped to 200> <<source>>`). K is the largest number, up to `MAX_NEW_PER_RUN` (20,
+      imported from docket-types), whose lines fit with the header and the note in `MAX_ANSWER`;
+    - when N > K, a last line: `...and <N-K> more` followed by `; the web area's task page shows the
+      newest <FINDINGS_SHOWN> (\`/web\`).` when the web area is set up (`d.webEditor`), or just `.`
+      without it. Import `FINDINGS_SHOWN` (50) from `history.ts`; do not copy the number.
+  - Reuse the first implementation's fitting code where it fits this shape. Drop the room
+    computation that squeezed the history's rest; it is no longer needed.
+- **Research and scout are unchanged:** one message, the newest `SERIES_SHOWN` (8), as on `main`.
+  Price and renewal are unchanged too.
+- **The web area and the Task API are unchanged.**
+- **README:** the `/want` row says the rest of the listings are in `/task history`'s second message,
+  "up to 20, as many as fit in one message", plus the web pointer. The `/task history` row says a
+  want watch's findings come as a second message. Every sentence must be true of the code.
+- **CHANGELOG bullet:** rewritten as below. It does not claim the DM's "lists them all" now holds,
+  because when the lines do not all fit, it does not.
+
+### Steps
+
+1. In W, rebase onto the #161 branch: `git rebase --onto ccr-de9d9c44-hgkav1-161 origin/main` (the
+   local branch exists; it is the head of PR #274, currently at `a6914ef`). Resolve any conflict
+   (README rows) keeping both sides' text. Confirm `git log --oneline ccr-de9d9c44-hgkav1-161..HEAD`
+   is only #166's commit(s).
+2. `discord.ts` `run` and its types: the `more` follow-ups as decided.
+3. `series.ts`: a want watch's history builds the two parts. Return the `{ content, more }` shape
+   only for want types with at least one finding. `historyWithSeries` keeps its string result for
+   every other caller, so check who else calls it (the web and the API do not).
+4. README rows, as decided.
+5. Tests:
+   - **`series.test.ts` (unit), replacing the one-message fitting tests:**
+     - 20 short findings: all 20 shown, header `(newest 20 of 20)`, no note;
+     - 20 long findings (about 240 characters): whole lines only, the newest kept, the note's count
+       exact (N-K), the second message at most `MAX_ANSWER`;
+     - 25 findings, all short: K is 20, the note says 5 more;
+     - the note points to `/web` only with the web area, both values;
+     - the first message keeps the runs and changes of a long want history. Compare its runs and
+       changes section with the same history's on `main`'s code, or assert specific run lines are
+       present;
+     - research and scout still show the newest 8 in one message, including with long findings.
+       This kills reviewer B's M36.
+   - **`surface.test.ts` or `want.test.ts`, end to end through `/task history` on a want watch whose
+     run found 20 listings:**
+     - the reply is the history with `Findings: 20` and its runs;
+     - one ephemeral follow-up (`flags: 64`) holds the findings;
+     - the edit comes before the follow-up (use #161's ordered `said` log in `surface.test.ts`'s
+       `slash`, or the equivalent);
+     - a failing follow-up is logged, not thrown.
+   - Keep the first implementation's tests that still apply; delete the ones that pin the dropped
+     one-message fitting.
+6. Commit as a new commit on top: `fix(tracker): send a want watch's findings in /task history as a
+   second message, up to a run's worth (#166)`, with the two trailer lines. Do not squash or rewrite
+   the earlier commit beyond the rebase.
+7. Checks: `bun run lint`, `bun run check`, `bun run build`, `bun run generate-index -- --check`,
+   `bun run check-contract`, `bun test plugins/tracker`, `bun test`.
+8. Mutations in a scratch worktree, one at a time:
+   - `more` not sent;
+   - `more` sent before the edit;
+   - `more` not ephemeral;
+   - findings left in the first message too;
+   - K not capped at 20;
+   - the note's count off by one;
+   - the `/web` pointer shown always;
+   - research given the second message;
+   - the follow-up's catch removed.
+
+   Name the red test for each.
+9. Record everything that differs from this revision under a new `### Revision 2, as implemented`
+   at the end of "Deviations as implemented".
+
+### CHANGELOG bullet, revision 2 (for the PR body)
+
+`/task history` of a want-list watch now sends its findings as a second message: up to 20, a run's
+worth, as many whole lines as fit, newest kept, and says how many more there are (pointing to the
+web area's task page when it is set up). The history itself keeps its runs and changes, as before.
+It used to list only the newest 8 findings, so a DM's "the rest in `/task history`" left most of a
+20-listing run nowhere in Discord (#166).

@@ -3,7 +3,7 @@ import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../packages/api/contract.js";
 import { MAX_ANSWER } from "./actions.js";
 import { FetchRefusedError } from "./fetch.js";
-import { api, call, cleanup, csrfOf, LARRY, makeToken, ORIGIN, people, press, signIn, slash, world } from "./web/harness.js";
+import { api, call, cleanup, csrfOf, LARRY, makeToken, ORIGIN, people, press, type Said, signIn, slash, world } from "./web/harness.js";
 import { parseMarketplace, type Source, SourceUnavailableError } from "@rackbops/docket-types";
 import { BGG_THING, shopSearch } from "./want-fixtures.js";
 import { EBAY_PAGE, MAX_WANT_TASKS } from "./want.js";
@@ -71,9 +71,10 @@ describe("/want", () => {
     await pollTick(w.plugin);
     expect(w.sent).toHaveLength(2);
 
-    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" } });
+    const said: Said[] = [];
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" }, said });
     expect(history).toContain("Findings: 3");
-    expect(history).toContain("Wingspan Nesting Box -- 60.00 USD -- used <https://shop.example/p/nests>");
+    expect(said[1]?.content).toContain("Wingspan Nesting Box -- 60.00 USD -- used <https://shop.example/p/nests>");
 
     const done = buttons(w.sent, 1).find((b) => b.label.toLowerCase() === "done");
     expect(done).toBeDefined();
@@ -88,29 +89,59 @@ describe("/want", () => {
     expect(w.sent).toHaveLength(2);
   });
 
-  it("lists a 20-listing run in /task history, the newest by whole lines, and counts the ones that do not fit (#166)", async () => {
+  /** A watch whose first run found 20 listings, each line about 180 characters, so not all fit in one message. */
+  async function twentyListings(logs?: string[]) {
     const items: Item[] = Array.from({ length: 20 }, (_, i) => ({
       name: `Wingspan expansion ${String(i + 1).padStart(2, "0")}: ${"birds, eggs and nests in a box ".repeat(3).trim()}`,
       url: `https://shop.example/p/wingspan-expansion-${i + 1}`,
       price: 30,
     }));
     const { fetch } = shop(items);
-    const w = await world({ fetch });
+    const w = await world({ fetch, ...(logs ? { logs } : {}) });
     await people(w.plugin);
     await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan expansions", source: "page", target: SHOP } });
     await pollTick(w.plugin);
     expect(content(w.sent, 0)).toContain("Wingspan expansions: 20 new listings.");
     expect(content(w.sent, 0)).toContain("...and 15 more: `/task history t1` lists them all.");
+    return { w, items };
+  }
 
-    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" } });
-    expect(history.length).toBeLessThanOrEqual(MAX_ANSWER);
-    expect(history).toContain("Findings: 20");
-    // More than the 8 a research request lists, not all 20: whole lines, the newest, oldest to newest, then the count of the rest.
-    const shown = history.split("\n").filter((l) => l.startsWith("- Wingspan expansion "));
+  it("sends a 20-listing run's findings in /task history as a second message, after the history (#166)", async () => {
+    const { w, items } = await twentyListings();
+    const said: Said[] = [];
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" }, said });
+    // The answer is the history: the count and the run, and no listing.
+    expect(history).toContain("\nFindings: 20\nRuns:\n- ");
+    expect(history).toMatch(/^Runs:\n- .+ -- done$/m);
+    expect(history).not.toContain("Wingspan expansion ");
+    // Then the findings, in one follow-up only Larry sees, like the answer.
+    expect(said.map((m) => m.kind)).toEqual(["edit", "followUp"]);
+    expect(said[0]).toEqual({ kind: "edit", content: history });
+    expect(said[1]).toMatchObject({ kind: "followUp", flags: 64 });
+    const findings = said[1]?.content ?? "";
+    expect(findings.length).toBeLessThanOrEqual(MAX_ANSWER);
+    // The newest, whole, oldest to newest, then the count of the rest and where they are.
+    const shown = findings.split("\n").filter((l) => l.startsWith("- Wingspan expansion "));
     expect(shown.length).toBeGreaterThan(8);
     expect(shown.length).toBeLessThan(20);
-    expect(shown).toEqual(items.slice(20 - shown.length).map((it) => `- ${it.name} -- 30.00 USD <${it.url}>`));
-    expect(history).toContain(`${shown.at(-1)}\n...and ${20 - shown.length} more: the web area lists them all (\`/web\`).\nRuns:`);
+    expect(findings).toBe(
+      [
+        `Findings (newest ${shown.length} of 20):`,
+        ...items.slice(20 - shown.length).map((it) => `- ${it.name} -- 30.00 USD <${it.url}>`),
+        `...and ${20 - shown.length} more; the web area's task page shows the newest 50 (\`/web\`).`,
+      ].join("\n"),
+    );
+  });
+
+  it("logs a /task history follow-up that fails, and still answers (#166)", async () => {
+    const logs: string[] = [];
+    const { w } = await twentyListings(logs);
+    const said: Said[] = [];
+    // `slash` awaits the command's handle(): a rejection would fail the test here.
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" }, said, followUpFails: Object.assign(new Error("Unknown interaction"), { code: 10062 }) });
+    expect(said).toEqual([{ kind: "edit", content: history }]);
+    expect(history).toContain("\nFindings: 20\nRuns:\n- ");
+    expect(logs).toContain("could not send /task's answer's message 2 as a follow-up: Unknown interaction");
   });
 
   it("holds to the top price: a listing over it waits, and is sent once it drops under", async () => {
