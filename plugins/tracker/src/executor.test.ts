@@ -267,6 +267,21 @@ describe("the city-hall Executor (docket's Executor port, city-hall#18's source 
     expect(slow.logs[0]).toContain("error city-hall timed out (TimeoutError)");
   });
 
+  it("an unreachable city-hall and a refused credential each keep their own hour: neither hides the other", async () => {
+    let down = true;
+    const w = setup(() => {
+      if (down) throw new TypeError("fetch failed");
+      return json(401, { error: "unauthorized" });
+    });
+    expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    down = false;
+    expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    const errors = w.logs.filter((l) => l.startsWith("error"));
+    expect(errors).toHaveLength(2);
+    expect(errors[0]).toContain("could not be reached (TypeError)");
+    expect(errors[1]).toContain("refused the tracker's credential (HTTP 401)");
+  });
+
   it("logs a submission by its Job key and city-hall's id only: never the prompt, the source key or the result", async () => {
     const w = setup(() => json(201, { job: job("done", { result: { kind: "success", result: "SECRET RESULT", durationMs: 1 } }) }));
     await w.executor.run(SPEC, "o7", "o7");
