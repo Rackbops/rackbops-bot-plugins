@@ -259,7 +259,9 @@ on the orchestrator's decision to close both races found while testing, on `e81f
 11. **`release` wrote `active` over an owner's delete (item 1's second finding, as on `main`).**
     `pauseIfActive` became `statusIf(taskId, from, to, at)`, the same one-statement
     compare-and-set; `release` sets the task active only from `paused`, and adds the `resumed` event
-    and gives the next run only when that applied. It reads the task again for `materialize`, which
+    and gives the next run only when that applied. (`release` also runs from forget-me's erasure and
+    from `resumeTask`, on the same lock; there the compare-and-set only adds a refusal, for a task
+    that left `paused` since its read.) It reads the task again for `materialize`, which
     gives no run to a task that is no longer active. Tests: "a delete landing between the resume's
     read of the task and its write stays deleted, with no new run" (a store whose `getTask`,
     `release`'s read, runs the delete to its end before returning): `resume` resumes no task, the
@@ -322,6 +324,53 @@ tests):
 The pause's races no longer depend on the pass's compare-and-set: the health lock keeps them
 apart. So the compare-and-set's mutations now redden only the delete's tests, and dropping the
 `DELETE` only the delete's leftover-row test.
+
+### Review gate round 2
+
+Round 2, on `7583882`: reviewers A and B both **SOUND**. Fixes on `27b4b1b`; this record in the
+next commit.
+
+13. **(A, Minor 2) A Store error just after a task's compare-and-set lost its owner's notice for
+    good**: the notice went on the list only after the `paused` event was written, and the next pass
+    finds the task already paused and leaves it. `pauseAffected` now reads the owner before the
+    transaction and puts the notice on the tell-after-the-lock list as soon as `statusIf` applies,
+    before `addTaskEvent`; `lockedThenTell`'s `finally` sends it. Test: "a Store error just after a
+    task's pause still tells its owner, once: the next pass finds the task paused and leaves it"
+    (`addTaskEvent` throws once): the task is paused with its row, `holdFor` rejects with the error,
+    the owner is told, and a second pass tells no one again. Round 1's item 2 test now expects both
+    owners told: its second task's pause applied before its event write threw. The `paused` event
+    of a task whose event write throws is still lost; its row and status say why it is paused.
+14. **(B, survivor f) The pass's transaction was untested.** Test "a pass whose pause row cannot be
+    written leaves the task active: the status and the row are one transaction": a `BEFORE INSERT`
+    trigger on `delivery_pauses` that raises `ABORT`; `holdFor` rejects, the task stays `active`
+    with no row, and no owner is told.
+15. **(B, survivor g) `release`'s re-read was untested.** Test "a delete landing just after the
+    resume's write stands too: no next run is queued for it": the delete runs inside `addTaskEvent`
+    once the `resumed` event is written; the task ends `archived` with events `paused`, `resumed`,
+    `archived` and no queued run.
+16. **(B, Minor 1)** `release`'s docstring now says both: a delete landing between the read and the
+    write stands with no `resumed` event and no next run, and one landing after the write stands
+    too, with the `resumed` event already written and a run `materialize` queued just before it left
+    inert on the archived task.
+17. **(B, Minor 2; A's note)** `exclusive`'s docstring names its third user: the owner's own pause
+    (`manage.ts` `pauseTask`, after the task's lock).
+18. **(B, Minor 3)** The header says "each status checked in the write itself".
+19. **(B, scope)** Item 11 now says `release` also runs from forget-me's erasure and `resumeTask`,
+    where the compare-and-set only adds a refusal.
+20. **Declined: A's Minor 1** (delete a crash-left `delivery_pauses` row in `pauseLocked`). It needs
+    a crash in older code between two writes; no new case can arise, since `ac1ce52` writes the
+    status and the row in one transaction; and item 12 already records it.
+
+Mutations on `27b4b1b`, each alone in a scratch worktree, `bun test plugins/tracker` (523 tests):
+
+| Mutation | Red |
+|---|---|
+| Item 13's old order: the owner read and the notice after `addTaskEvent` | 2: "a Store error just after a task's pause still tells its owner, once ..." and "a pass that throws part way ..." |
+| Survivor f: the pass's `db.transaction` removed (the two statements run bare) | 1: "a pass whose pause row cannot be written leaves the task active ..." |
+| Survivor g: `release` materializes `{ ...task, status: "active" }` instead of reading again | 1: "a delete landing just after the resume's write stands too ..." |
+| `pauseTask` without `d.health.exclusive` | 2: "an owner's pauseTask started between ..." and "an owner's pauseTask started with a held send's pass, or queued behind ..." |
+| `release` writes a plain `updateTask` in place of `statusIf` | 2: "a delete landing between the resume's read ..." and "a delete started with the person's resume ..." |
+| The pass's compare-and-set dropped (an unconditional `UPDATE` in the transaction) | 3: the two "an owner's deleteTask landing between ..." and "an owner's deleteTask started with a held send's pass ..." |
 
 ## Review gate round 1: fixes to make (orchestrator, 2026-10-11; execute as written)
 
