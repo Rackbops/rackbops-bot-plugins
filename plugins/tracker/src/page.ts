@@ -7,13 +7,19 @@
  * extractor needs is small, so the body is reduced to it, with no scan that can backtrack:
  *
  * - a JSON body (it parses) is kept as JSON, every `<` escaped as `<` (same value);
- * - otherwise: the page's JSON-LD blocks (at most `MAX_BLOCKS`, each `<` inside escaped the same
- *   way), its `<meta>` tags (at most `MAX_METAS`, each at most `MAX_TAG` long), then the whole
- *   page with every `<` blanked: no tag pattern has anywhere to start in it, and an owner's `near`
- *   words still find a price in the text, an attribute or a script's data.
+ * - otherwise: the page's first `MAX_BLOCKS` JSON-LD blocks (each `<` inside escaped the same
+ *   way), its first `MAX_METAS` `<meta>` tags (each at most `MAX_TAG` long), both in page order,
+ *   then the whole page with every `<` blanked: no tag pattern has anywhere to start in it, and an
+ *   owner's `near` words still find a price in the text, an attribute or a script's data.
+ *
+ * `MAX_BLOCKS` bounds the `JSON.parse` calls docket's extractor and the want-list's `page` source
+ * make on one page, with room for a shop search page that carries one JSON-LD `Product` per card
+ * (about 100-120 cards at most; rackbops-bot-plugins#208). The slow scans #81 guards against are
+ * over unclosed tags, not over how many well-formed blocks are kept, and a read is at most 3 MB
+ * (fetch.ts).
  */
 
-export const MAX_BLOCKS = 20;
+export const MAX_BLOCKS = 200;
 export const MAX_METAS = 300;
 export const MAX_TAG = 1000;
 
@@ -29,11 +35,21 @@ function jsonBody(body: string): string | null {
   }
 }
 
+/**
+ * `s` with only `A`-`Z` lower-cased, so every offset in the result is the same place in `s`
+ * (rackbops-bot-plugins#163). `toLowerCase` is not length-preserving: `"İ"` (U+0130) becomes two
+ * code units, so after one every offset found in the lowered text is one past the same place in the
+ * page, and a tag sliced at it is cut one character early and dropped. Tag names, attribute names
+ * and `application/ld+json` are ASCII, so this fold loses nothing the walk looks for.
+ */
+const asciiLower = (s: string) => s.replace(/[A-Z]+/g, (run) => run.toLowerCase());
+
 /** The body reduced to what price extraction reads; see the file's comment. */
 export function pageForExtraction(body: string): string {
   const json = jsonBody(body);
   if (json !== null) return json;
-  const lower = body.toLowerCase();
+  // Same length as `body`: an offset found in either one slices the other at the same place.
+  const lower = asciiLower(body);
   const blocks: string[] = [];
   const metas: string[] = [];
   // Where each closing tag next occurs at or after the walk: searched again only once the walk has
