@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fitTaskList, listTasks, MAX_ANSWER, type TrackerDeps } from "./actions.js";
+import { fitTaskList, listTasks, MAX_ANSWER, type TrackerDeps, withNotice } from "./actions.js";
 import { admit } from "./people.js";
 import { openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
@@ -147,5 +147,22 @@ describe("listTasks's paused lines", () => {
       "Paused: `t2` stretch -- I could not DM Person 1, Person 2, Person 3; `/task resume t2` goes on without them.",
       "Paused: `t3` water",
     ]);
+  });
+});
+
+describe("withNotice", () => {
+  const notice = "I could not DM you 3 times in a row, so your reminders were paused.";
+
+  it("puts the notice above an answer while the two fit one message, to the character", () => {
+    expect(withNotice(null, "Marked done.")).toEqual({ content: "Marked done.", followUp: null });
+    const fits = "x".repeat(MAX_ANSWER - notice.length - 2);
+    expect(withNotice(notice, fits)).toEqual({ content: `${notice}\n\n${fits}`, followUp: null });
+  });
+
+  it("sends the answer alone and the notice after it when the two would pass one message", () => {
+    const over = "x".repeat(MAX_ANSWER - notice.length - 1);
+    expect(withNotice(notice, over)).toEqual({ content: over, followUp: notice });
+    // An answer over the limit by itself is still cut, as every answer is.
+    expect(withNotice(notice, "x".repeat(MAX_ANSWER + 1)).content).toHaveLength(MAX_ANSWER);
   });
 });

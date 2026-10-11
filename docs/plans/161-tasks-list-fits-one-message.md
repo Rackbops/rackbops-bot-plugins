@@ -131,10 +131,12 @@ half an emoji (#161, #205).
    two at 2000, so the first command after someone's own DMs were paused lost the list's tail.
    Now, when notice + blank line + answer would pass `MAX_ANSWER`, the answer goes alone and the
    notice follows as an ephemeral follow-up (as `onButton` already does); otherwise the combined
-   answer is unchanged. This holds for every command. Test: `surface.test.ts` "the first command
-   after a pause answers a full /tasks whole, and tells of the resume in a second message" (A's
-   scenario: 40 reminders, `t1` paused for Curly, Larry paused for four days, then back); its
-   `slash` helper gained a `followUps` collector. README's pause paragraph says so.
+   answer is unchanged. This holds for every command. The rule is `withNotice` (`actions.ts`, next
+   to `enter`), which `run` calls. Tests: `surface.test.ts` "the first command after a pause answers
+   a full /tasks whole, and tells of the resume in a second message" (A's scenario: 40 reminders,
+   `t1` paused for Curly, Larry paused for four days, then back; its `slash` helper gained a
+   `followUps` collector), and `actions.test.ts` "withNotice" at the exact boundary (see 16).
+   README's pause paragraph says so.
 7. **(B, Major) The CHANGELOG bullet's "always keeps your paused tasks" was false** (paused lines
    alone over the limit are counted, not shown). Reworded as the coordinator gave it: "keeps your
    paused tasks in preference to active ones that do not fit (whose ids `/task resume` needs; any
@@ -173,3 +175,8 @@ half an emoji (#161, #205).
     `listTasks`) is the same change as row 6 ("revert `listTasks`") and turns only the surface
     `/tasks` tests red. The mutation table runs it in `listTasks` as written and, as row 1b, inside
     `fitTaskList` (returning `clip` of the whole list), which turns the helper tests red.
+16. **A threshold survivor of my own.** With the rule inline in `run`, a mutation of the threshold
+    (measuring notice + answer without the blank line) survived: no end-to-end answer lands within
+    two characters of 2000, so an off-by-one there could not be caught either. The rule moved into
+    `withNotice` so it is tested to the character: notice + blank line + answer of exactly 2000
+    stays one message, 2001 splits.

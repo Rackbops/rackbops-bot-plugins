@@ -142,6 +142,16 @@ export async function enter(d: TrackerDeps, discordId: string, membership: Membe
 }
 
 /**
+ * A command's answer with `enter`'s notice: above the answer, unless the two would pass one message;
+ * then the answer alone and the notice as a second message, so the notice never cuts the answer
+ * short (a full `/tasks`, rackbops-bot-plugins#161).
+ */
+export function withNotice(notice: string | null, body: string): { content: string; followUp: string | null } {
+  const together = notice ? `${notice}\n\n${body}` : body;
+  return together.length <= MAX_ANSWER ? { content: together, followUp: null } : { content: clip(body), followUp: notice };
+}
+
+/**
  * `/allow @user` (plan 5.8): an admin admits a person, who can then `/register`. With the usr link
  * on and run in a server, it also allows them in usr (`tracker:member`) and keeps the usr user id
  * usr answers with. usr's allow only ever adds, so running it again is safe: it links someone not yet
