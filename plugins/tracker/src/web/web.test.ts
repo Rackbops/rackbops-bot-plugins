@@ -663,11 +663,20 @@ describe("a reply is one plain line (#205, #208)", () => {
 
   it("a reply of only a blank filler, a lone mark or a variation selector is refused as empty; an emoji with its selector is kept", async () => {
     const w = await sharedRun();
-    // Hangul filler, braille blank, combining grapheme joiner, variation selector 16.
-    for (const blank of ["\u3164", "\u2800", "\u034f", "\ufe0f"]) expect(await replyText(w.plugin, "o1", CURLY, blank)).toBe(EMPTY);
+    // The Hangul fillers, the braille blank, the combining grapheme joiner, variation selector 16.
+    for (const blank of ["\u115f", "\u1160", "\u3164", "\uffa0", "\u2800", "\u034f", "\ufe0f"]) {
+      expect(await replyText(w.plugin, "o1", CURLY, blank)).toBe(EMPTY);
+    }
     expect(stored(w.dbPath)).toEqual([]);
     expect(await replyText(w.plugin, "o1", CURLY, "\u2764\ufe0f")).toBe(KEPT);
     expect(stored(w.dbPath)).toEqual(["\u2764\ufe0f"]);
+  });
+
+  it("a reply of only unassigned invisible code points is refused as empty; one between letters is a space", async () => {
+    const w = await sharedRun();
+    for (const unassigned of ["\u{e0080}", "\u2065"]) expect(await replyText(w.plugin, "o1", CURLY, unassigned)).toBe(EMPTY);
+    expect(await replyText(w.plugin, "o1", CURLY, "a\u{e0080}b")).toBe(KEPT);
+    expect(stored(w.dbPath)).toEqual(["a b"]);
   });
 
   it("an emoji joined by zero-width joiners survives", async () => {

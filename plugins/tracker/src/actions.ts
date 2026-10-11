@@ -122,14 +122,20 @@ export function clip(text: string, max = MAX_ANSWER): string {
 }
 
 /**
- * Text on one line: each run of whitespace (line and paragraph separators too), control characters
- * and format characters becomes one space; trimmed. It keeps only the format characters real text
- * needs: the joiners (U+200D holds an emoji together, U+200C a Persian or Indic word), the soft
+ * Text on one line: each run of whitespace (line and paragraph separators too), control characters,
+ * format characters and the unassigned code points Unicode keeps invisible (U+2065, U+FFF0-U+FFF8,
+ * and those of U+E0000-U+E0FFF) becomes one space; trimmed. It keeps a few format characters real
+ * text needs: the joiners (U+200D holds an emoji together, U+200C a Persian or Indic word), the soft
  * hyphen, and the visible number and end-of-verse signs (Arabic U+0600-U+0605, U+06DD, U+0890,
  * U+0891, U+08E2; Syriac U+070F; Kaithi U+110BD, U+110CD). Any other, tags and new ones included, goes.
  */
 export function oneLine(text: string): string {
-  return text.replace(/(?:(?!\u200d|[\u00ad\u0600-\u0605\u06dd\u070f\u0890\u0891\u08e2\u200c\u{110bd}\u{110cd}])[\s\p{Cc}\p{Cf}])+/gu, " ").trim();
+  return text
+    .replace(
+      /(?:(?!\u200d|[\u00ad\u0600-\u0605\u06dd\u070f\u0890\u0891\u08e2\u200c\u{110bd}\u{110cd}])[\s\p{Cc}\p{Cf}\u2065\ufff0-\ufff8\u{e0000}\u{e0002}-\u{e001f}\u{e0080}-\u{e00ff}\u{e01f0}-\u{e0fff}])+/gu,
+      " ",
+    )
+    .trim();
 }
 
 export type Entry = { ok: true; user: User; notice: string | null } | { ok: false; content: string };

@@ -73,8 +73,9 @@ export function changeView(e: TaskEvent, viewer: User, now: Date, names: Readonl
 /**
  * Shown as typed in Discord: a backslash before each `\`, `[`, `]`, `<`, `|` and backtick, and before
  * a `(` right after a `]` -- Discord's link text ignores escapes, so a `[` elsewhere on the message (a
- * title, another line) could still pair with an escaped `]`. No masked link, mention, timestamp,
- * spoiler or code renders from a reply.
+ * title, another line) could still pair with an escaped `]`. No masked link, spoiler or code renders
+ * from a reply; a mention or timestamp typed right after a bare link still can (the link takes the
+ * backslash), and `NO_MENTIONS` keeps it from pinging.
  */
 function discordPlain(text: string): string {
   return text.replace(/[\\[\]<|`]|(?<=\])\(/g, "\\$&");

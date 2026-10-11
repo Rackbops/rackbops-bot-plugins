@@ -171,10 +171,11 @@ export async function replyRefusal(d: TrackerDeps, user: User, occurrenceId: str
 }
 
 /**
- * A reply with nothing to see: spaces, control and format characters, marks with nothing to mark, and
- * the blank fillers (Hangul U+115F, U+1160, U+3164, U+FFA0; braille U+2800).
+ * A reply with nothing to see: spaces, control and format characters, the default-ignorable ones
+ * (`\p{DI}`: the Hangul fillers U+115F, U+1160, U+3164, U+FFA0 among them), marks with nothing to
+ * mark, and the braille blank U+2800.
  */
-const BLANK = /^[\s\p{Cc}\p{Cf}\p{M}\u115f\u1160\u3164\uffa0\u2800]*$/u;
+const BLANK = /^[\s\p{Cc}\p{Cf}\p{DI}\p{M}\u2800]*$/u;
 
 /** The Reply modal's submit: the text is kept on the task, against the run it answers, under the task's lock. */
 export async function submitReply(d: TrackerDeps, user: User, occurrenceId: string, text: string): Promise<string> {
