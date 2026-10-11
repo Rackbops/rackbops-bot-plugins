@@ -127,16 +127,18 @@ Written 2026-10-11 against `main` at `2949dbe`; re-find each cite by function na
 | The log never holds the error's message | 1 | the same (the key is absent) | log `err.message` in place of `err.name` |
 | A malformed address is a refusal | 2 | "a malformed address is refused ..." | remove the `new URL(raw)` catch |
 | A malformed Location is a refusal | 2 | "a redirect to a malformed Location ..." and the end-to-end case | remove the `new URL(location, url)` catch |
+| An id that is not `o` + its seq finds no run | 1 | "an occurrence id that is not o + digits is pruned" | drop `AND j.occurrence_id = 'o' \|\| o.seq` |
+| Network and credential logs keep separate hours | 1 | "an unreachable city-hall and a refused credential each keep their own hour ..." | `warnOnce("credential", ...)` in the catch |
 
 ## CHANGELOG bullet (for the PR body)
 
-- A research run that city-hall refuses on submission now names the right route ("POST
-  /api/execute/jobs") in the run's error (#214).
-- When city-hall cannot be reached at all, the tracker logs it once an hour instead of saying
-  nothing (#214).
+- A model run (research, scout or a want watch's judge) that city-hall refuses on submission now
+  names the right route ("POST /api/execute/jobs") in the run's error (#214).
+- When city-hall cannot be reached or does not answer in time, the tracker logs it once an hour
+  instead of saying nothing (#214).
 - The minute's clean-up of finished Job records no longer reads every run in the database (#214).
-- A page address, or a redirect, that is not a web address gets "I cannot read that page" instead
-  of an unexplained error (#214).
+- A page that redirects to something that is not a web address now gets "I cannot read that page:
+  it redirects to something that is not a web address." instead of "try again later" (#214).
 
 ## Deviations as implemented
 
@@ -155,6 +157,7 @@ Written 2026-10-11 against `main` at `2949dbe`; re-find each cite by function na
      `SEARCH o USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN`. The second term then checks only the
      one row found. With it, the join matches exactly the rows the old one did: for an integer
      `seq`, `id = 'o' || seq` already implies the first term.
+   - This replaces the first three e-4 Decisions bullets.
 2. **A thrown value that is not an `Error` is logged by its `typeof`.**
    - Finding: `catch (err)` gives `unknown`, so `err.name` does not type-check, and a non-`Error`
      has no name.
@@ -179,3 +182,53 @@ Written 2026-10-11 against `main` at `2949dbe`; re-find each cite by function na
 
 The plan allowed exporting the prune SQL. That was not needed: the plan test wraps the test
 database's `query` to get the SQL `JobRecords` sends, then asks SQLite for its plan.
+
+### Review gate round 1
+
+Reviewers A and B both found the change sound, with minor findings only.
+
+5. **(A + B) The README said nothing of the new log or the new refusal.**
+   - Fix: the city-hall paragraph now reads "city-hall unreachable or timed out (logged once an
+     hour, naming only the error's kind, never its message), a 5xx, or a refused credential or edge
+     redirect (logged once an hour as such, and the admins told once per Job) holds the run and
+     asks again".
+   - The Page reads row now says "redirects followed by hand and re-checked (at most 5; a redirect
+     to something that is not a web address is refused)".
+6. **(B) The CHANGELOG bullets overstated or understated what changed.** Each new bullet was
+   checked against the code.
+   - Fix, first bullet: it names every model run. The execute lane's types are docket-types'
+     `research`, `scout` and `wantjudge` (each `lane: "execute"`), and all three submit through
+     `call`.
+   - Fix, second bullet: it says "cannot be reached or does not answer in time". A timeout goes
+     through the same `catch` and `warnOnce`.
+   - Fix, fourth bullet: it covers the redirect only. `urlProblem` already refused a malformed
+     address before `get` (deviation 3). Before this change, `previewPrice` and `previewWant`
+     answered a malformed `Location` with "I could not read that page just now; try again later."
+     That was a `TypeError`, or a `SourceMiss` whose cause was one.
+7. **(B, survivor H1) No test showed that the network and credential logs keep separate hours.**
+   - Fix: added "an unreachable city-hall and a refused credential each keep their own hour:
+     neither hides the other". First city-hall is down (`TypeError`), then it answers 401. The
+     test expects two error logs, "could not be reached (TypeError)" then "refused the tracker's
+     credential (HTTP 401)".
+   - It goes red with `warnOnce("credential", ...)` in the catch. There is a new Coverage row for
+     it.
+8. **(B) The plan text did not mark what deviation 1 replaces, and had no row for its second
+   term.**
+   - Fix: deviation 1 now ends "This replaces the first three e-4 Decisions bullets.".
+   - Added the Coverage row "An id that is not `o` + its seq finds no run".
+9. **Declined: log the runtime's `err.code` beside the name.**
+   - Finding (A and B): every Bun network failure is a `TypeError`, and so is a refused header
+     value, so the name alone does not tell them apart.
+   - Why declined: the real fix for a bad key is e-5's header-value check at start. That lands with
+     #202 core-5 under decision 8. A code in the log would be a stopgap, and more surface to keep
+     key-free.
+10. **Declined as equivalent or harmless: B's H6b and H9.**
+    - H6b (drop the `CAST`) is equivalent. `o.seq` has INTEGER affinity, so SQLite converts the
+      `substr` text before it compares. In Bun 1.4.2's SQLite, both forms match the same rows for
+      `o1`, `o12`, `x1`, `o`, `o01`, `o1abc`, `o 1`, `o1.5`, `o1e3`, `o-1`, `o12 ` and `o99`, with
+      the same `SEARCH o USING INTEGER PRIMARY KEY` plan. The `CAST` stays as the Decisions wrote
+      it.
+    - H9 (`String(err)` for a non-`Error`) survives because no test throws a non-`Error`. The
+      runtime's `fetch` throws only `Error`s (`TypeError`, or a `DOMException` for a timeout or
+      abort), so in production that branch is never taken. `typeof` stays, so that if it ever is
+      taken, the thrown value is still not logged.
