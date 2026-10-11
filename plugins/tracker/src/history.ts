@@ -140,7 +140,8 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
   const replies = (await visibleReplies(d.store, actor, task.id)) ?? [];
   // A pause for a recipient is shown only to them, the owner and admins (#167; delivery-health.ts
   // `isRecipientPause`): docket's `visibleHistory` hides a recipient's own rows from the others, but
-  // not this one. Filtered here, before the count and the names, so Discord, the web and the API agree.
+  // not this one. Filtered here, before the slice and the "(N earlier)" count, so Discord, the web
+  // and the API agree.
   const seesEveryPause = user.admin || task.ownerId === user.id;
   const changes = ((await visibleHistory(d.store, actor, task.id)) ?? []).filter((e) => seesEveryPause || !isRecipientPause(e) || pauseNames(e.detail, user.id));
   const people = new Map<string, User>();

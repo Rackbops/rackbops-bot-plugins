@@ -60,11 +60,13 @@ export function isRecipientPause(e: { kind: string; detail: string }): boolean {
 }
 
 /**
- * Whether a recipient pause's detail names `userId`: only by id in braces (`{u5}`), never by a
- * name, so a row from before 0.6.0 names nobody and is left to the owner and admins.
+ * Whether a recipient pause's detail is `recipientPauseDetail(userId)`'s: matched on its exact
+ * `delivery to {<id>} paused:` start, as forget-me matches it (roster.ts `historyNames`), never on a
+ * name or an id anywhere else. A row from before 0.6.0 names nobody, even one whose stored display
+ * name holds a braced id (`delivery to Zed {u4} paused: ...`), and is left to the owner and admins.
  */
 export function pauseNames(detail: string, userId: string): boolean {
-  return detail.includes(`{${userId}}`);
+  return detail.startsWith(`delivery to {${userId}} paused:`);
 }
 
 /** Whether this failure is the one that pauses: pure, so the threshold is tested on its own. */

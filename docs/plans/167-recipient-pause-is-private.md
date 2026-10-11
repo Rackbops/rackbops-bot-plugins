@@ -90,10 +90,11 @@ own rule (plan 5.10) says a recipient learns nothing about who else receives a t
 
 ## CHANGELOG bullet (for the PR body)
 
-A recipient's task history, in `/task history` and on the web, no longer shows that another
-recipient's DMs failed and their delivery was paused, nor who that recipient is: such a row is now
-shown only to that person, the task's owner and admins. The task API, which serves only the caller's
-own tasks, never showed one to another recipient (#167).
+A recipient's task history, in `/task history` and on the web, no longer shows the row saying
+another recipient's DMs failed and their delivery was paused, nor who that recipient is: such a row
+is now shown only to that recipient, the task's owner and admins (a row from before 0.6.0, only to
+the owner and admins). The task API, which serves only the caller's own tasks, never showed one to
+another recipient (#167).
 
 ## Deviations as implemented
 
@@ -116,8 +117,8 @@ own tasks, never showed one to another recipient (#167).
 4. **Shape picked (no deviation):** two pure exports, `isRecipientPause(e)` and
    `pauseNames(detail, userId)`, next to `recipientPauseDetail`; the owner/admin test is in
    `loadHistory` (`user.admin || task.ownerId === user.id`). The filter runs on the whole list from
-   `visibleHistory`, before the `HISTORY_CHANGES` slice, the `earlierChanges` count and the name
-   lookups, so neither "(N earlier)" nor a name lookup betrays a hidden row.
+   `visibleHistory`, before the `HISTORY_CHANGES` slice and the `earlierChanges` count, so
+   "(N earlier)" does not betray a hidden row.
 5. **Every path that renders task events (no deviation; all three already go through
    `loadHistory`):** `/task history` -- `discord.ts` -> `series.ts` `historyWithSeries` ->
    `history.ts` `taskHistory` -> `loadHistory`; the web task page `GET /tasks/<id>` -- `web/app.ts`
@@ -139,3 +140,34 @@ own tasks, never showed one to another recipient (#167).
    Bob, a new `MOE` is Carol, `ADMIN` the admin; the web and API tests use Larry, Curly and
    `STRANGER` (admitted and registered in the test) the same way. Bob's own `/task history` is read
    last, because any command of a paused person resumes their delivery and the task.
+
+### Review gate round 1
+
+Reviewers A and B both SOUND; every finding Minor. Applied:
+
+8. **`pauseNames` matches the exact current form** (A). It was `detail.includes("{uN}")`, so a
+   pre-0.6.0 row whose stored display name held a braced id (`delivery to Zed {u4} paused: ...`)
+   counted as naming u4, and u4 saw another recipient's legacy pause (A reproduced it). It is now
+   `` detail.startsWith(`delivery to {${userId}} paused:`) ``, the form forget-me matches
+   (`roster.ts` `historyNames`); its JSDoc says so, and the unit test has the `Zed {u4}` case.
+9. **The "(N earlier)" count, the slice and the other `paused`/`resumed` rows are tested** (B: a count
+   or slice taken from the unfiltered list, and a filter hiding every `paused` row, or every `paused`
+   and `resumed` row, from non-owners, all survived). Discord has no `/task pause` (only `/task
+   resume`) and `surface.test.ts`'s world has no web area, so the owner cannot pause by hand there;
+   the scenario is extended in the web editor's #167 test (`web/editor.test.ts`) instead, which also
+   reads `/task history` through Discord: the owner pauses and resumes t1 on the web twice before
+   Curly's failing runs, and Stranger's `/task history` must end in exactly `Changes:`,
+   `- (2 earlier)`, `recipient accepted`, and `paused: paused by the owner` / `resumed: resumed by the
+   owner` twice -- seven visible rows, the hidden pause among the newest five of the unfiltered list.
+10. **Wording** (B): the `loadHistory` comment and deviation 4 no longer claim the filter's position
+    keeps name lookups from leaking (they cannot leak wherever they run: only shown rows are
+    rendered); they now name the slice and the "(N earlier)" count only.
+11. **The legacy exception is stated** (A+B): README ("Pause after failed DMs") and the CHANGELOG
+    bullet above now say a row from before 0.6.0 is shown only to the owner and admins, and the
+    bullet says the row is no longer shown, rather than that the fact is.
+12. **Accepted residue, outside the owner's decision** (which covers rows that name a recipient; a
+    follow-up issue is to be filed): another recipient can still infer that some other recipient
+    existed or was paused, without being told who, from a `resumed` row with no visible pause before
+    it (`delivery resumed`, `resumed by the owner`), from `resumed: a recipient left the tracker`
+    (`admin.ts:139`), from the task header's `paused` status, and from a pre-0.9.0 run error naming
+    `recipient uN cannot be messaged` (`history.ts` `runView`).

@@ -66,6 +66,8 @@ describe("isRecipientPause and pauseNames (#167: a recipient's pause is theirs, 
     expect(pauseNames(recipientPauseDetail("u3"), "u31")).toBe(false);
     expect(pauseNames(recipientPauseDetail("u31"), "u3")).toBe(false);
     expect(pauseNames(legacy, "u3")).toBe(false);
+    // A pre-0.6.0 row whose stored display name holds a braced id names nobody, that id included.
+    expect(pauseNames(`delivery to Zed {u4} paused: ${PAUSE_AFTER} DMs in a row could not be delivered`, "u4")).toBe(false);
   });
 });
 
