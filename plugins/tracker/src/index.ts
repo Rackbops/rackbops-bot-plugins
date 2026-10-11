@@ -10,7 +10,7 @@ import { Admissions } from "./admissions.js";
 import { Ceilings } from "./ceilings.js";
 import { DeliveryHealth } from "./delivery-health.js";
 import { createPageFetch } from "./fetch.js";
-import { EXECUTE_EVERY_MS, ExecuteLane } from "./execute-lane.js";
+import { EXECUTE_MIN_GAP_MS, ExecuteLane } from "./execute-lane.js";
 import { type CityHallConfig, createCityHallExecutor, databaseId, JobRecords, parseCityHallConfig } from "./executor.js";
 import type { Membership } from "./access.js";
 import { type Interactionish, lookupMembership, type RoleGate, serial } from "./discord-common.js";
@@ -258,14 +258,14 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
 
   /**
    * The execute lane (execute-lane.ts), started in the background so it never holds up a host tick:
-   * one at a time, at most once per host tick (a second call within half a minute is skipped),
-   * tracked like the other ticks so forget-me waits for it. Not a full minute: the host's ticks are a
-   * minute apart from each round's start, and this tick runs after every earlier check of the round.
+   * one at a time, at most once per host tick (a second call within `EXECUTE_MIN_GAP_MS` is skipped),
+   * tracked like the other ticks so forget-me waits for it. Not a full minute: the host's rounds start
+   * a minute apart, and this tick runs after every earlier check of the round, however long they took.
    */
   function startExecute(): void {
     if (!store || !executeLane || executeRun || forgetting > 0) return;
     const at = clock.now().getTime();
-    if (at - lastExecute < EXECUTE_EVERY_MS / 2) return;
+    if (at - lastExecute < EXECUTE_MIN_GAP_MS) return;
     lastExecute = at;
     const lane = executeLane;
     const records = jobRecords;
@@ -436,7 +436,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         jobRecords = records;
         executeLane = lane;
         deps = openedDeps;
-        health.blocked = typeof host.dm === "function" ? null : "this bot has no host.dm (it predates rackbops-discord-bot#736)";
+        health.blocked = dm ? null : "this bot has no host.dm (it predates rackbops-discord-bot#736)";
         health.activatedAt = activatedAt;
       } catch (err) {
         opened.close();
@@ -457,9 +457,12 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       const closing = db;
       db = null;
       // A tick already running (notify, poll or execute: each is `tracked`) keeps the store it read,
-      // so the database closes once none is, and a DM one sent is recorded as sent. One still running
+      // so the database closes once none is, and a DM one sent is recorded as sent. The host's stop
+      // aborts the ticks it waits on and drains them for up to 5 s (rackbops-discord-bot's
+      // `PLUGIN_TICK_ABORT_GRACE_MS`) before it calls this, so what is left here is what it no longer
+      // waits on: the execute lane's background run, or a tick past that grace. One still running
       // after `DISPOSE_WAIT_MS` can fail its last write: a send it made is then logged unconfirmed at
-      // the next start and not resent. The host stops waiting on dispose at 2 s (#202).
+      // the next start and not resent. The host bounds each plugin's dispose at 2 s (#202).
       await lanes.idle(DISPOSE_WAIT_MS);
       closing?.close();
     },

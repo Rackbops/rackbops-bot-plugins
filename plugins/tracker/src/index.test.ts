@@ -12,6 +12,7 @@ import { admit } from "./people.js";
 import { MIGRATIONS, openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
 import { CITY_HALL } from "./web/execute-harness.js";
+import { slash } from "./web/harness.js";
 
 const ADMIN = "111111111111111111";
 const START = "2026-10-01T12:00:00.000Z";
@@ -317,6 +318,7 @@ describe("the plugin end to end on a real data file", () => {
       for (const t of plugin.ticks ?? []) await t.run(new AbortController().signal);
       expect(delivery.calls.dm).toHaveLength(0);
       expect(started).toHaveLength(0);
+      expect(await slash(plugin, "tasks", ADMIN)).toBe("The tracker is starting up; try again in a minute.");
     }
     await failedStart("TRACKER_GUILD_ID is unset", {});
     await failedStart("execute lane on: city-hall", CITY_HALL);
@@ -365,6 +367,7 @@ describe("the plugin end to end on a real data file", () => {
     const begun = performance.now();
     await w.plugin.dispose!();
     const took = performance.now() - begun;
+    expect(DISPOSE_WAIT_MS).toBe(1_500);
     expect(took).toBeGreaterThanOrEqual(DISPOSE_WAIT_MS - 50);
     expect(took).toBeLessThan(2_000);
     // The tick ends now, its write after the DM failing on the closed database: expected here.
@@ -436,13 +439,23 @@ describe("the execute tick", () => {
     await w.plugin.dispose!();
   });
 
-  it("a second execute tick within half a minute starts nothing", async () => {
+  it("a second execute tick within 5 s starts nothing", async () => {
     const w = await executing();
     await w.execute();
-    w.clock.advance(29_999);
+    w.clock.advance(4_999);
     await w.execute();
     expect(w.started).toHaveLength(1);
     w.clock.advance(1);
+    await w.execute();
+    expect(w.started).toHaveLength(2);
+    await w.plugin.dispose!();
+  });
+
+  it("a round after a slow one still starts the lane", async () => {
+    const w = await executing();
+    await w.execute();
+    // The last round's earlier checks took 30.5 s (a poll tick near its bound), this round's 0.1 s.
+    w.clock.advance(29_600);
     await w.execute();
     expect(w.started).toHaveLength(2);
     await w.plugin.dispose!();
