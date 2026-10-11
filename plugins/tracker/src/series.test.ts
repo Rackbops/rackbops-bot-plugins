@@ -118,7 +118,7 @@ describe("/task history's findings", () => {
     }
   });
 
-  it("a want watch's second message fits whole lines at and around the limit, whatever their length", async () => {
+  it("a want watch's second message fits whole lines at and around the limit, in two sweeps of their length", async () => {
     // Each step lengthens every line by one, moving the message's end across the cap by more than a line's width.
     for (let pad = 130; pad < 178; pad++) {
       const all = found(20, pad);
@@ -154,6 +154,15 @@ describe("/task history's findings", () => {
     // The second message lists the newest 20 of the same findings the first one counts.
     expect(second).toBe([`Findings (newest 20 of ${counted}):`, ...listed(second), note(counted - 20)].join("\n"));
     expect(listed(second)).toEqual(Array.from({ length: 20 }, (_, i) => String(counted - 19 + i).padStart(2, "0")).map((n) => `- Listing ${n} <https://shop.example/p/${n}>`));
+  });
+
+  it("a want watch's second message cuts a finding's text to 200 characters, as the one message did", async () => {
+    const text = `Listing 01 ${FILL}${FILL}`;
+    expect(text.length).toBeGreaterThan(400);
+    const { second } = twoMessages(await history("wantjudge", [{ text, source: "https://shop.example/p/01" }]));
+    const cut = `- ${text.slice(0, 197)}... <https://shop.example/p/01>`;
+    expect(cut).toHaveLength(2 + 200 + 28);
+    expect(second).toBe(["Findings (newest 1 of 1):", cut].join("\n"));
   });
 
   it("a want watch with 25 short findings lists its newest 20 and says 5 more", async () => {

@@ -115,11 +115,12 @@ export async function world(
   return { plugin, clock, dbPath, sent, delivery };
 }
 
-/** One message a command sent after deferring: the edit of its answer, or a follow-up and its flags. */
+/** One message a command sent after deferring: the edit of its answer, or a follow-up with its flags and whom it may mention. */
 export interface Said {
   kind: "edit" | "followUp";
   content: string;
   flags?: unknown;
+  allowedMentions?: unknown;
 }
 
 /**
@@ -155,9 +156,9 @@ export async function slash(
       edits.push(x);
       o.said?.push({ kind: "edit", content: x.content });
     },
-    followUp: async (x: { content: string; flags?: unknown }) => {
+    followUp: async (x: { content: string; flags?: unknown; allowedMentions?: unknown }) => {
       if (o.followUpFails) throw o.followUpFails;
-      o.said?.push({ kind: "followUp", content: x.content, flags: x.flags });
+      o.said?.push({ kind: "followUp", content: x.content, flags: x.flags, allowedMentions: x.allowedMentions });
     },
   };
   await command.handle(interaction as unknown as ChatInputCommandInteraction);
