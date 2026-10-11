@@ -70,8 +70,9 @@ Docs-only: no test, no mutation. The audit in step 6 is the verification.
 
 The README and the package description no longer say the tracker never reads eBay. `/price` reads
 the public page it is given, eBay's included; it is the want-list watcher (`/want`, its page reads,
-its inbox watches and its judge) that never opens eBay. Nothing changed in what the tracker does
-(#165).
+its inbox watches and its judge) that never opens eBay. The watcher's own replies (its refusals, an
+inbox watch's confirmation, `/want`'s `source` choice and the editor's help) now say it is the
+watch, not the bot, that never opens eBay. Nothing changed in what the tracker does (#165).
 
 ## Deviations as implemented
 
@@ -87,10 +88,15 @@ its inbox watches and its judge) that never opens eBay. Nothing changed in what 
    reach a watch only this way", false for BGG while the token is set (`index.ts:149`, `want.ts:198`).
    Rewritten with its "never" claim as "An eBay watch, and a BGG one without its token, gets its
    listings only this way".
-3. **Six user-facing strings still say "I never open/read eBay" (or BGG's pages) unqualified, and
-   are left as they are**, per step 3 (a string change is a behaviour change). Each is shown only
-   inside a `/want` flow, so it reads as the watcher speaking, but it is not scoped in words:
-   `want.ts:59` (`EBAY_PAGE`), `want.ts:151` and `want.ts:158` (an inbox watch's confirmation),
-   `discord.ts:374` (`/want`'s `source` choice), `web/editor-pages.ts:118` (the want editor's
-   help), `fetch.ts:185` (the refusal on a want-list page read). Scoping them is a follow-up, not
-   this docs-only child.
+3. **The six user-facing strings that said "I never open/read eBay" (or BGG's pages) are scoped to
+   the watch** (orchestrator's call, 2026-10-11, in place of step 3's stop-and-report: the owner's
+   decision to allow `/price` on eBay makes the bot's unqualified "I never open eBay" false). Wording
+   only, in the bot's own voice, each string's meaning and what it tells the person to do unchanged:
+   `want.ts:59` `EBAY_PAGE` ("A want-list watch never opens eBay's pages."), `want.ts:151` and
+   `want.ts:158` (an inbox watch's confirmation: "This watch never opens eBay itself.", "this watch
+   never opens BGG's pages itself"), `discord.ts:374` (`/want`'s `source` choice, 60 of Discord's
+   100 characters), `web/editor-pages.ts:118` (the want editor's help: "a watch never opens eBay"),
+   `fetch.ts:185` (the refusal on a want-list page read: "which a want-list watch never reads").
+   Tests updated: `fetch.test.ts:117` and `want-inbox.test.ts:55`; `want.test.ts:133` compares
+   with `EBAY_PAGE` itself. So this child is no longer docs-only in the strict sense: the bot's
+   words changed, not what it does. The CHANGELOG bullet above gained one sentence for it.

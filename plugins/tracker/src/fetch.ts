@@ -182,7 +182,7 @@ function orAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
 async function checkHost(url: URL, resolve: Resolve, signal: AbortSignal, neverEbay = false): Promise<void> {
   const problem = urlProblem(url.href);
   if (problem) throw new FetchRefusedError(problem);
-  if (neverEbay && isEbayHost(url.hostname)) throw new FetchRefusedError("it leads to eBay, which I never read");
+  if (neverEbay && isEbayHost(url.hostname)) throw new FetchRefusedError("it leads to eBay, which a want-list watch never reads");
   const host = url.hostname.replace(/^\[|\]$/g, "");
   let addresses: string[];
   if (isIP(host) !== 0) addresses = [host];

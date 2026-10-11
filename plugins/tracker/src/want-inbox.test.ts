@@ -52,7 +52,7 @@ describe("/want source: ebay", () => {
     const made = await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan Oceania", source: "ebay" }, numbers: { max: 35 } });
     expect(made).toContain("Watching `t1`: Wingspan Oceania.");
     expect(made).toContain("I look at what you send in from eBay every 1 hour");
-    expect(made).toContain("I never open eBay myself.");
+    expect(made).toContain("This watch never opens eBay itself.");
     expect(made).toContain("Claude in Chrome");
     expect(made).toContain("`POST /tasks/t1/listings`");
     expect(made).toContain("eBay's saved-search alert emails");
