@@ -115,7 +115,7 @@ different README rows). What differs from revision 2, or what it left open:
    only command that returns it.
 2. **The follow-ups mention no one** (`NO_MENTIONS`, as the answer's edit), the resume notice's too:
    the findings were sent under it inside the answer before, and a listing's name is a shop's text.
-   The notice is fixed text, so for it nothing changes.
+   The notice is fixed text, so for it nothing changes. Pinned in review gate round 2 (item 11).
 3. **The README's resume-notice sentence (from #161) changes too.** It said the notice comes "in a
    second message"; for a want watch's `/task history` it comes after the findings, so a third. It
    now says "in a message of its own after it".
@@ -123,9 +123,14 @@ different README rows). What differs from revision 2, or what it left open:
    since only the text is clipped to 200) makes K 0 when it is the newest: the second message is
    `Findings (newest 0 of N):` and the note. A line is never cut, and an older one is not listed in
    its place (K counts the newest). Pinned by a test.
-5. **`historyWithSeries` reads the task and its findings once more for a want watch** (`wantFindings`
-   is its own read, after `seriesLines`), so `seriesLines` keeps `main`'s shape; both reads run in
-   the same queue turn.
+5. **`historyWithSeries` reads the task and its findings once, for both messages** (corrected in
+   review gate round 2, item 10; the first implementation read them again in `wantFindings`). It
+   reads the visible task (`visibleTask`) and, for a research request, a scout or a want watch, its
+   findings (`visibleFindings`: the owner, an accepted recipient, or an admin), then hands that one
+   list to `findingLines` (the `Findings: N` line, and a research request's or a scout's newest 8)
+   and to the pure `wantFindings(findings, webEditor)` (the second message). `seriesLines` now takes
+   the visible task and serves a renewal or a price only. `taskHistory` keeps its own reads, as on
+   `main`; it shows no finding.
 6. **The web harness's `slash` (`web/harness.ts`) gained `said`, `followUpFails` and a `followUp`**,
    as #161 gave `surface.test.ts`'s, so the end-to-end tests are in `want.test.ts`, where a watch
    can read a shop. Before, a follow-up there would have thrown a `TypeError` (caught and logged).
@@ -136,10 +141,97 @@ different README rows). What differs from revision 2, or what it left open:
    moved to the second message (its second case now lengthens the newest line from 0 to 99
    characters past 60-character middle lines, so all 20 fit where the newest 19 and the note do
    not); "a want watch with no findings yet answers in one message"; and the case in 4.
-9. **Not pinned by a test: `more` before the resume notice's follow-up.** The notice is a follow-up
-   only when it and the answer pass 2,000 characters together, and a want watch's first message
-   (header, count, at most 10 runs and 5 changes) stays far below that in the test harness; the
-   order is the code's (`run`, discord.ts), and a mutation swapping it survives.
+9. **`more` before the resume notice's follow-up is pinned** (review gate round 2, item 12) by
+   "sends /task history's findings before the resume notice, each a message of its own"
+   (`want.test.ts`): a watch with a 100-character name and 5 listings, then 12 runs failed with
+   long errors and 7 edits written into its store, and its owner paused by `PAUSE_AFTER` failed DMs.
+   His `/task history` resumes him; its answer is 1,840 characters, too long to carry the
+   177-character notice above it, so Discord gets the edit, the findings, then the notice.
+
+### Review gate round 2
+
+Each finding -> its fix. Numbered on from "Revision 2, as implemented".
+
+10. **(A1, B5) The findings were read twice, so the two messages could disagree** -> read once.
+    `seriesLines`/`findingLines` read the task and its findings for `Findings: N`, then
+    `wantFindings` read both again for the second message; a finding stored between the reads gave
+    `Findings: 20`, then `newest 20 of 21 ... and 1 more`. `historyWithSeries` now reads the visible
+    task once and the findings once and hands the one list to `findingLines` and to a pure
+    `wantFindings(findings, webEditor)`; the extra task read is gone. Visibility is the same calls
+    with the same actor (`visibleTask`, `visibleFindings`; owner, accepted recipient, admin).
+    Test: "a want watch's two messages count the same findings when one is stored between two
+    reads" (`series.test.ts`). It wraps the store's `listFindings` so that **every** read is
+    followed by a new finding, not only the first: the first read is `taskHistory`'s own
+    (`loadHistory` reads the findings for the web page's view), so a finding added only after it is
+    seen by both of c3af797's later reads, and that variant passed on c3af797 (checked). The test
+    asserts the second message's `of N` and `...and N-20 more` are the first message's N. Red on
+    c3af797's `series.ts`. "Revision 2, as implemented" item 5 now describes this shape.
+11. **(A2, B3) "The follow-ups mention no one" was not pinned** -> both slash harnesses' `said`
+    (`web/harness.ts` and `surface.test.ts`'s own) record a follow-up's `allowedMentions`. The
+    findings follow-up in `want.test.ts`'s end-to-end test, the order test's two follow-ups, and
+    `surface.test.ts`'s resume-notice follow-up ("the first command after a pause answers a full
+    /tasks uncut by the notice ...") assert `{ parse: [] }`.
+12. **(A3, B2) "Findings before the resume notice" was not pinned** -> "sends /task history's
+    findings before the resume notice, each a message of its own" (`want.test.ts`), as item 9 now
+    says. The watch is made through `/want` and a poll; the 12 failed runs and 7 edits are written
+    with `SqliteStore` on the world's database file, and the pause with `DeliveryHealth.recordFailure`
+    (`PAUSE_AFTER` times, the real pause: Larry and his watch paused). It asserts Discord got
+    `[edit, followUp(findings), followUp(notice)]`, each follow-up ephemeral and mentioning no one,
+    and that the notice with the 1,840-character answer would pass 2,000 (by 19 characters), which
+    is why the notice is apart.
+13. **(B1, Major) The revision-2 CHANGELOG bullet's last sentence was false** (it misquoted the
+    DM, and "most of" a run was wrong) -> the bullet is replaced with the round's wording, its K
+    values measured by a probe calling `wantFindings` on 20 identical findings:
+    - a plain watch's line as the end-to-end fixture builds it (`twentyListings`): 177 characters;
+      K = 10 with the web pointer, 11 without;
+    - a judged watch's line (title, price, `looks right:` and the judge's why), its text past 200
+      characters clipped to 200, with a 48-character source: 253 characters; K = 7 with or without
+      the pointer. Reviewer A's 257-character judged line is K = 7 too (the sweep below);
+    - a sweep of uniform lines (with the pointer): K = 10 for lines of 173 to 189 characters, 9
+      for 190 to 210, 8 for 211 to 236, 7 for 237 to 270, 6 from 271.
+
+    So "about 10" and "about 7" stand. "A long findings list cut that message short" was checked
+    against `main`'s `historyWithSeries` (a6914ef, whose `series.ts` and `history.ts` are
+    `main`'s): a judged watch with 20 findings of those 253-character lines answered 2,000
+    characters, cut inside its eighth finding, with no run and no change shown (with 3 runs, and
+    with 10 runs and 2 edits). A plain watch with 177-character lines, 10 runs and 3 changes
+    answered 1,878 characters, nothing cut. True of a judged watch's usual lines, not of a plain
+    watch's, so the sentence stays: it says a long list did it, not every list.
+14. **(B4) An admin's second message was not tested** -> the end-to-end test runs `/task history`
+    as the admin on Larry's watch and expects the same edit and the same findings follow-up as
+    Larry's; it also runs it as Curly, who does not receive the watch, and expects
+    `NO_SUCH_TASK` and nothing after it.
+15. **(B5a) `wantFindings`'s JSDoc said the last line is always there** -> "and, when some are
+    not listed, a last line saying how many and, while the web area is set up (`webEditor`), that
+    the task's page there shows the newest `FINDINGS_SHOWN`".
+16. **(B5c) A test name claimed "whatever their length"** -> renamed "a want watch's second
+    message fits whole lines at and around the limit, in two sweeps of their length".
+17. **(B O32) The 200-character clip that K depends on was not pinned** -> "a want watch's second
+    message cuts a finding's text to 200 characters, as the one message did" (`series.test.ts`): a
+    431-character text is listed as its first 197 characters, `...` and its source.
+18. **(B O33) A padded id was not tested for the second message** -> the end-to-end test runs
+    `/task history` with `" t1 "` and expects the same edit and findings follow-up as with `t1`.
+19. **Declined: B's O28 (`twoMessages` checks only `more[0]`).** Equivalent today: the only
+    producer of `Parts` (`historyWithSeries`) sends exactly one `more`, and `twoMessages` asserts
+    `more` has length 1 before reading it.
+
+**Checks** (at 351c9f9): `bun run lint` no errors (215 files); `bun run check` clean; `bun run
+build` built every plugin; `bun run generate-index -- --check` "plugins.json is up to date.";
+`bun run check-contract` "packages/api/contract.d.ts matches upstream."; `bun test plugins/tracker`
+535 pass, 0 fail (8,408 expects, 40 files); `bun test` 1,846 pass, 0 fail (11,972 expects, 86
+files). The fix commit alone (60a82aa) typechecks and passes `bun test plugins/tracker` (533).
+
+**Mutations** (scratch worktree at 351c9f9, one at a time, `bun test plugins/tracker`):
+
+| Mutation | Red |
+|---|---|
+| (a) item 10 reverted: c3af797's `series.ts` (two reads) | "two messages count the same findings when one is stored between two reads" |
+| (b) `NO_MENTIONS` dropped from `followUp` (discord.ts) | the order test; the end-to-end test; surface's "first command after a pause ... second message" |
+| (c) the resume notice sent before `more` | the order test |
+| (d) the findings read with `admin: false` | the end-to-end test (the admin's step); research's "a recipient gets the answer and sees the findings ..." |
+| (d') `historyWithSeries`'s one actor with `admin: false` | the same two |
+| (e) a finding's text clipped to 400 | "cuts a finding's text to 200 characters" |
+| (f) the id not trimmed in `historyWithSeries` | the end-to-end test (the padded id's step) |
 
 ## Plan, revision 2 (execute as written; supersedes the one-message fitting above)
 
@@ -244,8 +336,8 @@ fit, which is the usual case.
 
 ### CHANGELOG bullet, revision 2 (for the PR body)
 
-`/task history` of a want-list watch now sends its findings as a second message: up to 20, a run's
-worth, as many whole lines as fit, newest kept, and says how many more there are (pointing to the
-web area's task page when it is set up). The history itself keeps its runs and changes, as before.
-It used to list only the newest 8 findings, so a DM's "the rest in `/task history`" left most of a
-20-listing run nowhere in Discord (#166).
+`/task history` of a want-list watch now sends its findings in a second message: as many whole
+lines as fit, up to 20 (a run's worth), newest kept, then how many more there are, pointing to the
+web area's task page when it is set up. Before, it showed the newest 8 at most, in the one message
+with the runs and changes, and a long findings list cut that message short. A plain watch's typical
+lines now fit about 10, a judged watch's longer ones about 7 (#166).
