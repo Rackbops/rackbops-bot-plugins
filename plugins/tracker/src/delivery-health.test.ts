@@ -58,6 +58,16 @@ describe("DeliveryHealth", () => {
     expect((await s.store.getTask(s.task.id))?.status).toBe("active");
   });
 
+  it("a DM that goes through after the pause leaves the pause and its count alone: only a resume ends it", async () => {
+    const s = await setup();
+    for (let i = 0; i < PAUSE_AFTER; i++) await s.health.recordFailure(s.owner.id, HOST_CANNOT_MESSAGE, "2026-10-01T12:00:00.000Z");
+    // A DM already out when the pause landed (an invitation, say) goes through after it.
+    s.health.recordSuccess(s.owner.id);
+    expect(s.health.get(s.owner.id)).toMatchObject({ failures: PAUSE_AFTER, pausedAt: "2026-10-01T12:00:00.000Z" });
+    expect(s.health.isPaused(s.owner.id)).toBe(true);
+    expect((await s.store.getTask(s.task.id))?.status).toBe("paused");
+  });
+
   it("pauses the person's active tasks on record, and resume sets back only what it paused", async () => {
     const s = await setup();
     const other = await s.store.createTask({ ...s.task, ownerId: s.owner.id, config: {}, state: null, at: "2026-10-01T12:00:00.000Z" });
@@ -191,6 +201,15 @@ describe("the notifier counting toward the pause", () => {
     expect(s.health.get(s.owner.id)?.failures).toBe(2);
   });
 
+  it("an unconfirmed send neither counts nor clears the count", async () => {
+    const s = await setup();
+    await s.health.recordFailure(s.owner.id, HOST_CANNOT_MESSAGE, "2026-10-01T12:00:00.000Z");
+    // Neither a refusal nor a delivery: it may have gone out, so it is the error itself, unchanged.
+    const timeout = new Error("request timed out");
+    await expect(failingWith(s, timeout, s.health).sendDm(s.owner.id, { text: "hi" })).rejects.toBe(timeout);
+    expect(s.health.get(s.owner.id)).toMatchObject({ failures: 1, pausedAt: null });
+  });
+
   it("a count that fails is logged, and the send's own error is still what docket gets", async () => {
     const s = await setup();
     const broken = new Error("database is locked");
@@ -233,7 +252,7 @@ describe("the notifier counting toward the pause", () => {
 });
 
 describe("the notify tick counting toward the pause", () => {
-  it("a DM that goes through clears the count, so refusals weeks apart never pause", async () => {
+  it("a DM that goes through clears the count, so only refusals in a row pause, however far apart", async () => {
     const s = await setup();
     let refuse = true;
     const sent: string[] = [];
