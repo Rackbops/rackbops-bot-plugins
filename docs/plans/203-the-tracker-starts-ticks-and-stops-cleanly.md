@@ -141,11 +141,12 @@ Written 2026-10-11 against `main` at `2949dbe`; re-find each cite by function na
 | Outcome | Step | Test | Mutation that must fail it |
 |---|---|---|---|
 | A tick a little under a minute after the last starts the lane | 1 | "... a little under a minute after the last" | restore `< EXECUTE_EVERY_MS` |
-| Two calls within half a minute start one run | 1 | "a second execute tick within half a minute ..." | drop the time check |
+| Two calls within 5 s start one run (round 1: was half a minute) | 1 | "a second execute tick within 5 s starts nothing" | drop the time check |
+| A round after one whose earlier checks ran 30 s longer still starts the lane (round 1) | 1 | "a round after a slow one still starts the lane" | restore `EXECUTE_EVERY_MS / 2` |
 | A late failed start closes the database | 1 | "a start that fails after the database opened ..." | move the `catch`'s end back to after `recover()` |
-| A late failed start keeps no handle (no tick runs) | 1 | the same | assign `store` before the log lines again |
+| A late failed start keeps no handle (no tick runs; round 1: no command reads) | 1 | the same | assign `store` before the log lines again; (round 1) assign `deps` before the guild log line |
 | Dispose waits for a notify tick in flight | 1 | "dispose waits for a notify tick in flight ..." | wait only on `executeRun`, as before |
-| Dispose's wait is bounded below the host's 2 s | 1 | "dispose stops waiting after `DISPOSE_WAIT_MS`" | `DISPOSE_WAIT_MS` = 5 000 |
+| Dispose's wait is bounded below the host's 2 s | 1 | "dispose stops waiting after `DISPOSE_WAIT_MS`" | `DISPOSE_WAIT_MS` = 5 000; (round 1) `DISPOSE_WAIT_MS` = 10 |
 | A tick after dispose touches nothing | -- | the renamed test | drop the `if (!store) return` in `tick` |
 
 ## CHANGELOG bullet (for the PR body)
@@ -154,8 +155,10 @@ Written 2026-10-11 against `main` at `2949dbe`; re-find each cite by function na
   longer one minute than the next, so research, scout and want-list judging are picked up each minute
   again (#203).
 - A start that fails part way now closes the database it opened (#203).
-- Stopping the bot waits up to 1.5 s for a reminder or page tick still running, so a DM it sent is
-  recorded as sent rather than reported unconfirmed at the next start (#202).
+- Stopping the bot now waits up to 1.5 s, before closing the database, for tracker work the host's
+  own stop no longer waits on (an execute-lane run, or a reminder or page tick past the host's 5 s
+  grace), so a DM it sent is recorded as sent rather than reported unconfirmed at the next start
+  (#202).
 
 ## Deviations as implemented
 
@@ -176,9 +179,63 @@ Written 2026-10-11 against `main` at `2949dbe`; re-find each cite by function na
    nothing.** Finding: the part-way case sets `TRACKER_CITY_HALL_*`, so that plugin has an `execute`
    tick, and `executeLane` was one of the handles set before that throw. What I did: both cases run
    `notify`, `poll` and (when present) `execute`, then expect no DM and no `executeStarted` call. The
-   two cases are one `it` through a local `failedStart(line, env)`. Why: it covers the handle the
-   part-way case is there for, and one `it` keeps the Coverage table's single test name.
+   two cases are one `it` through a local `failedStart(line, env)`. Why: it covers `store` and the
+   close on the city-hall path (`JobRecords`, `databaseId` and the executor are built); `executeLane`
+   set alone cannot be seen through a tick, since `startExecute` checks `store` first. One `it` keeps
+   the Coverage table's single test name. (This Why corrected in round 1, item 11.)
 4. **"dispose stops waiting after `DISPOSE_WAIT_MS`" has a 10 s test timeout.** Finding: bun's
    default per-test timeout is 5 s, the same as the mutation's `DISPOSE_WAIT_MS` = 5 000, so that
    mutation would fail on the timeout rather than on the bound. What I did: `it(..., 10_000)`. Why:
    the mutation then fails on `expect(took).toBeLessThan(2_000)`, the assertion its row names.
+
+### Review gate round 1
+
+Reviewers A and B: SOUND, Minors only. Everything above this heading stays as written, except the
+Coverage rows marked "(round 1)", the third CHANGELOG bullet (replaced, since the PR body takes it)
+and deviation 3's Why (corrected); each change is listed here.
+
+5. **(A, Minor M1) The half-minute floor still skips a round after a slow one.** Finding: a round
+   whose earlier checks ran 30 s or more longer than the next round's (the tracker's own `poll` tick
+   can take its 30 s bound; the host's `guardedTick` already skips a round while one runs) puts the
+   next execute call under 30 s after the last, e.g. +30.5 s then +60.1 s, a gap of 29.6 s. Fix
+   (the orchestrator's decision): `execute-lane.ts` exports `EXECUTE_MIN_GAP_MS` = 5 000, well under
+   a host round, and `startExecute` skips only within it of the last start. So the Decision "core-2:
+   a half-minute floor, not a minute" now reads, as implemented: a 5 s floor; a second call in one
+   round is still refused, and only a round whose earlier checks ran 55 s or more longer than the
+   next's still costs the next its run (the constant's doc says so). `startExecute`'s JSDoc and the
+   `execute-lane.ts` header name the constant. `EXECUTE_EVERY_MS` stays exported as the round's
+   cadence, now referenced by no code. Tests: "a second execute tick within half a minute starts
+   nothing" became "a second execute tick within 5 s starts nothing" (4 999 ms refused, 5 000 ms
+   starts), and "a round after a slow one still starts the lane" is new (a start, then a call
+   29 600 ms later starts again). The Coverage rows are updated in place.
+6. **(B, Minor 4) The README row overstated the cadence.** Fix: `README.md` Execute lane row now
+   says "(one at a time, at most once per host tick, about a minute)".
+7. **(A N1, B Minor 3) The host's stop already waits for notify and poll ticks.** Finding: the host
+   aborts its ticks on stop and drains them for up to 5 s (`PLUGIN_TICK_ABORT_GRACE_MS`) before it
+   calls `dispose()`, so the new wait matters for the background execute run and for a tick past
+   that grace. Fix: the third CHANGELOG bullet is replaced with the text above. `dispose()`'s comment
+   says the host aborts and drains its ticks first and that 2 s is the host's per-plugin bound on
+   dispose. Note on What is wrong 3(b): it holds for what the host's stop does not already wait on,
+   that is, a notify or poll tick still mid-DM after the host's 5 s grace, and the execute lane's
+   background run, which the host never waits on.
+8. **(A N2) The "nothing can throw" block read `typeof host.dm`.** Fix: `health.blocked = dm ? null :
+   "..."`, from the `dm` the closure already holds.
+9. **(B Minor 1, survivor S6) Assigning `deps` before the guild log line survived.** Fix: the
+   failed-start test also expects `/tasks` to answer "The tracker is starting up; try again in a
+   minute." (`slash` from `web/harness.ts`). Mutation row added to the Coverage table.
+10. **(B Minor 2, survivor S3b) `DISPOSE_WAIT_MS` = 10 survived.** Fix: the bounded-wait test also
+    expects `DISPOSE_WAIT_MS` to be 1 500, so the bound is pinned absolutely, not only relative to
+    itself. Mutation added to the Coverage table.
+11. **(B Minor 5) Deviation 3's Why claimed the test covers `executeLane`.** Fix: corrected in place
+    to what the test does cover (`store` and the close on the city-hall path); `executeLane` set
+    alone cannot be seen through a tick, since `startExecute` checks `store` first.
+12. **(B nits 6, 7) Two lines of the plan's own text were wrong.** Recorded here; the text above is
+    left as written. Decisions, core-2: "`EXECUTE_EVERY_MS` stays as the cadence that `locks.ts` and
+    `notify-lane.ts` name" should read "`EXECUTE_EVERY_MS` stays as the host's 60 s round, which
+    execute-lane.ts's header ('they send a minute later') and locks.ts's `TASK_BUSY` ('try again in
+    a minute') describe". What is wrong 2: the first half of `activate()` inside the `try` was "(the
+    vacuum, admins, `recover()`)", not "(migrations, admins, `recover()`)"; the migrations run in
+    `openDatabase`, before it.
+13. **Declined as harmless or equivalent:** survivors S2b, S8, S9, S11, S12 and S13, for the reasons
+    reviewer B gave in round 1. S2b (`DISPOSE_WAIT_MS` = 1 900) is still under the host's 2 s bound;
+    item 10's pin now fails it anyway.
