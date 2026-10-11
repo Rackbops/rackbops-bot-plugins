@@ -160,7 +160,8 @@ README, tests) and `ad7a32a` (tests); this file in the commit after them.
    U+0891, U+08E2, U+110BD, U+110CD -- and collapses every other `\p{Cf}`, so a format character
    Unicode adds later collapses by default, and the tag characters (U+E0001, U+E0020-U+E007F) still
    go: a subdivision flag still shows as a plain black flag. Biome's `noMisleadingCharacterClass`
-   refuses U+200D inside a character class, so the joiner is an alternative of the lookahead,
+   refuses U+200D between two characters of a character class, so the joiner is an alternative of
+   the lookahead,
    `(?!\u200d|[...])`, the same set. Test: "the format characters real text needs survive; a bidi
    override and a zero-width space between letters do not". Mutation: dropping U+200C fails it.
 7. **(A m2, B Major) The empty check missed blanks that are not format characters.** Finding: a
@@ -197,11 +198,60 @@ README, tests) and `ad7a32a` (tests); this file in the commit after them.
 13. **Declined (A m5): a bare URL in a reply unfurls into an embed under `/task history`.** It
     predates this change and is outside it; suppressing embeds on the history answer is a change of
     its own, for a follow-up issue.
-14. **Declined (A, optional): wrapping each answer in FSI/PDI.** It would add invisible characters to
-    every answer, the task API's JSON included.
+14. **Declined (A, optional): wrapping each answer in FSI/PDI.** `oneLine` already strips the bidi
+    overrides and isolates, so isolation would only fix cosmetic reordering of punctuation next to
+    right-to-left text. In `runLine` it would add two invisible characters to every Discord answer;
+    in `RunView` it would also reach the page and the task API's JSON.
 15. **Declined (B Minor 4): "shown as typed" inside a code span.** A reply's own backticks are now
     escaped, so it cannot open one; only the owner's title or the bot's own text could, and the
     effect is cosmetic.
 16. **Declined (B H5, H7): equivalent or harmless, for B's reasons.** The modal already caps input at
     `MAX_REPLY_TEXT`, and clipping before `oneLine` in `replyText` would only show fewer characters
     of an old row.
+
+### Review gate round 2
+
+Reviewer A and reviewer B each SOUND on `22f3644`: A with two Minors, B with three Minors and a nit.
+Fixed in `4ee9b0a` (code, README, tests) and `b8eb387` (tests); this file in the commit after them.
+
+17. **(A m-a) Unassigned default-ignorable code points passed as a reply.** Finding: a reply of only
+    `"\u{e0080}"` was stored and showed as an empty quote, and such code points could hide text
+    inside a reply. Fix: `BLANK` takes `\p{DI}`, and `oneLine` also collapses U+2065,
+    U+FFF0-U+FFF8, U+E0000, U+E0002-U+E001F, U+E0080-U+E00FF and U+E01F0-U+E0FFF, leaving the
+    variation selectors U+E0100-U+E01EF alone. Departure: the Hangul fillers U+115F, U+1160, U+3164
+    and U+FFA0 are default-ignorable, so with them still listed in `BLANK`, dropping `\p{DI}`, or
+    dropping a listed filler, failed no test (both run): with the fillers listed and the unassigned
+    ranges collapsed, no code point is left that only `\p{DI}` refuses (a scan of every code point
+    in Bun 1.4.2). So the four fillers left `BLANK`'s list, where `\p{DI}` refuses them, and the braille
+    blank U+2800, which is not default-ignorable, stays: `/^[\s\p{Cc}\p{Cf}\p{DI}\p{M}\u2800]*$/u`.
+    Test: "a reply of only unassigned invisible code points is refused as empty; one between letters
+    is a space" (`"\u{e0080}"` and `"\u2065"` refused; one code point from each range between letters
+    becomes a space, and an assigned U+E0100 stays). Mutations: dropping `\p{DI}` fails the
+    blank-filler test, which now sends all four Hangul fillers; dropping every range, or any one of
+    the six, fails the new test.
+18. **(A m-b) A bare link takes the backslash before a following `<`.** Finding: a reply of
+    `https://a.example<@123>` is shown as `https://a.example\<@123>`, Discord reads the backslash
+    as part of the link, and `<@123>` still shows as a mention pill. It never pings, since
+    `/task history` answers with `NO_MENTIONS`. Fix: the README says a mention or timestamp typed
+    right after a bare link may still show as one, and a mention there never pings; `discordPlain`'s
+    doc says the same. Links are not wrapped in `<...>`: an unescaped `](` inside a wrapped link
+    would reopen the masked-link hole.
+19. **(B Minor 1) Four survivors** (B's N3, N4, N6 and N11: `BLANK`'s `*`, the listed fillers, the
+    Arabic and Syriac signs, the Kaithi signs). Fix (`b8eb387`): a reply of only `" \n\t "` is
+    refused as empty; the blank-filler test also sends U+115F, U+1160 and U+FFA0; and the
+    format-characters test sends each kept number sign before a `1` and expects it unchanged.
+    Mutations: `BLANK`'s `*` made `+` fails two tests; dropping U+0600-U+0605, U+06DD, U+070F,
+    U+0890 and U+0891, U+08E2, or the Kaithi pair from the keep-list each fails the
+    format-characters test; dropping U+2800 from `BLANK` fails the blank-filler test. Dropping a
+    listed Hangul filler no longer applies, since none is listed (17); dropping `\p{DI}` fails instead.
+20. **(B Minor 2) The keep-list read as complete.** Finding: U+180E (Mongolian vowel separator) also
+    collapses. Fix: the wording, not the policy: the README says "but for a few format characters",
+    and `oneLine`'s doc "It keeps a few format characters real text needs". U+180E stays collapsed:
+    it is also on reviewer A's list of characters that can hide text.
+21. **(B Minor 3) Decline 14's reason.** Fix: replaced with B's: isolation would only fix cosmetic
+    reordering, and would put invisible characters in every Discord answer, or in the page and the
+    API too.
+22. **(B nit) Entry 6's Biome wording.** Fix: it refuses U+200D "between two characters of a
+    character class", not anywhere inside one.
+23. **Declined (B N10, N12, N16, N13).** N10, N12 and N16 are equivalent mutations and N13 is
+    harmless, for B's reasons.
