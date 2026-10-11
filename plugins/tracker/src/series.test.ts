@@ -134,6 +134,28 @@ describe("/task history's findings", () => {
     expect([...counts].some((n) => n < 20)).toBe(true);
   });
 
+  it("a want watch's two messages count the same findings when one is stored between two reads", async () => {
+    const t = await task("wantlist", found(20));
+    const store = t.d.store;
+    const list = store.listFindings.bind(store);
+    let stored = 0;
+    // Every read of the findings is followed by a new one, as a run storing a listing while /task history reads would be.
+    store.listFindings = async (filter) => {
+      const read = await list(filter);
+      stored++;
+      const n = String(20 + stored);
+      await store.addFinding({ taskId: t.id, ownerId: t.owner.id, occurrenceId: null, key: `late${n}`, type: "wantlist", text: `Listing ${n}`, source: `https://shop.example/p/${n}`, at: NOW });
+      return read;
+    };
+    const { first, second } = twoMessages(await historyWithSeries(t.d, t.owner, t.id));
+    const counted = Number(/\nFindings: (\d+)\n/.exec(first)?.[1]);
+    expect(counted).toBeGreaterThan(20);
+    expect(counted).toBeLessThanOrEqual(20 + stored);
+    // The second message lists the newest 20 of the same findings the first one counts.
+    expect(second).toBe([`Findings (newest 20 of ${counted}):`, ...listed(second), note(counted - 20)].join("\n"));
+    expect(listed(second)).toEqual(Array.from({ length: 20 }, (_, i) => String(counted - 19 + i).padStart(2, "0")).map((n) => `- Listing ${n} <https://shop.example/p/${n}>`));
+  });
+
   it("a want watch with 25 short findings lists its newest 20 and says 5 more", async () => {
     const all = found(25);
     const { first, second } = twoMessages(await history("wantlist", all));
