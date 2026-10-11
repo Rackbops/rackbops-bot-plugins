@@ -81,13 +81,15 @@ type reads it on every run (`docket-types/dist/price.js`, `run`), so the owner c
 ## CHANGELOG bullet (for the PR body)
 
 A `/price` tracker made with `near` now reads a price followed by a comma or a full stop ("19.99,"
-or "49.90.") as written; it used to read it as 1999 or 4990, so the first reading was 100 times too
-high and a correct later one looked like a 99% drop. Trackers made before this keep the pattern they
-were made with: delete and remake one that shows a price 100 times too high (#164).
+or "49.9.") as written; it used to drop the decimal point and read 1999 or 499, so its first reading
+was 10 or 100 times too high and a correct later one looked like a steep drop. Trackers made before
+this keep the pattern they were made with: stop one that shows such a price (`/task done`, or delete
+it on the web) and make it again (#164).
 
 ## Deviations as implemented
 
-None changes a decision above or the CHANGELOG bullet; both are about where and how the tests sit.
+Items 1 and 2 are about where and how the tests sit. Items 3 to 8 are the review gate's round 1;
+item 4 rewrites the CHANGELOG bullet above, the only edit made above this section.
 
 1. **The flow test needed a page only `near` can read.** `tracked.test.ts`'s `world()` page reader
    served only `page(price)`, a JSON-LD page, and the existing `near` test there covers only the
@@ -98,7 +100,49 @@ None changes a decision above or the CHANGELOG bullet; both are about where and 
    DM ("Now tracking ... at 19.99."), and `/task history` ("Prices: 1 read, low 19.99, high 19.99").
 2. **The capture tests are their own `describe("nearPattern on a page")` at the end of
    `page.test.ts`**, not inside `describe("pageForExtraction")`: they test the pattern, not the page
-   reduction. Each runs `extractPrice(pageForExtraction(html), nearPattern(near))`, as the existing
-   `near` cases do, so the plan's texts are wrapped in HTML (`<p>...</p>`; the JSON case in a plain
+   reduction. Each but "the capture stays bounded" runs
+   `extractPrice(pageForExtraction(html), nearPattern(near))`, as the existing `near` cases do; that
+   one runs `new RegExp(nearPattern("x"), "i")` itself, to see the raw capture rather than the price
+   read from it. So the plan's texts are wrapped in HTML (`<p>...</p>`; the JSON case in a plain
    `<script>`), and the thousands-separator texts carry words after the trailing separator
    (`1,299.99, with tax`, `1.299,99. Mit MwSt.`) so the separator is punctuation, not the page's end.
+3. **Review gate round 1: where the pattern is made and kept.** "What is wrong" cites
+   `priceInputPlan` -> `config.pattern`; no such function exists. `startPrice` builds it
+   (`price.ts:146`, `pattern: nearPattern(near)`), `finishPrice` stores it with the task through
+   `createTask` (`price.ts:181`), docket's `price` type reads it on every run
+   (`docket-types/dist/price.js:113`, `extractPrice(body, ctx.config.pattern)`), and an edit keeps it
+   (`editPriceLocked`, `edit.ts:262`, copies the old config and changes only the drop and the
+   baseline). The conclusion stands: the owner cannot repair it.
+4. **Review gate round 1: the CHANGELOG bullet is rewritten** (in its section above). A misread was 10
+   or 100 times too high, not only 100: a price with one decimal digit read 10 times too high (499
+   for "49.9."), one with two 100 times (1999 for "19.99,"), so "a 99% drop" held only for the second.
+   And a tracker is stopped with `/task done` or deleted on the web; `/task` has no delete.
+5. **Review gate round 1: decision 2 left out `last`, the default baseline, and it strengthens the
+   decision.** Under `last`, the first correct reading after a misread baseline sends one false alert
+   (a 90% or 99% drop) and then measures from the correct reading. Under `first` or `peak` the
+   misread stays the reference for good: every correct reading is below it, so after one false alert
+   a real drop never alerts. A read-time upgrade or a migration would send that false alert under
+   every rule, and leave `first` and `peak` trackers broken.
+6. **Review gate round 1: item 2's "each runs `extractPrice(...)`"** was untrue of "the capture
+   stays bounded"; the sentence is corrected in place.
+7. **Review gate round 1: tests for mutations nothing killed**, all in `page.test.ts`'s
+   `nearPattern on a page`, each confirmed red under its mutation in a scratch worktree:
+
+   | Test | Mutation it kills |
+   |---|---|
+   | "a two- or three-digit price followed by a comma is read whole" (10, 120) | `{0,14}` -> `{1,14}` ("10," read 1); the last `[0-9]` -> `[1-9]` ("120," read 12) |
+   | "a price with one decimal digit is read as written" (19.5) | the old capture ("19.5," read 195) |
+   | "a price under 1 is read" (0.99) | the first `[0-9]` -> `[1-9]` |
+   | "the gap after the near text is at most 40 characters" (40 dashes -> 5, 41 -> no price) | the gap's `{0,40}` -> `{0,41}`, `{0,39}` or `*` |
+   | "the gap after the near text may hold commas and full stops" (`Price, incl. VAT: 19.99,`) | the gap's `[^0-9]` -> `[^0-9.,]` |
+   | "a near text with regular-expression characters is matched as written" (near `Total (incl. VAT) [EUR\GBP] \|`, after a number and a near-miss with `x` for `.`) | dropping `.`, `(`, `)`, `[`, `[` with `\]`, `\|` or `\\` from the escape class |
+8. **Review gate round 1: mutations declined as equivalent**, each confirmed to leave every test
+   green:
+   - `(?:` -> `(`: an inner group that captures; the price is still group 1.
+   - The first `[0-9]` -> `[0-9.,]`, and the capture `([0-9.,]{0,15}[0-9])`: the gap before it
+     already takes every `.` and `,` it can, so the capture starts at a separator only when the gap
+     is full at 40 characters. The same in practice.
+   - Dropping `.trim()`: `startPrice`, the only caller, trims `near` first (`price.ts:140`).
+   - Dropping `\]` from the escape class (found while running the rows above): a lone `]` outside a
+     class is a literal in a pattern without the `u` flag, and docket compiles the pattern with `"i"`
+     alone (`docket-types/dist/extract.js:136`), so `\[EUR]` and `\[EUR\]` match the same text.
