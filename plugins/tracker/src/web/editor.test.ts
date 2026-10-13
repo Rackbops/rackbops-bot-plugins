@@ -428,6 +428,40 @@ describe("price trackers", () => {
   });
 });
 
+describe("the editor's page reads go through the fence (#227)", () => {
+  it("with no Fetch given, a new price or page watch whose page redirects inward is refused, and the inner address is never asked", async () => {
+    const realFetch = globalThis.fetch;
+    const asked: string[] = [];
+    // The network: each public page redirects to the cloud metadata address. A fetch that follows
+    // redirects itself (anything but the fence's `manual`) reads a price there.
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      asked.push(url);
+      if (url.startsWith("http://169.254.169.254/")) return new Response("<p>Price: 1.00</p>");
+      if (init?.redirect !== "manual") {
+        asked.push("http://169.254.169.254/latest/meta-data/");
+        return new Response("<p>Price: 1.00</p>");
+      }
+      return new Response(null, { status: 302, headers: { location: "http://169.254.169.254/latest/meta-data/" } });
+    }) as unknown as typeof fetch;
+    try {
+      const w = await world();
+      await people(w.plugin);
+      const larry = await signIn(w.plugin, LARRY);
+      const csrf = await csrfOf(w.plugin, larry);
+      const price = await post(w.plugin, larry, csrf, "/new/price", { url: "http://1.1.1.1/widget", near: "Price:" });
+      expect(price.status).toBe(400);
+      expect(await price.text()).toContain("I cannot read that page: Only public web pages can be tracked.");
+      const page = await post(w.plugin, larry, csrf, "/new/wantlist", { name: "Widgets", source: "page", target: "http://1.1.1.1/widgets", judge: "no" });
+      expect(page.status).toBe(400);
+      expect(tasks(w.dbPath)).toEqual([]);
+      expect(asked).toEqual(["http://1.1.1.1/widget", "http://1.1.1.1/widgets"]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
 describe("pause, resume, delete", () => {
   it("pause holds the reminder; resume lets it go (late); each once, with the reason when refused", async () => {
     const w = await setup();
