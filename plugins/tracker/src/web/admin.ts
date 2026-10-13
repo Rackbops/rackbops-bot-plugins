@@ -240,9 +240,9 @@ export async function usrLinkRunsSettled(): Promise<void> {
  * its role), re-read in the queue (someone forgotten meanwhile is skipped, never sent to usr),
  * allowed in usr as `<app>:member` with the pressing admin as the invoker, then linked in the queue.
  * usr records each link against `TRACKER_GUILD_ID`'s first server, so without a gate it refuses and
- * says to use `/allow` in the server. Only a 400 from usr is about the one person; any other refusal
- * or failure (the admin's own usr roles, the key, usr unreachable) would fail everyone the same way,
- * so the run stops there.
+ * says to use `/allow` in the server. Only a 400 that names one of the person's own fields is about
+ * them (`personsOwn400`); any other refusal or failure (another 400, the admin's own usr roles, the
+ * key, usr unreachable) would fail everyone the same way, so the run stops there.
  */
 function startLinkEveryone(a: AdminWeb, usr: UsrLink, me: User): Exclude<Result, null> | "started" {
   if (a.usrGuildId === null) {
@@ -266,6 +266,17 @@ function startLinkEveryone(a: AdminWeb, usr: UsrLink, me: User): Exclude<Result,
     });
   usrLinkPending.add(pending);
   return "started";
+}
+
+/**
+ * Whether usr's refusal is about the one person, so the run goes on to the next: a 400 whose reason
+ * starts with a field that is theirs (usr's `${field} must be a Discord id` shape, in usr's
+ * `src/server/lib/discord.ts`; `display_name` should usr ever check it). Every other 400 -- the
+ * server, the invoker, the roles, or wording usr has not used yet -- would fail everyone the same
+ * way, so it stops the run; a name quoted back later in a reason changes nothing.
+ */
+function personsOwn400(err: UsrError): boolean {
+  return err.status === 400 && /^(discord_user_id|display_name)\b/.test(err.reason);
 }
 
 async function linkEveryone(a: AdminWeb, usr: UsrLink, invoker: string, by: string, guildId: string, ids: string[], run: UsrLinkRun): Promise<void> {
@@ -307,8 +318,7 @@ async function linkEveryone(a: AdminWeb, usr: UsrLink, invoker: string, by: stri
     const answer = await usr.client
       .allow({ discordId: p.discordId as string, guildId, invokerDiscordId: invoker, roles: [member], ...(p.displayName ? { displayName: p.displayName } : {}) })
       .catch((err: unknown) => err);
-    // A 400 about the request itself (the server, the admin, the role) would fail everyone; only one about the person is theirs.
-    if (answer instanceof UsrError && answer.status === 400 && !/guild_id|invoker|roles|role "/.test(answer.reason)) {
+    if (answer instanceof UsrError && personsOwn400(answer)) {
       problems.push(`${nameOf(p)}: ${answer.message}`);
       run.done++;
       continue;

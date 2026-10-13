@@ -70,6 +70,8 @@ export interface TrackerDeps {
   configuredAdmins: ReadonlySet<string>;
   /** Whether a notify or poll tick is running, and a bounded wait for none to be (index.ts). */
   lanes: TickGate;
+  /** Test seam: forget-me's wait for the ticks, in ms (admin.ts `TICK_WAIT_MS` when absent). */
+  tickWaitMs?: number;
   /** People, blocks and forget-me's erasure: the SQL docket's Store has no method for (roster.ts). */
   roster: Roster;
   /** People's own daily ceilings, raised by an admin (ceilings.ts; plan 5.7). */

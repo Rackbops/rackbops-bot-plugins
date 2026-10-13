@@ -7,7 +7,7 @@ import { type Executor, materialize } from "@rackbops/docket-core";
 import { SlashCommandBuilder } from "discord.js";
 import { makeFakeDelivery, makeFakeHost } from "../../../packages/testkit/index.js";
 import pkg from "../package.json" with { type: "json" };
-import { createPlugin, DB_DIR, DB_FILE, DISPOSE_WAIT_MS, TRACKER_TYPES } from "./index.js";
+import { createPlugin, DB_DIR, DB_FILE, DISPOSE_WAIT_MS, idleWithin, TRACKER_TYPES } from "./index.js";
 import { admit } from "./people.js";
 import { MIGRATIONS, openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
@@ -502,5 +502,23 @@ describe("this file's cleanup (#232)", () => {
     });
     expect(walAtRemoval).toEqual([false]);
     expect(existsSync(dataDir)).toBe(false);
+  });
+});
+
+describe("idleWithin, forget-me's wait for the ticks (#160)", () => {
+  it("is true at once with no tick, false when one outlasts the wait, and true once the last one ends", async () => {
+    const running = new Set<Promise<unknown>>();
+    expect(await idleWithin(running, 50)).toBe(true);
+    let end = () => {};
+    const held = new Promise<void>((r) => (end = r));
+    // Removed as it settles, as index.ts's `tracked` does.
+    running.add(held);
+    void held.then(() => running.delete(held));
+    const started = Date.now();
+    expect(await idleWithin(running, 30)).toBe(false);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(25);
+    const waiting = idleWithin(running, 5_000);
+    end();
+    expect(await waiting).toBe(true);
   });
 });

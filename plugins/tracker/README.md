@@ -241,9 +241,10 @@ served at a hashed path, cached for a year).
 | `/admin` | Admins only: everyone on the list, the decline blocks in force (each with Lift), and a form to allow a person by Discord id. |
 | `/admin/tasks` | Admins only: every task in the store, with its owner, status and how many receive it, each linking to its page. |
 | `/admin/deliveries` | Admins only: the DMs that did not arrive (below), newest first. |
-| `/admin/people/<id>` | Admins only: one person -- Discord id, registration, zone and hour, delivery, task counts, their tasks -- with Make admin or Revoke admin, Resume delivery (when paused), and Remove from the tracker. |
+| `/admin/usage` | Admins only: model usage per budget day (below). |
+| `/admin/people/<id>` | Admins only: one person -- Discord id, registration, zone and hour, delivery, task counts, their tasks -- with Make admin or Revoke admin, Resume delivery (when paused), and Remove from the tracker; their daily ceiling, with the form to change it; and their API tokens, each with Revoke. |
 | `/admin/usr-link` | Admins only, POST only, with the usr link on: Link everyone to usr (below). |
-| `/admin/allow`, `/admin/people/<id>/grant`, `/revoke`, `/resume-delivery`, `/forget`, `/admin/blocks/<id>/lift`, `/admin/tokens/<id>/revoke` | Admins only, POST only: the acts below. |
+| `/admin/allow`, `/admin/people/<id>/grant`, `/revoke`, `/resume-delivery`, `/ceiling`, `/forget`, `/admin/blocks/<id>/lift`, `/admin/tokens/<id>/revoke` | Admins only, POST only: the acts below. |
 | `/api/v1/...` | The JSON task API (below): bearer tokens only, never the cookie. |
 | `/signin` | Where a request that is not signed in is sent (a POST, or any request with the usr link off): says to run `/web`, and with the usr link on offers Sign in with usr. |
 | `/login?t=...` | The link `/web` gives. |
@@ -355,9 +356,10 @@ the function the command path runs:
 - **Make admin / Revoke admin** (plan 5.8). The last admin can be neither revoked nor removed. An
   admin who revokes themselves lands on My tasks. Each change is logged (`u1 made u2 an admin`).
   An admin named in `TRACKER_ADMIN_DISCORD_IDS` is made an admin again at every start, so their page
-  offers neither Revoke nor Remove, and both are refused: take them out of the configuration first.
-  Such an admin may still forget themselves (if another admin is left); the pages say that the next
-  start makes them again, as a new person, unless the configuration no longer names them.
+  offers another admin neither Revoke nor Remove, and both are refused: take them out of the
+  configuration first. Such an admin may still forget themselves (if another admin is left): their
+  own page offers Remove but not Revoke, and the pages say that the next start makes them again, as
+  a new person, unless the configuration no longer names them.
 - **Resume delivery** of a person paused after failed DMs: `DeliveryHealth.resume`, what the
   person's own next command does -- the count clears and the tasks nothing else holds go back on.
 - **Lift** a decline block in force: docket's `liftBlock`, recorded as that admin's lift.
@@ -424,7 +426,9 @@ in one SQLite transaction in the write queue, **deleted, not archived**:
   person row.
 
 What stays, and why: another person's task that they received stays that owner's; one paused only
-because DMs to them failed goes back on. Another person's row keeps its own audit fact but not their
+because DMs to them failed goes back on (one that cannot finish, on a store error, is named in an
+admin's answer and logged with its status then -- still paused, or active with its next run maybe
+missing -- and the rest of the erasure stands). Another person's row keeps its own audit fact but not their
 id -- `admitted_by` of someone they admitted, `lifted_by` of a block they lifted, and `set_by` of a
 change they made to someone's ceiling become
 `forgotten` ("an admin since forgotten"; null already means "the configuration"). Text is matched
@@ -440,7 +444,9 @@ and is deleted when it is on a task they were a recipient of, names their curren
 other recipient of that task has that name. A row written under an older name of theirs, or shared
 with a same-named recipient, is kept: the one known gap. A reply other people wrote on the erased
 person's own tasks is deleted with those tasks. Outside the store, nothing is touched: the DMs the
-bot sent stay in the person's Discord DMs, and the host's log may hold their tracker id. **city-hall
+bot sent stay in the person's Discord DMs, and the host's log may hold their tracker id. With the
+usr link on, their usr account -- which holds their Discord id and `tracker:member` -- is usr's:
+forget-me never calls usr, so it stays until it is removed there. **city-hall
 keeps its own copy of a research Job** -- the spec (the question and context are in its prompt) and
 the result -- under city-hall's retention, not the tracker's (Nazu, plan 5.8): forget-me deletes the
 tracker's `executor_jobs` rows for the erased runs (no tombstone is kept; the keys name only the
@@ -457,7 +463,9 @@ write-ahead log is checkpointed without waiting; when a reader keeps it busy, th
 SQLite's next checkpoint copies it back.
 
 Timing: forget-me first waits, outside the write queue, until no notify or poll tick is running (at
-most 20 seconds; then it answers 503, try again, and deletes nothing), so a reminder DM to them
+most 6 seconds, under the bot's 10-second bound on a web request, so the answer reaches the browser;
+then it answers 503, try again, and deletes nothing; the queue turn after the wait has no bound of
+its own, but nothing slow runs in the queue), so a reminder DM to them
 already in flight cannot be recorded after they are gone -- and no one else's command waits behind
 it. Inside the queue it only checks that no tick started meanwhile (else the same 503). A DM sent
 outside any tick -- an invitation's -- that fails after they are gone writes nothing: the failure
@@ -724,8 +732,8 @@ checks they are a member of the server with its role, as `/allow` does; re-reads
 usr, so someone forgotten before then is never sent; allows them in usr as `tracker:member`, with the pressing
 admin as the one who allowed them; then links them. usr records each link against
 `TRACKER_GUILD_ID`'s first server, so with no gate it refuses and says to `/allow` in the server
-instead. Only a 400 from usr about the person's own details is theirs, listed by name while the rest go on; any other
-refusal or failure (the admin not linked in usr or missing `tracker:register` or `tracker:member`,
+instead. Only a 400 from usr whose reason starts with one of the person's own fields (`discord_user_id`,
+`display_name`) is theirs, listed by name while the rest go on; any other 400, refusal or failure (the admin not linked in usr or missing `tracker:register` or `tracker:member`,
 the key, usr unreachable) stops the run, since it would fail everyone the same way. It never starts
 on its own. It passes over everyone already linked, so it does not fix a link usr moved at sign-up
 (`/allow` above): run `/allow` for that person again.
@@ -755,7 +763,7 @@ From then on they `/allow` everyone else. (usr's own "Setup" step 3, in `docs/di
   [Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17); the research lane
   still needs a deployed city-hall with a runner).
 - Editing in Discord (the editor is on the web only; `/scout edit` is the one exception), and changing a price tracker's page or `near` after it is made (make a new one); a free-form pattern for `price` (`near` is the safe subset: a user's regular expression run on a large page could hang the bot).
-- Showing unconfirmed deliveries to admins anywhere but the log, or a run's deliveries in its history.
+- Showing a run's deliveries in its history (admins see the ones that did not arrive on `/admin/deliveries`).
 
 docket-core, docket-types and `@rackbops/styles` are `devDependencies`: `bun build` bundles them
 into `dist/plugin.js` (the theme's CSS as text), and the bot loads that file without installing
