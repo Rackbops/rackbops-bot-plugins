@@ -4,11 +4,14 @@ import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import { SlashCommandBuilder } from "discord.js";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import { NO_SUCH_TASK } from "../actions.js";
+import { PAUSE_DETAIL } from "../delivery-health.js";
 import { MAX_LIVE_TASKS, MAX_NEAR, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
 import { MAX_PRICE_TASKS, nearPattern } from "../price.js";
 import { MAX_FORM_BYTES } from "./app.js";
 import { READING } from "./editor.js";
-import { ADMIN, call, cleanup, csrfOf, CURLY, hidden, type Jar, LARRY, ORIGIN, people, signIn, slash, world } from "./harness.js";
+import { ADMIN, api, call, cleanup, csrfOf, CURLY, hidden, type Jar, LARRY, makeToken, ORIGIN, people, press, signIn, slash, STRANGER, world } from "./harness.js";
+import { esc } from "./html.js";
+import { DMS_PAUSED } from "./pages.js";
 
 /**
  * The task editor (rackbops-bot-plugins#80, slice 2), through the plugin's own `http` handler with
@@ -523,6 +526,46 @@ describe("only the owner", () => {
   });
 });
 
+describe("a recipient's delivery pause (#167)", () => {
+  it("is not on another recipient's page or /task history, nor in its count; the owner's own pause and resume are, and the owner's page names them", async () => {
+    const w = await setup();
+    await slash(w.plugin, "allow", ADMIN, { users: { user: STRANGER } });
+    await slash(w.plugin, "register", STRANGER);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    for (const who of [CURLY, STRANGER]) {
+      await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: who } });
+      await press(w.plugin, "tracker:a.t.t1", who);
+    }
+    // The owner pauses and resumes it by hand, twice (the web is the one place to pause by hand):
+    // Stranger then sees more changes than are shown, the hidden pause among the newest five.
+    for (let i = 0; i < 2; i++) {
+      for (const act of ["pause", "resume"]) expect((await post(w.plugin, w.larry, w.csrf, `/tasks/t1/${act}`)).status).toBe(303);
+    }
+    w.delivery.unreachable.add(CURLY);
+    for (const day of ["01", "02", "03"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await notifyTick(w.plugin);
+    }
+    const history = await slash(w.plugin, "task", STRANGER, { sub: "history", strings: { task: "t1" } });
+    expect(history.slice(history.indexOf("Changes:"))).toBe(
+      [
+        "Changes:",
+        "- (2 earlier)",
+        "- Thu Oct 1, 8:00 recipient accepted",
+        "- Thu Oct 1, 8:00 paused: paused by the owner",
+        "- Thu Oct 1, 8:00 resumed: resumed by the owner",
+        "- Thu Oct 1, 8:00 paused: paused by the owner",
+        "- Thu Oct 1, 8:00 resumed: resumed by the owner",
+      ].join("\n"),
+    );
+    const page = async (who: string) => (await call(w.plugin, "GET", "/tasks/t1", { jar: await signIn(w.plugin, who) })).text();
+    expect(await page(LARRY)).toContain("delivery to user333 paused:");
+    const theirs = await page(STRANGER);
+    expect(theirs).toContain("bins out");
+    expect(theirs).not.toContain("delivery to");
+  });
+});
+
 describe("the gates", () => {
   it("every editor post needs the session's CSRF token and this Origin; nothing changes without them", async () => {
     const w = await setup();
@@ -796,5 +839,270 @@ describe("review fixes", () => {
     for (let i = 0; i < MAX_PRICE_TASKS; i++) await slash(w.plugin, "price", LARRY, { strings: { url: `${SHOP}${i}` } });
     const answer = await slash(w.plugin, "price", LARRY, { strings: { url: SHOP } });
     expect(answer).toBe(`You already track ${MAX_PRICE_TASKS} prices, the most one person may. Stop one with \`/task done\` first.`);
+  });
+});
+
+/** Who a task is held for (delivery-health.ts `delivery_pauses`), and each of its runs' delivery rows. */
+function holds(dbPath: string, taskId: string) {
+  const db = new Database(dbPath, { readonly: true });
+  const pauses = (db.query("SELECT user_id FROM delivery_pauses WHERE task_id = ? ORDER BY user_id").all(taskId) as { user_id: string }[]).map((r) => r.user_id);
+  const deliveries = db
+    .query(
+      `SELECT d.user_id AS user, d.status AS status FROM deliveries d JOIN occurrences o ON d.occurrence_id = 'o' || o.seq
+       WHERE o.task_id = ? ORDER BY d.seq`,
+    )
+    .all(taskId) as { user: string; status: string }[];
+  db.close();
+  return { pauses, deliveries };
+}
+
+describe("a send held for a paused person (#168)", () => {
+  it("a task made on the web by a paused person pauses at its first send, and its DM waits for the resume", async () => {
+    const w = await setup();
+    for (const text of ["a", "b", "c"]) await slash(w.plugin, "remind", LARRY, { strings: { text, when: "in 5 minutes" } });
+    w.delivery.refuse = true;
+    w.clock.advance(10 * 60 * 1000);
+    await notifyTick(w.plugin);
+    w.delivery.refuse = false;
+    expect(deliveryPausedAt(w.dbPath, "u2")).not.toBeNull();
+    // Making a task on the web resumes no one: Larry makes a reminder there while his delivery is still paused.
+    const res = await post(w.plugin, w.larry, w.csrf, "/new/reminder", { text: "made on the web", when: "in 5 minutes", repeat: "none" });
+    expect(res.headers.get("location")).toBe("/tracker/tasks/t4?done=created");
+    expect(deliveryPausedAt(w.dbPath, "u2")).not.toBeNull();
+    // Six hours of ticks, far past docket's eight deferrals (about two hours) had the task stayed active.
+    for (let i = 0; i < 72; i++) {
+      w.clock.advance(5 * 60 * 1000);
+      await notifyTick(w.plugin);
+    }
+    expect(tasks(w.dbPath)[3]?.status).toBe("paused");
+    expect(events(w.dbPath, "t4")).toEqual(["created", `paused: ${PAUSE_DETAIL}`]);
+    expect(holds(w.dbPath, "t4")).toEqual({ pauses: ["u2"], deliveries: [{ user: "u2", status: "deferred" }] });
+    expect(w.sent).toEqual([]);
+
+    // He uses a command: resumed, and the next tick DMs him that run.
+    expect(await slash(w.plugin, "tasks", LARRY)).toContain("I could not DM you 3 times in a row");
+    expect(tasks(w.dbPath)[3]?.status).toBe("active");
+    await notifyTick(w.plugin);
+    expect(w.sent.map((s) => [s.userId, (s.message as { content: string }).content])).toEqual([[LARRY, "made on the web"]]);
+    expect(holds(w.dbPath, "t4")).toEqual({ pauses: [], deliveries: [{ user: "u2", status: "sent" }] });
+  });
+});
+
+/** The banner's text as a page carries it, escaped. */
+const BANNER = esc(DMS_PAUSED);
+
+/** The banner's Resume DMs form, with the session's CSRF token. */
+function resumeForm(csrf: string): string {
+  return `<form method="post" action="/tracker/resume-dms"><input type="hidden" name="csrf" value="${csrf}"><button class="rb-btn rb-btn--accent rb-btn--sm" type="submit">Resume DMs</button></form>`;
+}
+
+async function page(plugin: Plugin, jar: Jar, path: string): Promise<string> {
+  const res = await call(plugin, "GET", path, { jar });
+  expect(res.status).toBe(200);
+  return res.text();
+}
+
+/**
+ * Three runs of Larry's in a row the host cannot deliver: his delivery pauses, with every active task
+ * that would DM him. After his session is made: `/web` is a command, and a command resumes him.
+ */
+async function pauseLarry(w: Awaited<ReturnType<typeof setup>>): Promise<void> {
+  for (const text of ["a", "b", "c"]) await slash(w.plugin, "remind", LARRY, { strings: { text, when: "in 5 minutes" } });
+  w.delivery.unreachable.add(LARRY);
+  w.clock.advance(10 * 60 * 1000);
+  await notifyTick(w.plugin);
+  w.delivery.unreachable.delete(LARRY);
+  expect(deliveryPausedAt(w.dbPath, "u2")).not.toBeNull();
+}
+
+/** One run of Larry's the host cannot deliver: a count of one, short of the pause. */
+async function failOnce(w: Awaited<ReturnType<typeof setup>>, text: string): Promise<void> {
+  await slash(w.plugin, "remind", LARRY, { strings: { text, when: "in 5 minutes" } });
+  w.delivery.unreachable.add(LARRY);
+  w.clock.advance(10 * 60 * 1000);
+  await notifyTick(w.plugin);
+  w.delivery.unreachable.delete(LARRY);
+}
+
+/** A person's `delivery_health` row as stored, every column. */
+function healthRow(dbPath: string, userId: string): Record<string, unknown> | null {
+  const db = new Database(dbPath, { readonly: true });
+  const row = db.query("SELECT * FROM delivery_health WHERE user_id = ?").get(userId) as Record<string, unknown> | null;
+  db.close();
+  return row;
+}
+
+describe("Resume DMs on the web (#168)", () => {
+  it("a paused person sees the banner on every page, with a Resume DMs form", async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "stretch", repeat: "day" } });
+    const curly = await signIn(w.plugin, CURLY);
+    for (const path of ["/", "/tasks/t1", "/settings"]) expect(await page(w.plugin, w.larry, path)).not.toContain(BANNER);
+    await pauseLarry(w);
+    expect(tasks(w.dbPath)[0]?.status).toBe("paused");
+    for (const path of ["/", "/tasks/t1", "/settings"]) {
+      const body = await page(w.plugin, w.larry, path);
+      expect(body).toContain(BANNER);
+      expect(body).toContain(resumeForm(w.csrf));
+    }
+    // Curly is not paused: no banner and no button.
+    for (const path of ["/", "/settings"]) {
+      const body = await page(w.plugin, curly, path);
+      expect(body).not.toContain(BANNER);
+      expect(body).not.toContain("/resume-dms");
+    }
+  });
+
+  it("Resume DMs resumes the person and their tasks, and says how many are back on", async () => {
+    const w = await setup();
+    const curly = await signIn(w.plugin, CURLY);
+    // He receives Curly's daily reminder (accepted before his DMs fail: a press is a use, which
+    // resumes), and his copy of three runs in a row cannot be delivered.
+    await slash(w.plugin, "remind", CURLY, { strings: { text: "curly-plants", when: "9am", repeat: "day" } });
+    await slash(w.plugin, "task", CURLY, { sub: "share", strings: { task: "t1" }, users: { user: LARRY } });
+    await press(w.plugin, "tracker:a.t.t1", LARRY);
+    w.delivery.unreachable.add(LARRY);
+    for (const day of ["01", "02", "03"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await notifyTick(w.plugin);
+    }
+    w.delivery.unreachable.delete(LARRY);
+    expect(deliveryPausedAt(w.dbPath, "u2")).not.toBeNull();
+    // He owns one made on the web while paused: it pauses at its first send, which waits (part 1's test).
+    const made = await post(w.plugin, w.larry, w.csrf, "/new/reminder", { text: "made on the web", when: "in 5 minutes", repeat: "none" });
+    expect(made.headers.get("location")).toBe("/tracker/tasks/t2?done=created");
+    for (let i = 0; i < 72; i++) {
+      w.clock.advance(5 * 60 * 1000);
+      await notifyTick(w.plugin);
+    }
+    expect(tasks(w.dbPath).map((t) => t.status)).toEqual(["paused", "paused"]);
+    expect(holds(w.dbPath, "t2")).toEqual({ pauses: ["u2"], deliveries: [{ user: "u2", status: "deferred" }] });
+    const sentBefore = w.sent.length;
+    // An old tab's address while he is still paused: the banner, and no word of a resume.
+    const stale = await page(w.plugin, w.larry, "/?done=resumed-dms");
+    expect(stale).toContain(BANNER);
+    expect(stale).not.toContain("DMs resumed.");
+
+    const res = await post(w.plugin, w.larry, w.csrf, "/resume-dms");
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/tracker/?done=resumed-dms");
+    expect(deliveryPausedAt(w.dbPath, "u2")).toBeNull();
+    expect(tasks(w.dbPath).map((t) => t.status)).toEqual(["active", "active"]);
+    for (const id of ["t1", "t2"]) expect(events(w.dbPath, id).at(-1)).toBe("resumed: delivery resumed");
+    // The count is Larry's: Curly at the same address first sees no count, and takes none.
+    const curlys = await page(w.plugin, curly, "/?done=resumed-dms");
+    expect(curlys).toContain("DMs resumed.");
+    expect(curlys).not.toContain("back on");
+    const home = await page(w.plugin, w.larry, "/?done=resumed-dms");
+    expect(home).toContain("DMs resumed. 2 task(s) are back on.");
+    expect(home).not.toContain(BANNER);
+    // The count is shown once; a reload says only that DMs resumed.
+    const reloaded = await page(w.plugin, w.larry, "/?done=resumed-dms");
+    expect(reloaded).toContain("DMs resumed.");
+    expect(reloaded).not.toContain("back on");
+
+    // The DM his web-made task held goes out on the next tick.
+    await notifyTick(w.plugin);
+    expect(w.sent.slice(sentBefore).map((s) => [s.userId, (s.message as { content: string }).content])).toEqual([[LARRY, "made on the web"]]);
+    expect(holds(w.dbPath, "t2")).toEqual({ pauses: [], deliveries: [{ user: "u2", status: "sent" }] });
+  });
+
+  it("Resume DMs without the CSRF token is refused and resumes no one", async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "stretch", repeat: "day" } });
+    await pauseLarry(w);
+    const curly = await csrfOf(w.plugin, await signIn(w.plugin, CURLY));
+    for (const form of [{}, { csrf: "" }, { csrf: curly }] as Record<string, string>[]) {
+      expect((await call(w.plugin, "POST", "/resume-dms", { jar: w.larry, form, origin: ORIGIN })).status).toBe(403);
+    }
+    expect((await call(w.plugin, "POST", "/resume-dms", { jar: w.larry, form: { csrf: w.csrf }, origin: "https://evil.example.net" })).status).toBe(403);
+    const get = await call(w.plugin, "GET", "/resume-dms", { jar: w.larry });
+    expect(get.status).toBe(405);
+    expect(get.headers.get("allow")).toBe("POST");
+    const anon = await call(w.plugin, "POST", "/resume-dms", { form: { csrf: w.csrf }, origin: ORIGIN });
+    expect(anon.status).toBe(303);
+    expect(anon.headers.get("location")).toBe("/tracker/signin");
+    expect(deliveryPausedAt(w.dbPath, "u2")).not.toBeNull();
+    expect(tasks(w.dbPath)[0]?.status).toBe("paused");
+    expect(events(w.dbPath, "t1")).toEqual(["created", `paused: ${PAUSE_DETAIL}`]);
+  });
+
+  it("pressing Resume DMs when not paused changes nothing", async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "stretch", repeat: "day" } });
+    // One failure on record, so a write to his row would show.
+    await failOnce(w, "x");
+    const counted = healthRow(w.dbPath, "u2");
+    expect(counted).toMatchObject({ failures: 1, paused_at: null });
+    const never = await post(w.plugin, w.larry, w.csrf, "/resume-dms");
+    expect(never.status).toBe(303);
+    expect(never.headers.get("location")).toBe("/tracker/");
+    expect(events(w.dbPath, "t1")).toEqual(["created"]);
+    expect(healthRow(w.dbPath, "u2")).toEqual(counted);
+    // A second press, after the first resumed him: the same.
+    await pauseLarry(w);
+    expect((await post(w.plugin, w.larry, w.csrf, "/resume-dms")).headers.get("location")).toBe("/tracker/?done=resumed-dms");
+    const resumed = events(w.dbPath, "t1");
+    expect(resumed.at(-1)).toBe("resumed: delivery resumed");
+    await failOnce(w, "y");
+    // Failures on record again, short of a pause, so a write to his row would show.
+    const recounted = healthRow(w.dbPath, "u2");
+    expect(recounted?.paused_at).toBeNull();
+    expect(Number(recounted?.failures)).toBeGreaterThan(0);
+    const again = await post(w.plugin, w.larry, w.csrf, "/resume-dms");
+    expect(again.status).toBe(303);
+    expect(again.headers.get("location")).toBe("/tracker/");
+    expect(events(w.dbPath, "t1")).toEqual(resumed);
+    expect(healthRow(w.dbPath, "u2")).toEqual(recounted);
+    expect(tasks(w.dbPath)[0]?.status).toBe("active");
+    expect(await page(w.plugin, w.larry, "/")).not.toContain('role="status"');
+  });
+
+  it("viewing pages, a web edit and a Task API call resume no one", async () => {
+    const w = await setup();
+    const token = await makeToken(w, w.larry);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "stretch", repeat: "day" } });
+    await pauseLarry(w);
+    const pausedAt = deliveryPausedAt(w.dbPath, "u2");
+    for (const path of ["/", "/tasks/t1", "/tasks/t1/edit", "/settings", "/tokens"]) expect(await page(w.plugin, w.larry, path)).toContain(BANNER);
+    const saved = await post(w.plugin, w.larry, w.csrf, "/tasks/t1/edit", { text: "stretch more", when: "", repeat: "day" });
+    expect(saved.headers.get("location")).toBe("/tracker/tasks/t1?done=saved");
+    expect((await api(w.plugin, "POST", "/tasks", { token, body: { type: "reminder", text: "from the api", when: "tomorrow 9am" } })).status).toBe(201);
+    expect((await api(w.plugin, "GET", "/tasks", { token })).status).toBe(200);
+    expect(deliveryPausedAt(w.dbPath, "u2")).toBe(pausedAt);
+    expect(tasks(w.dbPath)[0]).toMatchObject({ title: "stretch more", status: "paused" });
+    expect(await page(w.plugin, w.larry, "/")).toContain(BANNER);
+  });
+
+  it("an admin's own banner is theirs alone", async () => {
+    const w = await setup();
+    await pauseLarry(w);
+    const admin = await signIn(w.plugin, ADMIN);
+    const theirs = await page(w.plugin, admin, "/admin/people/u2");
+    expect(theirs).not.toContain(BANNER);
+    expect(theirs).not.toContain("/resume-dms");
+    expect(theirs).toContain('action="/tracker/admin/people/u2/resume-delivery"');
+    expect(theirs).toContain(">Resume delivery</button>");
+    expect(await page(w.plugin, w.larry, "/")).toContain(BANNER);
+  });
+
+  it("an admin who resumes their own delivery from their admin page sees no banner on the result", async () => {
+    const w = await setup();
+    const admin = await signIn(w.plugin, ADMIN);
+    const csrf = await csrfOf(w.plugin, admin);
+    for (const text of ["a", "b", "c"]) await slash(w.plugin, "remind", ADMIN, { strings: { text, when: "in 5 minutes" } });
+    w.delivery.unreachable.add(ADMIN);
+    w.clock.advance(10 * 60 * 1000);
+    await notifyTick(w.plugin);
+    w.delivery.unreachable.delete(ADMIN);
+    expect(deliveryPausedAt(w.dbPath, "u1")).not.toBeNull();
+    expect(await page(w.plugin, admin, "/admin/people/u1")).toContain(BANNER);
+    const res = await post(w.plugin, admin, csrf, "/admin/people/u1/resume-delivery");
+    expect(res.status).toBe(200);
+    const result = await res.text();
+    expect(result).toContain("resumed; 3 task(s) back on.");
+    expect(result).not.toContain(BANNER);
+    expect(result).not.toContain("/resume-dms");
+    expect(deliveryPausedAt(w.dbPath, "u1")).toBeNull();
   });
 });

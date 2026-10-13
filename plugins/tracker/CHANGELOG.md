@@ -20,7 +20,65 @@
 ### Schema
 
 - Migration 10: a new `mail_addresses` table, purely additive. A database at 10 is refused by
-  0.23.0 and older.
+  0.24.0 and older.
+
+## [0.24.0] - 2026-10-13
+
+The fixes from the 2026-10-07 code review (epics #265 and #266).
+
+### Added
+
+- **Resume DMs on the web** (#168, #288): a person whose DMs are paused sees a banner on every
+  signed-in page with a Resume DMs button (`POST /resume-dms`). It resumes them as their next
+  command would, and My tasks then says so.
+
+### Fixed
+
+- A paused person's DM is held by pausing every task that still DMs them (#168, #279).
+- A delivered DM is kept when its failure count cannot be cleared (#169, #278).
+- A recipient's delivery pause shows only to them, the task's owner and admins (#167, #275).
+- A recipient's reply is kept and shown as one plain line (#205, #289).
+- `/tasks` fits in one message by whole lines and keeps the paused tasks; a pressed button keeps
+  its status (#161, #274).
+- The daily digest fits in one message (#211, #280).
+- `/task history` for a want watch sends its findings as a second message, up to a run's worth
+  (#166, #281).
+- A near price ends at its last digit, so "19.99," reads as 19.99 (#164, #271).
+- A page's tags are read at the right offsets whatever its letters, and up to 200 JSON-LD blocks
+  are kept (#163, #277).
+- A refused route is named, an unreachable city-hall is logged, Jobs are pruned by key, and a bad
+  redirect is refused (#214, #282).
+- The execute lane starts on every host tick, a failed start is closed, and dispose waits for
+  running ticks (#203, #284).
+
+### Changed
+
+- Docs and comments say what is true: `/price` may track an eBay page and only the want-list
+  watcher refuses eBay (#165, #270); the queue, the membership gate and the task API (#204, #283);
+  city-hall's requeue cap as how a `usage_limit` reaches docket (#213, #285); the core's comments,
+  with the unused `localIdentity` dropped (#202, #290).
+- The 48 h hold's comment and tests say that city-hall's requeue cap fails a Job inside it at the
+  runner's hourly pace, and which paths let the hold end first (#287, #293).
+- Tests pin the Reply path's membership and registration gates (#162, #272), and close what each
+  opened before removing its temp directory, so the suite passes on Windows (#232, #276).
+
+### Schema
+
+- No change.
+
+## [0.23.1] - 2026-10-13
+
+### Fixed
+
+- `/allow` with the usr link on no longer tells someone usr already knew that "they can finish
+  their usr sign-up with `/register`" as if they were new. When usr linked an account it already
+  had, the reply now says "Linked to usr, to the usr account it already had for them; if they have
+  not signed up there yet, they can with `/register`." (usr does not say whether that account
+  finished signing up); the plain sign-up hint stays for someone usr made a new account for.
+
+### Schema
+
+- No change.
 
 ## [0.23.0] - 2026-10-07
 

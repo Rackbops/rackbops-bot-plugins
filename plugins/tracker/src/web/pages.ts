@@ -1,5 +1,6 @@
 import { ADMIN_DISCLOSURE, describeSchedule, formatInstant, type TaskListEntry, type User } from "@rackbops/docket-core";
 import type { PausedTask } from "../actions.js";
+import { PAUSE_AFTER } from "../delivery-health.js";
 import { FINDINGS_SHOWN, type FindingView, type HistoryView } from "../history.js";
 import { MAX_ZONE } from "../limits.js";
 import { html, type Html, page } from "./html.js";
@@ -14,14 +15,36 @@ export interface Viewer {
   base: string;
   user: User;
   csrf: string;
+  /** The viewer's own DMs are paused (delivery-health.ts): read once per request, where app.ts builds this. */
+  deliveryPaused: boolean;
 }
 
 function name(u: User): string {
   return u.displayName ?? "you";
 }
 
+export const DMS_PAUSED =
+  `DMs to you are paused: the bot could not DM you ${PAUSE_AFTER} times in a row, so the tasks that DM you are paused too, and their DMs wait. ` +
+  "Only a DM for a task already finished, such as a research answer, does not wait: it fails if you are still paused about two hours on " +
+  "(a research answer's claims stay on its task page). " +
+  "Check that you accept DMs from members of a server you share with the bot, then resume.";
+
+/** The banner above every page while the viewer's DMs are paused; its one button posts to `/resume-dms` (app.ts). */
+function pausedBanner(v: Viewer): Html {
+  return html`<section><div class="rb-alert rb-alert--warning" role="status">
+<p>${DMS_PAUSED}</p>
+<form method="post" action="${v.base}/resume-dms"><input type="hidden" name="csrf" value="${v.csrf}"><button class="rb-btn rb-btn--accent rb-btn--sm" type="submit">Resume DMs</button></form>
+</div></section>`;
+}
+
 export function framed(v: Viewer, title: string, body: Html): string {
-  return page({ base: v.base, title, signedIn: { name: name(v.user), csrf: v.csrf, admin: v.user.admin }, body });
+  return page({
+    base: v.base,
+    title,
+    signedIn: { name: name(v.user), csrf: v.csrf, admin: v.user.admin },
+    body: v.deliveryPaused ? html`${pausedBanner(v)}
+${body}` : body,
+  });
 }
 
 /** Where a request that is not signed in lands. */

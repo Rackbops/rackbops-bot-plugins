@@ -13,8 +13,8 @@ import {
   type TaskEvent,
   type User,
 } from "@rackbops/docket-core";
-import { clip, NO_SUCH_TASK, type TrackerDeps } from "./actions.js";
-import { PERSON_REF } from "./delivery-health.js";
+import { clip, NO_SUCH_TASK, oneLine, type TrackerDeps } from "./actions.js";
+import { isRecipientPause, PERSON_REF, pauseNames } from "./delivery-health.js";
 
 /**
  * `/task history` (plan 1.3 "History", 5.10): every run of a task -- when it was due, how it went,
@@ -29,7 +29,8 @@ export const HISTORY_CHANGES = 5;
 function replyText(r: Reply): string {
   if (r.kind === "text") {
     const text = typeof r.payload === "object" && r.payload !== null ? String((r.payload as { text?: unknown }).text ?? "") : "";
-    return `replied "${clip(text, 80)}"`;
+    // One line even when it was kept before #205, line breaks and all.
+    return `replied "${clip(oneLine(text), 80)}"`;
   }
   if (r.kind === "decision") return `chose ${String((r.payload as { choice?: unknown } | null)?.choice ?? "?")}`;
   return r.kind === "opt_out" ? "opted out" : r.kind;
@@ -42,7 +43,7 @@ export interface RunView {
   late: boolean;
   /** The failure, clipped; null unless the run failed with one. */
   error: string | null;
-  /** `Larry replied "..."`, `Curly opted out`. */
+  /** `Larry replied "..."`, `Curly opted out`: plain text, one line each; Discord's rendering (`runLine`) escapes them. */
   answers: string[];
 }
 
@@ -69,10 +70,21 @@ export function changeView(e: TaskEvent, viewer: User, now: Date, names: Readonl
   return { at: formatInstant(e.at, viewer.timeZone, now), kind: e.kind.replaceAll("_", " "), detail };
 }
 
+/**
+ * Shown as typed in Discord: a backslash before each `\`, `[`, `]`, `<`, `|` and backtick, and before
+ * a `(` right after a `]` -- Discord's link text ignores escapes, so a `[` elsewhere on the message (a
+ * title, another line) could still pair with an escaped `]`. No masked link, spoiler or code renders
+ * from a reply; a mention or timestamp typed right after a bare link still can (the link takes the
+ * backslash), and `NO_MENTIONS` keeps it from pinging.
+ */
+function discordPlain(text: string): string {
+  return text.replace(/[\\[\]<|`]|(?<=\])\(/g, "\\$&");
+}
+
 function runLine(v: RunView): string {
   const late = v.late ? " (late)" : "";
   const error = v.error ? `: ${v.error}` : "";
-  const answered = v.answers.length > 0 ? `; ${v.answers.join(", ")}` : "";
+  const answered = v.answers.length > 0 ? `; ${v.answers.map(discordPlain).join(", ")}` : "";
   return `- ${v.due} -- ${v.status}${late}${error}${answered}`;
 }
 
@@ -138,7 +150,12 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
   const runs = all.filter((o) => !upcoming(o));
   const next = all.find(upcoming);
   const replies = (await visibleReplies(d.store, actor, task.id)) ?? [];
-  const changes = (await visibleHistory(d.store, actor, task.id)) ?? [];
+  // A pause for a recipient is shown only to them, the owner and admins (#167; delivery-health.ts
+  // `isRecipientPause`): docket's `visibleHistory` hides a recipient's own rows from the others, but
+  // not this one. Filtered here, before the slice and the "(N earlier)" count, so Discord, the web
+  // and the API agree.
+  const seesEveryPause = user.admin || task.ownerId === user.id;
+  const changes = ((await visibleHistory(d.store, actor, task.id)) ?? []).filter((e) => seesEveryPause || !isRecipientPause(e) || pauseNames(e.detail, user.id));
   const people = new Map<string, User>();
   for (const r of replies) {
     if (!people.has(r.userId)) {

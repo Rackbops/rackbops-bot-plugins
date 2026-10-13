@@ -20,7 +20,7 @@ const ADMIN_TOKEN_REVOKE = /^\/admin\/tokens\/([^/]+)\/revoke$/;
 export type PersonAction = "grant" | "revoke" | "resume-delivery" | "forget";
 
 export type Route =
-  | { kind: "tasks" | "settings" | "logout" }
+  | { kind: "tasks" | "settings" | "logout" | "resume-dms" }
   | { kind: "task"; id: string }
   | { kind: "edit"; id: string }
   | { kind: "act"; id: string; action: TaskAction }
@@ -54,6 +54,7 @@ export function route(path: string): Route | null {
   if (path === "/") return { kind: "tasks" };
   if (path === "/settings") return { kind: "settings" };
   if (path === "/logout") return { kind: "logout" };
+  if (path === "/resume-dms") return { kind: "resume-dms" };
   if (path === "/forget") return { kind: "forget" };
   if (path === "/tokens") return { kind: "tokens" };
   const revoke = TOKEN_REVOKE.exec(path);
@@ -92,6 +93,7 @@ export function route(path: string): Route | null {
 export function methodsOf(r: Route): "GET" | "POST" | "GET, POST" {
   if (
     r.kind === "logout" ||
+    r.kind === "resume-dms" ||
     r.kind === "act" ||
     r.kind === "admin-allow" ||
     r.kind === "admin-usr-link" ||

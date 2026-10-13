@@ -210,7 +210,8 @@ export async function adminPost(a: AdminWeb, r: Route, form: URLSearchParams): P
   // An admin who just revoked their own flag has no admin view any more.
   const me = await a.d.store.getUser(a.v.user.id);
   if (!me?.admin) return redirect(`${base}/`);
-  return onePerson(a, r.id, said(done));
+  // One who just resumed their own delivery has no banner any more: the viewer's pause, read again.
+  return onePerson({ ...a, v: { ...a.v, deliveryPaused: a.d.health.isPaused(a.v.user.id) } }, r.id, said(done));
 }
 
 /** Where "Link everyone to usr" has got to: one run at a time per tracker, shown on the admin page. */

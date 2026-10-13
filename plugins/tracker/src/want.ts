@@ -16,8 +16,9 @@ import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
  *   the task is made only when it does.
  * - `bgg`: a BoardGameGeek game, read through BGG's API while `TRACKER_BGG_TOKEN` is set (`d.bgg`);
  *   without it (BGG declined the application), an inbox watch for BGG, as for eBay below.
- * - `ebay`: an inbox watch (docket-types' `inbox` source, inbox.ts). The tracker never opens eBay
- *   (nor BGG without its API): Rod's rule, 2026-10-05. The listings reach the watch when someone
+ * - `ebay`: an inbox watch (docket-types' `inbox` source, inbox.ts). The want-list watcher never
+ *   opens eBay, and an inbox watch opens neither eBay nor BGG: Rod's rule, 2026-10-05; scoped to
+ *   the watcher by roshne, 2026-10-11 (#165). The listings reach the watch when someone
  *   sends them in -- the owner's own browser, Claude in Chrome searching eBay for them, through
  *   the task API's `POST /tasks/<id>/listings`, or eBay's saved-search alert emails (mail.ts, 0.25.0) -- and the
  *   watch DMs the new ones as any watch does. The answer still hands over the eBay search, with
@@ -55,7 +56,7 @@ export const INBOX_OFF =
   "Watching eBay or BoardGameGeek needs this bot's web area: listings are sent in through its task API, and this bot has no web area set up. A listing page (`source: page`) works now.";
 export const JUDGE_OFF = "Checking listings with the model needs the model runner, which this bot does not have set up. Leave `judge` out for a plain watch.";
 export const WANT_TYPES: ReadonlySet<string> = new Set(["wantlist", "wantjudge"]);
-export const EBAY_PAGE = "I never open eBay's pages. Use `source: ebay` instead: it makes a watch that the eBay listings you send in reach, and I DM you the new ones.";
+export const EBAY_PAGE = "A want-list watch never opens eBay's pages. Use `source: ebay` instead: it makes a watch that the eBay listings you send in reach, and I DM you the new ones.";
 
 /** A watch's config as the host keeps it: docket's, plus an inbox watch's words and BGG game (see above). */
 export type WatchConfig = WantConfig & {
@@ -151,8 +152,8 @@ function inboxNote(c: WatchConfig, taskId: string, alerts: string | null): strin
     const cap = c.maxPrice !== undefined ? ` at or under ${money(c.maxPrice, c.currency ?? "")}` : "";
     return [
       alerts
-        ? `I never open eBay myself. Listings reach this watch from eBay's saved-search alert emails, and when you search eBay in your own browser with Claude in Chrome and ${send}.`
-        : `I never open eBay myself. Listings reach this watch when you search eBay in your own browser with Claude in Chrome and ${send}.`,
+        ? `This watch never opens eBay itself. Listings reach it from eBay's saved-search alert emails, and when you search eBay in your own browser with Claude in Chrome and ${send}.`
+        : `This watch never opens eBay itself. Listings reach it when you search eBay in your own browser with Claude in Chrome and ${send}.`,
       `The eBay search for "${words}"${cap}: <${ebaySearchUrl(words, c.maxPrice)}>`,
       ...(alerts
         ? [
@@ -164,7 +165,7 @@ function inboxNote(c: WatchConfig, taskId: string, alerts: string | null): strin
   if (site === "bgg") {
     const what = c.game !== undefined ? `BGG game ${c.game}` : `"${words}"`;
     return [
-      `This bot has no BoardGameGeek API access (BGG did not approve its application), and I never open BGG's pages myself. Listings reach this watch when you look at BGG's marketplace in your own browser with Claude in Chrome and ${send}.`,
+      `This bot has no BoardGameGeek API access (BGG did not approve its application), and this watch never opens BGG's pages itself. Listings reach it when you look at BGG's marketplace in your own browser with Claude in Chrome and ${send}.`,
       `What to look for: ${what}.`,
     ];
   }

@@ -1,5 +1,6 @@
 import type { Task } from "@rackbops/docket-core";
 import { CURRENCY_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
+import { backOn } from "../delivery-health.js";
 import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
 import { MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "../scout.js";
@@ -115,7 +116,7 @@ export function fieldsFor(type: NewType, mode: "new" | "edit"): readonly Field[]
             kind: "text",
             maxlength: MAX_URL,
             help:
-              "A shop's listing or search page, or a BGG game's address or id. For eBay, the words to search for (the name when empty): I never open eBay, so its listings reach the watch when you send them in through the task API, such as from Claude in Chrome in your own browser. BGG works the same way while this bot has no BGG access.",
+              "A shop's listing or search page, or a BGG game's address or id. For eBay, the words to search for (the name when empty): a watch never opens eBay, so its listings reach the watch when you send them in through the task API, such as from Claude in Chrome in your own browser. BGG works the same way while this bot has no BGG access.",
           } as const,
           {
             name: "judge",
@@ -311,8 +312,24 @@ export const NOTICES: Readonly<Record<string, string>> = {
   deleted: "Deleted. Its history is kept.",
 };
 
+function success(text: string): Html {
+  return html`<div class="rb-alert rb-alert--success" role="status"><p class="rb-alert__title">${text}</p></div>`;
+}
+
 export function notice(key: string | null, error?: string): Html | null {
   if (error) return html`<div class="rb-alert rb-alert--danger" role="alert"><p>${prose(error)}</p></div>`;
   const text = key !== null && Object.hasOwn(NOTICES, key) ? NOTICES[key] : undefined;
-  return text ? html`<div class="rb-alert rb-alert--success" role="status"><p class="rb-alert__title">${text}</p></div>` : null;
+  return text ? success(text) : null;
+}
+
+/** Where Resume DMs lands (`?done=resumed-dms`, app.ts). */
+export const RESUMED_DMS = "resumed-dms";
+
+/**
+ * Resume DMs' notice on My tasks: how many tasks came back on, in `resumedNotice`'s words, while
+ * this process still holds the count for the person (app.ts); after a reload or a restart, only
+ * that DMs resumed. Nothing in it comes from the address.
+ */
+export function resumedDmsNotice(back: number | undefined): Html {
+  return success(back === undefined ? "DMs resumed." : `DMs resumed. ${backOn(back)}`);
 }

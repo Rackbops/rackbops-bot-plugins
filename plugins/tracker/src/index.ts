@@ -10,7 +10,7 @@ import { Admissions } from "./admissions.js";
 import { Ceilings } from "./ceilings.js";
 import { DeliveryHealth } from "./delivery-health.js";
 import { createPageFetch } from "./fetch.js";
-import { EXECUTE_EVERY_MS, ExecuteLane } from "./execute-lane.js";
+import { EXECUTE_MIN_GAP_MS, ExecuteLane } from "./execute-lane.js";
 import { type CityHallConfig, createCityHallExecutor, databaseId, JobRecords, parseCityHallConfig } from "./executor.js";
 import type { Membership } from "./access.js";
 import { type Interactionish, lookupMembership, type RoleGate, serial } from "./discord-common.js";
@@ -51,12 +51,21 @@ import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_ID
  * and overdue" digest after the runs on the `notify` tick (plan 5.5, digest.ts).
  *
  * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID`, `TRACKER_GUILD_ROLES`,
- * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts), `TRACKER_BUDGET_UNLIMITED` (usage.ts), the `TRACKER_USR_*` settings (usr.ts) and the `TRACKER_MAIL_*` settings (mail.ts) and nothing else. The database is opened in `activate()` and closed in `dispose()`.
+ * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts), the `TRACKER_USR_*` settings (usr.ts: a
+ * half-set link refuses to load), `TRACKER_BUDGET_UNLIMITED` (usage.ts) and the `TRACKER_MAIL_*` settings (mail.ts),
+ * reads `TRACKER_BGG_TOKEN`, and nothing else. The database is opened in `activate()` and closed in `dispose()`.
  */
 
 /** The tracker's database: `<dataDir>/tracker/tracker.sqlite`, a directory of its own (mcp's convention). */
 export const DB_DIR = "tracker";
 export const DB_FILE = "tracker.sqlite";
+
+/**
+ * How long `dispose()` waits for the ticks in flight before it closes the database: under the
+ * host's own 2 s bound on a plugin's dispose (rackbops-discord-bot's `PLUGIN_DISPOSE_TIMEOUT_MS`),
+ * leaving it room for the close.
+ */
+export const DISPOSE_WAIT_MS = 1_500;
 
 /**
  * The task types this host runs: the notify-lane types -- `price` reads pages through the fenced
@@ -152,8 +161,9 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   // BGG's answers are XML, read by docket-types' own bounded BGG parser: the raw body, fenced like every read.
   const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createPageFetch({ raw: true, noRedirects: true }) }) : null);
   // The want-list inboxes (inbox.ts) live in the database `activate()` opens; until then, and after
-  // `dispose()`, an inbox reads as empty (no tick runs then anyway). eBay and BoardGameGeek reach a
-  // watch only this way: the tracker never opens either site (Rod, 2026-10-05).
+  // `dispose()`, an inbox reads as empty (no tick runs then anyway). An eBay watch, and a BGG one
+  // made while the bot has no BGG token, get their listings only this way: the want-list watcher
+  // never opens eBay, and an inbox watch opens neither site (Rod, 2026-10-05).
   let inbox: WantInbox | null = null;
   const readInbox: ReadInbox = async (key) => inbox?.read(key) ?? [];
   const types = options.types ?? { ...TRACKER_TYPES, ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}) }) };
@@ -221,7 +231,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   }
 
   // The ticks still running (one the host stopped waiting on included): forget-me waits for none
-  // to be, so a DM in flight to the person cannot write about them after they are erased (admin.ts).
+  // to be, so a DM in flight to the person cannot write about them after they are erased (admin.ts),
+  // and so does `dispose()`, before it closes the database.
   const running = new Set<Promise<unknown>>();
   const tracked = (p: Promise<void>): Promise<void> => {
     running.add(p);
@@ -254,13 +265,14 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
 
   /**
    * The execute lane (execute-lane.ts), started in the background so it never holds up a host tick:
-   * one at a time, at most once per `EXECUTE_EVERY_MS`, tracked like the other ticks so forget-me
-   * waits for it.
+   * one at a time, at most once per host tick (a second call within `EXECUTE_MIN_GAP_MS` is skipped),
+   * tracked like the other ticks so forget-me waits for it. Not a full minute: the host's rounds start
+   * a minute apart, and this tick runs after every earlier check of the round, however long they took.
    */
   function startExecute(): void {
     if (!store || !executeLane || executeRun || forgetting > 0) return;
     const at = clock.now().getTime();
-    if (at - lastExecute < EXECUTE_EVERY_MS) return;
+    if (at - lastExecute < EXECUTE_MIN_GAP_MS) return;
     lastExecute = at;
     const lane = executeLane;
     const records = jobRecords;
@@ -324,8 +336,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         path = join(dir, DB_FILE);
       }
       const opened = openDatabase(path);
-      const openedStore = new SqliteStore(opened);
       try {
+        const openedStore = new SqliteStore(opened);
         const vacuum = vacuumOnce(opened, path);
         if ("error" in vacuum) host.log.warn(`could not vacuum the tracker's database (${vacuum.error}); trying again at the next start`);
         const granted = await seedAdmins(openedStore, adminIds, clock.now());
@@ -345,94 +357,104 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           const why = c.error ? ` (${c.error})` : "";
           host.log.warn(`delivery of ${c.occurrenceId} to ${c.userId} claimed ${c.claimedAt ?? "?"} is unconfirmed${why}; it will not be resent`);
         }
+        // Built as locals and kept only once every call that can throw is past (#203): a start that
+        // fails part way leaves no handle a tick could find, and its database closed (below).
+        const openedInbox = new WantInbox(opened);
+        // The owner of a task a recipient's failures paused is told once, by a plain DM: not counted
+        // toward the owner's own pause (they may simply be offline), and `/tasks` shows it regardless.
+        const openedDelivery = new DeliveryHealth(opened, openedStore, {
+          log: host.log,
+          ...(dm
+            ? {
+                tellOwner: async (owner, text) => {
+                  if (owner.discordId) await dm(owner.discordId, { content: text });
+                },
+              }
+            : {}),
+        });
+        const notifier = dm ? createDmNotifier({ store: openedStore, dm, clock, log: host.log, health: openedDelivery }) : NO_DM;
+        let executor: Executor | null = null;
+        let records: JobRecords | null = null;
+        if (options.executor) executor = options.executor;
+        else if (cityHallConfig) {
+          records = new JobRecords(opened);
+          executor = createCityHallExecutor({
+            config: cityHallConfig,
+            records,
+            databaseId: databaseId(opened),
+            log: host.log,
+            now: () => clock.now(),
+            notice: async (key, text) => void (await noticeOnce(openedStore, notifier, key, clock.now(), { text })),
+            ...(options.cityHallFetch ? { fetchImpl: options.cityHallFetch } : {}),
+          });
+        }
+        // One docket Lanes for the execute lane while active: it keeps the usage-limit pause (execute-lane.ts).
+        // Its budget is docket's defaults with each person's raised ceiling read before every run (ceilings.ts),
+        // or none at all while TRACKER_BUDGET_UNLIMITED is on (usage.ts).
+        const ceilings = new Ceilings(opened);
+        const lane = executor ? new ExecuteLane({ store: openedStore, clock, types, notifier, executor, locks, fetch: pageFetch(), budget: executeBudget(ceilings, budgetUnlimited) }) : null;
+        // One line either way: the budgets-off line only when a model run can actually happen.
+        if (budgetUnlimited) host.log.info(lane ? UNLIMITED_LOG : UNLIMITED_IDLE_LOG);
+        if (cityHallConfig) host.log.info(`execute lane on: city-hall ${cityHallConfig.url}, capability ${cityHallConfig.capability}`);
+        else if ("missing" in cityHall && cityHall.missing.length > 0) host.log.warn(`execute lane is off, so /research is unavailable: ${cityHall.missing.join(", ")} not set`);
+        if (usrConfig) host.log.info(`usr link on: ${usrConfig.url}, app ${usrConfig.app}`);
+        const openedDeps: TrackerDeps = {
+          store: openedStore,
+          admissions: new Admissions(opened),
+          health: openedDelivery,
+          clock,
+          types,
+          fetch: pageFetch(),
+          dm,
+          log: host.log,
+          notifier,
+          locks,
+          logins: new LoginLinks(opened),
+          sessions: new Sessions(opened),
+          apiTokens: new ApiTokens(opened),
+          roster: new Roster(opened),
+          ceilings,
+          budgetUnlimited,
+          configuredAdmins: new Set(adminIds),
+          lanes,
+          webEditor: webOrigin !== null,
+          research: executeOn,
+          bgg: bgg !== null,
+          inbox: openedInbox,
+          mail: mailConfig ? new MailAddresses(opened, mailConfig.domain) : null,
+          usr:
+            usrConfig && usrClient
+              ? {
+                  client: usrClient,
+                  url: usrConfig.url,
+                  verifier: new UsrVerifier({ url: usrConfig.url, now: () => clock.now().getTime(), ...(options.usrFetch ? { fetchImpl: options.usrFetch } : {}) }),
+                  app: usrConfig.app,
+                  links: new UsrLinks(opened),
+                }
+              : null,
+        };
+        if (guildIds === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
+        else if (roleGate.roles !== null) host.log.info(`role check on for ${roleGate.roles.size} of ${guildIds.length} server(s)`);
+        const activatedAt = clock.now();
+        // Nothing from here on can throw.
+        db = opened;
+        store = openedStore;
+        inbox = openedInbox;
+        delivery = openedDelivery;
+        jobRecords = records;
+        executeLane = lane;
+        deps = openedDeps;
+        health.blocked = dm ? null : "this bot has no host.dm (it predates rackbops-discord-bot#736)";
+        health.activatedAt = activatedAt;
       } catch (err) {
         opened.close();
         throw err;
       }
-      db = opened;
-      store = openedStore;
-      inbox = new WantInbox(opened);
-      // The owner of a task a recipient's failures paused is told once, by a plain DM: not counted
-      // toward the owner's own pause (they may simply be offline), and `/tasks` shows it regardless.
-      delivery = new DeliveryHealth(opened, openedStore, {
-        log: host.log,
-        ...(dm
-          ? {
-              tellOwner: async (owner, text) => {
-                if (owner.discordId) await dm(owner.discordId, { content: text });
-              },
-            }
-          : {}),
-      });
-      const notifier = dm ? createDmNotifier({ store: openedStore, dm, clock, log: host.log, health: delivery }) : NO_DM;
-      let executor: Executor | null = null;
-      if (options.executor) executor = options.executor;
-      else if (cityHallConfig) {
-        jobRecords = new JobRecords(opened);
-        executor = createCityHallExecutor({
-          config: cityHallConfig,
-          records: jobRecords,
-          databaseId: databaseId(opened),
-          log: host.log,
-          now: () => clock.now(),
-          notice: async (key, text) => void (await noticeOnce(openedStore, notifier, key, clock.now(), { text })),
-          ...(options.cityHallFetch ? { fetchImpl: options.cityHallFetch } : {}),
-        });
-      }
-      // One docket Lanes for the execute lane while active: it keeps the usage-limit pause (execute-lane.ts).
-      // Its budget is docket's defaults with each person's raised ceiling read before every run (ceilings.ts),
-      // or none at all while TRACKER_BUDGET_UNLIMITED is on (usage.ts).
-      const ceilings = new Ceilings(opened);
-      executeLane = executor ? new ExecuteLane({ store: openedStore, clock, types, notifier, executor, locks, fetch: pageFetch(), budget: executeBudget(ceilings, budgetUnlimited) }) : null;
-      // One line either way: the budgets-off line only when a model run can actually happen.
-      if (budgetUnlimited) host.log.info(executeLane ? UNLIMITED_LOG : UNLIMITED_IDLE_LOG);
-      if (cityHallConfig) host.log.info(`execute lane on: city-hall ${cityHallConfig.url}, capability ${cityHallConfig.capability}`);
-      else if ("missing" in cityHall && cityHall.missing.length > 0) host.log.warn(`execute lane is off, so /research is unavailable: ${cityHall.missing.join(", ")} not set`);
-      if (usrConfig) host.log.info(`usr link on: ${usrConfig.url}, app ${usrConfig.app}`);
-      deps = {
-        store: openedStore,
-        admissions: new Admissions(opened),
-        health: delivery,
-        clock,
-        types,
-        fetch: pageFetch(),
-        dm,
-        log: host.log,
-        notifier,
-        locks,
-        logins: new LoginLinks(opened),
-        sessions: new Sessions(opened),
-        apiTokens: new ApiTokens(opened),
-        roster: new Roster(opened),
-        ceilings,
-        budgetUnlimited,
-        configuredAdmins: new Set(adminIds),
-        lanes,
-        webEditor: webOrigin !== null,
-        research: executeOn,
-        bgg: bgg !== null,
-        inbox,
-        mail: mailConfig ? new MailAddresses(opened, mailConfig.domain) : null,
-        usr:
-          usrConfig && usrClient
-            ? {
-                client: usrClient,
-                url: usrConfig.url,
-                verifier: new UsrVerifier({ url: usrConfig.url, now: () => clock.now().getTime(), ...(options.usrFetch ? { fetchImpl: options.usrFetch } : {}) }),
-                app: usrConfig.app,
-                links: new UsrLinks(opened),
-              }
-            : null,
-      };
-      if (guildIds === null) host.log.warn("TRACKER_GUILD_ID is unset: no membership gate, only the admission list");
-      else if (roleGate.roles !== null) host.log.info(`role check on for ${roleGate.roles.size} of ${guildIds.length} server(s)`);
-      health.blocked = typeof host.dm === "function" ? null : "this bot has no host.dm (it predates rackbops-discord-bot#736)";
-      health.activatedAt = clock.now();
     },
 
     async dispose() {
-      // Null the handles first: a tick the host abandoned, or one that starts after this, finds no
-      // store and returns instead of touching a closed database.
+      // Null the handles first: a tick that starts after this finds no store and returns instead of
+      // touching a closed database.
       health.activatedAt = null;
       deps = null;
       delivery = null;
@@ -442,14 +464,14 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       inbox = null;
       const closing = db;
       db = null;
-      // An execute tick in flight finishes its city-hall call (each is bounded) before the database
-      // closes, so a result collected is recorded; past 5 s it is asked again after the restart.
-      const inFlight = executeRun;
-      if (inFlight) {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        await Promise.race([inFlight, new Promise((r) => (timer = setTimeout(r, 5_000)))]);
-        clearTimeout(timer);
-      }
+      // A tick already running (notify, poll or execute: each is `tracked`) keeps the store it read,
+      // so the database closes once none is, and a DM one sent is recorded as sent. The host's stop
+      // aborts the ticks it waits on and drains them for up to 5 s (rackbops-discord-bot's
+      // `PLUGIN_TICK_ABORT_GRACE_MS`) before it calls this, so what is left here is what it no longer
+      // waits on: the execute lane's background run, or a tick past that grace. One still running
+      // after `DISPOSE_WAIT_MS` can fail its last write: a send it made is then logged unconfirmed at
+      // the next start and not resent. The host bounds each plugin's dispose at 2 s (#202).
+      await lanes.idle(DISPOSE_WAIT_MS);
       closing?.close();
     },
 
