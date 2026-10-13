@@ -452,17 +452,30 @@ eBay's saved-search alerts reach eBay watches by mail (0.24.0), while `TRACKER_M
   Email Worker in `mail-worker/worker.js` (a catch-all rule, "Send to a Worker"). The Worker posts it,
   as it came, to `POST /tracker/mail/inbound` with `Authorization: Bearer <TRACKER_MAIL_KEY>`,
   `X-Envelope-To: <the address>` and, while the web area is behind Cloudflare Access, a service
-  token's `CF-Access-Client-Id` / `-Secret`. Up to 1 MiB; bigger is `413` and refused. An address
-  that is no one's is `404`, which the Worker refuses back to the sender, so a mistyped forwarding
-  address bounces to the mailbox that forwarded it.
+  token's `CF-Access-Client-Id` / `-Secret`; the Access application covering `/tracker/*` then
+  needs a Service Auth policy that includes that token, or Access answers with a redirect and every
+  message bounces as `status 302`. Up to 1 MiB; bigger is `413` and refused. An address that is no
+  one's is `404`. The Worker refuses back to the sender, with a permanent error, anything the
+  tracker does not answer `200` (a `503` while it starts too), so a mistyped forwarding address, or
+  an outage, bounces to the mailbox that forwarded it; that day's alert is not retried. The Worker
+  is deployed by pasting `mail-worker/worker.js` into the Cloudflare dashboard's Worker editor; it is
+  not in the plugin's npm bundle.
 - **What a message does.** Gmail's forwarding confirmation (from `forwarding-noreply@google.com`):
   its code is DMed, to enter in Gmail's Forwarding and POP/IMAP settings. An eBay alert: the
   matches above "You might also like" (never eBay's suggestions) -- title, the item's bare
   `/itm/<number>` address, the price's lower end -- go into the inbox of each of the person's live
   eBay watches whose words are the saved search's (case and spacing aside), exactly as listings sent
-  through the task API; the watch's next look DMs the new ones. An alert no watch searches for gets
-  one DM saying so, with the `/want` that would watch it. Anything else is dropped. A message is
-  never stored, only the listings read from it, and nothing from it is logged.
+  through the task API; the watch's next look DMs the new ones. Words match with case, spacing and
+  the marks `` ` * _ ~ | < > @ # [ ] ( ) \ : / `` ignored. An alert no watch searches for gets a
+  DM saying so, with the `/want` that would watch it, each time eBay sends it. Anything else is
+  dropped. A message is never stored, only the listings read from it, and nothing from it is
+  logged.
+- **Only eBay's own domains** (ebay.com, .co.uk, .de, .ca, .com.au and the rest of eBay's sites;
+  never a lookalike such as `ebay.com.de`) count as eBay, for the sender and for every item link.
+  The sender is its `From` address, not a checked signature: the private address is the guard, and
+  anyone who learns it can send listings to its owner's eBay watches. A price's own sign gives its
+  currency (`$` on ebay.com, `C $`, `AU $`, `£`, `€`); otherwise none is set. The HTML read is
+  capped at 512 KiB, in bounded steps.
 - **Setting it up in Gmail.** Settings, Forwarding and POP/IMAP, Add a forwarding address: the alert
   address. Gmail mails a confirmation code there, and the bot DMs it; enter it. Then add a filter --
   from `ebay@ebay.com`, has the words `"Turn off alerts for"` -- that forwards to the alert address.

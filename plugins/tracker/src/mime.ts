@@ -69,7 +69,8 @@ function headers(head: string): Map<string, string> {
 
 /** A header's value and its `; key=value` parameters (keys lower-cased, quotes taken off). */
 function params(value: string | undefined): { value: string; params: Map<string, string> } {
-  const [first = "", ...rest] = (value ?? "").split(";");
+  // Split at each `;` outside double quotes: `boundary="a;b"` is one parameter.
+  const [first = "", ...rest] = (value ?? "").match(/(?:[^;"]|"[^"]*")+/g) ?? [""];
   const out = new Map<string, string>();
   for (const p of rest) {
     const eq = p.indexOf("=");

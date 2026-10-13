@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { User } from "@rackbops/docket-core";
 import type { Listing } from "@rackbops/docket-types";
 import type { TrackerDeps } from "./actions.js";
-import { readEbayAlert, sameSearch } from "./ebay-alert.js";
+import { readEbayAlert, SEARCH_MARKS, sameSearch } from "./ebay-alert.js";
 import { acceptListing } from "./inbox.js";
 import type { MailMessage } from "./mime.js";
 import { WANT_TYPES, type WatchConfig, watchSite } from "./want.js";
@@ -93,9 +93,14 @@ export function forwardingCode(mail: MailMessage): string | null {
   return /confirmation code:\s*(\d{6,12})/i.exec(mail.text ?? mail.html ?? "")?.[1] ?? null;
 }
 
-/** Words from a stranger's mail made safe for a DM: no markdown, mentions or links, one line, capped. */
+/**
+ * Words from a stranger's mail made safe for a DM: no markdown, mentions or links, one line,
+ * capped. The marks taken out are the ones `sameSearch` ignores, so a watch made with these words
+ * matches the alert they came from.
+ */
 function quoted(words: string): string {
-  return words.replace(/[`*_~|<>@#[\]()\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
+  // With `:` and `/` gone no address survives for Discord to link.
+  return words.replace(SEARCH_MARKS, " ").replace(/\s+/g, " ").trim().slice(0, 100);
 }
 
 export type MailOutcome =

@@ -12,7 +12,7 @@
   `POST /tracker/mail/inbound` (its own bearer, `TRACKER_MAIL_KEY`). An eBay alert's matches -- never
   its "You might also like" suggestions -- go into the inbox of each of the person's live eBay
   watches with the saved search's words, as listings sent through the task API do; Gmail's
-  forwarding confirmation code is DMed; an alert no watch searches for gets one DM saying so; anything
+  forwarding confirmation code is DMed; an alert no watch searches for gets a DM saying so each time it comes; anything
   else is dropped, and no message is stored or logged. The reader was built from the first real
   alert (2026-10-13), kept, with its tracking and account names taken out, as a test fixture.
   Forget-me deletes the address.

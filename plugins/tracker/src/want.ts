@@ -19,7 +19,7 @@ import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
  * - `ebay`: an inbox watch (docket-types' `inbox` source, inbox.ts). The tracker never opens eBay
  *   (nor BGG without its API): Rod's rule, 2026-10-05. The listings reach the watch when someone
  *   sends them in -- the owner's own browser, Claude in Chrome searching eBay for them, through
- *   the task API's `POST /tasks/<id>/listings`; later eBay's saved-search alert emails -- and the
+ *   the task API's `POST /tasks/<id>/listings`, or eBay's saved-search alert emails (mail.ts, 0.24.0) -- and the
  *   watch DMs the new ones as any watch does. The answer still hands over the eBay search, with
  *   the price cap in it, so the owner can save it on eBay too.
  *
@@ -139,8 +139,10 @@ export function watchWhere(c: WantConfig): string {
   return c.source === "bgg" ? "BoardGameGeek's marketplace" : "that page";
 }
 
-/** How listings reach an inbox watch, for its confirmation: never by the tracker opening the site. */
-/** `alerts`: the owner's alert address (mail.ts) while the alert-email route is on, else null. */
+/**
+ * How listings reach an inbox watch, for its confirmation: never by the tracker opening the site.
+ * `alerts` is the owner's alert address (mail.ts) while the alert-email route is on, else null.
+ */
 function inboxNote(c: WatchConfig, taskId: string, alerts: string | null): string[] {
   const site = watchSite(c);
   const words = c.search ?? "";

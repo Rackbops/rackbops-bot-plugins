@@ -1,6 +1,4 @@
-// Types for worker.js, for the tracker's tests (src/mail-worker.test.ts) only.
-export declare const MAX_MAIL_BYTES: number;
-export declare function refusal(status: number): string;
+// Types for worker.js, for the tracker's tests (src/mail.test.ts) only.
 export interface EmailMessageLike {
   readonly to: string;
   readonly raw: ReadableStream<Uint8Array>;
@@ -8,6 +6,8 @@ export interface EmailMessageLike {
   setReject(reason: string): void;
 }
 declare const worker: {
+  readonly MAX_MAIL_BYTES: number;
+  refusal(status: number): string;
   email(message: EmailMessageLike, env: Record<string, string | undefined>): Promise<void>;
 };
 export default worker;

@@ -7,7 +7,7 @@ import { type Listing, type Submitted, submittedListing } from "@rackbops/docket
  * a watch rather than read by the tracker. Rod's rule for eBay and BoardGameGeek (2026-10-05) is
  * that Clerk never opens either site itself; listings reach a watch only when someone sends them
  * in -- today the owner's own browser (Claude in Chrome searching eBay or BGG for them) through the
- * task API's `POST /tasks/<id>/listings` (web/api-listings.ts), later eBay's saved-search alert
+ * task API's `POST /tasks/<id>/listings` (web/api-listings.ts), and eBay's saved-search alert
  * emails. This is the host's half of the source: the `want_inbox` table (schema migration 8), one
  * inbox per watch, found by the watch's inbox key (its config's `target`).
  *

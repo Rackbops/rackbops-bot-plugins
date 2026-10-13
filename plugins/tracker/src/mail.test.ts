@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { Plugin } from "../../../packages/api/contract.js";
-import worker, { MAX_MAIL_BYTES as WORKER_MAX, refusal } from "../mail-worker/worker.js";
+import worker from "../mail-worker/worker.js";
 import { readEbayAlert, sameSearch } from "./ebay-alert.js";
 import { forwardingCode, MailAddresses, parseMailConfig } from "./mail.js";
 import { decodeWords, parseMail } from "./mime.js";
@@ -57,13 +57,13 @@ describe("parseMail", () => {
     const m = parseMail(FIXTURE);
     expect(m.from).toBe("ebay@ebay.com");
     expect(m.subject).toBe("wingspan oceania expansion: Only 1 match");
-    expect(m.html).toContain("Wingspan Board Game Wooden Component Up…");
+    expect(m.html).toContain("Wingspan Board Game Wooden Component Up\u2026");
     expect(m.html).not.toContain("=3D");
     expect(m.text).toBeNull();
   });
 
   it("finds both bodies in nested multipart, decodes base64 and encoded words, and skips attachments", () => {
-    const html = Buffer.from("<p>café – html</p>").toString("base64");
+    const html = Buffer.from("<p>caf\u00e9 \u2013 html</p>").toString("base64");
     const raw = [
       "From: =?UTF-8?Q?eBay_Caf=C3=A9?= <Alerts@Ebay.CO.UK>",
       "Subject: =?UTF-8?B?Y2Fmw6k=?=",
@@ -96,15 +96,17 @@ describe("parseMail", () => {
     ].join("\r\n");
     const m = parseMail(enc(raw));
     expect(m.from).toBe("alerts@ebay.co.uk");
-    expect(m.subject).toBe("café alert");
-    expect(m.text).toBe("café text");
-    expect(m.html).toBe("<p>café – html</p>");
+    expect(m.subject).toBe("caf\u00e9 alert");
+    expect(m.text).toBe("caf\u00e9 text");
+    expect(m.html).toBe("<p>caf\u00e9 \u2013 html</p>");
   });
 
   it("gives less, never a throw, for what is not a message", () => {
     expect(parseMail(enc(""))).toEqual({ from: null, subject: "", html: null, text: "" });
     expect(parseMail(enc("Content-Type: multipart/mixed\r\n\r\nno boundary")).html).toBeNull();
     expect(decodeWords("=?nonsense?Q?x?=")).toBe("x");
+    const quotedBoundary = 'Content-Type: multipart/alternative; boundary="a;b"\r\n\r\n--a;b\r\nContent-Type: text/html\r\n\r\n<p>x</p>\r\n--a;b--\r\n';
+    expect(parseMail(enc(quotedBoundary)).html).toBe("<p>x</p>");
   });
 });
 
@@ -112,7 +114,7 @@ describe("readEbayAlert", () => {
   it("takes the one match and its search from the real alert, and none of eBay's suggestions", () => {
     expect(readEbayAlert(parseMail(FIXTURE))).toEqual({
       search: "wingspan oceania expansion",
-      listings: [{ title: "Wingspan Board Game Wooden Component Up…", url: "https://www.ebay.com/itm/407286422177", price: "$39.00", currency: "USD" }],
+      listings: [{ title: "Wingspan Board Game Wooden Component Up\u2026", url: "https://www.ebay.com/itm/407286422177", price: "$39.00", currency: "USD" }],
     });
   });
 
@@ -129,20 +131,56 @@ describe("readEbayAlert", () => {
   it("falls back to the subject's words, and takes several matches each once", () => {
     const item = (n: string, title: string, price: string) =>
       `<a href="https://www.ebay.co.uk/itm/${n}?mkevt=1&amp;recoId=${n}"><span><h3>${title}</h3></span></a><p class="price fs16">${price}</p>`;
-    const html = `${item("123456789", "Oceania &amp; more", "£12.50")}${item("123456789", "again", "£1")}${item("223456789", "Asia", "")}<a href="https://www.ebay.co.uk/itm/323456789?_trkparms=x"><h3>Tracked</h3></a>`;
+    const html = `${item("123456789", "Oceania &amp; more", "\u00a312.50")}${item("123456789", "again", "\u00a31")}${item("223456789", "Asia", "")}<a href="https://www.ebay.co.uk/itm/323456789?_trkparms=x"><h3>Tracked</h3></a>`;
     const alert = readEbayAlert({ from: "ebay@ebay.co.uk", subject: "Wingspan: 2 new matches", html, text: null });
     expect(alert).toEqual({
       search: "Wingspan",
       listings: [
-        { title: "Oceania & more", url: "https://www.ebay.co.uk/itm/123456789", price: "£12.50" },
+        { title: "Oceania & more", url: "https://www.ebay.co.uk/itm/123456789", price: "\u00a312.50", currency: "GBP" },
         { title: "Asia", url: "https://www.ebay.co.uk/itm/223456789" },
       ],
     });
   });
 
+  it("takes only eBay's own domains, for the sender and for each item", () => {
+    const item = (host: string) => `<a href="https://${host}/itm/123456789"><h3>Oceania</h3></a><p class="price">$30.00</p>`;
+    const at = (from: string, host: string) => readEbayAlert({ from, subject: "oceania: 1 match", html: item(host), text: null });
+    expect(at("ebay@ebay.com", "www.ebay.com")?.listings).toHaveLength(1);
+    expect(at("ebay@reply.ebay.de", "www.ebay.de")?.listings[0]?.url).toBe("https://www.ebay.de/itm/123456789");
+    for (const lookalike of ["ebay.com.de", "ebay.in.ua", "www.ebay.com.ai", "ebay.xyz", "ebay.co", "notebay.com"]) {
+      expect(at(`ebay@${lookalike}`, "www.ebay.com")).toBeNull();
+      expect(at("ebay@ebay.com", lookalike)).toBeNull();
+    }
+  });
+
+  it("keeps a price's whole text and its currency, and the low end of a range", () => {
+    const one = (price: string, host = "www.ebay.de") =>
+      readEbayAlert({ from: "ebay@ebay.de", subject: "x: 1 match", html: `<a href="https://${host}/itm/123456789"><h3>T</h3></a><p class="price">${price}</p>`, text: null })?.listings[0];
+    expect(one("EUR 1.234,56")).toMatchObject({ price: "EUR 1.234,56", currency: "EUR" });
+    expect(one("1.234,56 \u20ac")).toMatchObject({ price: "1.234,56 \u20ac", currency: "EUR" });
+    expect(one("C $12.00 to C $15.00", "www.ebay.ca")).toMatchObject({ price: "C $12.00", currency: "CAD" });
+    expect(one("$39.00 to $44.00", "www.ebay.com")).toMatchObject({ price: "$39.00", currency: "USD" });
+    expect(one("$39.00", "www.ebay.com.au")?.currency).toBeUndefined();
+  });
+
+  it("strips a forward's prefix from the subject's words", () => {
+    const html = `<a href="https://www.ebay.com/itm/123456789"><h3>T</h3></a>`;
+    expect(readEbayAlert({ from: "ebay@ebay.com", subject: "Fwd: Re: wingspan: 2 new matches", html, text: null })?.search).toBe("wingspan");
+  });
+
+  it("reads hostile HTML in bounded time", () => {
+    const from = "ebay@ebay.com";
+    const started = performance.now();
+    expect(readEbayAlert({ from, subject: "x: 1", html: "<a ".repeat(80_000), text: null })).toBeNull();
+    expect(readEbayAlert({ from, subject: "x: 1", html: '<a href="https://www.ebay.com/itm/1234567"><h3>'.repeat(8_000), text: null })).toBeNull();
+    expect(readEbayAlert({ from, subject: "x: 1", html: `<a href="https://www.ebay.com/itm/1234567"${" x".repeat(200_000)}`, text: null })).toBeNull();
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
   it("compares searches as eBay would", () => {
     expect(sameSearch(" Wingspan  Oceania Expansion", "wingspan oceania expansion")).toBe(true);
     expect(sameSearch("wingspan oceania", "wingspan oceania expansion")).toBe(false);
+    expect(sameSearch("7 wonders (2nd edition)", "7 wonders 2nd edition")).toBe(true);
   });
 });
 
@@ -229,7 +267,7 @@ describe("POST /mail/inbound", () => {
     expect(await res.json()).toEqual({ result: "stored", watches: 1, listings: 1 });
     const rows = query<{ task_id: string; listing: string }>(w.dbPath, "SELECT task_id, listing FROM want_inbox");
     expect(rows.map((r) => r.task_id)).toEqual(["t1"]);
-    expect(JSON.parse(rows[0]?.listing ?? "{}")).toEqual({ title: "Wingspan Board Game Wooden Component Up…", url: "https://www.ebay.com/itm/407286422177", price: 39, currency: "USD" });
+    expect(JSON.parse(rows[0]?.listing ?? "{}")).toEqual({ title: "Wingspan Board Game Wooden Component Up\u2026", url: "https://www.ebay.com/itm/407286422177", price: 39, currency: "USD" });
     expect(w.sent.length).toBe(before);
 
     w.clock.advance(3600_000);
@@ -254,6 +292,29 @@ describe("POST /mail/inbound", () => {
     const other = "From: someone@example.com\r\nSubject: hello\r\n\r\nhi";
     expect(await (await inbound(w.plugin, address, other)).json()).toEqual({ result: "ignored" });
     expect(w.sent.length).toBe(before + 2);
+  });
+
+  it("feeds every live eBay watch with the words, paused ones too, and never a BGG or page watch", async () => {
+    const w = await setup();
+    const { address } = await watching(w);
+    await slash(w.plugin, "want", LARRY, { strings: { name: "Again", source: "ebay", target: "wingspan  OCEANIA expansion" } });
+    await slash(w.plugin, "want", LARRY, { strings: { name: "BGG", source: "bgg", target: "wingspan oceania expansion" } });
+    await slash(w.plugin, "want", LARRY, { strings: { name: "Other words", source: "ebay", target: "wingspan asia" } });
+    const jar = await signIn(w.plugin, LARRY);
+    const csrf = await csrfOf(w.plugin, jar);
+    expect((await call(w.plugin, "POST", "/tasks/t2/pause", { jar, form: { csrf }, origin: ORIGIN })).status).toBe(303);
+    expect(await (await inbound(w.plugin, address, FIXTURE)).json()).toEqual({ result: "stored", watches: 2, listings: 1 });
+    expect(query<{ task_id: string }>(w.dbPath, "SELECT task_id FROM want_inbox ORDER BY seq").map((r) => r.task_id).sort()).toEqual(["t1", "t2"]);
+  });
+
+  it("keeps the address on the settings page when a change is refused", async () => {
+    const w = await setup();
+    const { address } = await watching(w);
+    const jar = await signIn(w.plugin, LARRY);
+    const csrf = await csrfOf(w.plugin, jar);
+    const bad = await call(w.plugin, "POST", "/settings", { jar, form: { csrf, hour: "25", zone: "UTC" }, origin: ORIGIN });
+    expect(bad.status).toBe(400);
+    expect(await bad.text()).toContain(address);
   });
 
   it("refuses a wrong key, an unknown address and a message too big; is off without the settings", async () => {
@@ -325,7 +386,7 @@ describe("the Email Worker", () => {
   });
 
   it("refuses what the tracker does not take, a message too big, and an unreachable tracker", async () => {
-    expect(WORKER_MAX).toBe(MAX_MAIL_BYTES);
+    expect(worker.MAX_MAIL_BYTES).toBe(MAX_MAIL_BYTES);
     globalThis.fetch = (async () => new Response("{}", { status: 404 })) as unknown as typeof fetch;
     const m = message(FIXTURE);
     await worker.email(m, env);
@@ -334,7 +395,8 @@ describe("the Email Worker", () => {
     globalThis.fetch = (async () => new Response(null, { status: 302 })) as unknown as typeof fetch;
     const r = message(FIXTURE);
     await worker.email(r, env);
-    expect(r.rejected).toEqual([refusal(302)]);
+    expect(r.rejected).toEqual(["Clerk could not take this message (status 302)"]);
+    expect(worker.refusal(503)).toBe("Clerk could not take this message (status 503)");
     let called = false;
     globalThis.fetch = (async () => {
       called = true;
@@ -346,6 +408,6 @@ describe("the Email Worker", () => {
     expect(called).toBe(false);
     const down = message(FIXTURE);
     await worker.email(down, env);
-    expect(down.rejected).toEqual(["Clerk could not be reached; try again later"]);
+    expect(down.rejected).toEqual(["Clerk could not be reached"]);
   });
 });
