@@ -5,7 +5,7 @@ import { parseMail } from "../mime.js";
 import { safeEqual } from "./secrets.js";
 
 /**
- * `POST /<plugin>/mail/inbound` (tracker 0.24.0): where the Email Worker (`mail-worker/`) posts each
+ * `POST /<plugin>/mail/inbound` (tracker 0.25.0): where the Email Worker (`mail-worker/`) posts each
  * message Cloudflare Email Routing receives for `TRACKER_MAIL_DOMAIN` (mail.ts).
  *
  * - `Authorization: Bearer <TRACKER_MAIL_KEY>`, compared in constant time; anything else is a 401.

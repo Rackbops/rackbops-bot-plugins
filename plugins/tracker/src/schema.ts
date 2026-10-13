@@ -380,7 +380,7 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE users ADD COLUMN usr_subject TEXT;
   CREATE UNIQUE INDEX users_usr_subject ON users (usr_subject) WHERE usr_subject IS NOT NULL;
   `,
-  // 10 (0.24.0; eBay's saved-search alert emails reach eBay watches, Rod's "build the email route"):
+  // 10 (0.25.0; eBay's saved-search alert emails reach eBay watches, Rod's "build the email route"):
   // purely additive, one new table; no existing table or row is touched.
   // - `mail_addresses`: each person's alert address (mail.ts), made the first time it is shown to
   //   them. `local` is the part before the @, `m-` and 24 random hex digits: whoever knows it can

@@ -3,7 +3,7 @@ import { MAX_LISTINGS_PER_POST } from "./inbox.js";
 import type { MailMessage } from "./mime.js";
 
 /**
- * eBay's saved-search alert emails, read for the listings in them (tracker 0.24.0): the second way
+ * eBay's saved-search alert emails, read for the listings in them (tracker 0.25.0): the second way
  * listings reach an eBay inbox watch, beside Claude in Chrome posting them (web/api-listings.ts).
  * The tracker still never opens eBay (Rod, 2026-10-05): eBay mails the alert to the owner, the
  * owner's Gmail forwards it to their alert address (mail.ts), and this reads only what the email

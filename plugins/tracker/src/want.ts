@@ -19,7 +19,7 @@ import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
  * - `ebay`: an inbox watch (docket-types' `inbox` source, inbox.ts). The tracker never opens eBay
  *   (nor BGG without its API): Rod's rule, 2026-10-05. The listings reach the watch when someone
  *   sends them in -- the owner's own browser, Claude in Chrome searching eBay for them, through
- *   the task API's `POST /tasks/<id>/listings`, or eBay's saved-search alert emails (mail.ts, 0.24.0) -- and the
+ *   the task API's `POST /tasks/<id>/listings`, or eBay's saved-search alert emails (mail.ts, 0.25.0) -- and the
  *   watch DMs the new ones as any watch does. The answer still hands over the eBay search, with
  *   the price cap in it, so the owner can save it on eBay too.
  *

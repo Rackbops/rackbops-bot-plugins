@@ -12,7 +12,7 @@ import { CURLY, call, cleanup, csrfOf, LARRY, ORIGIN, people, signIn, slash, wor
 import { MAX_MAIL_BYTES } from "./web/mail-inbound.js";
 
 /**
- * The alert-email route (tracker 0.24.0): eBay's saved-search alerts, forwarded to a person's alert
+ * The alert-email route (tracker 0.25.0): eBay's saved-search alerts, forwarded to a person's alert
  * address, reach their eBay watches. The fixture is the first real alert (2026-10-13) with its
  * tracking parameters and account names taken out.
  */

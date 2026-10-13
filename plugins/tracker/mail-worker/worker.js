@@ -1,4 +1,4 @@
-// Clerk's Email Worker (tracker 0.24.0, plugins/tracker/src/mail.ts): Cloudflare Email Routing
+// Clerk's Email Worker (tracker 0.25.0, plugins/tracker/src/mail.ts): Cloudflare Email Routing
 // hands it every message sent to the alert domain, and it posts each one, as it came, to the
 // tracker's `POST /tracker/mail/inbound`. It reads nothing in the message and keeps nothing.
 //

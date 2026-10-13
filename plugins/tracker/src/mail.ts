@@ -9,7 +9,7 @@ import type { MailMessage } from "./mime.js";
 import { WANT_TYPES, type WatchConfig, watchSite } from "./want.js";
 
 /**
- * The alert-email route (tracker 0.24.0; Rod's "build the email route", with the forwarding
+ * The alert-email route (tracker 0.25.0; Rod's "build the email route", with the forwarding
  * address he chose on the card): eBay's saved-search alerts reach a person's eBay watches by mail.
  *
  * Each person has one alert address, `m-<24 hex>@<TRACKER_MAIL_DOMAIN>`, made the first time it is

@@ -1,5 +1,5 @@
 /**
- * A small, bounded reader for the mail the alert route takes in (mail.ts; tracker 0.24.0): an
+ * A small, bounded reader for the mail the alert route takes in (mail.ts; tracker 0.25.0): an
  * RFC 5322 message as bytes, to its sender's address, its subject and its HTML and plain-text
  * bodies. It is not a mail library -- it reads what eBay's saved-search alerts and Gmail's
  * forwarding confirmation are, and leaves anything else unread:
