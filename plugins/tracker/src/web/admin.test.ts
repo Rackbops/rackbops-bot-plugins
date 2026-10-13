@@ -169,6 +169,31 @@ describe("who may use the admin view", () => {
     expect((await call(w.plugin, "GET", "/", { jar: w.larry })).status).toBe(200);
   });
 
+  it("an admin revoked after their request was let in, but before its turn in the queue, is refused there (#222)", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    let asked = false;
+    // The stranger's membership lookup runs after app.ts's admin check and before the queue turn.
+    const w = await setup({
+      guild: true,
+      webMembership: async (id) => {
+        if (id !== STRANGER) return "member";
+        asked = true;
+        await gate;
+        return "member";
+      },
+    });
+    expect((await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u2/grant")).status).toBe(200);
+    const allowing = post(w.plugin, w.larry, w.larryCsrf, "/admin/allow", { discord_id: STRANGER });
+    for (let i = 0; i < 400 && !asked; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(asked).toBe(true);
+    expect((await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u2/revoke")).status).toBe(200);
+    const before = snapshot(w.dbPath);
+    release();
+    expect((await allowing).status).toBe(404);
+    expect(snapshot(w.dbPath)).toBe(before);
+  });
+
   it("an admin revoking their own flag lands on My tasks; the last admin can be neither revoked nor forgotten", async () => {
     const w = await setup();
     const last = await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u1/revoke");

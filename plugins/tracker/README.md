@@ -726,8 +726,8 @@ checks they are a member of the server with its role, as `/allow` does; re-reads
 usr, so someone forgotten before then is never sent; allows them in usr as `tracker:member`, with the pressing
 admin as the one who allowed them; then links them. usr records each link against
 `TRACKER_GUILD_ID`'s first server, so with no gate it refuses and says to `/allow` in the server
-instead. Only a 400 from usr about the person's own details is theirs, listed by name while the rest go on; any other
-refusal or failure (the admin not linked in usr or missing `tracker:register` or `tracker:member`,
+instead. Only a 400 from usr whose reason starts with one of the person's own fields (`discord_user_id`,
+`display_name`) is theirs, listed by name while the rest go on; any other 400, refusal or failure (the admin not linked in usr or missing `tracker:register` or `tracker:member`,
 the key, usr unreachable) stops the run, since it would fail everyone the same way. It never starts
 on its own.
 

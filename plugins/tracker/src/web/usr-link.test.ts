@@ -120,6 +120,12 @@ describe("Link everyone to usr", () => {
       { status: 403, body: { error: 'key "clerk" is not configured as a Discord service' } },
       { status: 401, body: { error: "unauthorized" } },
       { status: 400, body: { error: "guild_id must be a Discord id" } },
+      // usr's other 400s are about the request too, and so is one in wording it has not used (#231).
+      { status: 400, body: { error: "invoker_discord_user_id must be a Discord id" } },
+      { status: 400, body: { error: "roles must be a non-empty array of role names" } },
+      { status: 400, body: { error: 'invalid role "tracker:Member!"' } },
+      { status: 400, body: { error: "malformed input" } },
+      { status: 400, body: null },
       { status: 500, body: { error: "internal" } },
     ];
     for (const refusal of refusals) {
@@ -143,6 +149,18 @@ describe("Link everyone to usr", () => {
     const mixed = await finished(v);
     expect(mixed).toContain("Linked 2 of 3 to usr.");
     expect(mixed).toContain("Not linked: Larry: usr answered HTTP 400: display_name is too long.");
+
+    // A 400 naming the person's own Discord id is theirs, and a name quoted back in it changes nothing.
+    const own: Record<string, Answer> = {
+      [LARRY]: { status: 400, body: { error: "discord_user_id must be a Discord id" } },
+      [CURLY]: { status: 400, body: { error: 'display_name "roles invoker guild_id" is not allowed' } },
+    };
+    const x = await setup((b, n) => own[String(b.discord_user_id)] ?? ok(n));
+    await press(x);
+    const theirs = await finished(x);
+    expect(theirs).toContain("Linked 1 of 3 to usr.");
+    expect(theirs).toContain("Larry: usr answered HTTP 400: discord_user_id must be a Discord id");
+    expect(x.usr.calls).toHaveLength(3);
   });
 
   it("checks each person is a member of the server, as /allow does, and never sends one who is not", async () => {
@@ -168,6 +186,24 @@ describe("Link everyone to usr", () => {
     hold.release();
     expect(await finished(w)).toContain("Linked 2 of 3 to usr.");
     expect(w.usr.calls.map((c) => c.discord_user_id)).toEqual([ADMIN, LARRY]);
+  });
+
+  it("stops when the admin who pressed it is no longer an admin, and links no one after (#222)", async () => {
+    const hold = held();
+    const w = await setup(async (_b, n) => {
+      if (n === 1) await hold.gate;
+      return ok(n);
+    });
+    expect((await call(w.plugin, "POST", "/admin/people/u2/grant", { jar: w.admin, form: { csrf: w.csrf }, origin: ORIGIN })).status).toBe(200);
+    const larry = await signIn(w.plugin, LARRY);
+    expect((await call(w.plugin, "POST", "/admin/usr-link", { jar: larry, form: { csrf: await csrfOf(w.plugin, larry) }, origin: ORIGIN })).status).toBe(303);
+    // usr is answering the first person; meanwhile Larry's flag is revoked.
+    for (let i = 0; i < 400 && w.usr.calls.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    expect((await call(w.plugin, "POST", "/admin/people/u2/revoke", { jar: w.admin, form: { csrf: w.csrf }, origin: ORIGIN })).status).toBe(200);
+    hold.release();
+    expect(await finished(w)).toContain("Linking to usr stopped: Larry, who started it, is no longer an admin here. Linked 0 so far.");
+    expect(w.usr.calls).toHaveLength(1);
+    expect(subjects(w.dbPath)).toEqual({ [ADMIN]: null, [LARRY]: null, [CURLY]: null });
   });
 
   it("refuses without a membership gate, since usr needs a server", async () => {
