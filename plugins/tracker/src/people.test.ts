@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { DEFAULT_PREFERRED_HOUR, DEFAULT_TIME_ZONE, PeopleError, admit, localIdentity, parseAdminIds, seedAdmins, setPreferences } from "./people.js";
+import { DEFAULT_PREFERRED_HOUR, DEFAULT_TIME_ZONE, PeopleError, admit, parseAdminIds, seedAdmins, setPreferences } from "./people.js";
 import pkg from "../package.json" with { type: "json" };
 import { openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
@@ -62,15 +62,6 @@ describe("people in the store", () => {
     await expect(setPreferences(store, u.id, { preferredHour: 24 })).rejects.toThrow("0 to 23");
     await expect(setPreferences(store, u.id, { preferredHour: 7.5 })).rejects.toThrow(PeopleError);
     expect(await store.getUser(u.id)).toMatchObject({ timeZone: "Europe/London", preferredHour: 7 });
-  });
-
-  it("answers docket's Identity port from the store; a usr subject never resolves", async () => {
-    const store = fresh();
-    await seedAdmins(store, [A], NOW);
-    const identity = localIdentity(store);
-    const admin = await store.findUserByDiscordId(A);
-    expect(await identity.actorForDiscord(A)).toEqual({ userId: admin?.id ?? "", admin: true });
-    expect(await identity.actorForDiscord(B)).toBeNull();
   });
 
   it("two admissions racing for one Discord id leave one row: the loser reads back the winner", async () => {

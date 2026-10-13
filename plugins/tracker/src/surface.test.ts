@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChatInputCommandInteraction, MessageComponentInteraction, ModalSubmitInteraction } from "discord.js";
 import type { HostApi, HostMessage, Plugin } from "../../../packages/api/contract.js";
 import { makeFakeHost } from "../../../packages/testkit/index.js";
-import { NOT_ADMIN, NOT_ADMITTED, NOT_MEMBER, NOT_REGISTERED, type Membership } from "./access.js";
+import { MEMBERSHIP_UNKNOWN, NOT_ADMIN, NOT_ADMITTED, NOT_MEMBER, NOT_REGISTERED, type Membership } from "./access.js";
 import { PAUSE_AFTER } from "./delivery-health.js";
 import { NO_SUCH_TASK } from "./actions.js";
 import { lookupMembership, type Interactionish } from "./discord.js";
@@ -21,6 +21,7 @@ const ADMIN = "111111111111111111";
 const LARRY = "222222222222222222";
 const CURLY = "333333333333333333";
 const STRANGER = "444444444444444444";
+const MOE = "555555555555555555";
 const GUILD = "999999999999999999";
 const GUILD_B = "888888888888888888";
 // 2026-10-01 is a Thursday; 12:00 UTC is 08:00 in New York (EDT).
@@ -36,7 +37,11 @@ interface Sent {
   message: HostMessage;
 }
 
-function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: Set<string>; web?: boolean } = {}) {
+/**
+ * `members` turns the membership gate on (`TRACKER_GUILD_ID`); a Discord id in `unknown` then gets
+ * "unknown" from the lookup, as when Discord cannot be asked, whatever `members` holds.
+ */
+function world(opts: { members?: Set<string>; unknown?: Set<string>; unreachable?: Set<string>; gone?: Set<string>; web?: boolean } = {}) {
   const clock = clockAt(START);
   const sent: Sent[] = [];
   const unreachable = opts.unreachable ?? new Set<string>();
@@ -50,6 +55,7 @@ function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: 
   };
   const warnings: string[] = [];
   const members = opts.members;
+  const unknown = opts.unknown;
   const plugin = createPlugin(
     makeFakeHost({
       name: "tracker",
@@ -66,7 +72,9 @@ function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: 
       dbPath: ":memory:",
       // These tests count every DM; the daily digest has its own (digest.test.ts).
       digest: false,
-      ...(members ? { membership: async (_i: Interactionish, id: string): Promise<Membership> => (members.has(id) ? "member" : "not-member") } : {}),
+      ...(members
+        ? { membership: async (_i: Interactionish, id: string): Promise<Membership> => (unknown?.has(id) ? "unknown" : members.has(id) ? "member" : "not-member") }
+        : {}),
     },
   );
   return { plugin, clock, sent, unreachable, warnings };
@@ -76,6 +84,7 @@ type Options = {
   sub?: string;
   strings?: Record<string, string>;
   ints?: Record<string, number>;
+  numbers?: Record<string, number>;
   users?: Record<string, string>;
   client?: unknown;
   guildId?: string;
@@ -108,6 +117,7 @@ async function slash(plugin: Plugin, name: string, userId: string, o: Options = 
       getSubcommand: () => o.sub ?? "",
       getString: (k: string) => o.strings?.[k] ?? null,
       getInteger: (k: string) => o.ints?.[k] ?? null,
+      getNumber: (k: string) => o.numbers?.[k] ?? null,
       getUser: (k: string) => (o.users?.[k] ? { id: o.users[k], bot: false } : null),
     },
     deferReply: async (x: unknown) => void (deferred = x),
@@ -644,6 +654,149 @@ describe("review fixes (#79)", () => {
     expect(await slash(w.plugin, "tasks", LARRY)).toContain("Paused: `t1` bins out -- I could not DM user333; `/task resume t1` goes on without them.");
     expect(await slash(w.plugin, "task", LARRY, { sub: "resume", strings: { task: "t1" } })).toBe("Resumed `t1`, without user333.");
     expect(await slash(w.plugin, "tasks", LARRY)).toContain("`t1` bins out -- next");
+  });
+});
+
+describe("a recipient's delivery pause is theirs, the owner's and admins' to see (#167)", () => {
+  it("another recipient's /task history has no line about it; theirs, the owner's and an admin's show it by name", async () => {
+    const w = world();
+    await withLarry(w);
+    for (const who of [CURLY, MOE]) {
+      await slash(w.plugin, "allow", ADMIN, { users: { user: who } });
+      await slash(w.plugin, "register", who);
+    }
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    for (const who of [CURLY, MOE]) {
+      await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: who } });
+      await pressButton(w.plugin, "tracker:a.t.t1", who);
+    }
+    w.unreachable.add(CURLY);
+    for (const day of ["01", "02", "03"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await tick(w.plugin);
+    }
+    const history = (who: string) => slash(w.plugin, "task", who, { sub: "history", strings: { task: "t1" } });
+    const pause = `paused: delivery to user333 paused: ${PAUSE_AFTER} DMs in a row could not be delivered`;
+    const moe = await history(MOE);
+    expect(moe).toContain("`t1` bins out -- reminder, paused");
+    expect(moe).not.toContain("delivery to");
+    expect(moe).not.toContain("user333");
+    expect(await history(LARRY)).toContain(pause);
+    expect(await history(ADMIN)).toContain(pause);
+    // Last: using a command resumes Curly's delivery, and the task with it.
+    expect(await history(CURLY)).toContain(pause);
+  });
+});
+
+describe("the Reply path's gates (#162)", () => {
+  /** Larry's "water the plants", fired: run o1, with Done, Snooze and Reply on Larry's DM. */
+  async function firedReminder(w: ReturnType<typeof world>) {
+    await withLarry(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "water the plants", when: "9am" } });
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await tick(w.plugin);
+    expect(buttonIds(w.sent.at(-1))).toEqual(["tracker:d.o.o1", "tracker:s.o.o1", "tracker:r.o.o1"]);
+  }
+
+  /** Larry's weekly "bins out" shared with Curly, who accepts; run o1 fired, with opt-out and Reply on Curly's DM. */
+  async function sharedAndFired(w: ReturnType<typeof world>) {
+    await withLarry(w);
+    await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
+    await slash(w.plugin, "register", CURLY);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "week" } });
+    expect(await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } })).toContain("Invited");
+    expect((await pressButton(w.plugin, "tracker:a.t.t1", CURLY)).edits[0]?.content).toContain("-- Accepted");
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await tick(w.plugin);
+    expect(buttonIds(w.sent.at(-1))).toEqual(["tracker:q.o.o1", "tracker:r.o.o1"]);
+  }
+
+  /** A task's history as the admin -- every run, every reply -- read from the store by `/task history`. */
+  const historyOf = (w: ReturnType<typeof world>, task = "t1") => slash(w.plugin, "task", ADMIN, { sub: "history", strings: { task } });
+
+  it("a recipient who left the server is refused at the Reply modal, and nothing is stored", async () => {
+    const members = new Set([ADMIN, LARRY, CURLY]);
+    const w = world({ members });
+    await sharedAndFired(w);
+    // The button checks no membership (its answer has to be the modal): it opens, then Curly leaves.
+    expect((await pressButton(w.plugin, "tracker:r.o.o1", CURLY)).modals).toHaveLength(1);
+    members.delete(CURLY);
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", CURLY, "done it already")).toBe(NOT_MEMBER);
+    expect(await historyOf(w)).not.toContain("replied");
+    // Back in the server, the same submit is stored and shows: the history above would have shown it.
+    members.add(CURLY);
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", CURLY, "back again")).toBe("Reply kept with the task's history.");
+    const history = await historyOf(w);
+    expect(history).toContain('user333 replied "back again"');
+    expect(history).not.toContain("done it already");
+  });
+
+  it("a recipient who opted out after opening the Reply modal is refused at its submit, and nothing is stored", async () => {
+    const w = world();
+    await sharedAndFired(w);
+    expect((await pressButton(w.plugin, "tracker:r.o.o1", CURLY)).modals).toHaveLength(1);
+    expect((await pressButton(w.plugin, "tracker:q.o.o1", CURLY, "bins out")).edits[0]?.content).toContain("-- You will not get this task's messages any more.");
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", CURLY, "done it already")).toBe("That is not yours to reply to.");
+    expect(await historyOf(w)).not.toContain("replied");
+    // The owner's submit to the same run is stored and shows: the history above would have shown Curly's.
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", LARRY, "bins are out")).toBe("Reply kept with the task's history.");
+    const history = await historyOf(w);
+    expect(history).toContain('Larry replied "bins are out"');
+    expect(history).not.toContain("done it already");
+  });
+
+  it("the Reply button refuses someone it does not know, and shows no modal", async () => {
+    const w = world();
+    await firedReminder(w);
+    expect(await pressButton(w.plugin, "tracker:r.o.o1", STRANGER)).toEqual({ edits: [], followUps: [], replies: [NOT_ADMITTED], modals: [] });
+  });
+
+  it("the Reply button refuses someone admitted but not registered, and shows no modal; its modal and a button refuse them too", async () => {
+    const w = world();
+    await firedReminder(w);
+    expect(await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } })).toContain("Allowed");
+    expect(await pressButton(w.plugin, "tracker:r.o.o1", CURLY)).toEqual({ edits: [], followUps: [], replies: [NOT_REGISTERED], modals: [] });
+    // A modal kept open from before, or a press, meets the same gate at the submit and the press.
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", CURLY, "x")).toBe(NOT_REGISTERED);
+    expect(await pressButton(w.plugin, "tracker:d.o.o1", CURLY)).toEqual({ edits: [], followUps: [NOT_REGISTERED], replies: [], modals: [] });
+  });
+
+  it("a button pressed while membership cannot be checked is refused, and changes nothing", async () => {
+    const unknown = new Set<string>();
+    const w = world({ members: new Set([ADMIN, LARRY]), unknown });
+    await firedReminder(w);
+    // A renewal inside its lead asks at once (t2), with keep, cancel and renewed: docket's decision buttons.
+    await slash(w.plugin, "renewal", LARRY, { strings: { name: "Netflix", currency: "usd", renews: "2026-10-03" }, numbers: { amount: 15.99 } });
+    await tick(w.plugin);
+    const renewed = w.sent.at(-1)?.message.buttons?.find((b) => b.label === "renewed")?.customId as string;
+    expect(renewed).toStartWith("tracker:");
+    const before = [await historyOf(w), await historyOf(w, "t2")];
+    unknown.add(LARRY);
+    for (const id of ["tracker:d.o.o1", "tracker:s.o.o1", renewed]) {
+      expect(await pressButton(w.plugin, id, LARRY)).toEqual({ edits: [], followUps: [MEMBERSHIP_UNKNOWN], replies: [], modals: [] });
+    }
+    expect([await historyOf(w), await historyOf(w, "t2")]).toEqual(before);
+    expect(before[0]).not.toContain("Larry done");
+    expect(before[1]).not.toContain("Larry chose");
+    // Once Larry can be checked, the same presses are the runs' first answers.
+    unknown.delete(LARRY);
+    expect((await pressButton(w.plugin, "tracker:d.o.o1", LARRY, "water the plants")).edits[0]?.content).toBe("water the plants\n\n-- Marked done.");
+    expect(await historyOf(w)).toContain("- Thu Oct 1, 9:00 -- done; Larry done");
+    expect((await pressButton(w.plugin, renewed, LARRY, "Netflix")).edits[0]?.content).toBe("Netflix\n\n-- Recorded: renewed.");
+    expect(await historyOf(w, "t2")).toContain("Larry chose renewed");
+  });
+
+  it("a modal submitted while membership cannot be checked is refused, and nothing is stored", async () => {
+    const unknown = new Set<string>();
+    const w = world({ members: new Set([ADMIN, LARRY]), unknown });
+    await firedReminder(w);
+    expect((await pressButton(w.plugin, "tracker:r.o.o1", LARRY)).modals).toHaveLength(1);
+    unknown.add(LARRY);
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", LARRY, "watered")).toBe(MEMBERSHIP_UNKNOWN);
+    expect(await historyOf(w)).not.toContain("replied");
+    unknown.delete(LARRY);
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", LARRY, "watered, late")).toBe("Reply kept with the task's history.");
+    expect(await historyOf(w)).toContain('Larry replied "watered, late"');
   });
 });
 

@@ -3,7 +3,7 @@ import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { ChatInputCommandInteraction, MessageComponentInteraction } from "discord.js";
 import type { HostApi, HostMessage, Plugin } from "../../../packages/api/contract.js";
 import { makeFakeHost } from "../../../packages/testkit/index.js";
-import { FetchRefusedError } from "./fetch.js";
+import { createPageFetch, FetchRefusedError, NEVER_EBAY } from "./fetch.js";
 import { createPlugin } from "./index.js";
 import { FETCH_TYPES, takesType } from "./notify-lane.js";
 import { MAX_PRICE_TASKS, nearPattern } from "./price.js";
@@ -32,7 +32,8 @@ function page(price: number | null): string {
   return `<html><head><script type="application/ld+json">${JSON.stringify(ld)}</script></head><body>Widget</body></html>`;
 }
 
-function world() {
+/** `reader`, when given, replaces the fake page reader (for the real `createPageFetch` over a fake network). */
+function world(reader?: Fetch) {
   const clock = clockAt(START);
   const sent: { userId: string; message: HostMessage }[] = [];
   let n = 0;
@@ -43,22 +44,27 @@ function world() {
   };
   const shop = {
     price: 100 as number | null,
+    /** A page to serve as sent instead of `page(price)`'s, for a price only `near` can find. */
+    body: null as string | null,
     status: 200,
     reads: [] as string[],
+    /** Each read's request headers, as the Fetch port would get them. */
+    headers: [] as Record<string, string>[],
     refuse: null as string | null,
     onRead: null as (() => void) | null,
   };
   const fetch: Fetch = {
-    async get(url: string): Promise<FetchResponse> {
+    async get(url: string, headers: Record<string, string> = {}): Promise<FetchResponse> {
       shop.reads.push(url);
+      shop.headers.push(headers);
       shop.onRead?.();
       if (shop.refuse) throw new FetchRefusedError(shop.refuse);
-      return { status: shop.status, body: page(shop.price), headers: {} };
+      return { status: shop.status, body: shop.body ?? page(shop.price), headers: {} };
     },
   };
   const plugin = createPlugin(
     makeFakeHost({ name: "tracker", env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN }, log: { info() {}, warn() {}, error() {} }, dm }),
-    { clock, dbPath: ":memory:", fetch: () => fetch, digest: false },
+    { clock, dbPath: ":memory:", fetch: () => reader ?? fetch, digest: false },
   );
   return { plugin, clock, sent, shop };
 }
@@ -272,6 +278,18 @@ describe("/price", () => {
     expect(await slash(w.plugin, "tasks", LARRY)).not.toContain("t1");
   });
 
+  it("refuses a page that redirects to something that is not a web address, and creates nothing", async () => {
+    // The real page reader over a fake network: the shop's page answers a redirect to `http://[`.
+    const reader = createPageFetch({
+      resolve: async () => ["93.184.215.14"],
+      fetchImpl: (async () => new Response(null, { status: 302, headers: { location: "http://[" } })) as unknown as typeof fetch,
+    });
+    const w = world(reader);
+    await withLarry(w);
+    expect(await slash(w.plugin, "price", LARRY, { strings: { url: SHOP } })).toBe("I cannot read that page: it redirects to something that is not a web address.");
+    expect(await slash(w.plugin, "tasks", LARRY)).not.toContain("t1");
+  });
+
   it("refuses a local address before reading anything, and caps how many one person tracks", async () => {
     const w = world();
     await withLarry(w);
@@ -288,6 +306,18 @@ describe("/price", () => {
     expect(await slash(w.plugin, "price", LARRY, { strings: { url: SHOP } })).toContain(`You already track ${MAX_PRICE_TASKS} prices`);
   });
 
+  it("tracks an eBay page: only the want-list watcher refuses eBay (roshne, 2026-10-11, #165)", async () => {
+    const w = world();
+    await withLarry(w);
+    const ebay = "https://www.ebay.com/itm/1";
+    expect(await slash(w.plugin, "price", LARRY, { strings: { url: ebay } })).toContain("Tracking `t1`: www.ebay.com/itm/1. I read 100.00 USD just now.");
+    await pollTick(w.plugin);
+    expect(w.sent[0]?.message.content).toContain("Now tracking www.ebay.com/itm/1 at 100.00 USD.");
+    expect(w.shop.reads).toEqual([ebay, ebay]);
+    // No read asks the Fetch port to refuse eBay: only the want-list's page source sends that directive.
+    expect(w.shop.headers.flatMap((h) => Object.keys(h).map((k) => k.toLowerCase()))).not.toContain(NEVER_EBAY);
+  });
+
   it("near builds a pattern that finds the price after the owner's words", async () => {
     const w = world();
     await withLarry(w);
@@ -295,6 +325,21 @@ describe("/price", () => {
     expect(new RegExp(pattern, "i").exec("<b>Our price (today):</b> $1,299.99")?.[1]).toBe("1,299.99");
     w.shop.price = null; // no structured price: only `near` can find one, and here it does not
     expect(await slash(w.plugin, "price", LARRY, { strings: { url: SHOP, near: "Our price" } })).toContain("I found no price after that `near` text");
+  });
+
+  it("near reads a price followed by a comma as written, and keeps it as the first price (#164)", async () => {
+    const w = world();
+    await withLarry(w);
+    w.shop.body = "<html><body><p>Price: 19.99, free shipping</p></body></html>";
+    const set = await slash(w.plugin, "price", LARRY, { strings: { url: SHOP, near: "Price:", baseline: "first" } });
+    expect(set).toContain("Tracking `t1`: shop.example/widget. I read 19.99 just now.");
+    await pollTick(w.plugin);
+    expect(w.sent).toHaveLength(1);
+    expect(w.sent[0]?.message.content).toContain("Now tracking shop.example/widget at 19.99.");
+    expect(w.sent[0]?.message.content).toContain("from the first price seen");
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" } });
+    expect(history).toContain("Last check: baseline 19.99");
+    expect(history).toContain("Prices: 1 read, low 19.99, high 19.99");
   });
 });
 
