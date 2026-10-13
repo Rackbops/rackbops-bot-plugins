@@ -116,8 +116,9 @@ that way as "unavailable", not "pending": the run is held and asked again, never
 six hours while the runner is paused, and nothing new is submitted meanwhile. docket counts its
 six hours from the submission, so once a Job has been seen paused (`executor_jobs.paused_at`) every
 unfinished answer for it -- queued or running -- stays "unavailable": a runner that resumes after
-six hours is collected, not given up and run a second time. That hold is capped at 48 hours from
-the first sight (a judgement, not a measured figure): past it the Job answers "pending" again, so
+six hours is collected, not given up and run a second time. That hold is capped at eight days from
+the first sight, long enough for the runner to wait out a weekly usage limit and claim the Job
+again (#287): past it the Job answers "pending" again, so
 docket gives the run up, and the admins are told once. It logs "the model runner is paused" naming
 the outcome once an hour per Job, and tells the admins once per Job and outcome. docket's own
 usage-limit pause (which waits for the reset the CLI named) applies only to a `usage_limit` result
