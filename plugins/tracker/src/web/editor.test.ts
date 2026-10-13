@@ -9,6 +9,7 @@ import { MAX_LIVE_TASKS, MAX_NEAR, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WH
 import { MAX_PRICE_TASKS, nearPattern } from "../price.js";
 import { MAX_FORM_BYTES } from "./app.js";
 import { READING } from "./editor.js";
+import { EDITOR_TYPES, type Field, fieldsFor, NEW_TYPES } from "./editor-pages.js";
 import { ADMIN, api, call, cleanup, csrfOf, CURLY, hidden, type Jar, LARRY, makeToken, ORIGIN, people, press, signIn, slash, STRANGER, world } from "./harness.js";
 import { esc } from "./html.js";
 import { DMS_PAUSED } from "./pages.js";
@@ -630,6 +631,18 @@ describe("the gates", () => {
     const long = { text: "\u3042".repeat(1500), when: "tomorrow", repeat: "none" };
     expect((await post(w.plugin, w.larry, w.csrf, "/new/reminder", long)).status).toBe(303);
     expect(tasks(w.dbPath)).toHaveLength(1);
+  });
+
+  it("every editor form, each field at its longest in a script that percent-encodes to nine bytes a character, fits the cap", () => {
+    // A field with a maxlength filled to it; any other (a number, a date, a select) given 32
+    // characters, far more than a real value. The csrf token is 43 characters.
+    const worst = (fields: readonly Field[]) =>
+      new URLSearchParams({ csrf: "x".repeat(43), ...Object.fromEntries(fields.map((f) => [f.name, "あ".repeat(f.maxlength ?? 32)])) }).toString().length;
+    const forms = [...NEW_TYPES.map((t) => fieldsFor(t, "new")), ...EDITOR_TYPES.map((t) => fieldsFor(t, "edit"))];
+    // Research (a question and its context) is the longest; were docket-types to raise its limits
+    // past the cap, a legitimate request would get a bare "Bad request" and lose what was typed.
+    expect(Math.max(...forms.map(worst))).toBe(worst(fieldsFor("research", "new")));
+    for (const fields of forms) expect(worst(fields)).toBeLessThanOrEqual(MAX_FORM_BYTES);
   });
 
   it("the page names only fixed notices: nothing from the address is echoed", async () => {

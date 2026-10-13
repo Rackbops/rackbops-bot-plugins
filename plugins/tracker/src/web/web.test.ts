@@ -13,6 +13,7 @@ import { CITY_HALL } from "./execute-harness.js";
 import { parseWebUrl, WEB_URL_FORMAT } from "./config.js";
 import { esc, html } from "./html.js";
 import { sha256 } from "./secrets.js";
+import { MAX_SESSIONS_PER_USER } from "./sessions.js";
 import { STYLESHEET_PATH } from "./theme.js";
 import { removeDir } from "../test-dirs.js";
 
@@ -156,11 +157,15 @@ describe("sign-in by one-time link", () => {
     const token = tokenOf(await slash(plugin, "web", LARRY));
     const jar: Jar = new Map();
     const { form } = await openLink(plugin, token, jar);
+    // A browser that kept the page's cookie past its Max-Age (a jar filled by hand keeps it for good).
+    const kept: Jar = new Map(jar);
     clock.advance(10 * 60 * 1000);
     expect((await openLink(plugin, token, new Map())).form).toBeNull();
-    const res = await call(plugin, "POST", "/login", { jar, form: form ?? {}, origin: ORIGIN });
+    // The page's cookie lapses with the link: the form is stale.
+    expect((await call(plugin, "POST", "/login", { jar, form: form ?? {}, origin: ORIGIN })).status).toBe(403);
+    const res = await call(plugin, "POST", "/login", { jar: kept, form: form ?? {}, origin: ORIGIN });
     expect(res.status).toBe(400);
-    expect(jar.has(SESSION)).toBe(false);
+    expect(kept.has(SESSION)).toBe(false);
   });
 
   it("the sign-in post needs the page's own cookie (no login CSRF) and a matching Origin", async () => {
@@ -230,10 +235,46 @@ describe("sessions", () => {
     const { plugin, clock } = await world();
     await people(plugin);
     const jar = await signIn(plugin, LARRY);
+    // A browser that kept the cookie past its Max-Age: the session itself has ended too.
+    const kept: Jar = new Map(jar);
     clock.advance(7 * 24 * 60 * 60 * 1000 - 1);
     expect((await call(plugin, "GET", "/", { jar })).status).toBe(200);
     clock.advance(1);
     expect((await call(plugin, "GET", "/", { jar })).status).toBe(303);
+    expect((await call(plugin, "GET", "/", { jar: kept })).status).toBe(303);
+  });
+
+  it("the bare /tracker goes on to /tracker/, the path the session cookie is sent to, keeping its query", async () => {
+    const { plugin, dbPath } = await world();
+    await people(plugin);
+    const jar = await signIn(plugin, LARRY);
+    const bare = await call(plugin, "GET", "", { jar });
+    expect(bare.status).toBe(303);
+    expect(bare.headers.get("location")).toBe("/tracker/");
+    expect((await call(plugin, "GET", "/", { jar })).status).toBe(200);
+    expect((await call(plugin, "GET", "?saved=1", { jar })).headers.get("location")).toBe("/tracker/?saved=1");
+    expect((await call(plugin, "POST", "", { jar, form: { csrf: await csrfOf(plugin, jar) }, origin: ORIGIN })).status).toBe(405);
+    const db = new Database(dbPath);
+    expect((db.query("SELECT COUNT(*) AS n FROM web_sessions").get() as { n: number }).n).toBe(1);
+    db.close();
+  });
+
+  it("one person holds at most MAX_SESSIONS_PER_USER sessions: a new one ends their oldest", async () => {
+    const { plugin, dbPath } = await world();
+    await people(plugin);
+    const first = await signIn(plugin, LARRY);
+    const second = await signIn(plugin, LARRY);
+    for (let i = 2; i < MAX_SESSIONS_PER_USER; i++) await signIn(plugin, LARRY);
+    const curly = await signIn(plugin, CURLY);
+    expect((await call(plugin, "GET", "/", { jar: first })).status).toBe(200);
+    const last = await signIn(plugin, LARRY);
+    const db = new Database(dbPath);
+    const count = (who: string) => (db.query("SELECT COUNT(*) AS n FROM web_sessions WHERE user_id = ?").get(who) as { n: number }).n;
+    expect(count("u2")).toBe(MAX_SESSIONS_PER_USER);
+    expect(count("u3")).toBe(1);
+    db.close();
+    expect((await call(plugin, "GET", "/", { jar: first })).status).toBe(303);
+    for (const jar of [second, last, curly]) expect((await call(plugin, "GET", "/", { jar })).status).toBe(200);
   });
 
   it("sign out is a POST with the CSRF token; it ends that session", async () => {
@@ -509,6 +550,7 @@ describe("pages", () => {
       "default-src 'none'; style-src 'self'; img-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     );
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
@@ -755,6 +797,29 @@ describe("a reply is one plain line (#205, #208)", () => {
 });
 
 describe("the harness (#232)", () => {
+  it("the jar sends a cookie only under its Path, and forgets it once its Max-Age runs out", async () => {
+    const { plugin, clock } = await world();
+    await people(plugin);
+    const token = tokenOf(await slash(plugin, "web", LARRY));
+    const jar: Jar = new Map();
+    await openLink(plugin, token, jar);
+    expect(jar.has(LOGIN)).toBe(true);
+    // What reaches the handler: the cookie header, and the path the host passes.
+    const seen: string[] = [];
+    const real = plugin.http!.bind(plugin);
+    plugin.http = async (r, info) => {
+      seen.push(`${info.path} ${r.headers.get("cookie") ?? ""}`);
+      return real(r, info);
+    };
+    await call(plugin, "GET", "", { jar });
+    await call(plugin, "GET", "/", { jar });
+    expect(seen).toEqual(["/ ", `/ ${LOGIN}=${jar.get(LOGIN)}`]);
+    clock.advance(10 * 60 * 1000);
+    await call(plugin, "GET", "/", { jar });
+    expect(seen[2]).toBe("/ ");
+    expect(jar.has(LOGIN)).toBe(false);
+  });
+
   it("cleanup disposes every plugin world() made, before it removes their directories", async () => {
     const made = [await world(), await world()];
     for (const w of made) {
