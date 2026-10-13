@@ -25,6 +25,8 @@ export function reminderSchedule(when: Date | null, repeat: Repeat, zone: string
   const start = `${w.year}-${String(w.month).padStart(2, "0")}-${String(w.day).padStart(2, "0")}`;
   const base = { kind: "calendar" as const, every: 1, unit: repeat, start };
   if (!when) return base;
+  // `weekdays` and `dayOfMonth` equal docket's defaults (the start's weekday and day, as `start`
+  // is built from the same `w`); they are written out on purpose, so a stored schedule says its day.
   return {
     ...base,
     hour: w.hour,
