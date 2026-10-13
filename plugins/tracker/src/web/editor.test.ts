@@ -376,6 +376,36 @@ describe("price trackers", () => {
     expect((await post(w.plugin, larry, csrf, "/new/price", { url: `${SHOP}2`, near: "Price:" })).status).toBe(303);
   });
 
+  it("new: a watch that reads no page is not held by a read in flight; a page watch is, in words that fit it (#226)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const reads: string[] = [];
+    const fetch: Fetch = {
+      async get(url: string): Promise<FetchResponse> {
+        reads.push(url);
+        await gate;
+        return { status: 200, body: `<p>Price: 10.00</p>`, headers: {} };
+      },
+    };
+    const w = await world({ fetch });
+    await people(w.plugin);
+    const larry = await signIn(w.plugin, LARRY);
+    const csrf = await csrfOf(w.plugin, larry);
+    const first = post(w.plugin, larry, csrf, "/new/price", { url: SHOP, near: "Price:" });
+    for (let i = 0; i < 500 && reads.length < 1; i++) await Bun.sleep(2);
+    // An eBay watch reads nothing now: made at once, while the price's page is still being read.
+    const ebay = await post(w.plugin, larry, csrf, "/new/wantlist", { name: "Oceania", source: "ebay", judge: "no" });
+    expect(ebay.status).toBe(303);
+    const page = await post(w.plugin, larry, csrf, "/new/wantlist", { name: "Widgets", source: "page", target: `${SHOP}s`, judge: "no" });
+    expect(page.status).toBe(400);
+    expect(READING).not.toContain("your last new price tracker;");
+    expect(await page.text()).toContain(esc(READING));
+    expect(reads).toEqual([SHOP]);
+    release();
+    expect((await first).status).toBe(303);
+    expect(tasks(w.dbPath).map((t) => t.type)).toEqual(["wantlist", "price"]);
+  });
+
   it("edit: the name, interval, drop and baseline; never the page", async () => {
     const w = await setup();
     await post(w.plugin, w.larry, w.csrf, "/new/price", { url: SHOP, hours: "12" });

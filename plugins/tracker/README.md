@@ -291,8 +291,8 @@ you in as someone else. Sign out is a POST too.
 **The task editor** (slice 2). The forms take the options of `/remind`, `/renewal`, `/price` and
 `/research` (#82), and the same functions check and make them: the same defaults, limits and messages, the page read
 once before a price tracker is made, at most 20 price trackers per person wherever they were made,
-and `near` turned into the same bounded pattern; a person has one new price tracker's page read in
-flight at a time. Every person may have at most 200 active or paused tasks of all types together,
+and `near` turned into the same bounded pattern; a person has one first page read (a new price
+tracker's or `page` watch's) in flight at a time. Every person may have at most 200 active or paused tasks of all types together,
 made anywhere. The length limits are one set (`src/limits.ts`) for the slash options, the forms
 and the server's checks. An edit changes a reminder's text, time and repeat
 (an empty time keeps the one it has, unless the repeat changes); a renewal's name, amount,
@@ -573,8 +573,8 @@ with `Retry-After`. A limited request is refused before its owner is looked up. 
 token does not look up (unknown, revoked, expired, malformed) share one global bucket of 30,
 refilled at one every two seconds; past it they get `429` instead of `401`, and valid tokens are
 unaffected. A body is at most
-16 KiB, read no further. One new price tracker's page read in flight per person, shared with the
-web editor (`409 busy`).
+16 KiB, read no further. One new price tracker's or `page` watch's first read in flight per person,
+shared with the web editor (`409 busy`).
 
 **Requests.** A `POST` or `PATCH` body is one JSON object with `Content-Type: application/json`
 (else `415`), and names only the fields listed for that type (else `400 unknown_field`), each of

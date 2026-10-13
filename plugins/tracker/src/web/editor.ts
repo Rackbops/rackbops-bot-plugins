@@ -41,12 +41,12 @@ export interface Editor {
 export interface Writer {
   d: TrackerDeps;
   queue: Queue;
-  /** Shared by the web and the API: one new price tracker's page read per person, wherever it was asked. */
+  /** Shared by the web and the API: one new price tracker's or page watch's read per person, wherever it was asked. */
   reading: Set<string>;
   userId: string;
 }
 
-export const READING = "I am still reading the page of your last new price tracker; try again when it is done.";
+export const READING = "I am still reading a page for your last new price tracker or want-list watch; try again when it is done.";
 
 const GONE = NO_LONGER_LISTED;
 
@@ -87,15 +87,19 @@ export async function makeTask(w: Writer, type: NewType, form: URLSearchParams):
   }
 }
 
-/** `/want`'s rules, a page read outside the queue as a new price's is, under the same one-read-per-person guard. */
+/**
+ * `/want`'s rules, a page read outside the queue as a new price's is. Only a `page` watch reads
+ * anything now (BGG and the inbox watches do not), so only it takes the one-read-per-person guard,
+ * and only once `startWant` has said which it is.
+ */
 async function makeWant(w: Writer, form: URLSearchParams): Promise<Written> {
-  const input = wantInput(form);
+  const started = await asUser(w, (u) => startWant(w.d, u, wantInput(form)));
+  if (!started.ok) return started;
+  const { start } = started;
+  if (start.config.source !== "page") return asUser(w, (u) => finishWant(w.d, u, start, { ok: true, text: "" }));
   if (w.reading.has(w.userId)) return { ok: false, error: READING };
   w.reading.add(w.userId);
   try {
-    const started = await asUser(w, (u) => startWant(w.d, u, input));
-    if (!started.ok) return started;
-    const { start } = started;
     const seen = await previewWant(w.d, start);
     return await asUser(w, (u) => finishWant(w.d, u, start, seen));
   } finally {
