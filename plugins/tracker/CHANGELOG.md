@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.23.1] - 2026-10-13
+
+### Fixed
+
+- `/allow` with the usr link on no longer tells someone who already has a usr account that "they
+  can finish their usr sign-up with `/register`". When usr linked an existing account, the reply
+  now says "Linked to usr, to the usr account they already have."; the sign-up hint stays for
+  someone usr made a new account for.
+
+### Schema
+
+- No change.
+
 ## [0.23.0] - 2026-10-07
 
 ### Added

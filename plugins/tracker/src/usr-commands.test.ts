@@ -73,7 +73,7 @@ async function slash(plugin: Plugin, name: string, userId: string, o: { target?:
   return edits[0]?.content ?? "";
 }
 
-const allowed = (roles = ["tracker:member"], userId = SUBJECT) => ({ status: 200, body: { user_id: userId, created: true, roles } });
+const allowed = (roles = ["tracker:member"], userId = SUBJECT, created = true) => ({ status: 200, body: { user_id: userId, created, roles } });
 const link = (t = "abc") => ({ status: 200, body: { url: `https://id.example.com/register/discord?t=${t}`, expires_at: "2026-10-07T12:15:00.000Z" } });
 const registered = { status: 409, body: { error: "this Discord account is already registered \u2014 unlink it first" } };
 
@@ -86,6 +86,15 @@ async function started(w: ReturnType<typeof world>) {
 }
 
 describe("/allow with the usr link on", () => {
+  it("does not tell someone who already has a usr account to finish signing up", async () => {
+    const w = world();
+    await started(w);
+    w.usr.answers["/api/discord/allow"]!.push(allowed(undefined, SUBJECT, false));
+    const answer = await slash(w.plugin, "allow", ADMIN, { target: LARRY });
+    expect(answer).toContain("Linked to usr, to the usr account they already have.");
+    expect(answer).not.toContain("finish their usr sign-up");
+  });
+
   it("allows the person in usr as tracker:member, by the admin, in this server, and keeps the usr user id", async () => {
     const w = world();
     await started(w);
