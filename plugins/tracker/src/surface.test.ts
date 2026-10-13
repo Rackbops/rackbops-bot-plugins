@@ -40,7 +40,7 @@ interface Sent {
  * `members` turns the membership gate on (`TRACKER_GUILD_ID`); a Discord id in `unknown` then gets
  * "unknown" from the lookup, as when Discord cannot be asked, whatever `members` holds.
  */
-function world(opts: { members?: Set<string>; unknown?: Set<string>; unreachable?: Set<string>; gone?: Set<string> } = {}) {
+function world(opts: { members?: Set<string>; unknown?: Set<string>; unreachable?: Set<string>; gone?: Set<string>; web?: boolean } = {}) {
   const clock = clockAt(START);
   const sent: Sent[] = [];
   const unreachable = opts.unreachable ?? new Set<string>();
@@ -58,7 +58,11 @@ function world(opts: { members?: Set<string>; unknown?: Set<string>; unreachable
   const plugin = createPlugin(
     makeFakeHost({
       name: "tracker",
-      env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, ...(members ? { TRACKER_GUILD_ID: GUILD } : {}) },
+      env: {
+        TRACKER_ADMIN_DISCORD_IDS: ADMIN,
+        ...(members ? { TRACKER_GUILD_ID: GUILD } : {}),
+        ...(opts.web ? { TRACKER_WEB_URL: "https://clerk.example.com" } : {}),
+      },
       log: { info() {}, warn: (m) => void warnings.push(m), error() {} },
       dm,
     }),
@@ -75,7 +79,26 @@ function world(opts: { members?: Set<string>; unknown?: Set<string>; unreachable
   return { plugin, clock, sent, unreachable, warnings };
 }
 
-type Options = { sub?: string; strings?: Record<string, string>; ints?: Record<string, number>; numbers?: Record<string, number>; users?: Record<string, string>; client?: unknown; guildId?: string };
+type Options = {
+  sub?: string;
+  strings?: Record<string, string>;
+  ints?: Record<string, number>;
+  numbers?: Record<string, number>;
+  users?: Record<string, string>;
+  client?: unknown;
+  guildId?: string;
+  /** Collects what the command sent after deferring, in order: its answer's edit, then any follow-up. */
+  said?: Said[];
+  /** Makes every follow-up fail with this (an expired interaction). */
+  followUpFails?: Error;
+};
+
+/** One message a command sent after deferring: the edit of its answer, or a follow-up and its flags. */
+interface Said {
+  kind: "edit" | "followUp";
+  content: string;
+  flags?: unknown;
+}
 
 /** Runs a slash command as `userId` and returns the ephemeral answer's text. */
 async function slash(plugin: Plugin, name: string, userId: string, o: Options = {}): Promise<string> {
@@ -96,7 +119,14 @@ async function slash(plugin: Plugin, name: string, userId: string, o: Options = 
       getUser: (k: string) => (o.users?.[k] ? { id: o.users[k], bot: false } : null),
     },
     deferReply: async (x: unknown) => void (deferred = x),
-    editReply: async (x: { content: string }) => void edits.push(x),
+    editReply: async (x: { content: string }) => {
+      edits.push(x);
+      o.said?.push({ kind: "edit", content: x.content });
+    },
+    followUp: async (x: { content: string; flags?: unknown }) => {
+      if (o.followUpFails) throw o.followUpFails;
+      o.said?.push({ kind: "followUp", content: x.content, flags: x.flags });
+    },
   };
   await command.handle(interaction as unknown as ChatInputCommandInteraction);
   expect(deferred).toMatchObject({ flags: 64 });
@@ -750,5 +780,146 @@ describe("share refusals", () => {
     expect(await share(LARRY)).toBe(`<@${LARRY}> ${CANNOT_SHARE}`); // themself
     await pressButton(w.plugin, "tracker:x.t.t1", CURLY);
     expect(await share(CURLY)).toContain("declined an earlier invitation from you");
+  });
+});
+describe("one message (#161, #205 discord-1)", () => {
+  /** Larry's `t1`, shared with Curly, paused because Curly cannot be DMed (as above). */
+  async function pausedForCurly(w: ReturnType<typeof world>) {
+    await withLarry(w);
+    await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
+    await slash(w.plugin, "register", CURLY);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } });
+    await pressButton(w.plugin, "tracker:a.t.t1", CURLY);
+    w.unreachable.add(CURLY);
+    for (const day of ["01", "02", "03", "04"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await tick(w.plugin);
+    }
+  }
+
+  /** `n` daily reminders for Larry, each answered as set. */
+  async function reminders(w: ReturnType<typeof world>, n: number, text: (i: number) => string) {
+    for (let i = 1; i <= n; i++) {
+      expect(await slash(w.plugin, "remind", LARRY, { strings: { text: text(i), repeat: "day" } })).toContain("set:");
+    }
+  }
+
+  const PAUSED_T1 = "Paused: `t1` bins out -- I could not DM user333; `/task resume t1` goes on without them.";
+  const porch = (i: number) => `water the plants on the back porch, pot ${i}`;
+
+  /** The count in `/tasks`' `...and N more active.` line (NaN when there is none). */
+  const moreActive = (list: string) => Number(list.match(/^\.\.\.and (\d+) more active\.$/m)?.[1]);
+
+  it("/tasks with 40 tasks and a paused one keeps the paused one's id and says how many it left out", async () => {
+    const w = world();
+    await pausedForCurly(w);
+    await reminders(w, 40, porch);
+    const list = await slash(w.plugin, "tasks", LARRY);
+    expect(list.length).toBeLessThanOrEqual(2000);
+    const shown = list.split("\n").filter((l) => l.includes("water the plants on the back porch")).length;
+    expect(shown + moreActive(list)).toBe(40);
+    // Without the web area there is no closing line: the paused one is last.
+    expect(list.endsWith(`\n${PAUSED_T1}`)).toBe(true);
+    expect(list).not.toContain("/web");
+  });
+
+  it("/tasks with the web area set up points to /web for the rest", async () => {
+    const w = world({ web: true });
+    await withLarry(w);
+    await reminders(w, 40, porch);
+    const list = await slash(w.plugin, "tasks", LARRY);
+    expect(list.length).toBeLessThanOrEqual(2000);
+    expect(list.endsWith("\nThe web area lists them all: `/web`.")).toBe(true);
+    const shown = list.split("\n").filter((l) => l.includes("water the plants on the back porch")).length;
+    expect(shown + moreActive(list)).toBe(40);
+  });
+
+  it("/tasks keeps a task whose title holds a newline whole: never its first line without its second", async () => {
+    const w = world();
+    await withLarry(w);
+    await reminders(w, 40, (i) => `water the plants on the back porch\npot ${i}`);
+    const list = await slash(w.plugin, "tasks", LARRY);
+    expect(list.length).toBeLessThanOrEqual(2000);
+    const lines = list.split("\n");
+    const firsts = lines.flatMap((l, i) => (/^`t\d+` water the plants on the back porch$/.test(l) ? [i] : []));
+    expect(firsts.length).toBeGreaterThan(0);
+    expect(firsts.length + moreActive(list)).toBe(40);
+    for (const i of firsts) expect(lines[i + 1]).toMatch(/^pot \d+ -- /);
+  });
+
+  /** Larry's own DMs fail for four days (his tasks pause), then work again. */
+  async function larryPausedAndBack(w: ReturnType<typeof world>) {
+    w.unreachable.add(LARRY);
+    for (const day of ["05", "06", "07", "08"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await tick(w.plugin);
+    }
+    w.unreachable.delete(LARRY);
+  }
+
+  it("the first command after a pause answers a full /tasks uncut by the notice, and tells of the resume in a second message", async () => {
+    const w = world();
+    await pausedForCurly(w);
+    await reminders(w, 40, porch);
+    await larryPausedAndBack(w);
+    const said: Said[] = [];
+    const list = await slash(w.plugin, "tasks", LARRY, { said });
+    expect(list.length).toBeLessThanOrEqual(2000);
+    // The answer is the list alone, from its first task line to its paused one.
+    expect(list).toMatch(/^`t\d+` water the plants on the back porch, pot \d+ -- /);
+    expect(list).not.toContain("I could not DM you");
+    expect(list).toMatch(/^\.\.\.and \d+ more active\.$/m);
+    expect(list.endsWith(`\n${PAUSED_T1}`)).toBe(true);
+    // The answer first, then the notice, which only Larry sees, like the answer.
+    expect(said).toHaveLength(2);
+    expect(said[0]).toEqual({ kind: "edit", content: list });
+    expect(said[1]).toMatchObject({ kind: "followUp", flags: 64 });
+    expect(said[1]?.content).toContain(`I could not DM you ${PAUSE_AFTER} times in a row, so your reminders were paused.`);
+    // Next time there is no notice, and nothing follows.
+    const again: Said[] = [];
+    await slash(w.plugin, "tasks", LARRY, { said: again });
+    expect(again.map((m) => m.kind)).toEqual(["edit"]);
+  });
+
+  it("a follow-up that fails after the answer landed is logged, never thrown to the host", async () => {
+    const w = world();
+    await withLarry(w);
+    await reminders(w, 40, porch);
+    await larryPausedAndBack(w);
+    const said: Said[] = [];
+    // `slash` awaits the command's handle(): a rejection would fail the test here.
+    const list = await slash(w.plugin, "tasks", LARRY, { said, followUpFails: Object.assign(new Error("Unknown interaction"), { code: 10062 }) });
+    expect(said).toEqual([{ kind: "edit", content: list }]);
+    expect(list).toMatch(/^\.\.\.and \d+ more active\.$/m);
+    expect(w.warnings).toContain("could not send /tasks's resume notice as a follow-up: Unknown interaction");
+  });
+
+  it("a button pressed on a 2000-character DM keeps its status", async () => {
+    const w = world();
+    await withLarry(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "water the plants", when: "9am" } });
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await tick(w.plugin);
+    const pressed = await pressButton(w.plugin, buttonIds(w.sent[0])[0] as string, LARRY, "x".repeat(2000));
+    const content = pressed.edits[0]?.content ?? "";
+    expect(content.endsWith("\n\n-- Marked done.")).toBe(true);
+    expect(content.length).toBeLessThanOrEqual(2000);
+    expect(content.startsWith(`${"x".repeat(1980)}...`)).toBe(true);
+  });
+
+  it("a button pressed on a DM cut inside an emoji keeps the emoji whole or leaves it out, never half", async () => {
+    const w = world();
+    await withLarry(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "water the plants", when: "9am" } });
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await tick(w.plugin);
+    const dm = `${"x".repeat(1979)}${"😀".repeat(11)}`;
+    const content = (await pressButton(w.plugin, buttonIds(w.sent[0])[0] as string, LARRY, dm)).edits[0]?.content ?? "";
+    expect(content.endsWith("\n\n-- Marked done.")).toBe(true);
+    expect(content.length).toBeLessThanOrEqual(2000);
+    // No lone surrogate: half an emoji shows as a broken character.
+    expect(content).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    expect(content).toBe(`${"x".repeat(1979)}...\n\n-- Marked done.`);
   });
 });

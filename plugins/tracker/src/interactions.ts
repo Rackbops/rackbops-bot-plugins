@@ -10,7 +10,7 @@ import {
 } from "discord.js";
 import type { PluginInteractionHandler } from "../../../packages/api/contract.js";
 import { decideAccess, NOT_ADMITTED } from "./access.js";
-import { clip, enter, type TrackerDeps } from "./actions.js";
+import { clip, enter, MAX_ANSWER, type TrackerDeps } from "./actions.js";
 import { MAX_REPLY_TEXT, modalId, parseCustomId, REPLY_FIELD, replyButtonId } from "./buttons.js";
 import { EPHEMERAL, FAILED, type Interactionish, NO_MENTIONS, STARTING, type SurfaceContext } from "./discord-common.js";
 import { press, reducesContact, replyRefusal, submitReply } from "./press.js";
@@ -64,8 +64,10 @@ export function createInteractionHandler(c: SurfaceContext): PluginInteractionHa
     });
     if (result.pressed.ok) {
       const { status, keepReplyFor } = result.pressed;
+      // The status is what the presser came for: clip the DM, never it (#205 discord-1).
+      const suffix = `\n\n-- ${status}`;
       await interaction.editReply({
-        content: clip(`${interaction.message.content}\n\n-- ${status}`),
+        content: `${clip(interaction.message.content, MAX_ANSWER - suffix.length)}${suffix}`,
         components: keepReplyFor ? [replyRow(keepReplyFor)] : [],
         ...NO_MENTIONS,
       });
