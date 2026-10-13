@@ -68,10 +68,10 @@ describe("migration 8", () => {
     const before = { schema: schema(), users: users() };
 
     expect(migrate(db)).toBe(7);
-    // Every later migration runs too; migration 9's users.usr_subject has its own test (usr.test.ts):
-    // users gains exactly that column, nothing else.
+    // Every later migration runs too; migration 9's users.usr_subject and migration 10's
+    // mail_addresses have their own tests (usr.test.ts, mail.test.ts): users gains exactly that column.
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
-    const after = schema().filter((s) => s.name !== "users_usr_subject");
+    const after = schema().filter((s) => s.name !== "users_usr_subject" && !s.name.includes("mail_addresses"));
     expect(after.filter((s) => !s.name.startsWith("want_inbox"))).toEqual(before.schema.map(withUsrSubject));
     expect(after.filter((s) => s.name.startsWith("want_inbox")).map((s) => s.name)).toEqual(["want_inbox", "want_inbox_key", "want_inbox_task"]);
     expect(users()).toEqual(before.users.map((u) => ({ ...(u as object), usr_subject: null })));

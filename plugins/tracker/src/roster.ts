@@ -105,6 +105,7 @@ export const ERASED_TABLES = [
   "usage",
   "notices",
   "ceiling_changes",
+  "mail_addresses",
   "users",
 ] as const;
 
@@ -427,6 +428,8 @@ export class Roster {
       // Their ceiling changes go; a change they made to someone else's keeps its row, not their id.
       del("ceiling_changes", "user_id = ?", userId);
       this.db.query("UPDATE ceiling_changes SET set_by = ? WHERE set_by = ?").run(FORGOTTEN, userId);
+      // Their alert address (mail.ts, schema migration 10): mail sent to it after this finds no one.
+      del("mail_addresses", "user_id = ?", userId);
       del("users", "seq = ?", Number(seq));
 
       const held = this.db.query("SELECT 1 FROM delivery_pauses WHERE task_id = ? LIMIT 1");

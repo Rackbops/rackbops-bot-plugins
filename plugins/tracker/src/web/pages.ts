@@ -222,6 +222,8 @@ export interface SettingsForm {
   zone: string;
   saved?: boolean;
   error?: string;
+  /** The person's alert address (mail.ts), while the alert-email route is on. */
+  alerts?: string;
 }
 
 export function settingsPage(v: Viewer, form: SettingsForm): string {
@@ -250,6 +252,12 @@ ${form.error ? html`<div class="rb-alert rb-alert--danger" role="alert"><p class
 <div><button class="rb-btn rb-btn--primary" type="submit">Save</button></div>
 </form>
 </section>
+${form.alerts
+    ? html`<section>
+<h2>eBay alert emails</h2>
+<p>Forward eBay's saved-search alert emails to <code>${form.alerts}</code> and their listings reach your eBay watches with the same words. The address is yours alone: keep it private.</p>
+</section>`
+    : null}
 <section>
 <h2>API tokens</h2>
 <p>For a program that uses the tracker's task API as you. <a class="rb-link" href="${v.base}/tokens">API tokens</a></p>

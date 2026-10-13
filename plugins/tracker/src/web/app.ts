@@ -330,7 +330,11 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
         return fresh ? saveSettings(d, fresh, { hour: Number(hour), zone }) : "You are no longer on this tracker's list.";
       });
     }
-    if (error !== null) return htmlResponse(settingsPage(v, { hour, zone, error }), 400);
+    if (error !== null) {
+      const mail = d.mail;
+      const alerts = mail ? await w.queue(async () => mail.addressFor(v.user.id, d.clock.now())) : undefined;
+      return htmlResponse(settingsPage(v, { hour, zone, error, ...(alerts ? { alerts } : {}) }), 400);
+    }
     return redirect(`${base}/settings?saved=1`);
   }
 
@@ -476,10 +480,19 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     case "admin-usage":
     case "admin-person":
       return adminGet(a, r);
-    default:
+    default: {
+      // The alert address (mail.ts) is made the first time it is shown, in the one queue.
+      const mail = d.mail;
+      const alerts = mail ? await w.queue(async () => mail.addressFor(auth.user.id, d.clock.now())) : undefined;
       return htmlResponse(
-        settingsPage(v, { hour: String(auth.user.preferredHour), zone: auth.user.timeZone, saved: url.searchParams.get("saved") === "1" }),
+        settingsPage(v, {
+          hour: String(auth.user.preferredHour),
+          zone: auth.user.timeZone,
+          saved: url.searchParams.get("saved") === "1",
+          ...(alerts ? { alerts } : {}),
+        }),
       );
+    }
     }
   };
 }

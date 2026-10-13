@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-13T13:43:36.948Z",
+  "generatedAt": "2026-10-13T14:17:04.784Z",
   "plugins": [
     {
       "name": "mcp",
@@ -170,8 +170,8 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.24.0",
-      "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, and listings you send in through the task API for eBay, which the watcher never opens, and for BoardGameGeek without that token; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
+      "version": "0.25.0",
+      "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
       "commands": [
@@ -286,9 +286,29 @@
           "description": "The usr app the tracker's roles live under (tracker:member, tracker:register); it must match the app on the key's usr Discord service row, which is what usr goes by. Unset = tracker. Needs TRACKER_USR_URL.",
           "required": false,
           "secret": false
+        },
+        {
+          "key": "TRACKER_MAIL_DOMAIN",
+          "format": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$",
+          "description": "The domain the alert-email route receives mail at through Cloudflare Email Routing and the tracker's Email Worker, e.g. alerts.example.com (lower case). Each person gets one private address there (m- and 24 hex digits), shown by /want source: ebay and on the web settings page; eBay's saved-search alerts forwarded to it reach their eBay watches with the same words, and Gmail's forwarding confirmation code is DMed to them. With TRACKER_MAIL_KEY; either unset = off (the route answers 404).",
+          "required": false,
+          "secret": false
+        },
+        {
+          "key": "TRACKER_MAIL_KEY",
+          "format": "^\\S{32,}$",
+          "description": "The bearer the Email Worker posts each message to /tracker/mail/inbound with, at least 32 characters; the same value goes in the Worker's CLERK_MAIL_KEY secret. Required with TRACKER_MAIL_DOMAIN; one without the other refuses to load. Never logged.",
+          "required": false,
+          "secret": true
         }
       ],
       "releases": [
+        {
+          "version": "0.25.0",
+          "publishedAt": "2026-10-13T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.25.0",
+          "notes": "### Added\n\n- **eBay's saved-search alert emails reach eBay watches** (#83, Rod's \"build the email route\"),\n  while `TRACKER_MAIL_DOMAIN` and `TRACKER_MAIL_KEY` are set. Each person gets one private alert\n  address at the domain (`m-` and 24 random hex digits), shown by `/want source: ebay` and on the\n  web settings page. Cloudflare Email Routing hands the domain's mail to the Email Worker in\n  `mail-worker/worker.js`, which posts each message as it came to the new\n  `POST /tracker/mail/inbound` (its own bearer, `TRACKER_MAIL_KEY`). An eBay alert's matches -- never\n  its \"You might also like\" suggestions -- go into the inbox of each of the person's live eBay\n  watches with the saved search's words, as listings sent through the task API do; Gmail's\n  forwarding confirmation code is DMed; an alert no watch searches for gets a DM saying so each time it comes; anything\n  else is dropped, and no message is stored or logged. The reader was built from the first real\n  alert (2026-10-13), kept, with its tracking and account names taken out, as a test fixture.\n  Forget-me deletes the address.\n\n### Schema\n\n- Migration 10: a new `mail_addresses` table, purely additive. A database at 10 is refused by\n  0.24.0 and older."
+        },
         {
           "version": "0.24.0",
           "publishedAt": "2026-10-13T00:00:00.000Z",
@@ -342,12 +362,6 @@
           "publishedAt": "2026-10-05T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.18.0",
           "notes": "### Added\n\n- **The daily \"today and overdue\" digest** (plan 5.5). Once a day, at each person's preferred hour\n  in their own zone (the hour `/register` and `/settings` set, 9:00 by default), Clerk DMs them one\n  message listing their own reminders and renewals that are **overdue** -- the latest run fired\n  before today and was never marked done or decided -- and those **due today**: a run still to come\n  today, or one that already went out today and waits on an answer. Each line names the task id\n  and the time, and the message ends with the commands that answer them (`/task done`,\n  `/task decide`, `/task snooze`). Price checks, want-list watches, scouts and research run on\n  their own and owe nothing, so they are not listed; nor are tasks the person only receives, since\n  only the owner answers a run. A renewal's line says when it was asked (its lead days before the\n  date), not the date itself. A snoozed run is not overdue: its snooze is what is due. At most 10\n  lines a section, the rest counted.\n- Nothing due and nothing overdue: no DM at all.\n- Exactly once per person per day, by research-triage's claim pattern: the day is claimed in the\n  store (docket's once-only notice key `digest:<person>:<date>`) before their tasks are read or anything is sent,\n  so a restart or an overlapping tick never sends it twice; a send that fails is logged and not\n  retried that day. Notify lane only, on the `notify` tick after the runs due now, with no model\n  call. A digest the bot was down for goes out when it is back, until the person's midnight; a\n  person whose DMs are paused after failures gets theirs later that day if the pause lifts.\n- Forget-me erases the person's digest claims too."
-        },
-        {
-          "version": "0.17.0",
-          "publishedAt": "2026-10-04T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.17.0",
-          "notes": "### Added\n\n- **The model's look at new want-list listings** (#83; plan 5.4 and item 63, the rest of E9). A\n  watch made while the model runner is set up is judged (the plugin's own `wantjudge` type,\n  `src/wantjudge-type.ts`, on the execute lane): the page or BGG is still read in plain code, and\n  only when that read finds listings it has not told you of does one `claude -p` Job run, through\n  the queue and the runner on the subscription. For each listing the model says whether it is the\n  thing you want (`match`, `maybe`, or `no` for an accessory, another product, a replica, parts),\n  why, in one sentence, and what the listing's own page shows about the seller and the offer --\n  ratings, sales, returns, where it ships from, anything that looks wrong -- as signals, never a\n  verdict about a person. The DM lists the listings worth a look, best first, each with that note;\n  the ones it calls `no` are not DMed but are kept as findings with the verdict, so\n  `/task history` shows them. The Job may open only the listings' pages on the watch's own site\n  (`WebFetch` scoped to the pasted page's host, or BGG's; never eBay's, never a host a listing\n  merely names) and may not search the web or read the runner's files; 12 turns, 0.50 USD, 5 minutes a look\n  (proposed, like the scout's caps). A look that fails for good sends the listings unchecked, so an\n  alert never waits on the model past its retry.\n- `/want judge:` (yes or no; the web form's and the task API's `judge`, `\"yes\"` or `\"no\"`): left\n  out, a watch is judged whenever the model runner is set up; `judge: false` makes a plain watch as\n  before; `judge: true` without the runner is refused. Fixed once made: to change it, make a new\n  watch. Watches made before 0.17.0 stay plain.\n- A judged watch's plain-code reads are not charged; its looks are, like any model run, and while\n  its owner is at a daily ceiling (with the budgets on) or the runner is down, the watch waits.\n- **The Discord-role check** (plan 1.1 and 5.5, item 46). `TRACKER_GUILD_ROLES` (new, optional):\n  comma-separated `serverId:roleId` pairs. In a server named there, a member passes the membership\n  gate only while they hold one of its roles, read off the same forced single-member lookup the\n  gate already makes (no privileged intent); a `TRACKER_GUILD_ID` server not named stays\n  membership-only, and every server named must be in `TRACKER_GUILD_ID` or the plugin refuses to\n  load. The `TRACKER_ADMIN_DISCORD_IDS` admins skip the role, never the membership. Lacking the role\n  is exactly like leaving the server: commands, buttons, `/allow` and `/task share` refuse, the web area and API\n  tokens sign out and revoke on their next re-check, and the person's tasks, history and DMs stay.\n  When none of a server's named roles exists there, the answer is a logged unknown (refused, never\n  a no); a server's own id (@everyone) refuses to load. Unset = as before.\n\n### Changed\n\n- The refusals that said \"not a member of this tracker's server\" now also name the role."
         }
       ]
     },

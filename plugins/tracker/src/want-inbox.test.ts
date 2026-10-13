@@ -55,7 +55,7 @@ describe("/want source: ebay", () => {
     expect(made).toContain("This watch never opens eBay itself.");
     expect(made).toContain("Claude in Chrome");
     expect(made).toContain("`POST /tasks/t1/listings`");
-    expect(made).toContain("eBay's saved-search alert emails");
+    expect(made).not.toContain("alert emails");
     expect(made).toContain(`<${ebaySearchUrl("Wingspan Oceania", 35)}>`);
     expect(ebaySearchUrl("Wingspan Oceania", 35)).toBe("https://www.ebay.com/sch/i.html?_nkw=Wingspan+Oceania&_udhi=35");
     const [task] = query<{ type: string; config: string; schedule: string }>(w.dbPath, "SELECT type, config, schedule FROM tasks");

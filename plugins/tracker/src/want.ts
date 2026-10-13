@@ -20,7 +20,7 @@ import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
  *   opens eBay, and an inbox watch opens neither eBay nor BGG: Rod's rule, 2026-10-05; scoped to
  *   the watcher by roshne, 2026-10-11 (#165). The listings reach the watch when someone
  *   sends them in -- the owner's own browser, Claude in Chrome searching eBay for them, through
- *   the task API's `POST /tasks/<id>/listings`; later eBay's saved-search alert emails -- and the
+ *   the task API's `POST /tasks/<id>/listings`, or eBay's saved-search alert emails (mail.ts, 0.25.0) -- and the
  *   watch DMs the new ones as any watch does. The answer still hands over the eBay search, with
  *   the price cap in it, so the owner can save it on eBay too.
  *
@@ -140,16 +140,26 @@ export function watchWhere(c: WantConfig): string {
   return c.source === "bgg" ? "BoardGameGeek's marketplace" : "that page";
 }
 
-/** How listings reach an inbox watch, for its confirmation: never by the tracker opening the site. */
-function inboxNote(c: WatchConfig, taskId: string): string[] {
+/**
+ * How listings reach an inbox watch, for its confirmation: never by the tracker opening the site.
+ * `alerts` is the owner's alert address (mail.ts) while the alert-email route is on, else null.
+ */
+function inboxNote(c: WatchConfig, taskId: string, alerts: string | null): string[] {
   const site = watchSite(c);
   const words = c.search ?? "";
   const send = `send them in through the task API (\`POST /tasks/${taskId}/listings\`, with a token from the web area's API tokens page)`;
   if (site === "ebay") {
     const cap = c.maxPrice !== undefined ? ` at or under ${money(c.maxPrice, c.currency ?? "")}` : "";
     return [
-      `This watch never opens eBay itself. Listings reach it when you search eBay in your own browser with Claude in Chrome and ${send}, and soon from eBay's saved-search alert emails.`,
+      alerts
+        ? `This watch never opens eBay itself. Listings reach it from eBay's saved-search alert emails, and when you search eBay in your own browser with Claude in Chrome and ${send}.`
+        : `This watch never opens eBay itself. Listings reach it when you search eBay in your own browser with Claude in Chrome and ${send}.`,
       `The eBay search for "${words}"${cap}: <${ebaySearchUrl(words, c.maxPrice)}>`,
+      ...(alerts
+        ? [
+            `For the alert emails: save that search on eBay with email alerts on, and have your mail forward eBay's alerts to ${alerts} (yours alone; keep it private). I match an alert to this watch by its words, so keep the saved search's words the same as this watch's.`,
+          ]
+        : []),
     ];
   }
   if (site === "bgg") {
@@ -293,7 +303,7 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
         start.judge
           ? `I look at ${where} every ${plural(start.hours, "hour")}, and the model looks at each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before -- whether it is the thing, and ${shows} -- then I DM you the ones worth a look, with its notes; the first look starts within a minute. Those looks are model runs, charged like research; \`judge: false\` makes a watch without them. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`
           : `I look at ${where} every ${plural(start.hours, "hour")} and DM you each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before; ${first}. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`,
-        ...inboxNote(c, task.id),
+        ...inboxNote(c, task.id, d.mail && watchSite(c) === "ebay" ? d.mail.addressFor(user.id, now) : null),
       ].join("\n"),
     ),
   };

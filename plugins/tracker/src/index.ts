@@ -26,6 +26,8 @@ import { openDatabase, vacuumOnce } from "./schema.js";
 import { Roster } from "./roster.js";
 import { SqliteStore } from "./store.js";
 import { createWebHandler } from "./web/app.js";
+import { handleMailInbound, MAIL_PATH } from "./web/mail-inbound.js";
+import { MailAddresses, parseMailConfig } from "./mail.js";
 import { parseWebUrl } from "./web/config.js";
 import { ApiTokens } from "./web/api-tokens.js";
 import { Sessions } from "./web/sessions.js";
@@ -50,8 +52,8 @@ import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_ID
  *
  * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID`, `TRACKER_GUILD_ROLES`,
  * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts), the `TRACKER_USR_*` settings (usr.ts: a
- * half-set link refuses to load) and `TRACKER_BUDGET_UNLIMITED` (usage.ts), reads `TRACKER_BGG_TOKEN`, and
- * nothing else. The database is opened in `activate()` and closed in `dispose()`.
+ * half-set link refuses to load), `TRACKER_BUDGET_UNLIMITED` (usage.ts) and the `TRACKER_MAIL_*` settings (mail.ts),
+ * reads `TRACKER_BGG_TOKEN`, and nothing else. The database is opened in `activate()` and closed in `dispose()`.
  */
 
 /** The tracker's database: `<dataDir>/tracker/tracker.sqlite`, a directory of its own (mcp's convention). */
@@ -146,6 +148,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const cityHall = parseCityHallConfig(host.env);
   // The link to our usr (usr.ts): checked at load, so a half-set link refuses to start; off while unset.
   const usrConfig = parseUsrConfig(host.env);
+  // The alert-email route (mail.ts): both settings or neither, checked at load.
+  const mailConfig = parseMailConfig(host.env);
   const usrClient = usrConfig ? createUsrClient({ config: usrConfig, ...(options.usrFetch ? { fetchImpl: options.usrFetch } : {}) }) : null;
   // Budgets off for the alpha (roshne, 2026-10-02): no daily ceiling holds a run; usage is still recorded.
   const budgetUnlimited = parseBudgetUnlimited(host.env[BUDGET_UNLIMITED_KEY]);
@@ -417,6 +421,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           research: executeOn,
           bgg: bgg !== null,
           inbox: openedInbox,
+          mail: mailConfig ? new MailAddresses(opened, mailConfig.domain) : null,
           usr:
             usrConfig && usrClient
               ? {
@@ -498,6 +503,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       if (info.path === "/healthz" && (request.method === "GET" || request.method === "HEAD")) {
         return healthResponse(decideHealth(health, clock.now()));
       }
+      // eBay's alert emails, from the Email Worker (web/mail-inbound.ts): its own bearer, never a session.
+      if (info.path === MAIL_PATH) return handleMailInbound({ config: mailConfig, deps: () => deps, queue }, request);
       return web(request, info);
     },
   };
