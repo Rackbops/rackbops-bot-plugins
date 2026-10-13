@@ -44,7 +44,8 @@ function value(env: Readonly<Record<string, string | undefined>>, key: string): 
 
 /**
  * The usr link's settings: `null` while `TRACKER_USR_URL` is unset (off). A URL without a key, a
- * key or app without a URL, or a malformed value refuses to load, naming the setting, never its value.
+ * key or app without a URL, or a malformed value refuses to load, naming the setting. It never echoes
+ * the URL or the key; only a malformed `TRACKER_USR_APP`, an app name and no secret, is quoted back.
  */
 export function parseUsrConfig(env: Readonly<Record<string, string | undefined>>): UsrConfig | null {
   const url = value(env, USR_ENV.url);
@@ -75,7 +76,10 @@ export function parseUsrConfig(env: Readonly<Record<string, string | undefined>>
   return { url: parsed.origin, key, app: app ?? DEFAULT_USR_APP };
 }
 
-/** usr refused or could not be reached; `message` is safe to show an admin (no key, no body). */
+/**
+ * usr refused or could not be reached; `message` is safe to show an admin: never the key or the
+ * request, and of usr's answer only its own `error` reason, cleaned and cut to 200 characters.
+ */
 export class UsrError extends Error {
   constructor(
     message: string,
@@ -117,8 +121,8 @@ export interface RegisterLink {
 
 export interface UsrClient {
   allow(req: AllowRequest): Promise<AllowResult>;
-  /** The person's one-time usr registration link, or `null` when they are already registered there (409). */
   /**
+   * The person's one-time usr registration link, or `null` when they are already registered there (409).
    * `policy` is usr's: `allow` (the default) only for someone `/allow` already linked, `open` for
    * anyone, which the tracker asks for only for its own configured admins (their first link).
    */

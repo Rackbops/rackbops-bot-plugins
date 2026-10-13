@@ -326,9 +326,9 @@ async function linkEveryone(a: AdminWeb, usr: UsrLink, invoker: string, by: stri
       try {
         return usr.links.link(id, allowed.userId);
       } catch (err) {
+        // As in `/allow`: link() finds another holder in its own transaction, so this is the database failing.
         a.d.log.error("usr link failed", err);
-        // Another process linked the account at the same moment (the unique index): the same as taken, as `/allow` says.
-        return err instanceof Error && /UNIQUE constraint failed/.test(err.message) ? ("taken" as const) : ("failed" as const);
+        return "failed" as const;
       }
     });
     if (outcome === null) return notAdmin();

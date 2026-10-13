@@ -245,14 +245,19 @@ function usrAllowed(d: TrackerDeps, usr: UsrLink, userId: string, result: unknow
   try {
     outcome = usr.links.link(userId, answer.userId);
   } catch (err) {
+    // link() checks for another holder inside its BEGIN IMMEDIATE transaction, so the unique index
+    // never fires here: an error is the database itself failing.
     d.log.error("usr link failed", err);
-    // Another process linked the account at the same moment (the unique index): the same as taken.
-    if (err instanceof Error && /UNIQUE constraint failed/.test(err.message)) outcome = "taken";
-    else return "Not linked to usr: something went wrong keeping their usr link. They are on the tracker's list; run `/allow` again to retry.";
+    return "Not linked to usr: something went wrong keeping their usr link. They are on the tracker's list; run `/allow` again to retry.";
   }
   if (outcome === "gone") return "Not linked to usr: they left the tracker while usr was being asked.";
   if (outcome === "taken") return "Not linked to usr: usr's account for them is already linked to someone else here.";
   if (outcome === "unchanged") return "Linked to usr.";
+  // usr moves a person's Discord link, and drops the account /allow made, when they finish signing
+  // up while signed in to a usr account they already had (usr docs/discord-registration.md): the id
+  // kept here goes stale until an /allow learns the new one, and their usr sign-in fails till then.
+  if (outcome === "relinked" && !answer.created)
+    return "Linked to usr again, to the account usr now has for them (usr moves them to it when they finish signing up with a usr account they already had), so they can sign in to the web area through usr.";
   // usr made a new account only for someone it had never seen. An existing one may still be an
   // unfinished sign-up (usr does not say which), so the /register pointer stays, conditionally.
   if (!answer.created)
@@ -287,7 +292,8 @@ export async function registerPerson(
   const { text, saved } = await registerSettings(d, user, input);
   const usr = d.usr;
   if (!usr || !saved || user.discordId === null || usr.links.isSignedUp(user.id)) return text;
-  const linked = usr.links.subjectOf(user.id) !== null;
+  const subject = usr.links.subjectOf(user.id);
+  const linked = subject !== null;
   const firstAdmin = !linked && d.configuredAdmins.has(user.discordId);
   if (!linked && !firstAdmin) return text;
   if (guildId === null) return `${text}\n\nRun \`/register\` in the server to get your usr sign-up link.`;
@@ -300,9 +306,10 @@ export async function registerPerson(
         usr.links.markSignedUp(user.id);
         return firstAdmin ? `${text}\n\nYou are signed up on usr. Once a usr admin gives you \`${usr.app}:register\` and \`${usr.app}:${MEMBER_ROLE}\` there, run \`/allow\` on yourself to link your tracker account.` : text;
       }
-      if (result instanceof UsrError && result.status === 403 && linked && result.reason.includes("not allowed yet")) {
+      if (result instanceof UsrError && result.status === 403 && subject !== null && result.reason.includes("not allowed yet")) {
         // usr no longer knows their Discord link (a usr admin removed it): forget ours, so /allow relinks.
-        usr.links.unlink(user.id);
+        // An /allow while usr was being asked may have linked them anew; that link stays, and so does the answer.
+        if (!usr.links.unlink(user.id, subject)) return text;
         return `${text}\n\nusr no longer has you on its list: ask an admin to run \`/allow\` for you again.`;
       }
       if (result instanceof Error) {

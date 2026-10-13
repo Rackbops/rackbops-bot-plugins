@@ -74,6 +74,9 @@ export class UsrVerifier {
   }
 
   private async keyFor(kid: string, force: boolean): Promise<CryptoKey | null> {
+    // A fetch under way (for a token checked a moment ago) has already moved `fetchedAt`: wait for
+    // its keys rather than reading the old ones, or none, and refusing a good token.
+    if (this.pending) await this.pending;
     const age = this.o.now() - this.fetchedAt;
     if (age < 0 || age >= JWKS_TTL_MS || (force && age >= JWKS_RETRY_MS)) await this.refresh();
     return this.keys.find((k) => k.kid === kid)?.key ?? null;

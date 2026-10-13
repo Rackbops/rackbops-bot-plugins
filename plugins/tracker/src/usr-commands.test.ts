@@ -21,7 +21,7 @@ interface Call {
   body: Record<string, unknown>;
 }
 
-type Answer = { status: number; body: unknown } | "down";
+type Answer = { status: number; body: unknown } | "down" | Promise<{ status: number; body: unknown }>;
 
 function usrFake() {
   const calls: Call[] = [];
@@ -29,7 +29,7 @@ function usrFake() {
   const usrFetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const path = new URL(String(input)).pathname;
     calls.push({ path, body: JSON.parse(String(init?.body ?? "{}")) });
-    const next = answers[path]?.shift();
+    const next = await answers[path]?.shift();
     if (!next) throw new Error(`unexpected usr call ${path}`);
     if (next === "down") throw new TypeError("fetch failed");
     return new Response(JSON.stringify(next.body), { status: next.status, headers: { "Content-Type": "application/json" } });
@@ -192,6 +192,19 @@ describe("/allow with the usr link on", () => {
     expect(await slash(w.plugin, "allow", ADMIN, { target: LARRY })).toContain("Linked to usr: they can finish");
   });
 
+  it("relinks someone usr moved to the account they signed up with, and says so", async () => {
+    const w = world();
+    await started(w);
+    const existing = "6f1c2a9e-0000-4000-8000-000000000002";
+    // The first /allow makes a new usr account; Larry then finishes signing up on usr while signed
+    // in to an account he already had, and usr moves him there and drops the new one.
+    w.usr.answers["/api/discord/allow"]!.push(allowed(), allowed(undefined, existing, false));
+    expect(await slash(w.plugin, "allow", ADMIN, { target: LARRY })).toContain("Linked to usr: they can finish");
+    const again = await slash(w.plugin, "allow", ADMIN, { target: LARRY });
+    expect(again).toContain("Linked to usr again, to the account usr now has for them");
+    expect(again).not.toContain("/register");
+  });
+
   it("says usr could not be reached, and asks for a server when run in a DM", async () => {
     const w = world();
     await started(w);
@@ -274,6 +287,25 @@ describe("/register with the usr link on", () => {
     // Unlinked: /register no longer asks usr, and /allow links them anew.
     expect(await slash(w.plugin, "register", LARRY)).not.toContain("usr");
     expect(await slash(w.plugin, "allow", ADMIN, { target: LARRY })).toContain("Linked to usr: they can finish");
+  });
+
+  it("keeps a link an /allow made while /register was asking usr, though usr's answer was about the old one", async () => {
+    const w = world();
+    await started(w);
+    const other = "6f1c2a9e-0000-4000-8000-000000000002";
+    w.usr.answers["/api/discord/allow"]!.push(allowed(), allowed(undefined, other, false));
+    await slash(w.plugin, "allow", ADMIN, { target: LARRY });
+    let answer!: (a: { status: number; body: unknown }) => void;
+    w.usr.answers["/api/discord/register-link"]!.push(new Promise((resolve) => (answer = resolve)));
+    const registering = slash(w.plugin, "register", LARRY);
+    while (w.usr.calls.length < 2) await Bun.sleep(1);
+    // Meanwhile an admin's /allow links Larry to the account usr now has for him.
+    expect(await slash(w.plugin, "allow", ADMIN, { target: LARRY })).toContain("Linked to usr");
+    answer({ status: 403, body: { error: "not allowed yet \u2014 ask an admin to /allow you" } });
+    expect(await registering).not.toContain("no longer has you");
+    // Still linked: /register asks usr for his sign-up link again.
+    w.usr.answers["/api/discord/register-link"]!.push(link());
+    expect(await slash(w.plugin, "register", LARRY)).toContain("https://id.example.com/register/discord?t=abc");
   });
 
   it("keeps the link when usr's 403 is about the key, not the person", async () => {
