@@ -49,7 +49,9 @@ import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_ID
  * and overdue" digest after the runs on the `notify` tick (plan 5.5, digest.ts).
  *
  * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID`, `TRACKER_GUILD_ROLES`,
- * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts) and `TRACKER_BUDGET_UNLIMITED` (usage.ts) and nothing else. The database is opened in `activate()` and closed in `dispose()`.
+ * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts), the `TRACKER_USR_*` settings (usr.ts: a
+ * half-set link refuses to load) and `TRACKER_BUDGET_UNLIMITED` (usage.ts), reads `TRACKER_BGG_TOKEN`, and
+ * nothing else. The database is opened in `activate()` and closed in `dispose()`.
  */
 
 /** The tracker's database: `<dataDir>/tracker/tracker.sqlite`, a directory of its own (mcp's convention). */
