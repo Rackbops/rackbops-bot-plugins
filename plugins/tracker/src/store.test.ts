@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -9,6 +9,27 @@ import { makeFakeHost } from "../../../packages/testkit/index.js";
 import { createPlugin } from "./index.js";
 import { META_TABLE, MIGRATIONS, migrate, openDatabase, vacuumOnce } from "./schema.js";
 import { SqliteStore } from "./store.js";
+import { removeDir } from "./test-dirs.js";
+
+type Opened = Database | ReturnType<typeof createPlugin>;
+
+/**
+ * What a test opens on a temp file (`keep` notes each), closed by `close` in the test's `finally`
+ * before its directory goes: Windows refuses to delete an open file (#232), and that EBUSY would
+ * hide the test's real failure. A second close or dispose of one already closed does nothing.
+ */
+function opened() {
+  const all: Opened[] = [];
+  return {
+    keep<T extends Opened>(x: T): T {
+      all.push(x);
+      return x;
+    },
+    async close() {
+      for (const x of all.splice(0)) await (x instanceof Database ? x.close() : x.dispose?.());
+    },
+  };
+}
 
 describe("SqliteStore passes docket's STORE_CONTRACT", () => {
   for (const c of STORE_CONTRACT) {
@@ -189,12 +210,13 @@ describe("SqliteStore beyond the contract", () => {
     expect((await store.listFindings()).map((x) => x.id)).toEqual(["f5"]);
   });
 
-  it("vacuums an existing database once, so rows deleted before secure_delete leave no bytes; the VACUUM bumps no schema", () => {
+  it("vacuums an existing database once, so rows deleted before secure_delete leave no bytes; the VACUUM bumps no schema", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tracker-vacuum-"));
+    const o = opened();
     try {
       const path = join(dir, "tracker.sqlite");
       const MARK = "MARKER-a1b2c3d4e5f6";
-      const old = new Database(path, { create: true });
+      const old = o.keep(new Database(path, { create: true }));
       old.exec("PRAGMA secure_delete = OFF");
       for (let v = 0; v < 3; v++) {
         old.exec(MIGRATIONS[v] as string);
@@ -205,7 +227,7 @@ describe("SqliteStore beyond the contract", () => {
       old.close();
       const bytes = () => [path, `${path}-wal`].map((p) => (existsSync(p) ? readFileSync(p).toString("latin1") : "")).join("");
       expect(bytes()).toContain(MARK); // what a copy of the file would still show
-      const db = openDatabase(path);
+      const db = o.keep(openDatabase(path));
       expect(vacuumOnce(db, path)).toEqual({ ran: true });
       expect(vacuumOnce(db, path)).toEqual({ ran: false }); // once
       db.close();
@@ -216,7 +238,7 @@ describe("SqliteStore beyond the contract", () => {
       // findings and Job records; 7, 0.13.0's ceiling changes; 8, 0.19.0's want-list inboxes; 9, 0.20.0's
       // usr link) is what
       // blocks a rollback to 0.6.0, whose migrate() refuses a user_version above its three migrations.
-      const again = new Database(path);
+      const again = o.keep(new Database(path));
       const version = (again.query("PRAGMA user_version").get() as { user_version: number }).user_version;
       expect(version).toBe(MIGRATIONS.length);
       expect(MIGRATIONS).toHaveLength(9);
@@ -226,22 +248,26 @@ describe("SqliteStore beyond the contract", () => {
       }).toThrow("newer than this plugin knows");
       again.close();
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      await o.close();
+      removeDir(dir);
     }
   });
 
   it("a VACUUM that fails does not fail activation: it is logged, and the next start runs it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tracker-vacuum-"));
+    const o = opened();
     try {
       const dbPath = join(dir, "tracker.sqlite");
       openDatabase(dbPath).close(); // an existing database, never vacuumed
-      const reader = new Database(dbPath, { readonly: true });
+      const reader = o.keep(new Database(dbPath, { readonly: true }));
       reader.exec("BEGIN");
       reader.query("SELECT * FROM users").all();
       const warnings: string[] = [];
-      const plugin = createPlugin(
-        makeFakeHost({ name: "tracker", env: {}, log: { info() {}, warn: (m: string) => void warnings.push(m), error() {} } }),
-        { dbPath },
+      const plugin = o.keep(
+        createPlugin(
+          makeFakeHost({ name: "tracker", env: {}, log: { info() {}, warn: (m: string) => void warnings.push(m), error() {} } }),
+          { dbPath },
+        ),
       );
       await plugin.activate!();
       expect(warnings.some((m) => m.includes("could not vacuum the tracker's database"))).toBe(true);
@@ -263,16 +289,18 @@ describe("SqliteStore beyond the contract", () => {
       expect(marked().n).toBe(1);
       await plugin.dispose!();
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      await o.close();
+      removeDir(dir);
     }
   });
 
   it("a file-backed store (WAL) keeps its data across a close and reopen, and keeps counting ids", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tracker-store-"));
+    const o = opened();
     try {
       const path = join(dir, "tracker.sqlite");
       const at = "2026-03-02T12:00:00.000Z";
-      const db = openDatabase(path);
+      const db = o.keep(openDatabase(path));
       expect((db.query("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode).toBe("wal");
       const first = new SqliteStore(db);
       const u = await first.createUser({ discordId: "111111111111111111", at });
@@ -280,13 +308,14 @@ describe("SqliteStore beyond the contract", () => {
       await first.createOccurrence({ taskId: t.id, lane: "notify", dueAt: at, dedupeKey: "k", at });
       db.close();
 
-      const again = new SqliteStore(openDatabase(path));
+      const again = new SqliteStore(o.keep(openDatabase(path)));
       expect((await again.findUserByDiscordId("111111111111111111"))?.id).toBe(u.id);
       expect((await again.getTask(t.id))?.config).toEqual({ text: "t" });
       expect(await again.createOccurrence({ taskId: t.id, lane: "notify", dueAt: at, dedupeKey: "k", at })).toBeNull();
       expect((await again.createUser({ discordId: "222222222222222222", at })).id).toBe("u2");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      await o.close();
+      removeDir(dir);
     }
   });
 });
