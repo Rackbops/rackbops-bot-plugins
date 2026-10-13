@@ -208,12 +208,21 @@ describe("Gmail's forwarding confirmation", () => {
     expect(forwardingCode({ from: "forwarding-noreply@google.com", subject: "#123456789 Gmail Forwarding Confirmation", html: null, text: null })).toBe("123456789");
     expect(forwardingCode({ from: "forwarding-noreply@google.com", subject: "Your receipt", html: null, text: "Order 123456789" })).toBeNull();
     expect(forwardingCode({ from: "someone@example.com", subject: "(#123456789) Gmail Forwarding Confirmation", html: null, text: null })).toBeNull();
+    // Gmail in another language: its subject still starts with the code.
+    expect(forwardingCode({ from: "forwarding-noreply@google.com", subject: "(#123456789) Gmail-Weiterleitungsbest\u00e4tigung", html: null, text: "x" })).toBe("123456789");
+    // An empty plain part does not hide the HTML.
+    expect(forwardingCode({ from: "forwarding-noreply@google.com", subject: "Gmail Forwarding Confirmation", html: "<p>Confirmation code: 123456789</p>", text: "" })).toBe("123456789");
+    // A quoted-printable soft break with white space before its line end.
+    const qp = "From: forwarding-noreply@google.com\r\nSubject: Gmail Forwarding Confirmation\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nConfirmation code: 1234= \r\n56789\r\n";
+    expect(forwardingCode(parseMail(enc(qp)))).toBe("123456789");
   });
 
   it("says why a message did nothing, without its words or a stranger's name", () => {
     expect(ignoredWhy({ from: "someone@example.com", subject: "Gmail forwarding? hello", html: null, text: "hi" })).toBe("from example.com, text, subject names forwarding");
     expect(ignoredWhy({ from: "forwarding-noreply@google.com", subject: "x", html: "<p>x</p>", text: null })).toBe("from forwarding-noreply@google.com, html, subject does not name forwarding");
     expect(ignoredWhy({ from: null, subject: "", html: null, text: null })).toBe("from none, no body, subject does not name forwarding");
+    expect(ignoredWhy({ from: "jane.doe@google.com", subject: "x", html: null, text: "x" })).toBe("from google.com, text, subject does not name forwarding");
+    expect(ignoredWhy({ from: "a@john_smith+secret", subject: "x", html: null, text: "x" })).toBe("from john?smith?secret, text, subject does not name forwarding");
   });
 });
 

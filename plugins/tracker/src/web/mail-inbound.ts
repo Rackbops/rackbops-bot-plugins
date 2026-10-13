@@ -16,7 +16,8 @@ import { safeEqual } from "./secrets.js";
  *
  * The answer is JSON, `{"result": ...}`: `stored` (with `watches` and `listings`), `confirmation`,
  * `unmatched` or `ignored`, all 200: the Worker has nothing to retry once a message is here. The
- * route is off (404) while `TRACKER_MAIL_*` is unset. Nothing from the message is ever logged.
+ * route is off (404) while `TRACKER_MAIL_*` is unset. The message's words are never logged; one
+ * that does nothing is logged with `ignoredWhy` (mail.ts), which names no person.
  */
 
 export const MAX_MAIL_BYTES = 1024 * 1024;
