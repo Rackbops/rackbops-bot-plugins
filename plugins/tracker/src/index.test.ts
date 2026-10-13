@@ -3,14 +3,16 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { materialize } from "@rackbops/docket-core";
+import { type Executor, materialize } from "@rackbops/docket-core";
 import { SlashCommandBuilder } from "discord.js";
 import { makeFakeDelivery, makeFakeHost } from "../../../packages/testkit/index.js";
 import pkg from "../package.json" with { type: "json" };
-import { createPlugin, DB_DIR, DB_FILE, TRACKER_TYPES } from "./index.js";
+import { createPlugin, DB_DIR, DB_FILE, DISPOSE_WAIT_MS, TRACKER_TYPES } from "./index.js";
 import { admit } from "./people.js";
 import { MIGRATIONS, openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
+import { CITY_HALL } from "./web/execute-harness.js";
+import { slash } from "./web/harness.js";
 import { removeDir } from "./test-dirs.js";
 
 const ADMIN = "111111111111111111";
@@ -47,7 +49,30 @@ afterEach(() => closeThenRemove());
 
 function clockAt(iso: string) {
   let now = new Date(iso);
-  return { now: () => new Date(now), set: (s: string) => (now = new Date(s)) };
+  return { now: () => new Date(now), set: (s: string) => (now = new Date(s)), advance: (ms: number) => (now = new Date(now.getTime() + ms)) };
+}
+
+const DUE = "2026-10-01T12:01:00.000Z";
+
+/** A data file with one reminder of the admin's due at `DUE`, made before the plugin starts; its occurrence's id. */
+async function seedDueReminder(dataDir: string): Promise<string> {
+  mkdirSync(join(dataDir, DB_DIR));
+  const db = openDatabase(join(dataDir, DB_DIR, DB_FILE));
+  const store = new SqliteStore(db);
+  const owner = await admit(store, ADMIN, new Date(START));
+  const task = await store.createTask({
+    ownerId: owner.id,
+    type: "reminder",
+    title: "stretch",
+    config: { text: "stretch" },
+    schedule: { kind: "once", at: DUE },
+    lane: "notify",
+    capabilities: ["notify"],
+    at: START,
+  });
+  const occurrence = await materialize(store, task, owner, new Date(DUE));
+  db.close();
+  return occurrence?.id ?? "";
 }
 
 const healthz = (plugin: ReturnType<typeof createPlugin>) =>
@@ -284,7 +309,7 @@ describe("the plugin end to end on a real data file", () => {
     await plugin.dispose!();
   });
 
-  it("a tick after dispose, or one the host abandoned across it, touches nothing", async () => {
+  it("a tick that starts after dispose touches nothing", async () => {
     const dataDir = tempDir();
     const delivery = makeFakeDelivery();
     const plugin = closeAfter(createPlugin(makeFakeHost({ name: "tracker", dataDir, ...delivery }), { clock: clockAt(START) }));
@@ -293,6 +318,83 @@ describe("the plugin end to end on a real data file", () => {
     await plugin.ticks![0]!.run(new AbortController().signal);
     expect(delivery.calls.dm).toHaveLength(0);
   });
+
+  it("a start that fails after the database opened closes it and keeps nothing", async () => {
+    // A throw from the host's log: the last call in activate(), after every handle used to be set,
+    // and one part way, after the execute lane is built.
+    async function failedStart(line: string, env: Record<string, string>) {
+      const dataDir = tempDir();
+      await seedDueReminder(dataDir);
+      const delivery = makeFakeDelivery();
+      const started: Promise<void>[] = [];
+      const refuse = (m: string) => {
+        if (m.startsWith(line)) throw new Error(`the log refused: ${line}`);
+      };
+      const host = makeFakeHost({ name: "tracker", dataDir, env, log: { info: refuse, warn: refuse, error() {} }, ...delivery });
+      const plugin = createPlugin(host, { clock: clockAt(DUE), executeStarted: (p) => void started.push(p) });
+      await expect(plugin.activate!()).rejects.toThrow(`the log refused: ${line}`);
+      // SQLite removes the -wal file when the last connection to the database closes.
+      expect(existsSync(join(dataDir, DB_DIR, `${DB_FILE}-wal`))).toBe(false);
+      expect((await healthz(plugin)).status).toBe(503);
+      for (const t of plugin.ticks ?? []) await t.run(new AbortController().signal);
+      expect(delivery.calls.dm).toHaveLength(0);
+      expect(started).toHaveLength(0);
+      expect(await slash(plugin, "tasks", ADMIN)).toBe("The tracker is starting up; try again in a minute.");
+    }
+    await failedStart("TRACKER_GUILD_ID is unset", {});
+    await failedStart("execute lane on: city-hall", CITY_HALL);
+  });
+
+  /** A plugin with the reminder due whose DMs wait on a gate the test holds; `dmCalled` settles at the first DM. */
+  async function heldDm() {
+    const dataDir = tempDir();
+    const occurrenceId = await seedDueReminder(dataDir);
+    let release = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    let reached = () => {};
+    const dmCalled = new Promise<void>((r) => (reached = r));
+    const dm = async () => {
+      reached();
+      await gate;
+      return { guildId: null, channelId: "c", messageId: "m" };
+    };
+    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, dm }), { clock: clockAt(DUE) });
+    await plugin.activate!();
+    const ticking = plugin.ticks![0]!.run(new AbortController().signal);
+    await dmCalled;
+    return { dataDir, occurrenceId, plugin, release, ticking };
+  }
+
+  it("dispose waits for a notify tick in flight, so its DM is recorded as sent", async () => {
+    const w = await heldDm();
+    const disposing = w.plugin.dispose!();
+    w.release();
+    await disposing;
+    await w.ticking;
+    const reopened = openDatabase(join(w.dataDir, DB_DIR, DB_FILE));
+    expect((await new SqliteStore(reopened).listDeliveries({ occurrenceId: w.occurrenceId })).map((d) => d.status)).toEqual(["sent"]);
+    reopened.close();
+    // So the next start has no unconfirmed send to report.
+    const warnings: string[] = [];
+    const again = createPlugin(makeFakeHost({ name: "tracker", dataDir: w.dataDir, log: { info() {}, warn: (m) => void warnings.push(m), error() {} } }), { clock: clockAt(DUE) });
+    await again.activate!();
+    expect(warnings.filter((m) => m.includes("unconfirmed"))).toEqual([]);
+    await again.dispose!();
+  });
+
+  // A longer timeout than bun's 5 s, so a wait past the host's bound fails on the bound itself.
+  it("dispose stops waiting after DISPOSE_WAIT_MS", async () => {
+    const w = await heldDm();
+    const begun = performance.now();
+    await w.plugin.dispose!();
+    const took = performance.now() - begun;
+    expect(DISPOSE_WAIT_MS).toBe(1_500);
+    expect(took).toBeGreaterThanOrEqual(DISPOSE_WAIT_MS - 50);
+    expect(took).toBeLessThan(2_000);
+    // The tick ends now, its write after the DM failing on the closed database: expected here.
+    w.release();
+    await w.ticking.catch(() => {});
+  }, 10_000);
 
   it("closes the database and stays inactive when activate() fails", async () => {
     const dataDir = tempDir();
@@ -325,6 +427,59 @@ describe("the plugin end to end on a real data file", () => {
 
   it("registers reminder, renewal and price (#81), research (#82) and the scout (#83), the execute-lane types, which run only with an Executor, and the want-list watcher, plain and judged (#83)", () => {
     expect(Object.keys(TRACKER_TYPES).sort()).toEqual(["price", "reminder", "renewal", "research", "scout", "wantjudge", "wantlist"]);
+  });
+});
+
+describe("the execute tick", () => {
+  /** A plugin with an Executor handed in, no run ever due, counting the lane's starts; `execute` lets each start settle. */
+  async function executing() {
+    const clock = clockAt(START);
+    const started: Promise<void>[] = [];
+    const executor: Executor = {
+      async run() {
+        throw new Error("no execute-lane run is due in these tests");
+      },
+    };
+    const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir: tempDir() }), { clock, executor, executeStarted: (p) => void started.push(p) });
+    await plugin.activate!();
+    const execute = async () => {
+      await plugin.ticks!.find((t) => t.name === "execute")!.run(new AbortController().signal);
+      await Promise.all(started);
+    };
+    return { plugin, clock, started, execute };
+  }
+
+  it("the execute lane starts on a host tick that comes a little under a minute after the last", async () => {
+    const w = await executing();
+    await w.execute();
+    expect(w.started).toHaveLength(1);
+    // This round's earlier checks took 50 ms less than the last round's.
+    w.clock.advance(59_950);
+    await w.execute();
+    expect(w.started).toHaveLength(2);
+    await w.plugin.dispose!();
+  });
+
+  it("a second execute tick within 5 s starts nothing", async () => {
+    const w = await executing();
+    await w.execute();
+    w.clock.advance(4_999);
+    await w.execute();
+    expect(w.started).toHaveLength(1);
+    w.clock.advance(1);
+    await w.execute();
+    expect(w.started).toHaveLength(2);
+    await w.plugin.dispose!();
+  });
+
+  it("a round after a slow one still starts the lane", async () => {
+    const w = await executing();
+    await w.execute();
+    // The last round's earlier checks took 30.5 s (a poll tick near its bound), this round's 0.1 s.
+    w.clock.advance(29_600);
+    await w.execute();
+    expect(w.started).toHaveLength(2);
+    await w.plugin.dispose!();
   });
 });
 
