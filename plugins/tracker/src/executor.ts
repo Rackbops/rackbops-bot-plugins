@@ -112,6 +112,17 @@ export const PAUSED_LOG_EVERY_MS = 60 * 60 * 1000;
  * docket's six-hour give-up applies: 48 hours from that first sight. A judgement, not a measured
  * figure: long enough for a five-hour usage window or a weekend's dead credential, short enough
  * that a runner gone for good does not hold the execute lane for ever.
+ *
+ * It also covers city-hall's requeue cap at docket-runner's real pace (#287). After a
+ * `usage_limit` the runner waits for the reset only when the CLI names one `Date.parse` reads;
+ * otherwise (inferred from the runner's tests: the CLI writes times like "3pm") it claims again
+ * after an hour (docket-runner `loop.ts`, `LIMIT_PAUSE_MS`). City-hall fails the Job when the
+ * 11th `usage_limit` outcome is posted (`CITY_HALL_MAX_REQUEUES`, default 10 requeues), about ten
+ * hours in, and a failed Job is answered before this hold is checked, so its `usage_limit` result
+ * reaches docket and docket's own pause applies. Parseable resets that add up to more than 48 h,
+ * a runner that stops claiming (down, or paused on a dead credential), or the rollback queue
+ * Rackbops/job-queue (`JOB_QUEUE_MAX_REQUEUES`, default 50) let the hold end first: the run is then
+ * given up and the Job, if it later runs, is collected by no one: the gap #287 records.
  */
 export const PAUSED_CAP_MS = 48 * 60 * 60 * 1000;
 
