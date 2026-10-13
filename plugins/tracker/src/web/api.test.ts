@@ -717,6 +717,10 @@ describe("tasks", () => {
     expect(price.edit.map((f: { name: string }) => f.name)).not.toContain("url");
     expect(price.create.find((f: { name: string }) => f.name === "hours")).toMatchObject({ type: "integer", minimum: 1, maximum: 168 });
     expect(price.create.find((f: { name: string }) => f.name === "baseline")).toMatchObject({ type: "string", enum: ["last", "first", "peak"] });
+    // An empty number is refused here, so an edit's number says to omit it, never to leave it empty (#173).
+    expect(price.create.find((f: { name: string }) => f.name === "hours").description).toContain("12 when empty.");
+    expect(price.edit.find((f: { name: string }) => f.name === "hours").description).toBe("Hours between checks. 1 to 168. Omit it to keep what it has.");
+    expect(JSON.stringify(types)).not.toContain("Leave it empty to keep what it has.");
     // An edit keeps whatever it is not sent: none of its fields is required, though a create's are.
     for (const t of types.types) expect(t.edit.filter((f: { required: boolean }) => f.required)).toEqual([]);
     expect(types.types[1].create.filter((f: { required: boolean }) => f.required).map((f: { name: string }) => f.name)).toEqual(["name", "amount", "currency", "renews"]);
