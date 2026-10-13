@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
-import { bggSource, inboxSource, pageSource, price, type ReadInbox, reminder, renewal, research, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
+import { bggSource, inboxSource, pageSource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds, parseGuildRoles } from "./access.js";
 import type { TickGate, TrackerDeps } from "./actions.js";
@@ -17,6 +17,7 @@ import { type Interactionish, lookupMembership, type RoleGate, serial } from "./
 import { createSurface, type SurfaceWiring } from "./discord.js";
 import { decideHealth, type HealthState, healthResponse } from "./health.js";
 import { WantInbox } from "./inbox.js";
+import { ResearchSources } from "./research-sources.js";
 import { TaskLocks } from "./locks.js";
 import { createDmNotifier } from "./notifier.js";
 import { type NotifyTickKind, runNotifyTick } from "./notify-lane.js";
@@ -78,15 +79,17 @@ export const DISPOSE_WAIT_MS = 1_500;
  * model looking at each new listing first (docket-types' `wantjudge`): an execute-lane type, under the
  * execute lane's switch, its plain-code reads through the same Fetch port.
  *
- * These are the types without a database: the want-list pair here reads pasted pages only.
- * `createPlugin` builds the pair it runs over `wantSources`, adding the `inbox` source (the listings
- * sent in for a watch, inbox.ts) over the database it opens, and BGG when its token is set.
+ * These are the types without a database: the want-list pair here reads pasted pages only, and
+ * `research` runs web requests only (a browser request here is told it cannot be run). `createPlugin`
+ * builds the pair it runs over `wantSources`, adding the `inbox` source (the listings sent in for a
+ * watch, inbox.ts) over the database it opens, and BGG when its token is set, and the research type
+ * over `readSources` (the pages a browser gathered for a request, research-sources.ts, 0.28.0).
  */
 export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object.freeze({
   reminder: reminder as TaskType<unknown>,
   renewal: renewal as TaskType<unknown>,
   price: price as TaskType<unknown>,
-  research: research as TaskType<unknown>,
+  research: researchType() as TaskType<unknown>,
   scout: scout as TaskType<unknown>,
   wantlist: wantlistType({ page: pageSource }) as TaskType<unknown>,
   wantjudge: wantjudgeType({ page: pageSource }) as TaskType<unknown>,
@@ -166,7 +169,15 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   // never opens eBay, and an inbox watch opens neither site (Rod, 2026-10-05).
   let inbox: WantInbox | null = null;
   const readInbox: ReadInbox = async (key) => inbox?.read(key) ?? [];
-  const types = options.types ?? { ...TRACKER_TYPES, ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}) }) };
+  // The pages gathered for a browser research request (research-sources.ts) live there too, and read
+  // as none the same way: a run that finds none makes no model call and tells the owner.
+  let sources: ResearchSources | null = null;
+  const readSources: ReadSources = async (taskId) => sources?.read(taskId) ?? [];
+  const types = options.types ?? {
+    ...TRACKER_TYPES,
+    research: researchType({ readSources }) as TaskType<unknown>,
+    ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}) }),
+  };
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
   let db: Database | null = null;
@@ -282,6 +293,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         if (r.failed > 0) host.log.warn(`execute lane: ${r.ran} ran, ${r.failed} failed`);
         // The record of a Job whose run is gone, or finished a month ago, goes (executor.ts).
         if (records && store) records.prune(clock.now());
+        // So do the gathered pages of a research request that has ended (research-sources.ts).
+        if (sources && store) sources.purgeEnded();
       } catch (err) {
         // A closed store after dispose, or a Store error: logged; the next tick tries again.
         if (store) host.log.error("execute lane tick failed", err);
@@ -360,6 +373,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         // Built as locals and kept only once every call that can throw is past (#203): a start that
         // fails part way leaves no handle a tick could find, and its database closed (below).
         const openedInbox = new WantInbox(opened);
+        const openedSources = new ResearchSources(opened);
         // The owner of a task a recipient's failures paused is told once, by a plain DM: not counted
         // toward the owner's own pause (they may simply be offline), and `/tasks` shows it regardless.
         const openedDelivery = new DeliveryHealth(opened, openedStore, {
@@ -421,6 +435,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           research: executeOn,
           bgg: bgg !== null,
           inbox: openedInbox,
+          sources: openedSources,
           mail: mailConfig ? new MailAddresses(opened, mailConfig.domain) : null,
           usr:
             usrConfig && usrClient
@@ -440,6 +455,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         db = opened;
         store = openedStore;
         inbox = openedInbox;
+        sources = openedSources;
         delivery = openedDelivery;
         jobRecords = records;
         executeLane = lane;
@@ -462,6 +478,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       jobRecords = null;
       store = null;
       inbox = null;
+      sources = null;
       const closing = db;
       db = null;
       // A tick already running (notify, poll or execute: each is `tracked`) keeps the store it read,

@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.28.0] - 2026-10-13
+
+### Added
+
+- **Research on pages your own browser gathered** (#125, docket-types 0.8.0's `sources: "sent"`).
+  BoardGameGeek refuses the runner's reads and declined API access, and the tracker never opens
+  eBay, so `/research sources: browser` (and `sources` on the web form and `POST /tasks`) makes a
+  request that waits for pages instead of searching for them: ask Claude in Chrome, in your own
+  browser, to gather them, and it sends each page's address, title and text to the new
+  `POST /api/v1/tasks/<id>/sources` (up to 10 a request and 10 per request in all, each cleaned by
+  docket-types' `gatheredPages`; the same address sent again replaces its page), then
+  `POST /api/v1/tasks/<id>/sources/ready`, which moves the queued run to now. The research run and
+  its reviewer both read the pages into their prompts and may not fetch BoardGameGeek or eBay.
+  Until then the run waits at the deadline or 14 days out, whichever is sooner; a request whose
+  pages never come runs then on none, which makes no model call, DMs you that no pages were
+  gathered, and ends it.
+- Only the token owner's own live browser request still waiting takes pages or `ready`: anyone
+  else's is the API's 404, a web request or one already started a 409, and `ready` with no page in
+  a 409. `at` is refused with `sources: browser`, and so is the option on a bot without the web
+  area, where the task API lives.
+- `/tasks`, `/task history` and the task API show a browser request's pages: `(sources: browser,
+  N pages in; waiting for pages)` on its line, and `sources: "sent"`, `pages` and
+  `waitingForPages` in its JSON (`settings.sources` is `web` or `browser` for every research
+  request). A request's pages go once it ends (the execute tick's housekeeping), and forget-me
+  erases them with the person's tasks.
+
+### Changed
+
+- docket-core and docket-types go to 0.8.0.
+
+### Schema
+
+- Migration 11: a new `research_sources` table and its index, purely additive. A database at 11 is
+  refused by 0.27.0 and older.
+
 ## [0.27.0] - 2026-10-13
 
 ### Fixed

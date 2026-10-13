@@ -196,8 +196,10 @@ describe("research from the task API", () => {
       ["context", "string", false],
       ["deadline", "string", false],
       ["at", "string", false],
+      ["sources", "string", false],
     ]);
     expect(research.create[0].maxLength).toBe(MAX_QUESTION_CHARS);
+    expect(research.create[4].enum).toEqual(["web", "browser"]);
     expect(research.edit).toEqual([]);
     const bad = await body(await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "auction" } }));
     expect(bad.error.message).toBe("`type` is one of reminder, renewal, price, research, scout, wantlist.");
