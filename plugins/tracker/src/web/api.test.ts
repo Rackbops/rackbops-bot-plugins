@@ -5,7 +5,7 @@ import type { Plugin } from "../../../../packages/api/contract.js";
 import type { Membership } from "../access.js";
 import { PAUSE_AFTER } from "../delivery-health.js";
 import { MAX_PRICE_TASKS } from "../price.js";
-import { FAILED_BURST, MAX_API_BYTES, RATE_BURST } from "./api.js";
+import { FAILED_BURST, MAX_API_BYTES, MEMBERSHIP_UNKNOWN, RATE_BURST } from "./api.js";
 import { MAX_TOKENS_PER_PERSON } from "./api-tokens.js";
 import { NOT_FOUND_MESSAGE } from "./api-tasks.js";
 import { MEMBER_GRACE_MS, MEMBER_RECHECK_MS } from "./app.js";
@@ -373,6 +373,18 @@ describe("membership (TRACKER_GUILD_ID set)", () => {
     l.answer = "member";
     w.clock.advance(60_000);
     expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(200);
+  });
+
+  it("with no Discord client yet (a restart, no command used since), the 503 says what unsticks it (#229)", async () => {
+    const { l, fn } = lookup();
+    const w = await setup({ guild: true, webMembership: fn });
+    l.answer = null;
+    w.clock.advance(MEMBER_GRACE_MS);
+    const res = await api(w.plugin, "GET", "/me", { token: w.token });
+    expect(res.status).toBe(503);
+    expect((await body(res)).error).toEqual({ code: "membership_unknown", message: MEMBERSHIP_UNKNOWN });
+    expect(MEMBERSHIP_UNKNOWN).toContain("commands or buttons in Discord");
+    expect(query(w.dbPath, "SELECT seq FROM api_tokens")).toHaveLength(1);
   });
 });
 

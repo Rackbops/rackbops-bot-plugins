@@ -197,6 +197,35 @@ describe("POST /tasks/<id>/listings", () => {
     expect(query(w.dbPath, "SELECT 1 FROM want_inbox")).toHaveLength(MAX_LISTINGS_PER_POST);
   });
 
+  it("takes only addresses on the watch's own site: eBay's for an eBay watch, BoardGameGeek's for a BGG one (#229)", async () => {
+    const w = await setup();
+    await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan Oceania", source: "ebay" } });
+    await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "bgg", target: "Wingspan Oceania" } });
+    const token = await tokenFor(w);
+    const post = (id: string, listings: unknown[]) => api(w.plugin, "POST", `/tasks/${id}/listings`, { token, body: { listings } });
+    const EVIL = { title: "Wingspan Oceania", url: "https://evil.example/pay", price: 1 };
+    const BGG = { title: "Wingspan Oceania (like new)", url: "https://boardgamegeek.com/market/product/1234567", price: 28 };
+
+    const mixed = await post("t1", [OCEANIA, EVIL, { ...EVIL, url: "https://ebay.com.evil.example/itm/123456789" }]);
+    expect(mixed.status).toBe(200);
+    const mixedBody = await mixed.json();
+    expect(mixedBody).toMatchObject({ accepted: 1, rejected: 2 });
+    expect(mixedBody.message).toContain("2 were left out: each needs a title and an absolute http(s) address on eBay.");
+    const none = await post("t1", [EVIL, BGG]);
+    expect(none.status).toBe(400);
+    expect((await none.json()).error.message).toBe("None of those listings could be used: each needs a `title` and an absolute http(s) `url` on eBay.");
+
+    const bgg = await post("t2", [BGG, { ...BGG, url: "https://www.boardgamegeek.com/market/product/7654321" }, OCEANIA, EVIL]);
+    expect(bgg.status).toBe(200);
+    expect(await bgg.json()).toMatchObject({ accepted: 2, rejected: 2 });
+    const stored = query<{ task_id: string; listing: string }>(w.dbPath, "SELECT task_id, listing FROM want_inbox ORDER BY seq").map((r) => [r.task_id, JSON.parse(r.listing).url]);
+    expect(stored).toEqual([
+      ["t1", "https://www.ebay.com/itm/123456789"],
+      ["t2", "https://boardgamegeek.com/market/product/1234567"],
+      ["t2", "https://www.boardgamegeek.com/market/product/7654321"],
+    ]);
+  });
+
   it("is the owner's own live inbox watch only: another's is 404, a page watch or a reminder is 409 or 404", async () => {
     const shopFetch: Fetch = {
       async get() {
