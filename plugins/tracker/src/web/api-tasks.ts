@@ -57,13 +57,13 @@ export const NOT_EDITABLE = "A research request cannot be edited. Delete it and 
  * only while it is available.
  */
 export function typesAnswer(d: Pick<TrackerDeps, "research">): ApiAnswer {
-  const describe = (fields: readonly Field[], mode: "new" | "edit") =>
+  const describe = (type: NewType, fields: readonly Field[], mode: "new" | "edit") =>
     fields.map((f) => ({
       name: f.name,
       type: jsonKind(f),
       // An edit keeps whatever it is not sent: no field of an edit is required.
       required: mode === "new" && f.required === true,
-      description: f.help ? `${f.label}. ${f.help}` : f.label,
+      description: `${f.help ? `${f.label}. ${f.help}` : f.label}${clearsWithNull(type, mode, f.name) ? " Send null to clear it." : ""}`,
       ...(f.maxlength !== undefined ? { maxLength: f.maxlength } : {}),
       ...(f.min !== undefined ? { minimum: f.min } : {}),
       ...(f.max !== undefined ? { maximum: f.max } : {}),
@@ -75,11 +75,16 @@ export function typesAnswer(d: Pick<TrackerDeps, "research">): ApiAnswer {
       types: offeredTypes(d).map((type) => ({
         type,
         editable: type !== "research",
-        create: describe(fieldsFor(type, "new"), "new"),
-        edit: describe(fieldsFor(type, "edit"), "edit"),
+        create: describe(type, fieldsFor(type, "new"), "new"),
+        edit: describe(type, fieldsFor(type, "edit"), "edit"),
       })),
     },
   };
+}
+
+/** The one field `null` is a value of: a watch's top price in an edit, which it clears (`GET /types` says so). */
+function clearsWithNull(type: string, mode: "new" | "edit", name: string): boolean {
+  return mode === "edit" && (type === "wantlist" || type === "wantjudge") && name === "max";
 }
 
 /**
@@ -96,7 +101,7 @@ export function asFields(body: Record<string, unknown>, type: NewType, mode: "ne
     if (!f) return problem(400, "unknown_field", `\`${key.slice(0, 40)}\` is not a field of a ${type}${mode === "edit" ? " edit" : ""}. GET types lists them.`);
     const kind = jsonKind(f);
     // A watch's top price is the one number an edit can clear: `null` sends it empty, as the form does.
-    if (value === null && mode === "edit" && (type === "wantlist" || type === "wantjudge") && key === "max") {
+    if (value === null && clearsWithNull(type, mode, key)) {
       form.set(key, "");
       continue;
     }

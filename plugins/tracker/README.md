@@ -272,7 +272,9 @@ the same address marked `?usr=1`; coming back still without one (usr's keys coul
 the clocks disagree) says the sign-in could not be confirmed, instead of going round again. A token
 without the member role, or for an account linked to no one registered here, shows what to ask an
 admin for. While signed in, a usr cookie for the person's own account that no longer carries
-`tracker:member` signs them out of every session and revokes their API tokens. Sign out ends the
+`tracker:member` signs them out of every session and revokes their API tokens. That happens only on
+a web request carrying the cookie: the task API never reads usr, so a token keeps working until the
+person next opens the web area (revoking their tokens or admission in the tracker ends them at once). Sign out ends the
 tracker's session only, not usr's: for 12 hours after it, a plain GET does not sign back in from
 usr's cookie; the sign-in page's "Sign in with usr" button (and usr's trip back from it) or a `/web`
 link does. Any site under usr's cookie domain can set an
@@ -588,7 +590,7 @@ only for a want-list watch's `max` in a `PATCH`, where it clears the top price; 
 refused as the wrong JSON type (send `""` to clear a note).
 
 Which types: `GET /tasks`, `GET /tasks/<id>`, pause, resume and `DELETE` work on any task you own,
-whatever its type. `POST /tasks` takes the three editor types (reminder, renewal, price),
+whatever its type. `POST /tasks` takes `reminder`, `renewal` and `price`, by the web editor's rules,
 `wantlist`, by `/want`'s rules, and, while the model runner is set up on this bot, `research`
 (#82), by `/research`'s rules, and `scout` (#83), by `/scout new`'s; while it is not, a `research`
 or `scout` create answers `503 unavailable`. `PATCH` takes the editor types, a want-list watch
@@ -624,8 +626,9 @@ and a `PATCH` naming it is refused (`unknown_field`). A write answers
 | 400 | `invalid` | A rule refused a value; `message` is the rule's own words, as the web editor shows them. Also a field of the wrong JSON type, or no `type`. |
 | 400 | `unknown_field` | A field that type does not take (on a pause or resume, any field). |
 | 400 | `invalid_json` | The body is not JSON, or not one object. |
+| 400 | `too_many` | More than 40 listings in one `/listings` request. |
 | 401 | `unauthorized` | No `Authorization` header. With `WWW-Authenticate: Bearer realm="tracker"`. |
-| 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered (their tokens are then deleted): one answer for all. |
+| 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered (their tokens are then deleted): one answer for all, with `WWW-Authenticate`. An owner forgotten while their write waited in the queue gets the same code with its own message and no `WWW-Authenticate`. |
 | 403 | `origin_refused` | The request carried an `Origin` header. |
 | 403 | `not_member` | The owner has left every `TRACKER_GUILD_ID` server (or lacks the `TRACKER_GUILD_ROLES` role where one is asked); their tokens are revoked. |
 | 404 | `not_found` | No such endpoint, or no such task of yours. Anyone else's task -- one shared with you, or any task to an admin's token -- answers exactly as an unknown id. |

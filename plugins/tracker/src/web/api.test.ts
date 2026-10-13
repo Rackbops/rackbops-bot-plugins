@@ -701,6 +701,11 @@ describe("tasks", () => {
     // An edit keeps whatever it is not sent: none of its fields is required, though a create's are.
     for (const t of types.types) expect(t.edit.filter((f: { required: boolean }) => f.required)).toEqual([]);
     expect(types.types[1].create.filter((f: { required: boolean }) => f.required).map((f: { name: string }) => f.name)).toEqual(["name", "amount", "currency", "renews"]);
+    // `null` is a value of one field only, a watch edit's top price, and that field says so (#228).
+    const nullable = types.types.flatMap((t: { type: string; create: { name: string; description: string }[]; edit: { name: string; description: string }[] }) =>
+      [...t.create.map((f) => ({ ...f, at: `${t.type} create` })), ...t.edit.map((f) => ({ ...f, at: `${t.type} edit` }))].filter((f) => f.description.endsWith("Send null to clear it.")).map((f) => `${f.at} ${f.name}`),
+    );
+    expect(nullable).toEqual(["wantlist edit max"]);
   });
 });
 
