@@ -56,13 +56,17 @@ export function recipientPauseDetail(userId: string): string {
   return `delivery to {${userId}} paused: ${PAUSE_AFTER} DMs in a row could not be delivered`;
 }
 
+/** The `resumed` detail of a task forget-me freed (admin.ts `forgetPerson`). */
+export const LEFT_DETAIL = "resumed: a recipient left the tracker";
+
 /** A person named in a history row's detail by `recipientPauseDetail`'s braces. */
 export const PERSON_REF = /\{(u[1-9][0-9]*)\}/g;
 
 /**
  * Whether a history row is a pause for a recipient (`recipientPauseDetail`), which only that
  * recipient, the task's owner and admins may see (#167, history.ts `loadHistory`): another recipient
- * would learn from it who else receives the task, and that their DMs fail. Matched on the detail's
+ * would learn from it who else receives the task, and that their DMs fail, so they read it as the
+ * task's own pause instead (#273, history.ts `changesForRecipient`). Matched on the detail's
  * `delivery to ` prefix, so a row from before 0.6.0, which carries a display name, is one too.
  * `PAUSE_DETAIL` (the owner's own DMs failed), `paused by the owner` (manage.ts) and every
  * `resumed` row are not.
