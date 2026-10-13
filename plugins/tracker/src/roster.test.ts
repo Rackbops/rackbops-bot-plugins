@@ -85,3 +85,36 @@ describe("forget-me and docket's delivery, usage, notice and finding rows, and t
     expect(inbox.read("ebay-000000000000000000000002")).toEqual([{ title: "Wingspan", url: "https://www.ebay.com/itm/123456789" }]);
   });
 });
+
+describe("the Deliveries page's read", () => {
+  it("joins only the rows it keeps, each to its run and task by rowid, never scanning them", async () => {
+    const db = openDatabase(":memory:");
+    const store = new SqliteStore(db);
+    const larry = await admit(store, "111111111111111111", new Date(AT));
+    const task = await store.createTask({ ownerId: larry.id, type: "reminder", title: "pills", config: { text: "pills" }, schedule: null, lane: "notify", capabilities: ["notify"], at: AT });
+    const run = (await store.createOccurrence({ taskId: task.id, lane: "notify", dueAt: AT, dedupeKey: "a", at: AT }))?.id ?? "";
+    await store.planDelivery(run, larry.id, AT);
+    db.query("UPDATE deliveries SET status = 'failed', settled_at = ?").run(AT);
+    // Every statement the read prepares, to ask SQLite how it runs the one that joins.
+    const asked: string[] = [];
+    const watched = new Proxy(db, {
+      get: (target, key) => (key === "query" ? (sql: string) => (asked.push(sql), target.query(sql)) : Reflect.get(target, key, target)),
+    });
+    const { rows, total } = new Roster(watched).undelivered(new Date(AT));
+    expect(total).toBe(1);
+    expect(rows.map((r) => [r.occurrenceId, r.taskId, r.title, r.ownerId, r.dueAt])).toEqual([[run, task.id, "pills", larry.id, AT]]);
+    const read = asked.find((sql) => sql.includes("JOIN occurrences")) ?? "";
+    const steps = db.query(`EXPLAIN QUERY PLAN ${read}`).all("failed", "unconfirmed", "deferred", AT, 200) as { id: number; parent: number; detail: string }[];
+    const plan = steps.map((p) => p.detail);
+    expect(plan).toContainEqual(expect.stringMatching(/^SEARCH o USING INTEGER PRIMARY KEY/));
+    expect(plan).toContainEqual(expect.stringMatching(/^SEARCH t USING INTEGER PRIMARY KEY/));
+    expect(plan.filter((p) => /^SCAN (o|t)\b/.test(p))).toEqual([]);
+    // The rows are picked, sorted and cut to `limit` in their own subquery before any join: SQLite
+    // flattens that subquery into the join (sorting after it) unless the LIMIT is inside it.
+    const picked = steps.find((p) => p.detail === "CO-ROUTINE d");
+    expect(picked).toBeDefined();
+    const inside = steps.filter((p) => p.parent === picked?.id).map((p) => p.detail);
+    expect(inside).toContainEqual(expect.stringMatching(/^SEARCH d USING INDEX deliveries_status/));
+    expect(inside).toContain("USE TEMP B-TREE FOR ORDER BY");
+  });
+});

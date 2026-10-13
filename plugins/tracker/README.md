@@ -37,7 +37,7 @@ as in a server (plan 5.5, item 39).
 
 | Command | Who | What |
 |---|---|---|
-| `/allow user` | a tracker admin | Admits a person: they can now `/register`. With the usr link on (0.21.0), run in a server, it also allows them in usr as `tracker:member` and keeps their usr user id. The admin must be linked in usr and hold `tracker:register` and `tracker:member` there. Run again, it asks usr again (usr only ever adds), so it links someone not yet linked and relinks someone whose usr link was made anew. A usr refusal or outage leaves the admission standing and says what to do; in a DM it says to run it in the server. |
+| `/allow user` | a tracker admin | Admits a person: they can now `/register`. With the usr link on (0.21.0), run in a server, it also allows them in usr as `tracker:member` and keeps their usr user id. The admin must be linked in usr and hold `tracker:register` and `tracker:member` there. Run again, it asks usr again (usr only ever adds), so it links someone not yet linked and relinks someone whose usr link was made anew. The usr user id is final only once they have signed up on usr: one who finishes signing up while signed in to a usr account they already had is moved to it by usr, and the account `/allow` made is dropped, so their usr sign-in fails until a second `/allow` links the one they have. A usr refusal or outage leaves the admission standing and says what to do; in a DM it says to run it in the server. |
 | `/register [hour] [zone]` | an admitted person | Signs up, or changes the preferred hour (0-23, default 9) and time zone (default `America/New_York`). The reply says an admin can see every task. With the usr link on (0.21.0), run in a server, it also carries a linked person's one-time usr sign-up link, until usr says they have signed up; in a DM it says to run it in the server. If usr says they are not allowed yet (a usr admin removed their link), it forgets their link and says to ask for `/allow` again. See **First admin and usr** below. |
 | `/remind text [when] [repeat]` | a registered person | A reminder by DM. `when` is docket's `parseWhen` grammar (`in 20 minutes`, `tomorrow 9am`, `fri at 17:30`); `repeat` is once (the default), daily, weekly or monthly. A repeating one with no `when` starts today at the preferred hour. |
 | `/renewal name amount currency renews [unit] [every] [lead] [note]` | registered | A subscription, domain, warranty or membership (docket's `renewal`, a `period` schedule). `renews` is the next renewal or expiry date, `YYYY-MM-DD`, today or later; `unit` yearly (the default), monthly, weekly or daily, `every` how many of those; the ask comes `lead` days before (default 7) at the preferred hour, with Keep, Cancel, Renewed and Snooze. If that ask is already past but the date is not, the first ask comes within a minute (a zone or hour change before it fires drops it for the next period's). Keep and Renewed record what was paid; Cancel ends it. |
@@ -292,8 +292,8 @@ you in as someone else. Sign out is a POST too.
 **The task editor** (slice 2). The forms take the options of `/remind`, `/renewal`, `/price` and
 `/research` (#82), and the same functions check and make them: the same defaults, limits and messages, the page read
 once before a price tracker is made, at most 20 price trackers per person wherever they were made,
-and `near` turned into the same bounded pattern; a person has one new price tracker's page read in
-flight at a time. Every person may have at most 200 active or paused tasks of all types together,
+and `near` turned into the same bounded pattern; a person has one first page read (a new price
+tracker's or `page` watch's) in flight at a time. Every person may have at most 200 active or paused tasks of all types together,
 made anywhere. The length limits are one set (`src/limits.ts`) for the slash options, the forms
 and the server's checks. An edit changes a reminder's text, time and repeat
 (an empty time keeps the one it has, unless the repeat changes); a renewal's name, amount,
@@ -581,8 +581,8 @@ with `Retry-After`. A limited request is refused before its owner is looked up. 
 token does not look up (unknown, revoked, expired, malformed) share one global bucket of 30,
 refilled at one every two seconds; past it they get `429` instead of `401`, and valid tokens are
 unaffected. A body is at most
-16 KiB, read no further. One new price tracker's page read in flight per person, shared with the
-web editor (`409 busy`).
+16 KiB, read no further. One new price tracker's or `page` watch's first read in flight per person,
+shared with the web editor (`409 busy`).
 
 **Requests.** A `POST` or `PATCH` body is one JSON object with `Content-Type: application/json`
 (else `415`), and names only the fields listed for that type (else `400 unknown_field`), each of
@@ -688,7 +688,7 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 | Admin, forget-me | `src/admin.ts`, `src/roster.ts`; `src/web/admin.ts`, `src/web/admin-pages.ts` | The admin acts and forget-me, Discord-free; the SQL docket's Store has no method for (listing people and blocks, erasing a person); the routes and pages. |
 | Web area | `src/web/` | `app.ts` authenticates and dispatches (pure over the injected store and clock), `routes.ts` names the paths; `pages.ts`, `editor-pages.ts` and `html.ts` render; `form-input.ts` reads the editor's fields and `editor.ts` calls the shared rules with them; `signin-link.ts` and `sessions.ts` hold the sign-in; `theme.ts` the stylesheet; `command.ts` is `/web`. |
 | Task API | `src/web/api.ts`, `src/web/api-tasks.ts`, `src/web/api-tokens.ts`, `src/web/tokens.ts`, `src/web/token-pages.ts` | The JSON API's authentication, gates and rate limit; its task routes over editor.ts's writes; the tokens (SQL, hashed); the tokens page and its routes. |
-| Task rules | `src/reminders.ts`, `src/tracked.ts`, `src/price.ts`, `src/edit.ts`, `src/manage.ts`, `src/limits.ts` | What makes, edits, pauses, resumes and deletes a task, and the limits on it, Discord-free, for the commands and the web editor alike. |
+| Task rules | `src/reminders.ts`, `src/tracked.ts`, `src/price.ts`, `src/research.ts`, `src/scout.ts`, `src/want.ts`, `src/edit.ts`, `src/manage.ts`, `src/limits.ts` | What makes, edits, pauses, resumes and deletes a task, and the limits on it, Discord-free, for the commands and the web editor alike. |
 
 ## Configuration
 
@@ -735,7 +735,8 @@ admin as the one who allowed them; then links them. usr records each link agains
 instead. Only a 400 from usr whose reason starts with one of the person's own fields (`discord_user_id`,
 `display_name`) is theirs, listed by name while the rest go on; any other 400, refusal or failure (the admin not linked in usr or missing `tracker:register` or `tracker:member`,
 the key, usr unreachable) stops the run, since it would fail everyone the same way. It never starts
-on its own.
+on its own. It passes over everyone already linked, so it does not fix a link usr moved at sign-up
+(`/allow` above): run `/allow` for that person again.
 
 **First admin and usr.** usr's `/api/discord/allow` needs the admin running `/allow` to be linked in
 usr already, so the first admin cannot be `/allow`ed by anyone. With the usr link on, a configured

@@ -148,7 +148,7 @@ ${
     ? null
     : html`<section>
 <h2>Link everyone to usr</h2>
-<p class="rb-muted">${o.usrUnlinked === 0 ? "Everyone on the list is linked to usr." : `${o.usrUnlinked} on the list ${o.usrUnlinked === 1 ? "is" : "are"} not linked to usr yet.`} Each one is checked as a member of the server and allowed in usr as a member, with you as the admin who allowed them, as <code>/allow</code> does in the server.</p>
+<p class="rb-muted">${o.usrUnlinked === 0 ? "Everyone on the list is linked to usr." : `${o.usrUnlinked} on the list ${o.usrUnlinked === 1 ? "is" : "are"} not linked to usr yet.`} Each one is checked as a member of the server and allowed in usr as a member, with you as the admin who allowed them, as <code>/allow</code> does in the server. Someone linked before they finished signing up on usr with a usr account they already had is linked to the account usr dropped, and cannot sign in through usr: run <code>/allow</code> for them again.</p>
 ${
   o.usrRun?.running
     ? html`<p>Linking everyone to usr: ${String(o.usrRun.done)} of ${String(o.usrRun.total)} done. Reload this page to see how far it has got.</p>`

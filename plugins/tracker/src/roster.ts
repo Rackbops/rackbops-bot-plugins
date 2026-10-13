@@ -251,7 +251,10 @@ export class Roster {
    * `days` before `now`, newest first, at most `limit` of them; and how many match in all. One read
    * over the `deliveries` table docket's Store keeps, with each row's run and task beside it: the
    * port's `listDeliveries` takes one status at a time, oldest first, with neither a window nor a
-   * bound, so this is plain SQL like the rest of this file.
+   * bound, so this is plain SQL like the rest of this file. The `limit` rows are picked first, and
+   * only they are joined, each by its run's and task's rowid (the ids are `o<seq>` and `t<seq>`;
+   * the string comparison beside it keeps the match exact), so an outage's thousands of rows never
+   * scan the runs and tasks once each.
    */
   undelivered(now: Date, days = UNDELIVERED_DAYS, limit = UNDELIVERED_LIMIT): { rows: UndeliveredRow[]; total: number } {
     const since = new Date(now.getTime() - days * 86_400_000).toISOString();
@@ -262,12 +265,10 @@ export class Roster {
       .query(
         `SELECT d.occurrence_id, d.user_id, d.status, d.attempts, d.deferrals, d.error, d.settled_at, d.created_at,
                 o.due_at, t.seq AS task_seq, t.title, t.owner_id
-         FROM deliveries d
-         LEFT JOIN occurrences o ON d.occurrence_id = 'o' || o.seq
-         LEFT JOIN tasks t ON o.task_id = 't' || t.seq
-         WHERE ${where}
-         ORDER BY COALESCE(d.settled_at, d.created_at) DESC, d.seq DESC
-         LIMIT ?`,
+         FROM (SELECT * FROM deliveries d WHERE ${where} ORDER BY COALESCE(d.settled_at, d.created_at) DESC, d.seq DESC LIMIT ?) d
+         LEFT JOIN occurrences o ON o.seq = CAST(substr(d.occurrence_id, 2) AS INTEGER) AND d.occurrence_id = 'o' || o.seq
+         LEFT JOIN tasks t ON t.seq = CAST(substr(o.task_id, 2) AS INTEGER) AND o.task_id = 't' || t.seq
+         ORDER BY COALESCE(d.settled_at, d.created_at) DESC, d.seq DESC`,
       )
       .all(...UNDELIVERED, since, limit) as Record<string, unknown>[];
     const str = (v: unknown) => (v === null || v === undefined ? null : String(v));

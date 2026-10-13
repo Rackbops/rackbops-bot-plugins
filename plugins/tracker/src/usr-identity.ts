@@ -74,12 +74,25 @@ export class UsrVerifier {
   }
 
   private async keyFor(kid: string, force: boolean): Promise<CryptoKey | null> {
+    const fresh = () => {
+      const age = this.o.now() - this.fetchedAt;
+      return age >= 0 && age < JWKS_TTL_MS;
+    };
+    const cached = () => this.keys.find((k) => k.kid === kid)?.key ?? null;
+    // A known key from fresh keys answers at once, never queued behind a fetch for another kid.
+    if (fresh() && cached()) return cached();
+    // A fetch under way (for a token checked a moment ago) has already moved `fetchedAt`: wait for
+    // its keys rather than reading the old ones, or none, and refusing a good token.
+    if (this.pending) await this.pending;
     const age = this.o.now() - this.fetchedAt;
     if (age < 0 || age >= JWKS_TTL_MS || (force && age >= JWKS_RETRY_MS)) await this.refresh();
     return this.keys.find((k) => k.kid === kid)?.key ?? null;
   }
 
-  /** One JWKS fetch at a time; a failed one keeps the old keys and counts as a fetch, so it is not retried at once. */
+  /**
+   * One JWKS fetch at a time; a failed one keeps the old keys and counts as a fetch, so it is not
+   * retried at once. (`keyFor` already waits for a fetch under way, so the reuse here is a guard.)
+   */
   private refresh(): Promise<void> {
     if (!this.pending) {
       this.pending = this.load().finally(() => {
