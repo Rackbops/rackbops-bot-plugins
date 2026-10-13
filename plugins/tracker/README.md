@@ -83,12 +83,16 @@ A task that comes to DM them while they stay paused -- one made on the web or th
 one its owner had paused and resumes by hand, one a pause stopped part way never reached -- pauses
 the same way at its first DM, which then waits too. Only a send for a task already finished (a
 research answer, say) is not held: docket's eight deferrals of it run out (about two hours), and it
-fails.
+fails; a research answer's claims are still on its task page (Findings, below).
 The owner of a task paused for a recipient is DMed once and sees why in `/tasks`; the task
 resumes when the recipient next uses the tracker, or `/task resume` goes on without them. A person
-paused for their own DMs is told, and resumed, the next time they use a command or button (a command
-tells them above its answer, or in a message of its own after it when the two would not fit in one). A DM
-that goes through clears the count. Only a DM the host says cannot reach that person (Discord's
+paused for their own DMs is resumed, with every task nothing else holds, by the next command or
+button they use (all but Decline and opt-out), which tells them why (a command tells them above its
+answer, or in a message of its own after it when the two would not fit in one); by Resume DMs, on
+the banner every web page shows them while they are paused; by resuming a paused task of their own
+(`/task resume`, or Resume on the web or through the task API); or by an admin's Resume delivery.
+Nothing else on the web or through the task API resumes them.
+A DM that goes through clears the count. Only a DM the host says cannot reach that person (Discord's
 50007, or 10013 for an account that is gone) counts, once per run: docket fails it for good at once. A DM refused for
 its content is retried by docket (three tries, a minute apart and doubling) and does not count; nor
 does one whose outcome is unknown (see Delivery below).
@@ -229,6 +233,7 @@ served at a hashed path, cached for a year).
 | `/new/reminder`, `/new/renewal`, `/new/price`, `/new/research`, `/new/scout` | The editor's new-task forms (GET), and making one (POST). `/new/research` and `/new/scout` are linked from My tasks only while the model runner is set up; without it the page says the type is not available instead of showing a form. A scout's interests go in a text box, separated by commas or one per line; its edit form shows the list one per line, and an emptied "Who it is for" or "Notes" clears it. |
 | `/tasks/<id>/edit` | The owner's edit form (GET) and saving it (POST). |
 | `/tasks/<id>/pause`, `/resume`, `/delete` | POST only. Delete answers a confirmation first; only a second post carrying `confirm=yes` deletes. |
+| `/resume-dms` | POST only: Resume DMs, the button on the banner every page shows a person whose DMs are paused (Pause after failed DMs, above). It resumes them as their next command would, and My tasks then says how many tasks are back on; pressed when they are not paused, it changes nothing. |
 | `/settings` | Preferred hour and time zone, checked as `/register` checks them. Links to API tokens and Forget me. |
 | `/tokens` | Your API tokens (below): each one's name, when it was made, last used and expires, with Revoke; and the form to make one (POST), which sends the new token to you by Discord DM -- never on the page. |
 | `/tokens/<id>/revoke` | POST only: revokes one of your own tokens. Anyone else's answers the same 404 as an unknown id. |

@@ -22,7 +22,8 @@ import { seqOf } from "./store.js";
  *   task resumes when that recipient next uses the tracker, or when the owner runs `/task resume`,
  *   which takes the unreachable recipient off it.
  * - A person paused for their own DMs cannot be DMed; they are told the next time they use a
- *   command, which resumes them (`resume`).
+ *   command, which resumes them (`resume`). The web area shows them a banner on every page while
+ *   they are paused, whose Resume DMs button resumes them the same way (web/app.ts).
  *
  * A task can still come to DM a person while they stay paused: one they make on the web or through
  * the task API (making a task there resumes no one); one its owner had paused, which the pass
@@ -326,8 +327,10 @@ export class DeliveryHealth {
   }
 
   /**
-   * Resumes a paused person (they used a command, so they are here): clears the count and their
-   * pause rows, and sets active every task nothing else still holds. Null when they were not paused.
+   * Resumes a paused person (they used a command or button, pressed the web's Resume DMs, or resumed
+   * a paused task of their own (manage.ts `resumeLocked`), so they are here; or an admin resumed
+   * them): clears the count and their pause rows, and sets active every task nothing else still
+   * holds. Null when they were not paused.
    */
   resume(userId: string, now: Date): Promise<Resumed | null> {
     return this.locked(async () => {
@@ -371,11 +374,15 @@ export class DeliveryHealth {
   }
 }
 
+/** How many tasks a resume set going again (`Resumed.tasks`), as the resumed person is told it. */
+export function backOn(tasks: number): string {
+  return tasks === 0 ? "Nothing else was waiting on you." : `${tasks} task(s) are back on.`;
+}
+
 /** What a resumed person is told, ahead of the answer to what they did. */
 export function resumedNotice(r: Resumed): string {
-  const what = r.tasks.length === 0 ? "Nothing else was waiting on you." : `${r.tasks.length} task(s) are back on.`;
   return (
-    `I could not DM you ${PAUSE_AFTER} times in a row, so your reminders were paused. ${what} ` +
+    `I could not DM you ${PAUSE_AFTER} times in a row, so your reminders were paused. ${backOn(r.tasks.length)} ` +
     "Check that you accept DMs from members of a server we share, or they will pause again."
   );
 }
