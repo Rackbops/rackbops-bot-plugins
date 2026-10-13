@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { defineTaskType, ExecutorUnavailableError, materialize, type Clock, type TaskType } from "@rackbops/docket-core";
 import type { HostApi, HostMessage } from "../../../packages/api/contract.js";
 import type { TrackerDeps } from "./actions.js";
-import { decidePause, DeliveryHealth, PAUSE_AFTER, recipientPauseDetail } from "./delivery-health.js";
+import { decidePause, DeliveryHealth, isRecipientPause, PAUSE_AFTER, PAUSE_DETAIL, pauseNames, recipientPauseDetail } from "./delivery-health.js";
 import { TRACKER_TYPES } from "./index.js";
 import { TaskLocks } from "./locks.js";
 import { deleteTask, type Done, pauseTask, resumeTask } from "./manage.js";
@@ -46,6 +46,31 @@ describe("decidePause", () => {
     expect(decidePause(PAUSE_AFTER - 1, false)).toBe(false);
     expect(decidePause(PAUSE_AFTER, false)).toBe(true);
     expect(decidePause(PAUSE_AFTER + 1, true)).toBe(false);
+  });
+});
+
+describe("isRecipientPause and pauseNames (#167: a recipient's pause is theirs, the owner's and admins' to see)", () => {
+  const legacy = `delivery to Bob paused: ${PAUSE_AFTER} DMs in a row could not be delivered`;
+
+  it("a pause for a recipient is one, by id or, from before 0.6.0, by name; the owner's own pause and a resume are not", () => {
+    expect(isRecipientPause({ kind: "paused", detail: recipientPauseDetail("u3") })).toBe(true);
+    expect(isRecipientPause({ kind: "paused", detail: legacy })).toBe(true);
+    expect(isRecipientPause({ kind: "paused", detail: PAUSE_DETAIL })).toBe(false);
+    expect(isRecipientPause({ kind: "paused", detail: "paused by the owner" })).toBe(false);
+    // Every detail a resume is written with (DeliveryHealth.release's callers, manage.ts), and a resume whatever its detail.
+    for (const detail of ["delivery resumed", "resumed by the owner", "resumed: a recipient left the tracker", recipientPauseDetail("u3")]) {
+      expect(isRecipientPause({ kind: "resumed", detail })).toBe(false);
+    }
+  });
+
+  it("names the recipient it is for, by id only: never another id, and a row from before 0.6.0 names nobody", () => {
+    expect(pauseNames(recipientPauseDetail("u3"), "u3")).toBe(true);
+    expect(pauseNames(recipientPauseDetail("u3"), "u5")).toBe(false);
+    expect(pauseNames(recipientPauseDetail("u3"), "u31")).toBe(false);
+    expect(pauseNames(recipientPauseDetail("u31"), "u3")).toBe(false);
+    expect(pauseNames(legacy, "u3")).toBe(false);
+    // A pre-0.6.0 row whose stored display name holds a braced id names nobody, that id included.
+    expect(pauseNames(`delivery to Zed {u4} paused: ${PAUSE_AFTER} DMs in a row could not be delivered`, "u4")).toBe(false);
   });
 });
 

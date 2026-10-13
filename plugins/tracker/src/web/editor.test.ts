@@ -9,7 +9,7 @@ import { MAX_LIVE_TASKS, MAX_NEAR, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WH
 import { MAX_PRICE_TASKS, nearPattern } from "../price.js";
 import { MAX_FORM_BYTES } from "./app.js";
 import { READING } from "./editor.js";
-import { ADMIN, call, cleanup, csrfOf, CURLY, hidden, type Jar, LARRY, ORIGIN, people, signIn, slash, world } from "./harness.js";
+import { ADMIN, call, cleanup, csrfOf, CURLY, hidden, type Jar, LARRY, ORIGIN, people, press, signIn, slash, STRANGER, world } from "./harness.js";
 
 /**
  * The task editor (rackbops-bot-plugins#80, slice 2), through the plugin's own `http` handler with
@@ -521,6 +521,46 @@ describe("only the owner", () => {
     expect((await post(w.plugin, w.larry, w.csrf, "/tasks/..%2Ft1/pause")).status).toBe(404);
     expect((await post(w.plugin, w.larry, w.csrf, "/tasks/t1%2Fpause/pause")).status).toBe(404);
     expect(tasks(w.dbPath)[0]?.status).toBe("active");
+  });
+});
+
+describe("a recipient's delivery pause (#167)", () => {
+  it("is not on another recipient's page or /task history, nor in its count; the owner's own pause and resume are, and the owner's page names them", async () => {
+    const w = await setup();
+    await slash(w.plugin, "allow", ADMIN, { users: { user: STRANGER } });
+    await slash(w.plugin, "register", STRANGER);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    for (const who of [CURLY, STRANGER]) {
+      await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: who } });
+      await press(w.plugin, "tracker:a.t.t1", who);
+    }
+    // The owner pauses and resumes it by hand, twice (the web is the one place to pause by hand):
+    // Stranger then sees more changes than are shown, the hidden pause among the newest five.
+    for (let i = 0; i < 2; i++) {
+      for (const act of ["pause", "resume"]) expect((await post(w.plugin, w.larry, w.csrf, `/tasks/t1/${act}`)).status).toBe(303);
+    }
+    w.delivery.unreachable.add(CURLY);
+    for (const day of ["01", "02", "03"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await notifyTick(w.plugin);
+    }
+    const history = await slash(w.plugin, "task", STRANGER, { sub: "history", strings: { task: "t1" } });
+    expect(history.slice(history.indexOf("Changes:"))).toBe(
+      [
+        "Changes:",
+        "- (2 earlier)",
+        "- Thu Oct 1, 8:00 recipient accepted",
+        "- Thu Oct 1, 8:00 paused: paused by the owner",
+        "- Thu Oct 1, 8:00 resumed: resumed by the owner",
+        "- Thu Oct 1, 8:00 paused: paused by the owner",
+        "- Thu Oct 1, 8:00 resumed: resumed by the owner",
+      ].join("\n"),
+    );
+    const page = async (who: string) => (await call(w.plugin, "GET", "/tasks/t1", { jar: await signIn(w.plugin, who) })).text();
+    expect(await page(LARRY)).toContain("delivery to user333 paused:");
+    const theirs = await page(STRANGER);
+    expect(theirs).toContain("bins out");
+    expect(theirs).not.toContain("delivery to");
   });
 });
 

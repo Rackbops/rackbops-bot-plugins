@@ -21,6 +21,7 @@ const ADMIN = "111111111111111111";
 const LARRY = "222222222222222222";
 const CURLY = "333333333333333333";
 const STRANGER = "444444444444444444";
+const MOE = "555555555555555555";
 const GUILD = "999999999999999999";
 const GUILD_B = "888888888888888888";
 // 2026-10-01 is a Thursday; 12:00 UTC is 08:00 in New York (EDT).
@@ -652,6 +653,37 @@ describe("review fixes (#79)", () => {
     expect(await slash(w.plugin, "tasks", LARRY)).toContain("Paused: `t1` bins out -- I could not DM user333; `/task resume t1` goes on without them.");
     expect(await slash(w.plugin, "task", LARRY, { sub: "resume", strings: { task: "t1" } })).toBe("Resumed `t1`, without user333.");
     expect(await slash(w.plugin, "tasks", LARRY)).toContain("`t1` bins out -- next");
+  });
+});
+
+describe("a recipient's delivery pause is theirs, the owner's and admins' to see (#167)", () => {
+  it("another recipient's /task history has no line about it; theirs, the owner's and an admin's show it by name", async () => {
+    const w = world();
+    await withLarry(w);
+    for (const who of [CURLY, MOE]) {
+      await slash(w.plugin, "allow", ADMIN, { users: { user: who } });
+      await slash(w.plugin, "register", who);
+    }
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    for (const who of [CURLY, MOE]) {
+      await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: who } });
+      await pressButton(w.plugin, "tracker:a.t.t1", who);
+    }
+    w.unreachable.add(CURLY);
+    for (const day of ["01", "02", "03"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await tick(w.plugin);
+    }
+    const history = (who: string) => slash(w.plugin, "task", who, { sub: "history", strings: { task: "t1" } });
+    const pause = `paused: delivery to user333 paused: ${PAUSE_AFTER} DMs in a row could not be delivered`;
+    const moe = await history(MOE);
+    expect(moe).toContain("`t1` bins out -- reminder, paused");
+    expect(moe).not.toContain("delivery to");
+    expect(moe).not.toContain("user333");
+    expect(await history(LARRY)).toContain(pause);
+    expect(await history(ADMIN)).toContain(pause);
+    // Last: using a command resumes Curly's delivery, and the task with it.
+    expect(await history(CURLY)).toContain(pause);
   });
 });
 
