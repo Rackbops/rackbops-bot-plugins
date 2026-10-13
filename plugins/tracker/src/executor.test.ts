@@ -239,11 +239,47 @@ describe("the city-hall Executor (docket's Executor port, city-hall#18's source 
     const w = setup((req) => (req.method === "POST" ? json(400, { error: "spec.prompt must be a non-empty string" }) : json(404, { error: "not found" })));
     const refused = await thrown(w.executor.run(SPEC, "o7", "o7"));
     expect(refused).not.toBeInstanceOf(ExecutorUnavailableError);
-    expect((refused as Error).message).toContain("HTTP 400");
+    expect((refused as Error).message).toBe("city-hall answered HTTP 400 to POST /api/execute/jobs");
     w.records.put("o8", "o8", "gone", NOW.toISOString());
     const unknown = await thrown(w.executor.run(null, "o8", "o8"));
     expect(unknown).not.toBeInstanceOf(ExecutorUnavailableError);
     expect((unknown as Error).message).toContain("HTTP 404 to GET /api/execute/jobs/:id");
+  });
+
+  it("a fetch that fails before city-hall answers is logged once an hour, by the error's name only", async () => {
+    // As Bun's fetch refuses a header value: before any I/O, echoing the value, which is the key.
+    const w = setup(() => {
+      throw new TypeError(`Header 'Authorization' has invalid value: 'Bearer ${KEY}'`);
+    });
+    const errors = () => w.logs.filter((l) => l.startsWith("error"));
+    expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    expect(errors()).toHaveLength(1);
+    expect(errors()[0]).toContain("could not be reached (TypeError)");
+    w.later(61 * 60 * 1000);
+    expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    expect(errors()).toHaveLength(2);
+    for (const line of w.logs) expect(line).not.toContain(KEY);
+    // A city-hall that never answers: the request's AbortSignal.timeout ends it with a TimeoutError.
+    const slow = setup(() => new Promise<Response>(() => {}));
+    expect(await thrown(slow.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    expect(slow.logs).toHaveLength(1);
+    expect(slow.logs[0]).toContain("error city-hall timed out (TimeoutError)");
+  });
+
+  it("an unreachable city-hall and a refused credential each keep their own hour: neither hides the other", async () => {
+    let down = true;
+    const w = setup(() => {
+      if (down) throw new TypeError("fetch failed");
+      return json(401, { error: "unauthorized" });
+    });
+    expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    down = false;
+    expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    const errors = w.logs.filter((l) => l.startsWith("error"));
+    expect(errors).toHaveLength(2);
+    expect(errors[0]).toContain("could not be reached (TypeError)");
+    expect(errors[1]).toContain("refused the tracker's credential (HTTP 401)");
   });
 
   it("logs a submission by its Job key and city-hall's id only: never the prompt, the source key or the result", async () => {
@@ -424,6 +460,44 @@ describe("JobRecords.prune (review of #110)", () => {
     expect(records.get("c")).toBe("j-c");
     expect(records.get("d")).toBeNull();
   });
+
+  it("prune looks each record's run up by its key", () => {
+    const db = openDatabase(":memory:");
+    const records = new JobRecords(db);
+    // The prune query as JobRecords sends it, for SQLite's plan of it.
+    const sent: string[] = [];
+    const query = db.query.bind(db);
+    db.query = ((sql: string) => {
+      sent.push(sql);
+      return query(sql);
+    }) as typeof db.query;
+    records.prune(NOW);
+    const prune = sent.find((sql) => sql.startsWith("DELETE FROM executor_jobs"));
+    expect(prune).toBeDefined();
+    const plan = (query(`EXPLAIN QUERY PLAN ${prune}`).all(NOW.toISOString()) as { detail: string }[]).map((r) => r.detail);
+    expect(plan.some((d) => /^SEARCH o USING INTEGER PRIMARY KEY/.test(d))).toBe(true);
+    expect(plan.filter((d) => /^SCAN o\b/.test(d))).toEqual([]);
+  });
+
+  it("an occurrence id that is not o + digits is pruned", () => {
+    const db = openDatabase(":memory:");
+    const records = new JobRecords(db);
+    const at = new Date(NOW.getTime() - 60_000).toISOString();
+    // A run still out, seq 1: only `o1` is its id, so `x1` is not, though the digits after the first letter match.
+    const seq = Number(
+      db
+        .query("INSERT INTO occurrences (task_id, lane, due_at, status, late, dedupe_key, created_at) VALUES ('t1', 'execute', ?, 'queued', 0, ?, ?)")
+        .run(at, crypto.randomUUID(), at).lastInsertRowid,
+    );
+    expect(seq).toBe(1);
+    records.put("kept", "o1", "j-kept", at);
+    records.put("x", "x1", "j-x", at);
+    records.put("bare", "o", "j-bare", at);
+    expect(records.prune(NOW)).toBe(2);
+    expect(records.get("kept")).toBe("j-kept");
+    expect(records.get("x")).toBeNull();
+    expect(records.get("bare")).toBeNull();
+  });
 });
 
 describe("a Job once paused stays held until it finishes, for at most 48 h (review of #110, round 2)", () => {
@@ -463,6 +537,40 @@ describe("a Job once paused stays held until it finishes, for at most 48 h (revi
     expect(w.records.pausedAt("o7")).toBeNull();
   });
 
+  it("a Job the runner retries hourly is failed at city-hall's cap inside the hold, and its usage_limit result reaches docket (#287)", async () => {
+    let body: unknown = paused;
+    const w = setup(() => json(200, body));
+    w.records.put("o7", "o7", "j-1", NOW.toISOString());
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    // docket-runner claims again an hour after each usage_limit; city-hall requeues ten times.
+    for (let attempt = 2; attempt <= 11; attempt++) {
+      w.later(60 * 60 * 1000);
+      body = { job: job("queued", { attempts: attempt, lastOutcome: "usage_limit" }), runs: [] };
+      expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    }
+    const limit = { kind: "usage_limit" as const, detail: "limit reached", durationMs: 1 };
+    body = { job: job("failed", { attempts: 11, result: limit, error: "requeued 10 times after auth_failed or usage_limit" }), runs: [] };
+    expect(await w.executor.run(null, "o7", "o7")).toEqual(limit);
+    expect(w.notices.filter((n) => n.key.startsWith("city-hall:paused-cap:"))).toHaveLength(0);
+  });
+
+  it("a Job requeued ten times across more than 48 h is given up past the hold, yet still answers its result once failed (#287)", async () => {
+    let body: unknown = paused;
+    const w = setup(() => json(200, body));
+    w.records.put("o7", "o7", "j-1", NOW.toISOString());
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    // Ten requeues six hours apart (a reset the runner could parse that did not free the limit): 60 h.
+    for (let attempt = 2; attempt <= 11; attempt++) {
+      w.later(6 * 60 * 60 * 1000);
+      body = { job: job("queued", { attempts: attempt, lastOutcome: "usage_limit" }), runs: [] };
+      const err = await thrown(w.executor.run(null, "o7", "o7"));
+      expect(err).toBeInstanceOf((attempt - 1) * 6 > 48 ? JobPendingError : ExecutorUnavailableError);
+    }
+    const limit = { kind: "usage_limit" as const, detail: "limit reached", durationMs: 1 };
+    body = { job: job("failed", { attempts: 11, result: limit, error: "requeued 10 times after auth_failed or usage_limit" }), runs: [] };
+    expect(await w.executor.run(null, "o7", "o7")).toEqual(limit);
+  });
+
   it("past 48 h from the first sight it answers pending, so docket's give-up applies, and the admins are told once", async () => {
     let body: unknown = paused;
     const w = setup(() => json(200, body));
@@ -475,6 +583,6 @@ describe("a Job once paused stays held until it finishes, for at most 48 h (revi
     body = { job: job("running", { attempts: 3, lastOutcome: "usage_limit" }), runs: [] };
     expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(JobPendingError);
     expect(w.notices.filter((n) => n.key.startsWith("city-hall:paused-cap:"))).toHaveLength(1);
-    expect(w.notices.find((n) => n.key.startsWith("city-hall:paused-cap:"))?.text).toContain("48 h");
+    expect(w.notices.find((n) => n.key.startsWith("city-hall:paused-cap:"))?.text).toContain("for over 48 h;");
   });
 });

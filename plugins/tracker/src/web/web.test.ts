@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import pkg from "../../package.json" with { type: "json" };
 import { type Membership, NOT_ADMITTED } from "../access.js";
@@ -7,10 +9,12 @@ import { createPlugin } from "../index.js";
 import { lookupMembership } from "../discord-common.js";
 import { LEFT_SERVER, lookupWithin, MEMBER_GRACE_MS, MEMBER_RECHECK_MS, MEMBER_RETRY_MS, RECHECK_FAILED } from "./app.js";
 import { WEB_NOT_CONFIGURED } from "./command.js";
+import { CITY_HALL } from "./execute-harness.js";
 import { parseWebUrl, WEB_URL_FORMAT } from "./config.js";
 import { esc, html } from "./html.js";
 import { sha256 } from "./secrets.js";
 import { STYLESHEET_PATH } from "./theme.js";
+import { removeDir } from "../test-dirs.js";
 
 /**
  * The web area's first slice (rackbops-bot-plugins#80), through the plugin's own `http` handler and
@@ -747,5 +751,64 @@ describe("a reply is one plain line (#205, #208)", () => {
     const w = await sharedRun();
     expect(await replyText(w.plugin, "o1", CURLY, "```js x``` `y`")).toBe(KEPT);
     expect(await history(w)).toContain('; user333 replied "\\`\\`\\`js x\\`\\`\\` \\`y\\`"');
+  });
+});
+
+describe("the harness (#232)", () => {
+  it("cleanup disposes every plugin world() made, before it removes their directories", async () => {
+    const made = [await world(), await world()];
+    for (const w of made) {
+      expect((await call(w.plugin, "GET", "/healthz")).status).toBe(200);
+      expect(existsSync(`${w.dbPath}-wal`)).toBe(true);
+    }
+    // SQLite deletes a database's write-ahead log when its last connection closes, so a log still
+    // there when its directory is removed is a database still open.
+    const walAtRemoval = new Map<string, boolean>();
+    await cleanup((dir) => {
+      walAtRemoval.set(dir, existsSync(join(dir, "tracker.sqlite-wal")));
+      removeDir(dir);
+    });
+    expect([...walAtRemoval]).toEqual(made.map((w) => [dirname(w.dbPath), false]));
+    for (const w of made) {
+      expect(await (await call(w.plugin, "GET", "/healthz")).json()).toMatchObject({ status: "inactive" });
+      expect(existsSync(dirname(w.dbPath))).toBe(false);
+    }
+  });
+
+  it("cleanup waits for an execute run still in flight before it removes the directory", async () => {
+    // city-hall answers (busy) only once the test opens `gate`, so the run is still out while
+    // cleanup runs: dispose() waits for it before it closes the database.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    const gated = (async () => {
+      await gate;
+      return new Response("busy", { status: 503 });
+    }) as unknown as typeof fetch;
+    const runs: Promise<void>[] = [];
+    const walAtRemoval: boolean[] = [];
+    let ended = false;
+    let done: Promise<void> | null = null;
+    try {
+      const w = await world({ env: CITY_HALL, cityHallFetch: gated, executeStarted: (p) => void runs.push(p) });
+      await people(w.plugin);
+      await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?" } });
+      await w.plugin.ticks?.find((t) => t.name === "execute")?.run(new AbortController().signal);
+      expect(runs).toHaveLength(1);
+      void Promise.all(runs).finally(() => (ended = true));
+      done = cleanup((dir) => {
+        walAtRemoval.push(existsSync(join(dir, "tracker.sqlite-wal")));
+        removeDir(dir);
+      });
+      for (let i = 0; i < 3; i++) await Bun.sleep(0);
+      // Nothing removed yet: dispose() is still waiting on the run.
+      expect(walAtRemoval).toEqual([]);
+      expect(ended).toBe(false);
+    } finally {
+      // However the test ended, the run ends, so dispose() never waits out its 5 s.
+      release();
+    }
+    await done;
+    expect(ended).toBe(true);
+    expect(walAtRemoval).toEqual([false]);
   });
 });
