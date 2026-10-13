@@ -1,25 +1,30 @@
+import type { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Lanes, materialize, type Clock, type Schedule, type User } from "@rackbops/docket-core";
 import { makeFakeDelivery, makeFakeHost } from "../../../packages/testkit/index.js";
 import type { HostApi, HostMessage } from "../../../packages/api/contract.js";
 import { DeliveryHealth } from "./delivery-health.js";
-import { collectDigest, digestKey, formatDigest, localDay, MAX_LINES, runDigests } from "./digest.js";
+import { collectDigest, digestKey, type DigestItem, formatDigest, localDay, MAX_LINES, runDigests } from "./digest.js";
 import { createPlugin, DB_DIR, DB_FILE, TRACKER_TYPES } from "./index.js";
-import { createDmNotifier, HOST_CANNOT_MESSAGE } from "./notifier.js";
+import { createDmNotifier, HOST_CANNOT_MESSAGE, MAX_CONTENT, wrapBareUrls } from "./notifier.js";
 import { runNotifyTick } from "./notify-lane.js";
 import { admit, setPreferences } from "./people.js";
 import { Roster } from "./roster.js";
 import { openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
+import { removeDir } from "./test-dirs.js";
 
 // Mon 2026-10-05 in New York is UTC-4: 9:00 there is 13:00Z.
 const BEFORE_HOUR = "2026-10-05T12:59:00.000Z";
 const AT_HOUR = "2026-10-05T13:00:00.000Z";
 const OWNER = "111111111111111111";
 const FRIEND = "222222222222222222";
+const FOOTER = "`/task done` marks a reminder done, `/task decide` answers a renewal, `/task snooze` puts either off; `/tasks` lists everything.";
+// Sat 2026-10-03, 9:30 in New York: every renewal of `longDay` has been asked.
+const ASKED = "2026-10-03T13:30:00.000Z";
 
 function fakeClock(iso: string): Clock & { set(iso: string): void } {
   let now = new Date(iso);
@@ -63,6 +68,29 @@ async function setup(start = "2026-10-03T12:00:00.000Z") {
     new Lanes({ store, clock, types: TRACKER_TYPES, notifier }).reply({ taskId, occurrenceId, userId, kind, payload });
   const lastRun = async (taskId: string) => (await store.listOccurrences({ taskId })).at(-1)!;
   return { db, store, clock, owner, calls, warnings, errors, health, tick, digests, make, reply, lastRun };
+}
+
+/**
+ * A day past one message (#211), made by `make`: twelve renewals asked on the morning of Sat Oct 3,
+ * overdue on Mon Oct 5 once they fire (at `ASKED`), and twelve reminders due that Monday evening.
+ * Every title is 100 characters, so each is cut to 80 in its line; `reminderTitle` sets the reminders'.
+ */
+async function longDay(
+  make: (title: string, schedule: Schedule, type: string, config: unknown) => Promise<unknown>,
+  reminderTitle = (i: number) => `reminder ${i} `.padEnd(100, "m"),
+): Promise<void> {
+  for (let i = 0; i < 12; i++) {
+    await make(`renewal ${i} `.padEnd(100, "r"), { kind: "once", at: `2026-10-03T13:${10 + i}:00.000Z` }, "renewal", { amount: 9.99, currency: "USD", renews: "2026-10-10", lead: 7 });
+  }
+  for (let i = 0; i < 12; i++) await make(reminderTitle(i), { kind: "once", at: `2026-10-05T22:${10 + i}:00.000Z` }, "reminder", { text: reminderTitle(i) });
+}
+
+/** The `- \`id\`` lines a digest shows in each section. */
+function shownLines(text: string): { overdue: string[]; today: string[] } {
+  const lines = text.split("\n");
+  const split = lines.indexOf("**Due today**");
+  const item = (l: string) => l.startsWith("- `");
+  return { overdue: lines.slice(0, split).filter(item), today: lines.slice(split).filter(item) };
 }
 
 describe("localDay", () => {
@@ -283,6 +311,89 @@ describe("formatDigest", () => {
     expect(text.split("\n").filter((l) => l.startsWith("- `"))).toHaveLength(MAX_LINES);
     expect(text).toContain("- and 2 more");
   });
+
+  /** `longDay` with its renewals asked, and what it lists on Mon Oct 5. */
+  async function longDigest(reminderTitle?: (i: number) => string) {
+    const s = await setup();
+    await longDay((title, schedule, type, config) => s.make(title, schedule, s.owner, type, config), reminderTitle);
+    s.clock.set(ASKED);
+    await s.tick();
+    const { start, end } = localDay(new Date(AT_HOUR), s.owner.timeZone);
+    return { s, digest: await collectDigest(s.store, s.owner, start, end) };
+  }
+
+  it("a digest past one message shows the same number of lines in each section, as many as fit, and keeps Due today, the footer and both counts", async () => {
+    const { s, digest } = await longDigest();
+    expect([digest.overdue.length, digest.today.length]).toEqual([12, 12]);
+    const text = formatDigest(digest, s.owner, new Date(AT_HOUR)) ?? "";
+    expect(wrapBareUrls(text).length).toBeLessThanOrEqual(MAX_CONTENT);
+    const { overdue, today } = shownLines(text);
+    const k = overdue.length;
+    expect(k).toBeGreaterThanOrEqual(1);
+    expect(today).toHaveLength(k);
+    const lines = text.split("\n");
+    expect(lines.slice(0, 2)).toEqual(["Your day, Mon Oct 5:", "**Overdue**"]);
+    expect(lines.slice(k + 2, k + 4)).toEqual([`- and ${12 - k} more`, "**Due today**"]);
+    expect(lines.slice(-2)).toEqual([`- and ${12 - k} more`, FOOTER]);
+    // As many as fit: one more line in each section would not.
+    const longest = (shown: string[]) => Math.max(...shown.map((l) => l.length));
+    expect(text.length + longest(overdue) + longest(today) + 2).toBeGreaterThan(MAX_CONTENT);
+    // Nothing is cut: a cut title's own "..." is inside its line, and no line ends in one.
+    expect(overdue[0]).toContain("... -- asked Sat Oct 3, 9:10,");
+    expect(lines.filter((l) => l.endsWith("..."))).toEqual([]);
+  });
+
+  it("a title with a bare link counts the host's wrapping", async () => {
+    // Every reminder's title is a bare link, two characters longer once the host wraps it. The first
+    // one's length sets the wrapped text with eight lines a section: 2000 characters at 29, 2001 at 30.
+    const linked = (first: number) => longDigest((i) => `https://shop.example/${i}/`.padEnd(i === 0 ? first : 54, "m"));
+    // Exactly MAX_CONTENT once wrapped fits: eight lines a section.
+    const exact = await linked(29);
+    const fits = formatDigest(exact.digest, exact.s.owner, new Date(AT_HOUR)) ?? "";
+    expect(wrapBareUrls(fits).length).toBe(MAX_CONTENT);
+    expect(shownLines(fits).overdue).toHaveLength(8);
+    expect(shownLines(fits).today).toHaveLength(8);
+    // One character more does not: seven lines a section.
+    const { s, digest } = await linked(30);
+    const text = formatDigest(digest, s.owner, new Date(AT_HOUR)) ?? "";
+    expect(wrapBareUrls(text).length).toBeLessThanOrEqual(MAX_CONTENT);
+    expect(shownLines(text).overdue).toHaveLength(7);
+    expect(shownLines(text).today).toHaveLength(7);
+    // The same digest with no link ("hxxps" is the same length) shows eight; with the links back, that
+    // text fits by its plain length and is one over once they are wrapped.
+    const unlink = (i: DigestItem) => ({ ...i, task: { ...i.task, title: i.task.title.replace("https://", "hxxps://") } });
+    const oneMore = (formatDigest({ overdue: digest.overdue, today: digest.today.map(unlink) }, s.owner, new Date(AT_HOUR)) ?? "").replaceAll("hxxps://", "https://");
+    expect(oneMore.length).toBeLessThanOrEqual(MAX_CONTENT);
+    expect(wrapBareUrls(oneMore).length).toBe(MAX_CONTENT + 1);
+    expect(shownLines(oneMore).overdue).toHaveLength(8);
+    expect(shownLines(oneMore).today).toHaveLength(8);
+  });
+
+  it("a section that can show no line counts them all, and an empty section leaves the other the full cap", async () => {
+    // Only a stand-in id this long reaches the case: with titles cut to 80 and the store's own ids,
+    // one line in each section comes to about 590 characters at most.
+    const { s, digest } = await longDigest();
+    const long = (i: DigestItem) => ({ ...i, task: { ...i.task, id: "9".repeat(MAX_CONTENT) } });
+    expect(formatDigest({ overdue: digest.overdue.map(long), today: digest.today.map(long) }, s.owner, new Date(AT_HOUR))).toBe(
+      ["Your day, Mon Oct 5:", "**Overdue**", "- 12 in all", "**Due today**", "- 12 in all", FOOTER].join("\n"),
+    );
+    // The twelve overdue alone, nothing due today: all ten lines fit, and only the rest is counted.
+    const asked = (i: number) => `- \`t${i + 1}\` ${`renewal ${i} `.padEnd(77, "r")}... -- asked Sat Oct 3, 9:${10 + i}, waiting on your keep, cancel or renewed`;
+    expect(formatDigest({ overdue: digest.overdue, today: [] }, s.owner, new Date(AT_HOUR))).toBe(
+      ["Your day, Mon Oct 5:", "**Overdue**", ...Array.from({ length: MAX_LINES }, (_, i) => asked(i)), "- and 2 more", FOOTER].join("\n"),
+    );
+  });
+
+  it("a section with no more items than the cap shows them all, with no count", async () => {
+    // Seven overdue and twelve due today: seven lines a section is the most that fits, all of Overdue.
+    const { s, digest } = await longDigest();
+    const text = formatDigest({ overdue: digest.overdue.slice(0, 7), today: digest.today }, s.owner, new Date(AT_HOUR)) ?? "";
+    expect(shownLines(text).overdue).toHaveLength(7);
+    expect(shownLines(text).today).toHaveLength(7);
+    const lines = text.split("\n");
+    expect(lines[9]).toBe("**Due today**");
+    expect(lines.filter((l) => l.startsWith("- and "))).toEqual(["- and 5 more"]);
+  });
 });
 
 describe("forget-me", () => {
@@ -299,12 +410,17 @@ describe("forget-me", () => {
 describe("the plugin's notify tick", () => {
   it("sends the digest after the runs due now, on a real data file", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "tracker-digest-"));
+    // The plugin and a second connection to its file, closed before the directory goes: Windows
+    // refuses to delete an open file (#232).
+    let plugin: ReturnType<typeof createPlugin> | null = null;
+    let db: Database | null = null;
     try {
       const clock = fakeClock("2026-10-05T10:00:00.000Z");
       const delivery = makeFakeDelivery();
-      const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: OWNER }, ...delivery }), { clock });
+      plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: OWNER }, ...delivery }), { clock });
       await plugin.activate!();
-      const store = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
+      db = openDatabase(join(dataDir, DB_DIR, DB_FILE));
+      const store = new SqliteStore(db);
       const owner = await admit(store, OWNER, clock.now());
       const task = await store.createTask({
         ownerId: owner.id,
@@ -333,9 +449,39 @@ describe("the plugin's notify tick", () => {
       clock.set("2026-10-05T13:01:00.000Z");
       await plugin.ticks![0]!.run(new AbortController().signal);
       expect(delivery.calls.dm).toHaveLength(2);
+    } finally {
+      await plugin?.dispose?.();
+      db?.close();
+      removeDir(dataDir);
+    }
+  });
+
+  it("sends a digest past one message whole: Due today, both counts and the footer, nothing cut (#211)", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "tracker-digest-"));
+    try {
+      const clock = fakeClock("2026-10-03T12:00:00.000Z");
+      const delivery = makeFakeDelivery();
+      const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: OWNER }, ...delivery }), { clock });
+      await plugin.activate!();
+      const store = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
+      const owner = await admit(store, OWNER, clock.now());
+      await longDay(async (title, schedule, type, config) => {
+        const task = await store.createTask({ ownerId: owner.id, type, title, config, schedule, lane: "notify", capabilities: ["notify"], at: clock.now().toISOString() });
+        await materialize(store, task, owner, clock.now());
+      });
+      clock.set(ASKED);
+      await plugin.ticks![0]!.run(new AbortController().signal);
+      clock.set(AT_HOUR);
+      await plugin.ticks![0]!.run(new AbortController().signal);
+      const sent = delivery.calls.dm.at(-1)?.message.content ?? "";
+      expect(sent).toStartWith("Your day, Mon Oct 5:\n**Overdue**\n");
+      expect(sent).toContain("\n**Due today**\n");
+      expect(sent.match(/^- and \d+ more$/gm)).toHaveLength(2);
+      expect(sent).toEndWith(`\n${FOOTER}`);
+      expect(sent).not.toEndWith("...");
       await plugin.dispose!();
     } finally {
-      rmSync(dataDir, { recursive: true, force: true });
+      removeDir(dataDir);
     }
   });
 });

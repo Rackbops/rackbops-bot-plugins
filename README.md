@@ -300,7 +300,8 @@ export function createPlugin(host: HostApi): Plugin {
   return {
     async http(request, { path, clientIp }) {
       // Mounted at /<your-plugin-name>/ -- `path` has that prefix stripped: "/callback", or "/" for
-      // the bare mount. `request` is untouched: full URL, query, headers, body.
+      // the bare mount. `request` is rebuilt by the host: full URL and query, the body already read,
+      // the forwarding headers replaced by `clientIp` (see `http` in contract.d.ts).
       if (request.method === "GET" && path === "/callback") return new Response("ok");
       return new Response("Not found", { status: 404 });
     },
@@ -318,8 +319,18 @@ export function createPlugin(host: HostApi): Plugin {
   arrives while your plugin is not running gets `503`.
 - **A request is not a critical section.** A restart does not wait for it, so write through
   `host.storage` (its writes are atomic) and let the client retry.
-- `clientIp` is `CF-Connecting-IP`, falling back to the socket address. It is trustworthy only for
-  traffic that really came through the tunnel.
+- **Read `clientIp`, never a forwarding header.** It is `CF-Connecting-IP` when the request came
+  through the deployment's own tunnel, falling back to the socket address, or `"unknown"`. Since
+  rackbops-discord-bot#539 the host overwrites `CF-Connecting-IP` and `X-Forwarded-For` with it,
+  removes `Forwarded`, `X-Real-IP`, `True-Client-IP` and `CF-Connecting-IPv6`, and sets
+  `Content-Length` to the buffered body's length; an older host passes every header through as the
+  client sent it.
+- **Background work is yours to contain.** A timer, listener or promise nothing awaits that
+  `activate()` starts is outside the host's isolation: an uncaught throw or unhandled rejection
+  there ends the whole bot, every other plugin with it.
+- **A refused `post`, `dm` or `edit`** (other than closed DMs) rejects with an `Error` carrying
+  Discord's message, `name`, `status`, `method` and `code`, never the request that was sent
+  (rackbops-discord-bot#540; an older host rejects with discord.js's own error).
 - **Never redirect to `path`, or build an absolute URL from `request.url`, unchecked.**
   `/<name>//evil.com` arrives as `path` `"//evil.com"`, which is a protocol-relative URL, and
   `request.url` takes its host from the client's `Host` header.
