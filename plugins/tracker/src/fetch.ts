@@ -57,9 +57,11 @@ export interface PageFetchOptions {
 }
 
 /**
- * docket-types' page reads carry `NEVER_EBAY`: a directive to this port, never sent. Any hop to
- * eBay is refused, so a pasted page that redirects to eBay is not read either (roshne's rule:
- * the tracker never reads eBay; an eBay watch gets its listings sent in, inbox.ts).
+ * docket-types' `page` source (the want-list watcher's page reads) carries `NEVER_EBAY`: a
+ * directive to this port, never sent. Any hop to eBay is refused, so a pasted page that redirects
+ * to eBay is not read either (roshne's rule: the want-list watcher never reads eBay; an eBay watch
+ * gets its listings sent in, inbox.ts). `/price`'s reads carry no such header, so a price may
+ * track an eBay page (roshne, 2026-10-11, #165).
  */
 export { isEbayHost, NEVER_EBAY };
 
@@ -182,7 +184,7 @@ function orAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
 async function checkHost(url: URL, resolve: Resolve, signal: AbortSignal, neverEbay = false): Promise<void> {
   const problem = urlProblem(url.href);
   if (problem) throw new FetchRefusedError(problem);
-  if (neverEbay && isEbayHost(url.hostname)) throw new FetchRefusedError("it leads to eBay, which I never read");
+  if (neverEbay && isEbayHost(url.hostname)) throw new FetchRefusedError("it leads to eBay, which a want-list watch never reads");
   const host = url.hostname.replace(/^\[|\]$/g, "");
   let addresses: string[];
   if (isIP(host) !== 0) addresses = [host];

@@ -8,7 +8,7 @@ import type { Writer } from "./editor.js";
 
 /**
  * The task API's listings route (tracker 0.19.0): `POST /tasks/<id>/listings`, how listings reach an
- * inbox watch (want.ts, inbox.ts). The tracker never opens eBay or BoardGameGeek (Rod, 2026-10-05):
+ * inbox watch (want.ts, inbox.ts). An inbox watch never opens eBay or BoardGameGeek (Rod, 2026-10-05):
  * the owner's own browser does -- Claude in Chrome searching eBay or BGG for the watch's `search`
  * words (`GET /tasks` shows them, with its top price) -- and posts what it found here. The next poll
  * of the watch reads them and DMs the new ones, as any watch DMs.

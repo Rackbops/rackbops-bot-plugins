@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import type { Membership } from "../access.js";
+import { PAUSE_AFTER } from "../delivery-health.js";
 import { MAX_PRICE_TASKS } from "../price.js";
 import { FAILED_BURST, MAX_API_BYTES, RATE_BURST } from "./api.js";
 import { MAX_TOKENS_PER_PERSON } from "./api-tokens.js";
@@ -22,9 +23,11 @@ import {
   makeToken,
   ORIGIN,
   people,
+  press,
   SESSION,
   signIn,
   slash,
+  STRANGER,
   type WebLookup,
   world,
 } from "./harness.js";
@@ -591,6 +594,28 @@ describe("tasks", () => {
       }
     }
     expect(snapshot(w.dbPath)).toBe(before);
+  });
+
+  it("a recipient's delivery pause (#167): the owner's history names them; another recipient's GET is still the unknown task's 404", async () => {
+    const w = await setup();
+    await slash(w.plugin, "allow", ADMIN, { users: { user: STRANGER } });
+    await slash(w.plugin, "register", STRANGER);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    for (const who of [CURLY, STRANGER]) {
+      await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: who } });
+      await press(w.plugin, "tracker:a.t.t1", who);
+    }
+    w.delivery.unreachable.add(CURLY);
+    for (const day of ["01", "02", "03"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await w.plugin.ticks!.find((t) => t.name === "notify")!.run(new AbortController().signal);
+    }
+    const own = await body(await api(w.plugin, "GET", "/tasks/t1", { token: w.token }));
+    expect(own.history.changes.at(-1)).toMatchObject({ kind: "paused", detail: `delivery to user333 paused: ${PAUSE_AFTER} DMs in a row could not be delivered` });
+    // The API serves only the caller's own tasks, so another recipient never reaches the history.
+    const theirs = await api(w.plugin, "GET", "/tasks/t1", { token: await makeToken(w, await signIn(w.plugin, STRANGER), "their-agent") });
+    expect(theirs.status).toBe(404);
+    expect(await theirs.text()).not.toContain("delivery to");
   });
 
   it("PATCH edits by the web editor's rules: the same fields make the same change", async () => {
