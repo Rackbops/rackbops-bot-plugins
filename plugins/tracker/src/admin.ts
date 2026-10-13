@@ -23,8 +23,13 @@ export const NO_SUCH_BLOCK = "There is no such block in force.";
 export const LAST_ADMIN = "That is the tracker's only admin: make someone else an admin first.";
 export const BUSY = "The tracker is busy sending reminders; nothing was deleted. Try again in a minute.";
 
-/** How long forget-me waits for a running tick to end, before its turn in the queue. */
-export const TICK_WAIT_MS = 20_000;
+/**
+ * How long forget-me waits for a running tick to end, before its turn in the queue: well under the
+ * host's 10 s bound on a web request (rackbops-discord-bot's `PLUGIN_HTTP_TIMEOUT_MS`), after which
+ * the host answers 504 and does not stop the handler -- so a longer wait would erase after the
+ * person was told it timed out, or build a 503 no one receives. The rest is the queue turn's room.
+ */
+export const TICK_WAIT_MS = 6_000;
 
 export const CONFIGURED_ADMIN =
   "That admin is named in TRACKER_ADMIN_DISCORD_IDS, which makes them an admin again at every start: remove them from the configuration first.";
@@ -41,8 +46,8 @@ export function isConfiguredAdmin(d: Pick<TrackerDeps, "configuredAdmins">, u: {
  * discord-common.ts): until no notify or poll tick runs, at most `TICK_WAIT_MS`. False when one
  * still runs; the caller answers BUSY and deletes nothing.
  */
-export function ticksSettled(d: Pick<TrackerDeps, "lanes">): Promise<boolean> {
-  return d.lanes.idle(TICK_WAIT_MS);
+export function ticksSettled(d: Pick<TrackerDeps, "lanes" | "tickWaitMs">): Promise<boolean> {
+  return d.lanes.idle(d.tickWaitMs ?? TICK_WAIT_MS);
 }
 
 /** The tracker's own `u<n>` id shape; anything else names no one. */
@@ -133,15 +138,28 @@ export async function forgetPerson(d: TrackerDeps, actor: User, targetId: string
   // the queue; here, inside the queue and the delivery lock, a tick that started since is only
   // detected, and the answer is BUSY. The erasure itself is synchronous, so no tick can start
   // between this check and its end.
+  // The erasure has committed once `erase` returns, so a task that fails to go back on is logged and
+  // the rest still are: one throw must not leave the others paused with no pause row to release them,
+  // nor skip the checkpoint (the erased pages would stay in the write-ahead log).
+  const stuck: string[] = [];
   const erased: Erased | null = await d.health.exclusive(async () => {
     if (d.lanes.busy()) return null;
     const e = d.roster.erase(target.id);
-    for (const taskId of e.freed) await d.health.release(taskId, null, "resumed: a recipient left the tracker", now);
+    for (const taskId of e.freed) {
+      try {
+        await d.health.release(taskId, null, "resumed: a recipient left the tracker", now);
+      } catch (err) {
+        stuck.push(taskId);
+        d.log.error(`after forgetting ${target.id}: ${taskId} could not go back on; its owner can resume it`, err);
+      }
+    }
     return e;
   });
   if (erased === null) return { ok: false, error: BUSY };
   if (!d.roster.checkpoint()) d.log.warn(`after forgetting ${target.id}: the write-ahead log is busy, so SQLite's next checkpoint copies it back`);
   const total = Object.values(erased.rows).reduce((a, b) => a + b, 0);
   d.log.info(`forgot ${target.id} (${actor.id === target.id ? "at their own request" : `removed by ${actor.id}`}): ${total} row(s) deleted`);
-  return { ok: true, text: actor.id === target.id ? "Everything the tracker held about you is deleted." : `${who(target)} is removed from the tracker.` };
+  const text = actor.id === target.id ? "Everything the tracker held about you is deleted." : `${who(target)} is removed from the tracker.`;
+  const still = stuck.length > 0 ? ` ${stuck.length} task(s) paused only for them could not go back on (${stuck.join(", ")}); each owner can resume theirs.` : "";
+  return { ok: true, text: `${text}${still}` };
 }

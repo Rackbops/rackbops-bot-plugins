@@ -130,6 +130,8 @@ export interface TrackerOptions {
   digest?: boolean;
   /** Test seam for the usr link's HTTP (usr.ts). */
   usrFetch?: typeof fetch;
+  /** Test seam: forget-me's wait for a running tick, in ms (admin.ts `TICK_WAIT_MS` by default). */
+  tickWaitMs?: number;
 }
 
 /** A Notifier for a host without `dm`: every send is refused, and nothing went out. */
@@ -417,6 +419,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           budgetUnlimited,
           configuredAdmins: new Set(adminIds),
           lanes,
+          ...(options.tickWaitMs !== undefined ? { tickWaitMs: options.tickWaitMs } : {}),
           webEditor: webOrigin !== null,
           research: executeOn,
           bgg: bgg !== null,

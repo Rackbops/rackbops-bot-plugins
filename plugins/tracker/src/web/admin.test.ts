@@ -4,7 +4,7 @@ import type { Plugin } from "../../../../packages/api/contract.js";
 import { NOT_ADMIN, NOT_ADMITTED } from "../access.js";
 import type { Fetch } from "@rackbops/docket-core";
 import { NO_LONGER_LISTED } from "../actions.js";
-import { CONFIGURED_ADMIN, CONFIGURED_SELF, LAST_ADMIN } from "../admin.js";
+import { BUSY, CONFIGURED_ADMIN, CONFIGURED_SELF, LAST_ADMIN, TICK_WAIT_MS } from "../admin.js";
 import { CANNOT_SHARE } from "../press.js";
 import { PAUSE_AFTER } from "../delivery-health.js";
 import { ERASED_TABLES, FORGOTTEN } from "../roster.js";
@@ -534,6 +534,101 @@ describe("forget-me", () => {
     expect(query(w.dbPath, "SELECT * FROM delivery_pauses")).toEqual([]);
     expect(await slash(w.plugin, "task", CURLY, { sub: "history", strings: { task: "t1" } })).toContain("Next: Sun Oct 4, 9:00");
     expect(traces(w.dbPath, "u2", [LARRY, "Larry"])).toEqual([]);
+  });
+
+  it("a task that cannot go back on is logged and named; the others still go back on, and the erasure is finished (#224)", async () => {
+    const logs: string[] = [];
+    const w = await setup({ logs });
+    for (const text of ["curly-plants", "curly-bins"]) {
+      await slash(w.plugin, "remind", CURLY, { strings: { text, when: "9am", repeat: "day" } });
+    }
+    for (const t of ["t1", "t2"]) {
+      await slash(w.plugin, "task", CURLY, { sub: "share", strings: { task: t }, users: { user: LARRY } });
+      await press(w.plugin, `tracker:a.t.${t}`, LARRY);
+    }
+    w.delivery.unreachable.add(LARRY);
+    for (const day of ["01", "02", "03"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await tick(w.plugin);
+    }
+    expect(query(w.dbPath, "SELECT status FROM tasks ORDER BY seq")).toEqual([{ status: "paused" }, { status: "paused" }]);
+    // t1 refuses to go back on, as a store error would.
+    const db = new Database(w.dbPath);
+    db.run("CREATE TRIGGER stuck BEFORE UPDATE OF status ON tasks WHEN OLD.seq = 1 AND NEW.status = 'active' BEGIN SELECT RAISE(ABORT, 'stuck'); END");
+    db.close();
+
+    const done = await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u2/forget", { confirm: "yes", word: CONFIRM_WORD });
+    expect(done.status).toBe(200);
+    expect(await done.text()).toContain("could not go back on (t1)");
+    expect(query(w.dbPath, "SELECT status FROM tasks ORDER BY seq")).toEqual([{ status: "paused" }, { status: "active" }]);
+    expect(traces(w.dbPath, "u2", [LARRY, "Larry"])).toEqual([]);
+    expect(logs.some((l) => l.includes("t1 could not go back on"))).toBe(true);
+    expect(logs.some((l) => l.startsWith("forgot u2 (removed by u1)"))).toBe(true);
+  });
+});
+
+describe("forget-me while a tick runs (#160, #172)", () => {
+  /** Curly's daily reminder, shared with Larry, due at 13:00 on 2026-10-01: a tick then DMs them both. */
+  async function sharedReminder(opts: Parameters<typeof world>[0] = {}) {
+    const w = await setup(opts);
+    await slash(w.plugin, "remind", CURLY, { strings: { text: "curly-plants", when: "9am", repeat: "day" } });
+    await slash(w.plugin, "task", CURLY, { sub: "share", strings: { task: "t1" }, users: { user: LARRY } });
+    await press(w.plugin, "tracker:a.t.t1", LARRY);
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    return w;
+  }
+
+  it("waits less than the host's 10 s bound on a web request, so the 503 reaches the person", () => {
+    expect(TICK_WAIT_MS).toBeLessThan(10_000);
+  });
+
+  it("a tick still running when the wait ends: 503, try again, and nothing is deleted", async () => {
+    const w = await sharedReminder({ tickWaitMs: 50 });
+    let release = () => {};
+    w.delivery.hold = new Promise<void>((r) => (release = r));
+    const ticking = tick(w.plugin);
+    for (let i = 0; i < 400 && w.delivery.held === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    expect(w.delivery.held).toBeGreaterThan(0);
+    const before = snapshot(w.dbPath);
+    const busy = await post(w.plugin, w.larry, w.larryCsrf, "/forget", { confirm: "yes", word: CONFIRM_WORD });
+    expect(busy.status).toBe(503);
+    expect(await busy.text()).toContain(esc(BUSY));
+    expect(snapshot(w.dbPath)).toBe(before);
+    const removed = await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u2/forget", { confirm: "yes", word: CONFIRM_WORD });
+    expect(removed.status).toBe(503);
+    expect(snapshot(w.dbPath)).toBe(before);
+    w.delivery.hold = null;
+    release();
+    await ticking;
+    expect((await post(w.plugin, w.larry, w.larryCsrf, "/forget", { confirm: "yes", word: CONFIRM_WORD })).status).toBe(303);
+  });
+
+  it("a tick that starts after the wait, before the erasure: the queue turn sees it, 503 and nothing deleted", async () => {
+    const w = await sharedReminder();
+    let release = () => {};
+    w.delivery.hold = new Promise<void>((r) => (release = r));
+    // The tick starts from inside forgetPerson's own turn (its first read of the clock), once: after
+    // the wait found no tick, just before the erasure's check.
+    let ticking: Promise<void> | null = null;
+    let armed = true;
+    const now = w.clock.now;
+    w.clock.now = () => {
+      if (armed && /forgetPerson/.test(new Error().stack ?? "")) {
+        armed = false;
+        ticking = tick(w.plugin);
+      }
+      return now();
+    };
+    const busy = await post(w.plugin, w.larry, w.larryCsrf, "/forget", { confirm: "yes", word: CONFIRM_WORD });
+    expect(ticking).not.toBeNull();
+    expect(busy.status).toBe(503);
+    expect(await busy.text()).toContain(esc(BUSY));
+    expect(query(w.dbPath, "SELECT seq FROM users WHERE seq = 2")).toHaveLength(1);
+    w.delivery.hold = null;
+    release();
+    await ticking;
+    expect(traces(w.dbPath, "u2", [LARRY, "Larry"])).not.toEqual([]);
+    expect((await post(w.plugin, w.larry, w.larryCsrf, "/forget", { confirm: "yes", word: CONFIRM_WORD })).status).toBe(303);
   });
 });
 
