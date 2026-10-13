@@ -9,7 +9,7 @@ import type { TickGate, TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
 import { Ceilings } from "./ceilings.js";
 import { DeliveryHealth } from "./delivery-health.js";
-import { createBggFetch, createPageFetch } from "./fetch.js";
+import { createBggFetch, createPageFetch, type PageFetchOptions } from "./fetch.js";
 import { EXECUTE_MIN_GAP_MS, ExecuteLane } from "./execute-lane.js";
 import { type CityHallConfig, createCityHallExecutor, databaseId, JobRecords, parseCityHallConfig } from "./executor.js";
 import type { Membership } from "./access.js";
@@ -124,6 +124,8 @@ export interface TrackerOptions {
   executor?: Executor;
   /** Test seam: a BGG source in place of the token's (docket-types' `bggSource`), as if `TRACKER_BGG_TOKEN` were set. */
   bgg?: Source;
+  /** Test seam for the token's BGG reads: the name lookup and HTTP under `createBggFetch`, which still decides raw and redirects. */
+  bggNetwork?: Pick<PageFetchOptions, "resolve" | "fetchImpl">;
   /** Test seam: each execute tick's background work as it starts, so a test can await it. */
   executeStarted?: (work: Promise<void>) => void;
   /** Test seam: false leaves the daily digest (digest.ts) off the notify tick, for tests that count every DM. On by default. */
@@ -159,7 +161,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const clock: Clock = options.clock ?? { now: () => new Date() };
   const bggToken = parseBggToken(host.env.TRACKER_BGG_TOKEN);
   // BGG's answers are XML, read by docket-types' own bounded BGG parser: the raw body, fenced like every read.
-  const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createBggFetch() }) : null);
+  const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createBggFetch(options.bggNetwork ?? {}) }) : null);
   // The want-list inboxes (inbox.ts) live in the database `activate()` opens; until then, and after
   // `dispose()`, an inbox reads as empty (no tick runs then anyway). An eBay watch, and a BGG one
   // made while the bot has no BGG token, get their listings only this way: the want-list watcher

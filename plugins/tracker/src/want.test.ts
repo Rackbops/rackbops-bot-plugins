@@ -284,6 +284,21 @@ describe("/want", () => {
     expect(content(w.sent, 0)).toContain("<https://boardgamegeek.com/geekmarket/product/4100001> (via BoardGameGeek)");
   });
 
+  it("with TRACKER_BGG_TOKEN set, the plugin's BGG reader never follows a redirect, so the token stays on BGG (#215)", async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      return new Response(null, { status: 302, headers: { location: "https://boardgamegeek.com/login" } });
+    }) as unknown as typeof fetch;
+    const w = await world({ fetch: shop([]).fetch, env: { TRACKER_BGG_TOKEN: "bgg-token" }, bggNetwork: { resolve: async () => ["93.184.215.14"], fetchImpl } });
+    await people(w.plugin);
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "bgg", target: "300580" } })).toContain("BoardGameGeek's marketplace");
+    await pollTick(w.plugin);
+    // The read went to BGG's API once, and the 302 came back as it was: nothing went to the login page.
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((u) => u.startsWith("https://boardgamegeek.com/xmlapi2/"))).toBe(true);
+  });
+
   it("tells the owner once when BGG cannot be read at all, not again at the third miss", async () => {
     const bgg: Source = { id: "bgg", async search() { throw new SourceUnavailableError("BGG rejected the token"); } };
     const w = await world({ fetch: shop([]).fetch, bgg });

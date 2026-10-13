@@ -4,7 +4,7 @@ import { MAX_ANSWER, type Parts, type TrackerDeps } from "./actions.js";
 import { FINDINGS_SHOWN, taskHistory } from "./history.js";
 import { admit } from "./people.js";
 import { openDatabase } from "./schema.js";
-import { historyWithSeries, SERIES_SHOWN } from "./series.js";
+import { historyWithSeries, SERIES_SHOWN, seriesLines } from "./series.js";
 import { SqliteStore } from "./store.js";
 
 /**
@@ -228,5 +228,35 @@ describe("/task history's findings", () => {
         expect(answer).toContain("\nRuns: none yet\nChanges:");
       }
     }
+  });
+});
+
+describe("seriesLines (#209: the newest SERIES_SHOWN points, all of them counted)", () => {
+  /** A task of `type` with `count` series points, one a day, valued 1, 2, 3, ..., each with `note`. */
+  async function points(type: "renewal" | "price", count: number, note: string): Promise<string[]> {
+    const t = await task(type, []);
+    for (let i = 0; i < count; i++) {
+      const at = new Date(Date.parse("2026-09-01T12:00:00.000Z") + i * 86_400_000).toISOString();
+      await t.d.store.addSeriesPoint({ taskId: t.id, at, value: i + 1, unit: "USD", note });
+    }
+    const stored = await t.d.store.getTask(t.id);
+    if (!stored) throw new Error("no task");
+    return seriesLines(t.d, t.owner, stored);
+  }
+
+  /** The amounts of the listed points, in order. */
+  const amounts = (lines: string[]) => lines.filter((l) => l.startsWith("- ")).map((l) => l.match(/ (\d+\.\d\d) USD/)?.[1]);
+  const newest = Array.from({ length: SERIES_SHOWN }, (_, i) => `${i + 5}.00`);
+
+  it("a renewal lists its newest paid periods and totals them all", async () => {
+    const lines = await points("renewal", SERIES_SHOWN + 4, "renewed");
+    expect(lines[0]).toBe(`Paid: ${SERIES_SHOWN + 4} periods, 78.00 USD in all`);
+    expect(amounts(lines)).toEqual(newest);
+  });
+
+  it("a price lists its newest readings, with the low and the high of them all", async () => {
+    const lines = await points("price", SERIES_SHOWN + 4, "observed");
+    expect(lines).toContain(`Prices: ${SERIES_SHOWN + 4} read, low 1.00 USD, high 12.00 USD`);
+    expect(amounts(lines)).toEqual(newest);
   });
 });
