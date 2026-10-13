@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import type { Plugin } from "../../../packages/api/contract.js";
 import worker from "../mail-worker/worker.js";
 import { readEbayAlert, sameSearch } from "./ebay-alert.js";
-import { forwardingCode, MailAddresses, parseMailConfig } from "./mail.js";
+import { forwardingCode, ignoredWhy, MailAddresses, parseMailConfig } from "./mail.js";
 import { decodeWords, parseMail } from "./mime.js";
 import { MIGRATIONS, migrate } from "./schema.js";
 import { query } from "./web/execute-harness.js";
@@ -200,6 +200,29 @@ describe("Gmail's forwarding confirmation", () => {
     expect(forwardingCode(m)).toBe("123456789");
     expect(forwardingCode({ ...m, from: "forwarding-noreply@google.com.evil.example" })).toBeNull();
     expect(forwardingCode({ ...m, subject: "Gmail Forwarding Confirmation" })).toBe("123456789");
+  });
+
+  it("reads it loosely: another Google sender, an HTML-only body, a code without brackets", () => {
+    const html = "<p>roshne@gmail.com has requested to automatically forward mail to your address.</p><p>Confirmation code: <b>987654321</b></p>";
+    expect(forwardingCode({ from: "noreply@accounts.google.com", subject: "Gmail Forwarding Confirmation", html, text: null })).toBe("987654321");
+    expect(forwardingCode({ from: "forwarding-noreply@google.com", subject: "#123456789 Gmail Forwarding Confirmation", html: null, text: null })).toBe("123456789");
+    expect(forwardingCode({ from: "forwarding-noreply@google.com", subject: "Your receipt", html: null, text: "Order 123456789" })).toBeNull();
+    expect(forwardingCode({ from: "someone@example.com", subject: "(#123456789) Gmail Forwarding Confirmation", html: null, text: null })).toBeNull();
+    // Gmail in another language: its subject still starts with the code.
+    expect(forwardingCode({ from: "forwarding-noreply@google.com", subject: "(#123456789) Gmail-Weiterleitungsbest\u00e4tigung", html: null, text: "x" })).toBe("123456789");
+    // An empty plain part does not hide the HTML.
+    expect(forwardingCode({ from: "forwarding-noreply@google.com", subject: "Gmail Forwarding Confirmation", html: "<p>Confirmation code: 123456789</p>", text: "" })).toBe("123456789");
+    // A quoted-printable soft break with white space before its line end.
+    const qp = "From: forwarding-noreply@google.com\r\nSubject: Gmail Forwarding Confirmation\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nConfirmation code: 1234= \r\n56789\r\n";
+    expect(forwardingCode(parseMail(enc(qp)))).toBe("123456789");
+  });
+
+  it("says why a message did nothing, without its words or a stranger's name", () => {
+    expect(ignoredWhy({ from: "someone@example.com", subject: "Gmail forwarding? hello", html: null, text: "hi" })).toBe("from example.com, text, subject names forwarding");
+    expect(ignoredWhy({ from: "forwarding-noreply@google.com", subject: "x", html: "<p>x</p>", text: null })).toBe("from forwarding-noreply@google.com, html, subject does not name forwarding");
+    expect(ignoredWhy({ from: null, subject: "", html: null, text: null })).toBe("from none, no body, subject does not name forwarding");
+    expect(ignoredWhy({ from: "jane.doe@google.com", subject: "x", html: null, text: "x" })).toBe("from google.com, text, subject does not name forwarding");
+    expect(ignoredWhy({ from: "a@john_smith+secret", subject: "x", html: null, text: "x" })).toBe("from john?smith?secret, text, subject does not name forwarding");
   });
 });
 

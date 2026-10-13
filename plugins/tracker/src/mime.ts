@@ -81,7 +81,7 @@ function params(value: string | undefined): { value: string; params: Map<string,
 }
 
 function quotedPrintable(body: string): Uint8Array {
-  const s = body.replace(/=\r?\n/g, "").replace(/=([0-9A-Fa-f]{2})/g, (_, h: string) => String.fromCharCode(Number.parseInt(h, 16)));
+  const s = body.replace(/=[ \t]*\r?\n/g, "").replace(/=([0-9A-Fa-f]{2})/g, (_, h: string) => String.fromCharCode(Number.parseInt(h, 16)));
   return bytesOf(s);
 }
 

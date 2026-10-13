@@ -16,7 +16,8 @@ import { safeEqual } from "./secrets.js";
  *
  * The answer is JSON, `{"result": ...}`: `stored` (with `watches` and `listings`), `confirmation`,
  * `unmatched` or `ignored`, all 200: the Worker has nothing to retry once a message is here. The
- * route is off (404) while `TRACKER_MAIL_*` is unset. Nothing from the message is ever logged.
+ * route is off (404) while `TRACKER_MAIL_*` is unset. The message's words are never logged; one
+ * that does nothing is logged with `ignoredWhy` (mail.ts), which names no person.
  */
 
 export const MAX_MAIL_BYTES = 1024 * 1024;
@@ -73,7 +74,9 @@ export async function handleMailInbound(m: MailInbound, request: Request): Promi
     if (userId === null) return answer(404, { error: "no_such_address" });
     const outcome = await deliverMail(d, userId, parseMail(raw));
     if (outcome.kind === "stored") d.log.info(`mail: an eBay alert gave ${outcome.listings} listing(s) to ${outcome.watches} watch(es)`);
+    else if (outcome.kind === "ignored") d.log.info(`mail: one message ignored (${outcome.why})`);
     else d.log.info(`mail: one message ${outcome.kind}`);
+    if (outcome.kind === "ignored") return answer(200, { result: "ignored" });
     const { kind, ...rest } = outcome;
     return answer(200, { result: kind, ...rest });
   });
