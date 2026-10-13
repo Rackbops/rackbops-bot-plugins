@@ -22,8 +22,9 @@ import { historyPage, notFoundPage, type Viewer } from "./pages.js";
  * the `Origin` and the CSRF token; here every act loads the task by id and checks, in the queue,
  * that the viewer owns it -- an id in the path is never trusted for ownership -- and anything else
  * answers the same 404 as an unknown id. The rules are the commands' own (reminders.ts, tracked.ts,
- * research.ts, edit.ts, manage.ts); this file only reads the form and renders. Every write takes its turn in the
- * surface's one queue, against the person as the store has them then.
+ * price.ts, research.ts, scout.ts, want.ts, edit.ts, manage.ts); this file only reads the form and
+ * renders. Every write takes its turn in the surface's one queue, against the person as the store has
+ * them then.
  *
  * The writes themselves (`makeTask`, `saveEdit`, `actOn`) are shared with the JSON task API
  * (api.ts, slice 4): the same fields, read by form-input.ts, through the same calls.
