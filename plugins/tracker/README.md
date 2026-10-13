@@ -426,8 +426,9 @@ in one SQLite transaction in the write queue, **deleted, not archived**:
   person row.
 
 What stays, and why: another person's task that they received stays that owner's; one paused only
-because DMs to them failed goes back on (one that cannot, on a store error, stays paused for its
-owner to resume; the log and an admin's answer name it, and the rest of the erasure stands). Another person's row keeps its own audit fact but not their
+because DMs to them failed goes back on (one that cannot finish, on a store error, is named in an
+admin's answer and logged with its status then -- still paused, or active with its next run maybe
+missing -- and the rest of the erasure stands). Another person's row keeps its own audit fact but not their
 id -- `admitted_by` of someone they admitted, `lifted_by` of a block they lifted, and `set_by` of a
 change they made to someone's ceiling become
 `forgotten` ("an admin since forgotten"; null already means "the configuration"). Text is matched
@@ -463,7 +464,8 @@ SQLite's next checkpoint copies it back.
 
 Timing: forget-me first waits, outside the write queue, until no notify or poll tick is running (at
 most 6 seconds, under the bot's 10-second bound on a web request, so the answer reaches the browser;
-then it answers 503, try again, and deletes nothing), so a reminder DM to them
+then it answers 503, try again, and deletes nothing; the queue turn after the wait has no bound of
+its own, but nothing slow runs in the queue), so a reminder DM to them
 already in flight cannot be recorded after they are gone -- and no one else's command waits behind
 it. Inside the queue it only checks that no tick started meanwhile (else the same 503). A DM sent
 outside any tick -- an invitation's -- that fails after they are gone writes nothing: the failure

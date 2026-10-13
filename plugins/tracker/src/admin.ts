@@ -27,7 +27,8 @@ export const BUSY = "The tracker is busy sending reminders; nothing was deleted.
  * How long forget-me waits for a running tick to end, before its turn in the queue: well under the
  * host's 10 s bound on a web request (rackbops-discord-bot's `PLUGIN_HTTP_TIMEOUT_MS`), after which
  * the host answers 504 and does not stop the handler -- so a longer wait would erase after the
- * person was told it timed out, or build a 503 no one receives. The rest is the queue turn's room.
+ * person was told it timed out, or build a 503 no one receives. The queue turn after the wait has
+ * no bound of its own; it is normally quick, since nothing slow runs in the queue.
  */
 export const TICK_WAIT_MS = 6_000;
 
@@ -149,8 +150,10 @@ export async function forgetPerson(d: TrackerDeps, actor: User, targetId: string
       try {
         await d.health.release(taskId, null, "resumed: a recipient left the tracker", now);
       } catch (err) {
+        // Before or after its status went back to active (a run may then be missing): the log says which.
         stuck.push(taskId);
-        d.log.error(`after forgetting ${target.id}: ${taskId} could not go back on; its owner can resume it`, err);
+        const status = (await d.store.getTask(taskId).catch(() => null))?.status ?? "unknown";
+        d.log.error(`after forgetting ${target.id}: ${taskId} could not finish going back on (now ${status})`, err);
       }
     }
     return e;
@@ -160,6 +163,6 @@ export async function forgetPerson(d: TrackerDeps, actor: User, targetId: string
   const total = Object.values(erased.rows).reduce((a, b) => a + b, 0);
   d.log.info(`forgot ${target.id} (${actor.id === target.id ? "at their own request" : `removed by ${actor.id}`}): ${total} row(s) deleted`);
   const text = actor.id === target.id ? "Everything the tracker held about you is deleted." : `${who(target)} is removed from the tracker.`;
-  const still = stuck.length > 0 ? ` ${stuck.length} task(s) paused only for them could not go back on (${stuck.join(", ")}); each owner can resume theirs.` : "";
+  const still = stuck.length > 0 ? ` ${stuck.length} task(s) paused only for them could not finish going back on (${stuck.join(", ")}): the bot log says where each stopped.` : "";
   return { ok: true, text: `${text}${still}` };
 }

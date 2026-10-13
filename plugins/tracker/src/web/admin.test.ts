@@ -169,7 +169,7 @@ describe("who may use the admin view", () => {
     expect((await call(w.plugin, "GET", "/", { jar: w.larry })).status).toBe(200);
   });
 
-  it("an admin revoked after their request was let in, but before its turn in the queue, is refused there (#222)", async () => {
+  it("an admin revoked after their request was let in, but before its turn in the queue, is refused there (#224)", async () => {
     let release = () => {};
     const gate = new Promise<void>((r) => (release = r));
     let asked = false;
@@ -430,7 +430,7 @@ describe("forget-me", () => {
     expect(page.status).toBe(200);
     const pageText = await page.text();
     expect(pageText).toContain('action="/tracker/forget"');
-    // What it cannot reach is said too (#223).
+    // What it cannot reach is said too (#222).
     expect(pageText).toContain(esc("your usr account if linked, which is usr's to delete"));
     const ask = await post(w.plugin, w.larry, w.larryCsrf, "/forget");
     expect(ask.status).toBe(200);
@@ -566,7 +566,8 @@ describe("forget-me", () => {
     expect(traces(w.dbPath, "u2", [LARRY, "Larry"])).toEqual([]);
   });
 
-  it("a task that cannot go back on is logged and named; the others still go back on, and the erasure is finished (#224)", async () => {
+  /** Curly's t1 and t2, shared with Larry and paused only for him, and t1 made to throw by `trigger` while it goes back on. */
+  async function stuckRelease(trigger: string) {
     const logs: string[] = [];
     const w = await setup({ logs });
     for (const text of ["curly-plants", "curly-bins"]) {
@@ -582,18 +583,30 @@ describe("forget-me", () => {
       await tick(w.plugin);
     }
     expect(query(w.dbPath, "SELECT status FROM tasks ORDER BY seq")).toEqual([{ status: "paused" }, { status: "paused" }]);
-    // t1 refuses to go back on, as a store error would.
     const db = new Database(w.dbPath);
-    db.run("CREATE TRIGGER stuck BEFORE UPDATE OF status ON tasks WHEN OLD.seq = 1 AND NEW.status = 'active' BEGIN SELECT RAISE(ABORT, 'stuck'); END");
+    db.run(trigger);
     db.close();
-
     const done = await post(w.plugin, w.admin, w.adminCsrf, "/admin/people/u2/forget", { confirm: "yes", word: CONFIRM_WORD });
     expect(done.status).toBe(200);
-    expect(await done.text()).toContain("could not go back on (t1)");
-    expect(query(w.dbPath, "SELECT status FROM tasks ORDER BY seq")).toEqual([{ status: "paused" }, { status: "active" }]);
+    expect(await done.text()).toContain("could not finish going back on (t1)");
     expect(traces(w.dbPath, "u2", [LARRY, "Larry"])).toEqual([]);
-    expect(logs.some((l) => l.includes("t1 could not go back on"))).toBe(true);
     expect(logs.some((l) => l.startsWith("forgot u2 (removed by u1)"))).toBe(true);
+    return { ...w, logs };
+  }
+
+  it("a task whose status cannot go back on is logged and named; the others still go back on, and the erasure is finished (#223)", async () => {
+    // t1's status write refuses, as a store error would.
+    const w = await stuckRelease("CREATE TRIGGER stuck BEFORE UPDATE OF status ON tasks WHEN OLD.seq = 1 AND NEW.status = 'active' BEGIN SELECT RAISE(ABORT, 'stuck'); END");
+    expect(query(w.dbPath, "SELECT status FROM tasks ORDER BY seq")).toEqual([{ status: "paused" }, { status: "active" }]);
+    expect(w.logs.some((l) => l.includes("t1 could not finish going back on (now paused)"))).toBe(true);
+  });
+
+  it("a task that throws after its status went back to active is named the same, and the log says where it stopped (#223)", async () => {
+    // t1's `resumed` event refuses, after the status write.
+    const w = await stuckRelease("CREATE TRIGGER stuck BEFORE INSERT ON task_events WHEN NEW.task_id = 't1' AND NEW.kind = 'resumed' BEGIN SELECT RAISE(ABORT, 'stuck'); END");
+    expect(query(w.dbPath, "SELECT status FROM tasks ORDER BY seq")).toEqual([{ status: "active" }, { status: "active" }]);
+    expect(w.logs.some((l) => l.includes("t1 could not finish going back on (now active)"))).toBe(true);
+    expect(w.logs.some((l) => l.includes("t2 could not"))).toBe(false);
   });
 });
 
@@ -836,7 +849,7 @@ describe("review fixes (slice 3)", () => {
     expect(page).toContain(esc(CONFIGURED_NOTE));
     expect(page).not.toContain("/admin/people/u1/revoke");
     expect(page).not.toContain("/admin/people/u1/forget");
-    // Their own page offers Remove, so it says so rather than "cannot be removed" (#223).
+    // Their own page offers Remove, so it says so rather than "cannot be removed" (#222).
     const own = await (await call(w.plugin, "GET", "/admin/people/u1", { jar: w.admin })).text();
     expect(own).toContain(esc(CONFIGURED_SELF_NOTE));
     expect(own).not.toContain(esc(CONFIGURED_NOTE));

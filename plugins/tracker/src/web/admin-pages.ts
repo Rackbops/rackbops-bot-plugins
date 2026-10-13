@@ -20,7 +20,7 @@ export const CONFIGURED_NOTE =
 
 /** Shown on a configured admin's own page, where Revoke is not offered but Remove (forgetting themselves) is. */
 export const CONFIGURED_SELF_NOTE =
-  "You are named in TRACKER_ADMIN_DISCORD_IDS: made an admin again at every start, so your flag cannot be revoked here. You may remove yourself, but the next start makes you an admin again, as a new person.";
+  "You are named in TRACKER_ADMIN_DISCORD_IDS: made an admin again at every start, so your flag cannot be revoked here. You may remove yourself if another admin is left, but the next start makes you an admin again, as a new person.";
 
 /** The word typed to confirm an erasure: the second post carries it with `confirm=yes`. */
 export const CONFIRM_WORD = "forget";

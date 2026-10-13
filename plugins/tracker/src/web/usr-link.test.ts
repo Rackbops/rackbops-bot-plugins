@@ -188,7 +188,7 @@ describe("Link everyone to usr", () => {
     expect(w.usr.calls.map((c) => c.discord_user_id)).toEqual([ADMIN, LARRY]);
   });
 
-  it("stops when the admin who pressed it is no longer an admin, and links no one after (#222)", async () => {
+  it("stops when the admin who pressed it is no longer an admin, and links no one after (#224)", async () => {
     const hold = held();
     const w = await setup(async (_b, n) => {
       if (n === 1) await hold.gate;
