@@ -86,12 +86,12 @@ async function started(w: ReturnType<typeof world>) {
 }
 
 describe("/allow with the usr link on", () => {
-  it("does not tell someone who already has a usr account to finish signing up", async () => {
+  it("does not tell someone usr already knew to finish signing up as if they were new", async () => {
     const w = world();
     await started(w);
     w.usr.answers["/api/discord/allow"]!.push(allowed(undefined, SUBJECT, false));
     const answer = await slash(w.plugin, "allow", ADMIN, { target: LARRY });
-    expect(answer).toContain("Linked to usr, to the usr account they already have.");
+    expect(answer).toContain("Linked to usr, to the usr account it already had for them; if they have not signed up there yet, they can with `/register`.");
     expect(answer).not.toContain("finish their usr sign-up");
   });
 

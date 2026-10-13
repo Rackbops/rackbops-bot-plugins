@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-13T12:15:14.889Z",
+  "generatedAt": "2026-10-13T12:20:51.052Z",
   "plugins": [
     {
       "name": "mcp",
@@ -293,7 +293,7 @@
           "version": "0.23.1",
           "publishedAt": "2026-10-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.23.1",
-          "notes": "### Fixed\n\n- `/allow` with the usr link on no longer tells someone who already has a usr account that \"they\n  can finish their usr sign-up with `/register`\". When usr linked an existing account, the reply\n  now says \"Linked to usr, to the usr account they already have.\"; the sign-up hint stays for\n  someone usr made a new account for.\n\n### Schema\n\n- No change."
+          "notes": "### Fixed\n\n- `/allow` with the usr link on no longer tells someone usr already knew that \"they can finish\n  their usr sign-up with `/register`\" as if they were new. When usr linked an account it already\n  had, the reply now says \"Linked to usr, to the usr account it already had for them; if they have\n  not signed up there yet, they can with `/register`.\" (usr does not say whether that account\n  finished signing up); the plain sign-up hint stays for someone usr made a new account for.\n\n### Schema\n\n- No change."
         },
         {
           "version": "0.23.0",
