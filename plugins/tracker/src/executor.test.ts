@@ -26,6 +26,8 @@ interface Seen {
   url: string;
   headers: Record<string, string>;
   body: unknown;
+  /** The request's redirect mode: "manual" keeps an edge's 302 from taking the Access headers to its login page. */
+  redirect: RequestRedirect | undefined;
 }
 
 /** A fake city-hall: `answer` decides each response; every request is recorded. */
@@ -37,6 +39,7 @@ function fakeCityHall(answer: (req: Seen) => Response | Promise<Response>) {
       url: String(input),
       headers: Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>)),
       body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      redirect: init?.redirect,
     };
     seen.push(req);
     // As the real fetch does: the request's signal (the adapter's timeout) aborts a slow answer.
@@ -314,6 +317,76 @@ describe("readJobResult", () => {
     expect(readJobResult({ kind: "exploded" })).toBeNull();
     expect(readJobResult({ kind: "usage_limit", detail: "d", resetsAt: "2026-10-01T15:00:00Z", durationMs: 3 })).toEqual({ kind: "usage_limit", detail: "d", resetsAt: "2026-10-01T15:00:00Z", durationMs: 3 });
     expect(readJobResult(null)).toBeNull();
+  });
+
+  it("keeps a success's turns, session and usage, and a failure's API status, session and cost (#215)", () => {
+    const usage = { input_tokens: 10, output_tokens: 20 };
+    expect(readJobResult({ kind: "success", result: "r", durationMs: 1, numTurns: 4, sessionId: "s-1", usage })).toEqual({
+      kind: "success",
+      result: "r",
+      durationMs: 1,
+      numTurns: 4,
+      sessionId: "s-1",
+      usage,
+    });
+    expect(readJobResult({ kind: "auth_failed", detail: "d", durationMs: 2, apiErrorStatus: 401, sessionId: "s-2", totalCostUsd: 0.01 })).toEqual({
+      kind: "auth_failed",
+      detail: "d",
+      durationMs: 2,
+      apiErrorStatus: 401,
+      sessionId: "s-2",
+      totalCostUsd: 0.01,
+    });
+  });
+});
+
+describe("the city-hall Executor's untested branches (#215)", () => {
+  it("never follows a redirect, on the submit and the read alike, and sends the Access headers on both", async () => {
+    const w = setup((req) => (req.method === "POST" ? json(201, { job: job("queued") }) : json(200, { job: job("running"), runs: [] })), true);
+    expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(JobPendingError);
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(JobPendingError);
+    expect(w.seen.map((s) => [s.method, s.redirect])).toEqual([
+      ["POST", "manual"],
+      ["GET", "manual"],
+    ]);
+    expect(w.seen[1]?.headers["CF-Access-Client-Id"]).toBe("cf-id");
+    expect(w.seen[1]?.headers["CF-Access-Client-Secret"]).toBe("cf-secret");
+  });
+
+  it("an HTTP 408 is unavailable, so the run is asked again", async () => {
+    const w = setup(() => json(408, {}));
+    expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+  });
+
+  it("a redirect and an answer that is not a job are each logged once an hour", async () => {
+    for (const answer of [() => new Response(null, { status: 302, headers: { location: "https://login.example.com" } }), () => new Response("<html></html>", { status: 200 })]) {
+      const w = setup(answer);
+      const errors = () => w.logs.filter((l) => l.startsWith("error"));
+      expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+      expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+      expect(errors()).toHaveLength(1);
+      w.later(61 * 60 * 1000);
+      expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+      expect(errors()).toHaveLength(2);
+    }
+  });
+
+  it("a store that cannot record a first pause answers unavailable, never ends the Job", async () => {
+    const w = setup(() => json(200, { job: job("queued", { attempts: 1, lastOutcome: "usage_limit" }), runs: [] }));
+    w.records.put("o7", "o7", "j-1", NOW.toISOString());
+    w.records.markPaused = () => {
+      throw new Error("SQLITE_BUSY");
+    };
+    const err = await thrown(w.executor.run(null, "o7", "o7"));
+    expect(err).toBeInstanceOf(ExecutorUnavailableError);
+    expect((err as Error).message).toContain("could not record that o7 is paused");
+  });
+
+  it("takes a capability tag of up to 100 characters", () => {
+    const base = { TRACKER_CITY_HALL_URL: URL_, TRACKER_CITY_HALL_KEY: KEY };
+    const tag = (n: number) => `claude-cli:${"a".repeat(n - "claude-cli:".length)}`;
+    expect(parseCityHallConfig({ ...base, TRACKER_CITY_HALL_CAPABILITY: tag(100) }).config?.capability).toBe(tag(100));
+    expect(() => parseCityHallConfig({ ...base, TRACKER_CITY_HALL_CAPABILITY: tag(101) })).toThrow(/not a capability tag/);
   });
 });
 

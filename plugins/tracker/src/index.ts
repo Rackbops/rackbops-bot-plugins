@@ -9,7 +9,7 @@ import type { TickGate, TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
 import { Ceilings } from "./ceilings.js";
 import { DeliveryHealth } from "./delivery-health.js";
-import { createPageFetch } from "./fetch.js";
+import { createBggFetch, createPageFetch } from "./fetch.js";
 import { EXECUTE_MIN_GAP_MS, ExecuteLane } from "./execute-lane.js";
 import { type CityHallConfig, createCityHallExecutor, databaseId, JobRecords, parseCityHallConfig } from "./executor.js";
 import type { Membership } from "./access.js";
@@ -159,7 +159,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const clock: Clock = options.clock ?? { now: () => new Date() };
   const bggToken = parseBggToken(host.env.TRACKER_BGG_TOKEN);
   // BGG's answers are XML, read by docket-types' own bounded BGG parser: the raw body, fenced like every read.
-  const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createPageFetch({ raw: true, noRedirects: true }) }) : null);
+  const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createBggFetch() }) : null);
   // The want-list inboxes (inbox.ts) live in the database `activate()` opens; until then, and after
   // `dispose()`, an inbox reads as empty (no tick runs then anyway). An eBay watch, and a BGG one
   // made while the bot has no BGG token, get their listings only this way: the want-list watcher

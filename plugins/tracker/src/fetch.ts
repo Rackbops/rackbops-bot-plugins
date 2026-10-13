@@ -229,6 +229,14 @@ function sameOriginOnly(headers: Record<string, string>, sameOrigin: boolean): R
   return Object.fromEntries(Object.entries(headers).filter(([k]) => !["authorization", "cookie", "proxy-authorization"].includes(k.toLowerCase())));
 }
 
+/**
+ * The BGG source's Fetch port: the raw body (docket-types' own bounded XML parser reads it), and a
+ * redirect handed back, never followed, since every read carries the Bearer token.
+ */
+export function createBggFetch(o: Omit<PageFetchOptions, "raw" | "noRedirects"> = {}): Fetch {
+  return createPageFetch({ ...o, raw: true, noRedirects: true });
+}
+
 /** The Fetch port, fenced as the file's comment says. */
 export function createPageFetch(o: PageFetchOptions = {}): Fetch {
   const resolve = o.resolve ?? systemResolve;
