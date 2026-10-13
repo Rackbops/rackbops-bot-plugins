@@ -96,6 +96,18 @@ describe("DeliveryHealth", () => {
     expect((await s.store.getTask(s.task.id))?.status).toBe("paused");
   });
 
+  it("a failure after the pause keeps the first pause and pauses a task made since (#212)", async () => {
+    const s = await setup();
+    for (let i = 0; i < PAUSE_AFTER; i++) await s.health.recordFailure(s.owner.id, HOST_CANNOT_MESSAGE, "2026-10-01T12:00:00.000Z");
+    const since = await s.store.createTask({ ...s.task, title: "drink water", config: { text: "drink water" }, at: "2026-10-01T12:05:00.000Z" });
+    expect(since.status).toBe("active");
+    // A DM that was in flight at the pause fails after it.
+    const late = await s.health.recordFailure(s.owner.id, HOST_CANNOT_MESSAGE, "2026-10-01T12:10:00.000Z");
+    expect(late).toEqual({ failures: PAUSE_AFTER + 1, paused: false });
+    expect(s.health.get(s.owner.id)?.pausedAt).toBe("2026-10-01T12:00:00.000Z");
+    expect((await s.store.getTask(since.id))?.status).toBe("paused");
+  });
+
   it("pauses the person's active tasks on record, and resume sets back only what it paused", async () => {
     const s = await setup();
     const other = await s.store.createTask({ ...s.task, ownerId: s.owner.id, config: {}, state: null, at: "2026-10-01T12:00:00.000Z" });

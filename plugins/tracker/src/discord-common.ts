@@ -17,6 +17,8 @@ import type { TrackerDeps } from "./actions.js";
 export const STARTING = "The tracker is starting up; try again in a minute.";
 export const FAILED = "Something went wrong on my side; try again in a minute.";
 export const EPHEMERAL = { flags: MessageFlags.Ephemeral } as const;
+/** Discord's flag that keeps a message's links from unfurling into previews. */
+export const NO_PREVIEWS = MessageFlags.SuppressEmbeds;
 export const NO_MENTIONS = { allowedMentions: { parse: [] as never[] } };
 
 /** Discord's error codes for "no such member" and "no such user". */

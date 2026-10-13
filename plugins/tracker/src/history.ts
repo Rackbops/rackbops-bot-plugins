@@ -17,9 +17,9 @@ import { clip, NO_SUCH_TASK, oneLine, type TrackerDeps } from "./actions.js";
 import { isRecipientPause, PERSON_REF, pauseNames } from "./delivery-health.js";
 
 /**
- * `/task history` (plan 1.3 "History", 5.10): every run of a task -- when it was due, how it went,
- * how the owner answered it, what anyone replied -- and the task's own changes, read through docket's
- * authorized reads (owner, accepted recipient, or an admin), newest last.
+ * `/task history` (plan 1.3 "History", 5.10): a task's newest runs -- when each was due, how it went,
+ * how the owner answered it, what anyone replied -- and its newest changes, older ones counted, read
+ * through docket's authorized reads (owner, accepted recipient, or an admin), newest last.
  */
 
 /** Runs and changes shown; older ones are summarized by count. */

@@ -318,6 +318,15 @@ describe("/price", () => {
     expect(w.shop.headers.flatMap((h) => Object.keys(h).map((k) => k.toLowerCase()))).not.toContain(NEVER_EBAY);
   });
 
+  it("tracks a BoardGameGeek page like any other: only the want-list watcher reads BGG its own way (#209)", async () => {
+    const w = world();
+    await withLarry(w);
+    const bgg = "https://boardgamegeek.com/geekmarket/product/4100001";
+    expect(await slash(w.plugin, "price", LARRY, { strings: { url: bgg } })).toContain("Tracking `t1`: boardgamegeek.com/geekmarket/product/4100001. I read 100.00 USD just now.");
+    await pollTick(w.plugin);
+    expect(w.shop.reads).toEqual([bgg, bgg]);
+  });
+
   it("near builds a pattern that finds the price after the owner's words", async () => {
     const w = world();
     await withLarry(w);
