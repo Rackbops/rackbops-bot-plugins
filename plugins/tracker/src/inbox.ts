@@ -5,7 +5,7 @@ import { type Listing, type Submitted, submittedListing } from "@rackbops/docket
 /**
  * Want-list inboxes (docket-types 0.7.0's `inbox` source; tracker 0.19.0): the listings sent in for
  * a watch rather than read by the tracker. Rod's rule for eBay and BoardGameGeek (2026-10-05) is
- * that Clerk never opens either site itself; listings reach a watch only when someone sends them
+ * that such a watch never opens either site itself; listings reach it only when someone sends them
  * in -- today the owner's own browser (Claude in Chrome searching eBay or BGG for them) through the
  * task API's `POST /tasks/<id>/listings` (web/api-listings.ts), later eBay's saved-search alert
  * emails. This is the host's half of the source: the `want_inbox` table (schema migration 8), one
