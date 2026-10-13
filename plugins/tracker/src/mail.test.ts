@@ -240,6 +240,7 @@ describe("Gmail's forwarding confirmation", () => {
     // Digits in an address in the body are not the code either.
     expect(forwardingCode({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "Use the code below, then forward to m-ab1234567cd@alerts.example.com" })).toBeNull();
     expect(forwardingCode({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "forward: the confirmation code is 123456789." })).toBe("123456789");
+    expect(forwardingCode({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "forward; code: see https://example.com/1234567890" })).toBeNull();
   });
 
   it("reads a long subject or body in linear time", () => {

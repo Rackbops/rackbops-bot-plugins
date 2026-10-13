@@ -106,7 +106,7 @@ const GMAIL_LINK = /https:\/\/(?:[a-z0-9-]{1,63}\.){0,4}(?:mail|mail-settings)\.
 
 function decodedHtmlLinks(html: string): string {
   // `&amp;` (or its numeric forms) in an href is `&` in the address.
-  return html.slice(0, MAX_HTML_CHARS).replace(/&(?:amp|#38|#x26);/gi, "&");
+  return html.slice(0, MAX_HTML_CHARS).replace(/&(?:amp|#0*38|#x0*26);/gi, "&");
 }
 
 /** `s` without a sentence's closing marks at its end. */
@@ -163,7 +163,7 @@ export function forwardingConfirmation(mail: MailMessage): ForwardingConfirmatio
   const code =
     leading ??
     /(?:^|[\s#(])(\d{6,12})(?=$|[\s).,:;])/.exec(subject)?.[1] ??
-    /\bcode\b\D{0,40}?(?<![\w.@-])(\d{6,12})(?!\d)/i.exec(withoutAddresses(body))?.[1] ??
+    /\bcode\b\D{0,40}?(?<![\w.@/=%?&#:-])(\d{6,12})(?!\d)/i.exec(withoutAddresses(body))?.[1] ??
     null;
   const link = gmailLink(mail.text ?? "") ?? (mail.html !== null ? gmailLink(decodedHtmlLinks(mail.html)) : null);
   return code || link ? { code, link } : null;
