@@ -40,7 +40,7 @@ import { META_TABLE } from "./schema.js";
  *   and so is every unfinished answer (`queued` or `running`) for that Job from then on, since
  *   docket counts its six hours from the submission: a runner that resumes after six hours is
  *   collected, not given up and run again. The first sight is kept in `executor_jobs.paused_at`;
- *   after `PAUSED_CAP_MS` (eight days) from it the Job answers pending again, so docket's give-up
+ *   after `PAUSED_CAP_MS` (48 h) from it the Job answers pending again, so docket's give-up
  *   applies, and the admins are told once. A pause is logged once an hour per Job and told to the
  *   admins once per Job and outcome (`requeuedBy`). How the claim ended is `job.lastOutcome`, else
  *   the last of `runs`;
@@ -109,16 +109,20 @@ export const PAUSED_LOG_EVERY_MS = 60 * 60 * 1000;
 
 /**
  * How long a Job first seen paused is held as "unavailable" before it answers pending again and
- * docket's six-hour give-up applies: eight days from that first sight (#287). docket-runner waits
- * out a usage limit until the reset the CLI named (an hour when it named none) before it claims
- * again, so a weekly limit can keep a Job queued for up to seven days; the extra day covers the
- * claim after the reset. A shorter hold gave such a run up while the Job still ran later, its
- * answer collected by no one. City-hall's own requeue cap (`CITY_HALL_MAX_REQUEUES`, 10 claims)
- * fails a Job that keeps hitting the limit, and a failed Job is answered before this hold is
- * checked, so its `usage_limit` result reaches docket inside the hold too. Still bounded, so a
- * runner gone for good does not hold the execute lane for ever.
+ * docket's six-hour give-up applies: 48 hours from that first sight. A judgement, not a measured
+ * figure: long enough for a five-hour usage window or a weekend's dead credential, short enough
+ * that a runner gone for good does not hold the execute lane for ever.
+ *
+ * It also covers city-hall's requeue cap at docket-runner's real pace (#287). After a
+ * `usage_limit` the runner waits for the reset only when the CLI names one `Date.parse` reads, and
+ * the CLI's own wording ("3pm") does not parse, so it claims again after an hour (docket-runner
+ * `loop.ts`, `LIMIT_PAUSE_MS`). City-hall fails the Job on the claim after `CITY_HALL_MAX_REQUEUES`
+ * (default 10) requeues, about eleven hours in, and a failed Job is answered before this hold is
+ * checked, so its `usage_limit` result reaches docket and docket's own pause applies. Only a reset
+ * the runner can parse, more than 48 hours out, lets the hold end first: the run is then given up
+ * and the Job, if it later runs, is collected by no one: the gap #287 records.
  */
-export const PAUSED_CAP_MS = 8 * 24 * 60 * 60 * 1000;
+export const PAUSED_CAP_MS = 48 * 60 * 60 * 1000;
 
 /**
  * What the tracker asks city-hall to do with the result (plan item 70: the caller says what is done
@@ -503,7 +507,7 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
     if (at.getTime() - Date.parse(pausedAt) > PAUSED_CAP_MS) {
       await tellAdmins(
         `city-hall:paused-cap:${jobKey}`,
-        `a model Job (${jobKey}, city-hall job ${job.id}) has waited on a paused runner for over ${PAUSED_CAP_MS / 86_400_000} days; the tracker stops holding it, so its run is given up`,
+        `a model Job (${jobKey}, city-hall job ${job.id}) has waited on a paused runner for over ${PAUSED_CAP_MS / 3_600_000} h; the tracker stops holding it, so its run is given up`,
       );
       throw new JobPendingError(`city-hall job is ${job.status}, past the paused-runner cap`);
     }

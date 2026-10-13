@@ -1,16 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Changed
-
-- **A research run waiting out a weekly usage limit is kept, not given up** (#287). The tracker now
-  holds a model Job that city-hall put back after a `usage_limit`, `auth_failed` or expired lease
-  for up to eight days from the first sight, not 48 hours. The runner waits for the reset the CLI
-  named before it claims again, so under a weekly limit the old hold gave the run up while the Job
-  still ran later and its answer was collected by no one. The admins' notice when the hold runs out
-  now says "8 days".
-
 ## [0.23.0] - 2026-10-07
 
 ### Added
