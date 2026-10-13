@@ -62,6 +62,38 @@ function asUser<T extends { ok: boolean }>(w: Writer, fn: (user: User) => Promis
 
 export type Written = TaskResult | { ok: false; error: string };
 
+/**
+ * The host answers a call with 504 once it has taken 10 s, without cancelling it (contract.d.ts,
+ * `http`). A new price's or page watch's first read, which fetch.ts lets run 15 s, gives up here
+ * first, counted from when the request came in, so a slow page makes nothing behind a 504 that a
+ * retry would then make a second time (#174).
+ */
+export const WEB_READ_MS = 8_000;
+export const SLOW_PAGE = `That page did not answer within ${WEB_READ_MS / 1000} seconds, so I made nothing; try again later.`;
+
+/** `read`'s result, or null once `WEB_READ_MS` from `begun` (a `performance.now()`) has passed first. */
+async function within<T>(read: Promise<T>, begun: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), Math.max(0, WEB_READ_MS - (performance.now() - begun)));
+  });
+  try {
+    return await Promise.race([read, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Ends the writer's one page read: at once, or, for a read given up on (`late`), only when it
+ * really ends, so a retry meanwhile is refused as busy rather than read alongside it.
+ */
+function release(w: Writer, late: Promise<unknown> | null): void {
+  const done = () => void w.reading.delete(w.userId);
+  if (late) late.then(done, done);
+  else done();
+}
+
 /** A new task of `type` from its fields: `/remind`'s, `/renewal`'s, `/price`'s, `/research`'s or `/scout new`'s rules, in the queue. */
 export async function makeTask(w: Writer, type: NewType, form: URLSearchParams): Promise<Written> {
   if (type === "reminder") return asUser(w, (u) => createReminder(w.d, u, reminderInput(form)));
@@ -72,34 +104,48 @@ export async function makeTask(w: Writer, type: NewType, form: URLSearchParams):
   if (type === "wantlist") return makeWant(w, form);
   const input = priceInput(form);
   // One page read per person at a time: the web has no Discord rate limit in front of it, and
-  // each read is an outbound request of up to 15 s.
+  // each read is an outbound request of up to 15 s (cut to `WEB_READ_MS` here).
+  const begun = performance.now();
   if (w.reading.has(w.userId)) return { ok: false, error: READING };
   w.reading.add(w.userId);
+  let late: Promise<unknown> | null = null;
   try {
     const started = await asUser(w, (u) => startPrice(w.d, u, input));
     if (!started.ok) return started;
     // The page is read outside the queue, as `/price` reads it: a slow page holds up no one else.
     const { pending } = started;
-    const seen = await previewPrice(w.d, pending);
+    const read = previewPrice(w.d, pending);
+    const seen = await within(read, begun);
+    if (seen === null) {
+      late = read;
+      return { ok: false, error: SLOW_PAGE };
+    }
     return await asUser(w, (u) => finishPrice(w.d, u, pending, seen));
   } finally {
-    w.reading.delete(w.userId);
+    release(w, late);
   }
 }
 
-/** `/want`'s rules, a page read outside the queue as a new price's is, under the same one-read-per-person guard. */
+/** `/want`'s rules, a page read outside the queue as a new price's is, under the same one-read-per-person guard and bound. */
 async function makeWant(w: Writer, form: URLSearchParams): Promise<Written> {
   const input = wantInput(form);
+  const begun = performance.now();
   if (w.reading.has(w.userId)) return { ok: false, error: READING };
   w.reading.add(w.userId);
+  let late: Promise<unknown> | null = null;
   try {
     const started = await asUser(w, (u) => startWant(w.d, u, input));
     if (!started.ok) return started;
     const { start } = started;
-    const seen = await previewWant(w.d, start);
+    const read = previewWant(w.d, start);
+    const seen = await within(read, begun);
+    if (seen === null) {
+      late = read;
+      return { ok: false, error: SLOW_PAGE };
+    }
     return await asUser(w, (u) => finishWant(w.d, u, start, seen));
   } finally {
-    w.reading.delete(w.userId);
+    release(w, late);
   }
 }
 

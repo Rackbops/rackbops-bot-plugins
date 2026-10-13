@@ -573,8 +573,10 @@ with `Retry-After`. A limited request is refused before its owner is looked up. 
 token does not look up (unknown, revoked, expired, malformed) share one global bucket of 30,
 refilled at one every two seconds; past it they get `429` instead of `401`, and valid tokens are
 unaffected. A body is at most
-16 KiB, read no further. One new price tracker's page read in flight per person, shared with the
-web editor (`409 busy`).
+16 KiB, read no further. One new price tracker's or page watch's page read in flight per person,
+shared with the web editor (`409 busy`). That first read gives up 8 seconds after the request came
+in, before the host's 10 s `504`, and makes nothing (`400 invalid`, "try again later"); the person
+stays busy until the read itself ends (15 s at most), so a retry cannot start a second one.
 
 **Requests.** A `POST` or `PATCH` body is one JSON object with `Content-Type: application/json`
 (else `415`), and names only the fields listed for that type (else `400 unknown_field`), each of

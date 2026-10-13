@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, jest } from "bun:test";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import type { Membership } from "../access.js";
@@ -9,6 +9,7 @@ import { FAILED_BURST, MAX_API_BYTES, RATE_BURST } from "./api.js";
 import { MAX_TOKENS_PER_PERSON } from "./api-tokens.js";
 import { NOT_FOUND_MESSAGE } from "./api-tasks.js";
 import { MEMBER_GRACE_MS, MEMBER_RECHECK_MS } from "./app.js";
+import { SLOW_PAGE, WEB_READ_MS } from "./editor.js";
 import { sha256 } from "./secrets.js";
 import { MAX_CREATIONS_PER_HOUR, TOKEN_NOT_SENT, TOO_MANY_CREATED } from "./tokens.js";
 import {
@@ -700,5 +701,75 @@ describe("tasks", () => {
     // An edit keeps whatever it is not sent: none of its fields is required, though a create's are.
     for (const t of types.types) expect(t.edit.filter((f: { required: boolean }) => f.required)).toEqual([]);
     expect(types.types[1].create.filter((f: { required: boolean }) => f.required).map((f: { name: string }) => f.name)).toEqual(["name", "amount", "currency", "renews"]);
+  });
+});
+
+describe("a slow first read (#174)", () => {
+  /** A shop whose page answers only once `release` is called; `reads` counts the reads begun. */
+  function slowShop() {
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const s = { reads: 0 };
+    const fetch: Fetch = {
+      async get(): Promise<FetchResponse> {
+        s.reads++;
+        await gate;
+        return { status: 200, body: "<p>Price: 10.00</p>", headers: {} };
+      },
+    };
+    return { s, fetch, release: () => open() };
+  }
+
+  /** Lets the request run up to its page read, by promise turns only: the timers are fake. */
+  async function untilRead(s: { reads: number }, n: number) {
+    for (let i = 0; i < 10_000 && s.reads < n; i++) await Promise.resolve();
+    expect(s.reads).toBe(n);
+  }
+
+  async function settle() {
+    for (let i = 0; i < 100; i++) await Promise.resolve();
+  }
+
+  afterEach(() => jest.useRealTimers());
+
+  it("gives up before the host's 10 s 504 and makes nothing; a retry is busy until the read ends, then works", async () => {
+    const slow = slowShop();
+    const w = await setup({ fetch: slow.fetch });
+    const make = { token: w.token, body: { type: "price", url: SHOP, near: "Price:" } };
+    jest.useFakeTimers();
+    const first = api(w.plugin, "POST", "/tasks", make);
+    await untilRead(slow.s, 1);
+    jest.advanceTimersByTime(WEB_READ_MS);
+    const res = await first;
+    expect(res.status).toBe(400);
+    expect((await body(res)).error).toEqual({ code: "invalid", message: SLOW_PAGE });
+    // The read is still running: a retry now is refused, not read alongside it.
+    const retry = await api(w.plugin, "POST", "/tasks", make);
+    expect(retry.status).toBe(409);
+    expect((await body(retry)).error.code).toBe("busy");
+    slow.release();
+    await settle();
+    jest.useRealTimers();
+    // The late answer made nothing; asked again, the page (now quick) makes one tracker.
+    expect((await body(await api(w.plugin, "GET", "/tasks", { token: w.token }))).tasks).toEqual([]);
+    expect((await api(w.plugin, "POST", "/tasks", make)).status).toBe(201);
+    expect((await body(await api(w.plugin, "GET", "/tasks", { token: w.token }))).tasks).toHaveLength(1);
+  });
+
+  it("a page watch's first read is bounded the same way, from the web editor too", async () => {
+    const slow = slowShop();
+    const w = await setup({ fetch: slow.fetch });
+    const csrf = await csrfOf(w.plugin, w.larry);
+    jest.useFakeTimers();
+    const first = form(w.plugin, w.larry, csrf, "/new/wantlist", { name: "Widget", source: "page", target: SHOP, judge: "no" });
+    await untilRead(slow.s, 1);
+    jest.advanceTimersByTime(WEB_READ_MS);
+    const res = await first;
+    expect(res.status).toBe(400);
+    expect(alertText(await res.text())).toBe(SLOW_PAGE);
+    slow.release();
+    await settle();
+    jest.useRealTimers();
+    expect((await body(await api(w.plugin, "GET", "/tasks", { token: w.token }))).tasks).toEqual([]);
   });
 });
