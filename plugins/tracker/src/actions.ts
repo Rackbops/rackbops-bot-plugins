@@ -213,6 +213,10 @@ function usrAllowed(d: TrackerDeps, usr: UsrLink, userId: string, result: unknow
   if (outcome === "gone") return "Not linked to usr: they left the tracker while usr was being asked.";
   if (outcome === "taken") return "Not linked to usr: usr's account for them is already linked to someone else here.";
   if (outcome === "unchanged") return "Linked to usr.";
+  // usr made a new account only for someone it had never seen. An existing one may still be an
+  // unfinished sign-up (usr does not say which), so the /register pointer stays, conditionally.
+  if (!answer.created)
+    return "Linked to usr, to the usr account it already had for them; if they have not signed up there yet, they can with `/register`.";
   return "Linked to usr: they can finish their usr sign-up with `/register`.";
 }
 
