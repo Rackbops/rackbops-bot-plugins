@@ -9,7 +9,7 @@ import { api, call, cleanup, CURLY, csrfOf, LARRY, makeToken, ORIGIN, people, si
 /**
  * Inbox watches (tracker 0.19.0; docket-types 0.7.0's `inbox` source): `/want source: ebay`, and
  * `source: bgg` on a bot without BGG's API, make a watch whose listings are sent in through the
- * task API's `POST /tasks/<id>/listings` -- the tracker never opens eBay or BGG -- and the poll tick
+ * task API's `POST /tasks/<id>/listings` -- such a watch never opens eBay or BGG -- and the poll tick
  * DMs the new ones. End to end through the plugin: the command, the API, the tick, the web editor.
  */
 
@@ -52,7 +52,7 @@ describe("/want source: ebay", () => {
     const made = await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan Oceania", source: "ebay" }, numbers: { max: 35 } });
     expect(made).toContain("Watching `t1`: Wingspan Oceania.");
     expect(made).toContain("I look at what you send in from eBay every 1 hour");
-    expect(made).toContain("I never open eBay myself.");
+    expect(made).toContain("This watch never opens eBay itself.");
     expect(made).toContain("Claude in Chrome");
     expect(made).toContain("`POST /tasks/t1/listings`");
     expect(made).toContain("eBay's saved-search alert emails");
@@ -90,6 +90,7 @@ describe("/want source: bgg without BGG's API", () => {
     const game = await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "bgg", target: "https://boardgamegeek.com/boardgameexpansion/300580/x" } });
     expect(game).toContain("I look at what you send in from BoardGameGeek every 1 hour");
     expect(game).toContain("This bot has no BoardGameGeek API access");
+    expect(game).toContain("this watch never opens BGG's pages itself");
     expect(game).toContain("What to look for: BGG game 300580.");
     const words = await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "bgg", target: "Wingspan Oceania" } });
     expect(words).toContain('What to look for: "Wingspan Oceania".');

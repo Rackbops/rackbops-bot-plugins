@@ -371,7 +371,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .addChoices(
                 { name: "a listing page you paste", value: "page" },
                 { name: "BoardGameGeek's marketplace", value: "bgg" },
-                { name: "eBay (from listings you send in; I never open eBay)", value: "ebay" },
+                { name: "eBay (from listings you send in; the watch never opens eBay)", value: "ebay" },
               ),
           )
           .addStringOption((o) =>
