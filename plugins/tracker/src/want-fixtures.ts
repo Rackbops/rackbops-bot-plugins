@@ -2,9 +2,9 @@
  * Test fixtures for the want-list watcher (want.test.ts), imported only by tests.
  *
  * `BGG_THING` is HAND-WRITTEN to the shape BGG documents for `xmlapi2/thing?...&marketplace=1`
- * (boardgamegeek.com/wiki/page/BGG_XML_API2, read 2026-09-29), not a captured response: BGG has not
- * yet approved the tracker's application, so no token exists to capture one with. Replace it with a
- * real response once `TRACKER_BGG_TOKEN` exists (rackbops-bot-plugins#83).
+ * (boardgamegeek.com/wiki/page/BGG_XML_API2, read 2026-09-29), not a captured response: BGG declined
+ * the tracker's application, so no token exists to capture one with. Replace it with a real response
+ * if BGG ever grants a `TRACKER_BGG_TOKEN` (rackbops-bot-plugins#83).
  */
 
 export const BGG_THING = `<?xml version="1.0" encoding="utf-8"?>
