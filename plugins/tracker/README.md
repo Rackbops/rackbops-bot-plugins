@@ -278,10 +278,13 @@ without the member role goes the same way once, since it can predate an `/allow`
 page shows what to ask an admin for. While signed in, a usr cookie for the person's own account that
 no longer carries `tracker:member` signs them out of every session and revokes their API tokens, but
 only on a GET back from usr's refresh: any other request with it, a POST included, is first sent
-there (a POST's form is not kept: the browser comes back to that page, or to My tasks). Sign out ends the tracker's
-session only, not usr's: for 12 hours after it, a GET does not sign back in from usr's cookie unless
-it carries `?usr=go` (the sign-in page's "Sign in with usr" button, whose trip to usr ends those 12
-hours); a `/web` link signs in as always. Any site under usr's cookie domain can set an
+there (a POST's form is not kept: the browser comes back to that page, or to My tasks). That happens
+only in the web area: the task API never reads usr, so a token keeps working until the person next
+uses the web area while still signed in to it; opened signed out, it only shows the not-member page
+and the tokens stay (revoking their tokens or admission in the tracker ends them at once). Sign out
+ends the tracker's session only, not usr's: for 12 hours after it, a GET does not sign back in from
+usr's cookie unless it carries `?usr=go` (the sign-in page's "Sign in with usr" button, whose trip to
+usr ends those 12 hours); a `/web` link signs in as always. Any site under usr's cookie domain can set an
 `nz_id` of its own, so every host under that domain must be trusted. The one-time `/web` link stays
 beside it. `src/usr-identity.ts` uses WebCrypto only.
 
@@ -589,7 +592,14 @@ token does not look up (unknown, revoked, expired, malformed) share one global b
 refilled at one every two seconds; past it they get `429` instead of `401`, and valid tokens are
 unaffected. A body is at most
 16 KiB, read no further. One new price tracker's or `page` watch's first read in flight per person,
-shared with the web editor (`409 busy`).
+shared with the web editor (`409 busy`). That first read gives up 8 seconds after the request
+arrived -- counted from before the token check, the membership re-check, the body and the create's
+first turn in the queue, not from when the read starts -- and then makes nothing (`503 slow_page`
+with `Retry-After`; the web form says the same words). The person stays busy until the read itself
+ends (15 s at most), so a retry cannot start a second one. The about 2 seconds of the host's 10 s
+left after a read in time are a margin for making the task in the queue, not a bound: a queue
+slower than that can still make it after the host has answered `504`, so after a `504` on a create,
+`GET /tasks` before trying again.
 
 **Requests.** A `POST` or `PATCH` body is one JSON object with `Content-Type: application/json`
 (else `415`), and names only the fields listed for that type (else `400 unknown_field`), each of
@@ -601,11 +611,11 @@ only for a want-list watch's `max` in a `PATCH`, where it clears the top price; 
 refused as the wrong JSON type (send `""` to clear a note).
 
 Which types: `GET /tasks`, `GET /tasks/<id>`, pause, resume and `DELETE` work on any task you own,
-whatever its type. `POST /tasks` takes the three editor types (reminder, renewal, price),
+whatever its type. `POST /tasks` takes `reminder`, `renewal` and `price`, by the web editor's rules,
 `wantlist`, by `/want`'s rules, and, while the model runner is set up on this bot, `research`
 (#82), by `/research`'s rules, and `scout` (#83), by `/scout new`'s; while it is not, a `research`
-or `scout` create answers `503 unavailable`. `PATCH` takes the editor types, a want-list watch
-(`wantlist` or `wantjudge`) and `scout` (a scout made while the runner was set up stays editable):
+or `scout` create answers `503 unavailable`. `PATCH` takes `reminder`, `renewal`, `price`, a
+want-list watch (`wantlist` or `wantjudge`) and `scout` (a scout made while the runner was set up stays editable):
 a research request cannot be edited, here or in Discord, and a `PATCH` of one answers
 `409 conflict`.
 
@@ -618,7 +628,7 @@ a research request cannot be edited, here or in Discord, and a `PATCH` of one an
 | `GET /api/v1/tasks/<id>` | One of your tasks (a deleted one too), with its history: the newest runs and changes, as `/task history` shows them. |
 | `PATCH /api/v1/tasks/<id>` | Edits it: the fields to change. A price's page is not editable. |
 | `POST /api/v1/tasks/<id>/pause`, `/resume` | Body `{}`. As the web's Pause and Resume, and `/task resume`. |
-| `POST /api/v1/tasks/<id>/listings` | Sends listings in to your inbox watch (an eBay watch, or a BGG one made without BGG's API): `{"listings": [{"title", "url", "price", "currency", "condition", "seller"}, ...]}`, 1 to 40 of them, `title` and an absolute http(s) `url` required, `price` a number or text such as `"$30.00"`, `currency` three letters. Each is cleaned by docket-types' `submittedListing` (an eBay item's address becomes its bare `/itm/<number>`, so one item stays one listing); the usable ones are kept, the others counted: `200 {"accepted", "rejected", "message"}`. None usable, or the wrong shape, is `400`; more than 40 is `400 too_many`; anyone else's, a deleted or finished watch, or not a watch, is `404`; a page or BGG-API watch is `409` (its listings are read, not sent). The next look DMs the new ones within the watch's limits, each once. The newest 100 per watch are kept, as many as one look reads: more than 100 sent between two looks loses the oldest. Body up to 64 KiB. |
+| `POST /api/v1/tasks/<id>/listings` | Sends listings in to your inbox watch (an eBay watch, or a BGG one made without BGG's API): `{"listings": [{"title", "url", "price", "currency", "condition", "seller"}, ...]}`, 1 to 40 of them, `title` and an absolute http(s) `url` on the watch's own site (one of eBay's own domains, `EBAY_DOMAINS` in `src/web/api-listings.ts`, or a subdomain, for an eBay watch; `boardgamegeek.com` or a subdomain for a BGG one) required, `price` a number or text such as `"$30.00"`, `currency` three letters. Each is cleaned by docket-types' `submittedListing` (an eBay item's address becomes its bare `/itm/<number>`, so one item stays one listing); the usable ones are kept, the others counted: `200 {"accepted", "rejected", "message"}`. None usable, or the wrong shape, is `400`; more than 40 is `400 too_many`; anyone else's, a deleted or finished watch, or not a watch, is `404`; a page or BGG-API watch is `409` (its listings are read, not sent). The next look DMs the new ones within the watch's limits, each once. The newest 100 per watch are kept, as many as one look reads: more than 100 sent between two looks loses the oldest. Body up to 64 KiB. |
 | `DELETE /api/v1/tasks/<id>` | Deletes it as the web does: archived, nothing more sent, history kept. No confirmation step. |
 
 A task is `{"id", "type", "title", "status", "cadence", "nextAt", "createdAt", "updatedAt",
@@ -637,8 +647,9 @@ and a `PATCH` naming it is refused (`unknown_field`). A write answers
 | 400 | `invalid` | A rule refused a value; `message` is the rule's own words, as the web editor shows them. Also a field of the wrong JSON type, or no `type`. |
 | 400 | `unknown_field` | A field that type does not take (on a pause or resume, any field). |
 | 400 | `invalid_json` | The body is not JSON, or not one object. |
+| 400 | `too_many` | More than 40 listings in one `/listings` request. |
 | 401 | `unauthorized` | No `Authorization` header. With `WWW-Authenticate: Bearer realm="tracker"`. |
-| 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered (their tokens are then deleted): one answer for all. |
+| 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered (their tokens are then deleted): one answer for all, with `WWW-Authenticate`. An owner forgotten while their write waited in the queue gets the same code with its own message and no `WWW-Authenticate`. |
 | 403 | `origin_refused` | The request carried an `Origin` header. |
 | 403 | `not_member` | The owner has left every `TRACKER_GUILD_ID` server (or lacks the `TRACKER_GUILD_ROLES` role where one is asked); their tokens are revoked. |
 | 404 | `not_found` | No such endpoint, or no such task of yours. Anyone else's task -- one shared with you, or any task to an admin's token -- answers exactly as an unknown id. |
@@ -649,7 +660,8 @@ and a `PATCH` naming it is refused (`unknown_field`). A write answers
 | 413 | `too_large` | Body over 16 KiB (64 KiB for `/listings`). |
 | 415 | `unsupported_media_type` | Not `application/json`. |
 | 429 | `rate_limited` | With `Retry-After`: this token's bucket, or the shared one for bad tokens. |
-| 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours; the type is not available on this bot. |
+| 503 | `slow_page` | A new price's or page watch's page did not answer within 8 seconds of the request's arrival: nothing was made. With `Retry-After`. |
+| 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours (the lookup goes through the Discord client of the last command or button the bot handled, so after a restart none runs until someone uses one); the type is not available on this bot. |
 
 **Example.**
 
@@ -683,7 +695,7 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 | Want-list watcher | `src/want.ts`, `src/inbox.ts`, `src/web/api-listings.ts`; the types and sources are `@rackbops/docket-types`' (0.7.0: `wantlist`, `wantjudge`, `pageSource`, `bggSource`, `inboxSource`) | `/want`'s rules; the `wantlist` type over a `Source` port; the `inbox` source over the `want_inbox` table (schema 8, 0.19.0: the listings sent in per watch, keyed `ebay-` or `bgg-` and 24 random hex digits, the newest 100 kept, as many as one look reads; forget-me erases them with the person's tasks), filled by the task API's listings route; the `page` source (JSON-LD listings through the fenced Fetch port, no HTML guessing) and the `bgg` source (BGG's XML API with the Bearer token, on `boardgamegeek.com`, never `www.`, at least 5 s between requests (a read due sooner is put back for the next tick, never waited on), read by a bounded `indexOf` parser, never a pattern over the whole body; a 401 or 403 is the token refused, a 202, 429 or 5xx a miss). The BGG fixture is hand-written to BGG's documented shape: BGG declined the application, so there is no token to capture a real response with. The judged watch (`wantjudge`) is an execute-lane type: its `prepare` reads the source in plain code (an uncharged `NoJob` when nothing is new), keeps new listings in the task's state as `pending` and asks for a follow-up, whose `prepare` makes the judge Job; `finish` maps the verdicts back by number, so a Job collected after a restart still has its listings. On this lane a BGG read due too soon waits out the spacing once. |
 | Execute lane | `src/execute-lane.ts`, `src/executor.ts`, `src/research.ts`, `src/scout.ts` (the `scout` type is docket-types') | Only when the city-hall Executor is configured: a third host tick, `execute`, that starts docket's `Lanes.tickExecute` in the background (one at a time, at most once per host tick, about a minute) over every task with a due execute-lane run, reserving those tasks and then holding their locks in id order, through one docket `Lanes` kept while the plugin is active (docket keeps its usage-limit pause on it). The Executor is city-hall#18's source pair (above), its I/O injected; `executor_jobs` keeps each Job key's city-hall id. `/research`'s and `/scout`'s rules, and the scout type. |
 | Budgets, usage | `src/ceilings.ts`, `src/usage.ts`; `src/web/ceiling-pages.ts`, `src/web/usage-pages.ts` | The execute lane's `BudgetPolicy` (docket's defaults plus each person's raise, or no ceiling at all while `TRACKER_BUDGET_UNLIMITED` is on), the ceiling changes, and the pure usage report `/admin/usage` renders from docket's `usage` table. |
-| Page reads | `src/fetch.ts` | docket's `Fetch` port for `price` and the want-list's `page` source: http or https on the default port, no credentials, every resolved address public (no loopback, private, link-local, CGNAT, multicast or reserved range, IPv4 or IPv6), redirects followed by hand and re-checked (at most 5; a redirect to something that is not a web address is refused), 15 s including the name lookup, at most 3 MB kept. The body is then rebuilt in linear time (`src/page.ts`) to just what extraction reads -- at most 200 JSON-LD blocks and 300 meta tags, the first ones in page order (room for a shop search page with one JSON-LD block per product beside its other blocks; the `page` source keeps at most 100 listings a page, docket-types' `MAX_LISTINGS`, and a look takes at most 20 new ones, the rest on the next look), and the page with every `<` blanked, so `near` still reads text, attributes and script data -- because docket's extraction patterns take quadratic time on a page of unclosed tags. Tag names are matched with only `A`-`Z` folded to lower case, so a letter that changes length when lower-cased (the Turkish `İ`) does not shift the tags after it out of reach. A read the tick's abort cuts short requeues its run instead of counting a miss. A DNS answer that changes between the check and the read is not caught here. A want-list page read (docket-types' `page` source) carries `NEVER_EBAY` and is refused on any hop to eBay; a price read is not. |
+| Page reads | `src/fetch.ts` | docket's `Fetch` port for `price` and the want-list's `page` source: http or https on the default port, no credentials, every resolved address public (no loopback, private, link-local, CGNAT, multicast or reserved range, IPv4 or IPv6), redirects followed by hand and re-checked (at most 5; a redirect to something that is not a web address is refused), 15 s including the name lookup, at most 3 MB kept. The body is then rebuilt in linear time (`src/page.ts`) to just what extraction reads -- at most 200 JSON-LD blocks and 300 meta tags, the first ones in page order (room for a shop search page with one JSON-LD block per product beside its other blocks; the `page` source keeps at most 100 listings a page, docket-types' `MAX_LISTINGS`, and a look takes at most 20 new ones, the rest on the next look), and the page with every `<` blanked, so `near` still reads text, attributes and script data -- because docket's extraction patterns take quadratic time on a page of unclosed tags. Tag names are matched with only `A`-`Z` folded to lower case, so a letter that changes length when lower-cased (the Turkish `İ`) does not shift the tags after it out of reach. A read the tick's abort cuts short requeues its run instead of counting a miss. A DNS answer that changes between the check and the read is not caught here. A refusal says why -- the name did not resolve, or it is not on the public internet -- so anyone who may make a price tracker or page watch (a command, the web editor or the task API) can learn which names the bot host's resolver maps to private addresses; one read at a time per person and the API's rate limit slow that, they do not stop it. A want-list page read (docket-types' `page` source) carries `NEVER_EBAY` and is refused on any hop to eBay; a price read is not. |
 | Renewals, prices | `src/tracked.ts`, `src/price.ts`, `src/series.ts`, `src/page.ts` | `/renewal`, `/price` and `/task decide`; the series lines of `/task history`. The series (docket's `series` table, schema 1) holds a renewal's paid amounts and a price's readings. |
 | Delivery | `src/notifier.ts`, `src/buttons.ts` | docket's `Notifier` over `host.dm`, with the buttons. docket claims each (run, person) in the store's `deliveries` before the DM and settles it after. The notifier maps the host's answers to docket's errors: cannot be messaged (50007) or an unknown user is `DeliveryFailedError(msg, true)` (failed for good; 50007 and 10013 count toward the pause); a message refused for its content is a plain `DeliveryFailedError` (retried); a paused person is `ExecutorUnavailableError` (deferred); anything else is rethrown, so docket settles it unconfirmed and never resends it. |
 | Daily digest | `src/digest.ts` | Plan 5.5's "today and overdue" DM, on the `notify` tick after the runs due now, no model. For each person whose preferred hour has come in their zone, the day is claimed first (docket's `claimNotice`, key `digest:<user>:<YYYY-MM-DD>`, research-triage's exactly-once pattern; forget-me erases it), then their own active reminders and renewals are read: overdue is the latest fired run before today with no done or decision from the owner, due today is a run not yet fired today or the latest fired run today still unanswered. A snoozed run, an older run behind a newer one, other types and received tasks are left out. Nothing listed, no DM; too long for one message, it caps both sections at the same, smaller number of lines (the most that fit) and counts the rest; a paused person is passed by unclaimed; a failed send is not retried. |

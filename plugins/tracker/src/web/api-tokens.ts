@@ -137,13 +137,6 @@ export class ApiTokens {
     return r ? toToken(r) : null;
   }
 
-  /** One token by id, whoever's; null when there is none. */
-  get(id: string): ApiToken | null {
-    if (!isTokenId(id)) return null;
-    const r = this.db.query(`SELECT ${COLUMNS} FROM api_tokens WHERE seq = ?`).get(Number(id.slice(1))) as Row | null;
-    return r ? toToken(r) : null;
-  }
-
   /** A person's live tokens, oldest first. */
   listFor(userId: string, now: Date): ApiToken[] {
     const rows = this.db
