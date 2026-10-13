@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { NOT_MEMBER } from "../access.js";
 import { JWKS_RETRY_MS, JWKS_TTL_MS, UsrVerifier } from "../usr-identity.js";
 import { USR_NO_COOKIE, USR_RECHECK_FAILED, USR_NOT_LINKED, USR_NOT_MEMBER } from "./app.js";
-import { call, csrfOf, cleanup, CURLY, type Jar, LARRY, openLink, ORIGIN, people, SESSION, signIn, slash, tokenOf, type WebLookup, world } from "./harness.js";
+import { api, call, csrfOf, cleanup, CURLY, type Jar, LARRY, makeToken, openLink, ORIGIN, people, SESSION, signIn, slash, tokenOf, type WebLookup, world } from "./harness.js";
 
 /**
  * The web area's sign-in through usr's `nz_id` cookie (usr-identity.ts, app.ts `usrSignIn`): a fake
@@ -325,6 +325,21 @@ describe("web sign-in through usr", () => {
     expect(res.status).toBe(403);
     expect(await res.text()).toContain(USR_NOT_MEMBER.slice(0, 40));
     expect(jar.has(SESSION)).toBe(false);
+  });
+
+  it("ends the person's API tokens with their sessions, but only once they next use the web area (#228)", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
+    await call(w.plugin, "GET", "/", { jar });
+    const token = await makeToken(w, jar);
+    jar.set("nz_id", await sign(w.usr.pair.privateKey, identity({ roles: [] })));
+    // The API never reads usr's cookie: the token still works until a web request carries it.
+    expect((await api(w.plugin, "GET", "/me", { token })).status).toBe(200);
+    expect((await call(w.plugin, "GET", "/", { jar })).status).toBe(403);
+    const after = await api(w.plugin, "GET", "/me", { token });
+    expect(after.status).toBe(401);
+    expect((await after.json()).error.code).toBe("invalid_token");
   });
 
   it("checks server membership before opening the session", async () => {

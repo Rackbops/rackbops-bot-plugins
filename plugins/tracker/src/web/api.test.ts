@@ -1,14 +1,21 @@
 import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, jest } from "bun:test";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import type { Membership } from "../access.js";
+import { NO_LONGER_LISTED, type TrackerDeps } from "../actions.js";
 import { PAUSE_AFTER } from "../delivery-health.js";
+import { admit } from "../people.js";
 import { MAX_PRICE_TASKS } from "../price.js";
-import { FAILED_BURST, MAX_API_BYTES, RATE_BURST } from "./api.js";
-import { MAX_TOKENS_PER_PERSON } from "./api-tokens.js";
-import { NOT_FOUND_MESSAGE } from "./api-tasks.js";
+import { openDatabase } from "../schema.js";
+import { SqliteStore } from "../store.js";
+import { WANT_OFF } from "../want.js";
+import { FAILED_BURST, MAX_API_BYTES, MEMBERSHIP_UNKNOWN, RATE_BURST, RateLimiter } from "./api.js";
+import { listingsAnswer } from "./api-listings.js";
+import { ApiTokens, MAX_TOKENS_PER_PERSON } from "./api-tokens.js";
+import { NOT_FOUND_MESSAGE, refusal } from "./api-tasks.js";
 import { MEMBER_GRACE_MS, MEMBER_RECHECK_MS } from "./app.js";
+import { READING, SLOW_PAGE, WEB_READ_MS, type Writer } from "./editor.js";
 import { sha256 } from "./secrets.js";
 import { MAX_CREATIONS_PER_HOUR, TOKEN_NOT_SENT, TOO_MANY_CREATED } from "./tokens.js";
 import {
@@ -27,6 +34,7 @@ import {
   SESSION,
   signIn,
   slash,
+  START,
   STRANGER,
   type WebLookup,
   world,
@@ -373,6 +381,18 @@ describe("membership (TRACKER_GUILD_ID set)", () => {
     w.clock.advance(60_000);
     expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(200);
   });
+
+  it("with no Discord client yet (a restart, no command used since), the 503 says what unsticks it (#229)", async () => {
+    const { l, fn } = lookup();
+    const w = await setup({ guild: true, webMembership: fn });
+    l.answer = null;
+    w.clock.advance(MEMBER_GRACE_MS);
+    const res = await api(w.plugin, "GET", "/me", { token: w.token });
+    expect(res.status).toBe(503);
+    expect((await body(res)).error).toEqual({ code: "membership_unknown", message: MEMBERSHIP_UNKNOWN });
+    expect(MEMBERSHIP_UNKNOWN).toContain("commands or buttons in Discord");
+    expect(query(w.dbPath, "SELECT seq FROM api_tokens")).toHaveLength(1);
+  });
 });
 
 describe("tokens on the web", () => {
@@ -704,5 +724,197 @@ describe("tasks", () => {
     // An edit keeps whatever it is not sent: none of its fields is required, though a create's are.
     for (const t of types.types) expect(t.edit.filter((f: { required: boolean }) => f.required)).toEqual([]);
     expect(types.types[1].create.filter((f: { required: boolean }) => f.required).map((f: { name: string }) => f.name)).toEqual(["name", "amount", "currency", "renews"]);
+    // `null` is a value of one field only, a watch edit's top price, and that field says so (#228).
+    const nullable = types.types.flatMap((t: { type: string; create: { name: string; description: string }[]; edit: { name: string; description: string }[] }) =>
+      [...t.create.map((f) => ({ ...f, at: `${t.type} create` })), ...t.edit.map((f) => ({ ...f, at: `${t.type} edit` }))].filter((f) => f.description.endsWith("Send null to clear it.")).map((f) => `${f.at} ${f.name}`),
+    );
+    expect(nullable).toEqual(["wantlist edit max"]);
+  });
+});
+
+describe("a slow first read (#174)", () => {
+  /** A shop whose page answers only once `release` is called; `reads` counts the reads begun. */
+  function slowShop() {
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const s = { reads: 0 };
+    const fetch: Fetch = {
+      async get(): Promise<FetchResponse> {
+        s.reads++;
+        await gate;
+        return { status: 200, body: "<p>Price: 10.00</p>", headers: {} };
+      },
+    };
+    return { s, fetch, release: () => open() };
+  }
+
+  /** Lets the request run up to its page read, by promise turns only: the timers are fake. */
+  async function untilRead(s: { reads: number }, n: number) {
+    for (let i = 0; i < 10_000 && s.reads < n; i++) await Promise.resolve();
+    expect(s.reads).toBe(n);
+  }
+
+  async function settle() {
+    for (let i = 0; i < 100; i++) await Promise.resolve();
+  }
+
+  afterEach(() => jest.useRealTimers());
+
+  it("gives up before the host's 10 s 504 and makes nothing; a retry is busy until the read ends, then works", async () => {
+    const slow = slowShop();
+    const w = await setup({ fetch: slow.fetch });
+    const make = { token: w.token, body: { type: "price", url: SHOP, near: "Price:" } };
+    jest.useFakeTimers();
+    const first = api(w.plugin, "POST", "/tasks", make);
+    await untilRead(slow.s, 1);
+    jest.advanceTimersByTime(WEB_READ_MS);
+    const res = await first;
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("10");
+    expect((await body(res)).error).toEqual({ code: "slow_page", message: SLOW_PAGE });
+    // The read is still running: a retry now is refused, not read alongside it.
+    const retry = await api(w.plugin, "POST", "/tasks", make);
+    expect(retry.status).toBe(409);
+    expect((await body(retry)).error.code).toBe("busy");
+    slow.release();
+    await settle();
+    jest.useRealTimers();
+    // The late answer made nothing; asked again, the page (now quick) makes one tracker.
+    expect((await body(await api(w.plugin, "GET", "/tasks", { token: w.token }))).tasks).toEqual([]);
+    expect((await api(w.plugin, "POST", "/tasks", make)).status).toBe(201);
+    expect((await body(await api(w.plugin, "GET", "/tasks", { token: w.token }))).tasks).toHaveLength(1);
+  });
+
+  it("counts the deadline from the request's arrival: a slow membership re-check leaves the read less time", async () => {
+    const slow = slowShop();
+    const CHECK_MS = 2500;
+    const membership: WebLookup = () => new Promise((resolve) => setTimeout(() => resolve("member"), CHECK_MS));
+    const w = await setup({ fetch: slow.fetch, guild: true, webMembership: membership });
+    w.clock.advance(MEMBER_RECHECK_MS);
+    jest.useFakeTimers();
+    let answered = false;
+    const first = api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "price", url: SHOP, near: "Price:" } }).finally(() => {
+      answered = true;
+    });
+    await settle();
+    expect(slow.s.reads).toBe(0);
+    jest.advanceTimersByTime(CHECK_MS);
+    await untilRead(slow.s, 1);
+    // The read began 2.5 s in; it gets what is left of the 8 s, not 8 s of its own.
+    jest.advanceTimersByTime(WEB_READ_MS - CHECK_MS - 1);
+    await settle();
+    expect(answered).toBe(false);
+    jest.advanceTimersByTime(1);
+    const res = await first;
+    expect(res.status).toBe(503);
+    expect((await body(res)).error.code).toBe("slow_page");
+    slow.release();
+    await settle();
+    jest.useRealTimers();
+    expect((await body(await api(w.plugin, "GET", "/tasks", { token: w.token }))).tasks).toEqual([]);
+  });
+
+  it("a page watch's first read is bounded the same way, from the web editor too", async () => {
+    const slow = slowShop();
+    const w = await setup({ fetch: slow.fetch });
+    const csrf = await csrfOf(w.plugin, w.larry);
+    jest.useFakeTimers();
+    const first = form(w.plugin, w.larry, csrf, "/new/wantlist", { name: "Widget", source: "page", target: SHOP, judge: "no" });
+    await untilRead(slow.s, 1);
+    jest.advanceTimersByTime(WEB_READ_MS);
+    const res = await first;
+    expect(res.status).toBe(400);
+    expect(alertText(await res.text())).toBe(SLOW_PAGE);
+    slow.release();
+    await settle();
+    jest.useRealTimers();
+    expect((await body(await api(w.plugin, "GET", "/tasks", { token: w.token }))).tasks).toEqual([]);
+  });
+});
+
+describe("guards a green suite used to miss (#230)", () => {
+  it("a token revoked while the membership re-check waited is refused, not used or touched", async () => {
+    let during = () => {};
+    const w = await setup({ guild: true, webMembership: async () => (during(), "member") });
+    w.clock.advance(MEMBER_RECHECK_MS);
+    during = () => {
+      const db = new Database(w.dbPath);
+      try {
+        db.query("DELETE FROM api_tokens").run();
+      } finally {
+        db.close();
+      }
+    };
+    const res = await api(w.plugin, "GET", "/me", { token: w.token });
+    expect(res.status).toBe(401);
+    expect((await body(res)).error.code).toBe("invalid_token");
+  });
+
+  it("a task id that is not valid percent-encoding is the unknown task's 404, not a throw", async () => {
+    const w = await setup();
+    const listing = { listings: [{ title: "W", url: "https://www.ebay.com/itm/123456789" }] };
+    for (const [method, path, sent] of [
+      ["GET", "/tasks/%zz", undefined],
+      ["POST", "/tasks/%E0%A4%A/pause", {}],
+      ["POST", "/tasks/%/listings", listing],
+    ] as const) {
+      const res = await api(w.plugin, method, path, { token: w.token, ...(sent ? { body: sent } : {}) });
+      expect(res.status).toBe(404);
+      expect((await body(res)).error.code).toBe("not_found");
+    }
+  });
+
+  it("each shared rule's refusal has its status and code", () => {
+    expect(refusal(READING)).toMatchObject({ status: 409, body: { error: { code: "busy", message: READING } } });
+    const gone = refusal(NO_LONGER_LISTED);
+    expect(gone).toMatchObject({ status: 401, body: { error: { code: "invalid_token" } } });
+    expect(gone.headers).toBeUndefined();
+    for (const off of ["Price tracking is not available on this bot.", "Reminders are not available on this bot.", WANT_OFF]) {
+      expect(refusal(off)).toMatchObject({ status: 503, body: { error: { code: "unavailable", message: off } } });
+    }
+    expect(refusal("That is not a web address.")).toMatchObject({ status: 400, body: { error: { code: "invalid" } } });
+  });
+
+  it("a token's name may hold no control character; a person's list leaves out the expired ones", async () => {
+    const db = openDatabase(":memory:");
+    const larry = await admit(new SqliteStore(db), "111111111111111111", new Date(START));
+    const tokens = new ApiTokens(db);
+    const now = new Date(START);
+    for (const name of ["a\u0000b", "tab\there", "bell\u0007", "del\u007f"]) {
+      expect(tokens.create(larry.id, { name, days: 30 }, now, null)).toEqual({ ok: false, error: "That name has a control character in it." });
+    }
+    expect(tokens.create(larry.id, { name: "monthly", days: 30 }, now, null).ok).toBe(true);
+    expect(tokens.create(larry.id, { name: "yearly", days: 365 }, now, null).ok).toBe(true);
+    expect(tokens.listFor(larry.id, now).map((t) => t.name)).toEqual(["monthly", "yearly"]);
+    // Past the monthly one's expiry, before any create drops it: still a row, no longer listed.
+    const later = new Date(now.getTime() + 31 * 24 * 3600_000);
+    expect((db.query("SELECT COUNT(*) AS n FROM api_tokens").get() as { n: number }).n).toBe(2);
+    expect(tokens.listFor(larry.id, later).map((t) => t.name)).toEqual(["yearly"]);
+  });
+
+  it("the rate limiter forgets full buckets once it holds over 10,000, and keeps the rest", () => {
+    const limiter = new RateLimiter(2, 1);
+    const size = () => (Reflect.get(limiter, "buckets") as Map<string, unknown>).size;
+    for (let i = 0; i < 10_000; i++) expect(limiter.take(`k${i}`, 0)).toBe(0);
+    expect(limiter.take("busy", 0)).toBe(0);
+    expect(limiter.take("busy", 0)).toBe(0);
+    expect(size()).toBe(10_001);
+    // A second later every bucket taken once is full again; the one drained twice is not.
+    expect(limiter.take("new", 1000)).toBe(0);
+    expect(size()).toBe(2);
+    expect(limiter.take("busy", 1000)).toBe(0);
+    expect(limiter.take("busy", 1000)).toBeGreaterThan(0);
+  });
+
+  it("listings for a watch while the inbox is not open answer 503, and store nothing", async () => {
+    const db = openDatabase(":memory:");
+    const store = new SqliteStore(db);
+    const larry = await admit(store, "111111111111111111", new Date(START));
+    const config = { source: "inbox", target: `ebay-${"a".repeat(24)}`, search: "Wingspan" };
+    const task = await store.createTask({ ownerId: larry.id, type: "wantlist", title: "Wingspan", config, schedule: null, lane: "notify", capabilities: ["notify"], at: START });
+    const d = { store, inbox: null, clock: { now: () => new Date(START) } } as unknown as TrackerDeps;
+    const writer: Writer = { d, queue: (fn) => fn(), reading: new Set(), userId: larry.id, arrived: performance.now() };
+    const res = await listingsAnswer(writer, larry, task.id, { listings: [{ title: "Wingspan", url: "https://www.ebay.com/itm/123456789" }] });
+    expect(res).toMatchObject({ status: 503, body: { error: { code: "unavailable" } } });
   });
 });

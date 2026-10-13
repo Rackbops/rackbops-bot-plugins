@@ -357,12 +357,14 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   }
 
   return async (request, info) => {
+    // The first page read of a new price or watch counts its deadline from here (editor.ts, #174).
+    const arrived = performance.now();
     // The JSON task API (api.ts): bearer tokens, never the cookie, and its own methods and errors.
     if (info.path === "/api" || info.path.startsWith("/api/")) {
       if (w.origin === null) return plain(404, "Not found");
       const d = w.deps();
       if (!d) return json(problem(503, "starting", "The tracker is starting up; try again in a minute.", { "Retry-After": "60" }));
-      return handleApi({ d, queue: w.queue, reading, base, limiter, failed, recheck: (user, at) => recheck(d, user, at) }, request, info.path);
+      return handleApi({ d, queue: w.queue, reading, base, limiter, failed, arrived, recheck: (user, at) => recheck(d, user, at) }, request, info.path);
     }
     const method = request.method;
     if (method !== "GET" && method !== "POST") return plain(405, "Method not allowed", { Allow: "GET, POST" });
@@ -411,7 +413,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     if (admin && !auth.user.admin) return unknownPage(base);
     if (admin && !allowed.split(", ").includes(method)) return plain(405, "Method not allowed", { Allow: allowed });
     const v: Viewer = { base, user: auth.user, csrf: auth.session.csrf, deliveryPaused: d.health.isPaused(auth.user.id) };
-    const e: Editor = { d, v, queue: w.queue, reading };
+    const e: Editor = { d, v, queue: w.queue, reading, arrived };
     const a: AdminWeb = { d, v, queue: w.queue, memberOf: (id) => memberOf(id), signOutCookie: clear(SESSION_COOKIE), usrGuildId: w.guildIds?.[0] ?? null };
 
     if (method === "POST") {
