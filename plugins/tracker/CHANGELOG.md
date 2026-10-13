@@ -16,7 +16,8 @@
   `POST /api/v1/tasks/<id>/sources/ready`, which moves the queued run to now. The research run and
   its reviewer both read the pages into their prompts and may not fetch BoardGameGeek or eBay.
   Until then the run waits 14 days out, or 10 minutes before the deadline when that is sooner (a
-  run started past the deadline makes no call); a request whose `ready` never comes runs then on
+  run started past the deadline makes no call; the margin makes that unlikely on an idle lane, not
+  impossible, and a deadline less than 20 minutes away is refused); a request whose `ready` never comes runs then on
   whatever pages are in, and with none makes no model call, DMs you that no pages were gathered,
   and ends it.
 - Only the token owner's own live browser request still waiting takes pages or `ready`: anyone

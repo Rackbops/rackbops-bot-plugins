@@ -144,6 +144,13 @@ describe("/research sources: browser", () => {
     expect(await slash(off.plugin, "research", LARRY, { strings: { question: "What is X?", sources: "browser" } })).toBe(BROWSER_OFF);
   });
 
+  it("refuses a deadline too soon to gather pages before its run", async () => {
+    const w = await setup();
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "How many players does Y take?", sources: "browser", deadline: "in 15 minutes" } })).toContain("at least 20 minutes away");
+    expect(query(w.dbPath, "SELECT status FROM tasks")).toEqual([]);
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "How many players does Y take?", sources: "browser", deadline: "in 25 minutes" } })).toContain("is waiting for pages");
+  });
+
   it("a request whose pages never come ends at its expiry with no model call", async () => {
     const w = await setup();
     await slash(w.plugin, "research", LARRY, { strings: { question: "How many players does Y take?", sources: "browser" } });
@@ -319,6 +326,13 @@ describe("the task API's sources routes", () => {
     expect(query(w.dbPath, "SELECT status FROM tasks WHERE seq = 1")).toEqual([{ status: "done" }]);
     // Ended: its pages are gone at the execute tick's housekeeping.
     expect(query(w.dbPath, "SELECT * FROM research_sources")).toEqual([]);
+  });
+  it("cleans each page of one large POST on its own: whole pages kept, the rest over budget, none cut", async () => {
+    const w = await ready();
+    const pages = Array.from({ length: 10 }, (_, i) => page(i + 1, "x".repeat(12_000)));
+    const said = await body(await api(w.plugin, "POST", "/tasks/t1/sources", { token: w.token, body: { pages } }));
+    expect(said).toMatchObject({ accepted: 8, rejected: 0, overBudget: 2, pages: 8 });
+    expect(query<{ n: number }>(w.dbPath, "SELECT length(text) AS n FROM research_sources")).toEqual(Array.from({ length: 8 }, () => ({ n: 12_000 })));
   });
   it("counts pages past the text budget apart from unusable ones, and refuses when none fit", async () => {
     const w = await ready();

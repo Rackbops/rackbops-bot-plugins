@@ -46,8 +46,11 @@ export const SOURCES_WAIT_MS = SOURCES_WAIT_DAYS * 24 * 60 * 60 * 1000;
 
 /**
  * How long before its deadline a browser request's run starts when the deadline comes first:
- * docket's research run makes no call once it starts past the deadline, and the execute tick picks
- * a due run up within a minute or two, so a run queued at the deadline itself would always miss it.
+ * docket's research run makes no call once it starts past the deadline, and an idle execute lane
+ * picks a due run up within a minute or two, so a run queued at the deadline itself would always
+ * miss it. The margin makes a miss unlikely, not impossible: a run held by the owner's budget, or
+ * behind another owner's Job still out, can still start past the deadline. `/research` refuses a
+ * browser request whose deadline leaves less than `MIN_GATHER_MINUTES` to gather before the run.
  */
 export const SOURCES_DEADLINE_MARGIN_MINUTES = 10;
 const SOURCES_DEADLINE_MARGIN_MS = SOURCES_DEADLINE_MARGIN_MINUTES * 60 * 1000;

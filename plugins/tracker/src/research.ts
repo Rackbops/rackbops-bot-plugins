@@ -4,6 +4,9 @@ import { clip, liveTaskCap, said, type TaskResult, type TrackerDeps } from "./ac
 import { MAX_TITLE, MAX_WHEN } from "./limits.js";
 import { MAX_SOURCES_PER_TASK, SOURCES_DEADLINE_MARGIN_MINUTES, SOURCES_WAIT_DAYS, sourcesExpiry } from "./research-sources.js";
 
+/** The least time a browser request leaves its browser to gather pages before its run, when a deadline brings that run forward. */
+export const MIN_GATHER_MINUTES = 10;
+
 /**
  * The one-off research request (category 5, plan 1.2 row 5; rackbops-bot-plugins#82): `/research`'s
  * rules over docket's `research` type, which runs on the execute lane through city-hall and the
@@ -94,6 +97,9 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
   if (typeof deadline === "string") return { ok: false, error: deadline };
   const start = at ?? now;
   if (deadline && deadline.getTime() <= Math.max(start.getTime(), now.getTime())) return { ok: false, error: "The deadline has to be after the research starts." };
+  if (browser && deadline && deadline.getTime() - now.getTime() < (SOURCES_DEADLINE_MARGIN_MINUTES + MIN_GATHER_MINUTES) * 60_000) {
+    return { ok: false, error: `With \`sources: browser\` the deadline has to be at least ${SOURCES_DEADLINE_MARGIN_MINUTES + MIN_GATHER_MINUTES} minutes away: the research starts ${SOURCES_DEADLINE_MARGIN_MINUTES} minutes before it, and your browser needs time to gather the pages first.` };
+  }
 
   const capped = await liveTaskCap(d, user);
   if (capped) return { ok: false, error: capped };
