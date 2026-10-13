@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-13T18:01:46.686Z",
+  "generatedAt": "2026-10-13T19:29:45.593Z",
   "plugins": [
     {
       "name": "mcp",
@@ -170,7 +170,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.26.0",
+      "version": "0.27.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
@@ -304,6 +304,12 @@
       ],
       "releases": [
         {
+          "version": "0.27.0",
+          "publishedAt": "2026-10-13T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.27.0",
+          "notes": "### Fixed\n\n- **Gmail's forwarding confirmation, again** (#83). 0.26.0 also left the re-sent one unread: from\n  `forwarding-noreply@google.com`, plain text, forwarding named, but no code where it looked. The\n  code is now any run of 6 to 12 digits in the subject, or one shortly after \"code\" in the body;\n  and Gmail's confirmation link (an https address on `mail.google.com` or\n  `mail-settings.google.com`, never another host) is DMed too, or alone when there is no code.\n- An unread message from one of Google's no-reply senders now also logs its subject's shape\n  (letters `a`, digits `9`), its text's length, and how many digit runs and https links it has,\n  and whether it says \"code\" -- still never its words.\n\n### Schema\n\n- No change. Still at 10."
+        },
+        {
           "version": "0.26.0",
           "publishedAt": "2026-10-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.26.0",
@@ -356,12 +362,6 @@
           "publishedAt": "2026-10-05T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.19.0",
           "notes": "### Added\n\n- **`/want source: ebay` makes a watch now** (Rod's choice: Clerk watches eBay and BoardGameGeek\n  for what people want through listings sent in, never by reading either site itself). It was an\n  answer only -- an eBay search to save on eBay. Now it is an inbox watch (docket-types 0.7.0's\n  `inbox` source): `target` is the words to search eBay for (the name when empty), and listings\n  reach the watch when you search eBay in your own browser, such as with Claude in Chrome, and send\n  what it finds to the task API's new `POST /api/v1/tasks/<id>/listings`; eBay's saved-search alert\n  emails are meant to follow. Each look (hourly by default, since reading what was sent in costs\n  nothing) DMs the new listings within your top price and currency, once each, with a Done button,\n  as every watch does; a judged one has the model look at each first, from what the listing says,\n  with no page opened. The answer still gives the eBay search link, with your top price in it.\n- **`/want source: bgg` without BGG's API makes the same kind of watch**: BGG declined the\n  application, so instead of refusing, the watch takes the BoardGameGeek listings you send in.\n  `target` is a BGG game (its address or id) or the words to look for. With `TRACKER_BGG_TOKEN`\n  set it reads BGG's API as before.\n- **`POST /api/v1/tasks/<id>/listings`**: `{\"listings\": [{title, url, price?, currency?, condition?,\n  seller?}, ...]}`, 1 to 40 a request, each cleaned by docket-types' `submittedListing`; the usable\n  ones are kept and the rest counted (`200 {\"accepted\", \"rejected\", \"message\"}`); none usable is a\n  400. Only your own live inbox watch: anyone else's is the API's usual 404, and a page or BGG-API\n  watch a 409. The newest 100 per watch are kept, as many as one look reads.\n- `GET /api/v1/tasks` shows an inbox watch's `site` (`ebay` or `bgg`), its words to `search` for,\n  and a BGG `game` when one was named, beside its top price and currency, so a browser helper knows\n  what to look for.\n- The web editor offers eBay as a source too.\n- Schema migration 8, purely additive: `want_inbox`, the listings sent in per watch. Forget-me\n  erases a person's with their tasks. A database at 8 is refused by 0.18.1 and older.\n\n### Changed\n\n- Every word that said the tracker does nothing for eBay now says what it does: the `/want`\n  source choice (eBay, from listings you send in), the web form's help, and pasting an eBay page\n  as `source: page`, which now points to `source: ebay`.\n- An inbox watch needs the web area (`TRACKER_WEB_URL`), where listings are sent in; without it,\n  `/want source: ebay` (or `bgg` without the token) is refused rather than made to wait forever.\n- docket-core and docket-types go to 0.7.0."
-        },
-        {
-          "version": "0.18.1",
-          "publishedAt": "2026-10-05T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.18.1",
-          "notes": "### Changed\n\n- **The scout and want-list types now come from `@rackbops/docket-types` 0.6.0** (plan item 104,\n  Rackbops/docket#25), and docket-core goes to 0.6.0 with them. `scout`, `wantlist`, `wantjudge`\n  and their page and BGG sources moved there unchanged; the plugin's own copies\n  (`scout-type.ts`, `wantlist-type.ts`, `wantjudge-type.ts`, `want-sources.ts`, `want-bgg.ts`)\n  are gone, and their unit tests moved with them. The fenced page fetch still honours and strips\n  the `NEVER_EBAY` header, now imported from docket-types. No behaviour change: same commands,\n  same DMs, same stored state."
         }
       ]
     },

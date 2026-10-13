@@ -18,8 +18,9 @@ import { WANT_TYPES, type WatchConfig, watchSite } from "./want.js";
  * (`mail-worker/`), which posts it as it came to `POST /<plugin>/mail/inbound` with
  * `TRACKER_MAIL_KEY` as its bearer and the address it was sent to (web/mail-inbound.ts). Here:
  *
- * - **Gmail's forwarding confirmation** (from Google, `forwardingCode`): its code is DMed to
- *   the person, so they can finish turning forwarding on in Gmail. Only the digits go on.
+ * - **Gmail's forwarding confirmation** (from Google, `forwardingConfirmation`): its code, and its
+ *   confirmation link on Gmail's own hosts, are DMed to the person, so they can finish turning
+ *   forwarding on in Gmail. Nothing else from it goes on.
  * - **An eBay alert** (ebay-alert.ts): its listings go into the inbox of each of the person's live
  *   eBay watches whose words are the alert's (case and spacing aside), exactly as if Claude in
  *   Chrome had posted them, and the watch's next look DMs the new ones. An alert no watch searches
@@ -96,22 +97,54 @@ function fromGoogle(address: string | null): boolean {
 }
 
 /**
- * Gmail's forwarding confirmation code in `mail`, or null when it is not one. Read loosely, since
- * the first real one (2026-10-13) went unread by a stricter reader: from Google, naming forwarding
- * in its subject or body, with the code as `#<digits>` in the subject or after "confirmation code"
- * in the body (plain text, else the HTML's text) -- or, in any language, a subject that starts
- * `(#<digits>)` as Gmail's does. Anyone can forge a From line, but the code only
- * goes to the address's own owner, who asked Gmail for it.
+ * Gmail's forwarding confirmation in `mail`: its code, its confirmation link, both, or null when it
+ * is not one. Read loosely, since the first two real ones (2026-10-13) went unread by stricter
+ * readers (0.25.0, 0.26.0), which wanted the code as `#<digits>` or after "confirmation code":
+ *
+ * - from Google, naming forwarding in its subject or body (or, in any language, a subject that
+ *   starts `(#<digits>)` as Gmail's has);
+ * - the code: that leading `(#<digits>)`, else any run of 6 to 12 digits in the subject, else one
+ *   within a few characters after "code" in the body (plain text, else the HTML's text);
+ * - the link: the first https address on Gmail's own hosts (`mail.google.com` and its subdomains,
+ *   `mail-settings.google.com`) in the body, the plain text's or the HTML's links.
+ *
+ * Anyone can forge a From line, but what is read only goes to the address's own owner, who asked
+ * Gmail for it.
  */
-export function forwardingCode(mail: MailMessage): string | null {
+export interface ForwardingConfirmation {
+  code: string | null;
+  link: string | null;
+}
+
+const GMAIL_LINK = /https:\/\/(?:[a-z0-9-]{1,63}\.){0,4}(?:mail|mail-settings)\.google\.com\/[^\s"'<>)\]]{1,1000}/i;
+
+function decodedHtmlLinks(html: string): string {
+  // `&amp;` in an href is `&` in the address.
+  return html.slice(0, MAX_HTML_CHARS).replace(/&amp;/gi, "&");
+}
+
+export function forwardingConfirmation(mail: MailMessage): ForwardingConfirmation | null {
   if (!fromGoogle(mail.from)) return null;
-  const leading = /^\(#(\d{6,12})\)/.exec(mail.subject)?.[1];
-  if (leading) return leading;
+  const leading = /^\(#(\d{6,12})\)/.exec(mail.subject)?.[1] ?? null;
   const body = mail.text || (mail.html !== null ? htmlText(mail.html.slice(0, MAX_HTML_CHARS)) : "");
-  if (!/forwarding/i.test(mail.subject) && !/forward/i.test(body)) return null;
-  const inSubject = /#\s?(\d{6,12})\b/.exec(mail.subject)?.[1];
-  if (inSubject) return inSubject;
-  return /confirmation code\W{0,20}(\d{6,12})\b/i.exec(body)?.[1] ?? null;
+  if (!leading && !/forwarding/i.test(mail.subject) && !/forward/i.test(body)) return null;
+  const code =
+    leading ??
+    /(?:^|\D)(\d{6,12})(?!\d)/.exec(mail.subject)?.[1] ??
+    /code\D{0,40}?(\d{6,12})(?!\d)/i.exec(body)?.[1] ??
+    null;
+  const link = GMAIL_LINK.exec(mail.text ?? "")?.[0] ?? (mail.html !== null ? GMAIL_LINK.exec(decodedHtmlLinks(mail.html))?.[0] : undefined) ?? null;
+  return code || link ? { code, link } : null;
+}
+
+/** The code alone, as 0.25.0 and 0.26.0 read it (kept for its callers and tests). */
+export function forwardingCode(mail: MailMessage): string | null {
+  return forwardingConfirmation(mail)?.code ?? null;
+}
+
+/** A string's shape for the log: letters `a`, digits `9`, everything else kept, capped. */
+function shape(s: string): string {
+  return s.replace(/\p{L}/gu, "a").replace(/\p{N}/gu, "9").replace(/[^\x20-\x7e]/g, "?").slice(0, 160);
 }
 
 /** What a message that did nothing was, for the log: never its words or its sender's name. */
@@ -121,7 +154,14 @@ export function ignoredWhy(mail: MailMessage): string {
   const system = mail.from !== null && fromGoogle(mail.from) && /^[a-z-]*no-?reply$/.test(mail.from.slice(0, mail.from.lastIndexOf("@")));
   const domain = mail.from ? (system ? mail.from : mail.from.slice(mail.from.lastIndexOf("@") + 1)) : "none";
   const parts = [mail.html !== null ? "html" : "", mail.text !== null ? "text" : ""].filter(Boolean).join("+") || "no body";
-  return `from ${domain.replace(/[^a-z0-9.@-]/g, "?").slice(0, 100)}, ${parts}, subject ${/forwarding/i.test(mail.subject) ? "names" : "does not name"} forwarding`;
+  const base = `from ${domain.replace(/[^a-z0-9.@-]/g, "?").slice(0, 100)}, ${parts}, subject ${/forwarding/i.test(mail.subject) ? "names" : "does not name"} forwarding`;
+  if (!system) return base;
+  // From Google's own system senders only: the subject's shape (no letters or digits survive) and
+  // counts from the body, so the next unread confirmation says what it looked like.
+  const body = mail.text ?? "";
+  const runs = (body.match(/\d{6,12}/g) ?? []).length;
+  const links = (body.match(/https:\/\/[a-z0-9.-]{1,253}/gi) ?? []).length;
+  return `${base}, subject shape "${shape(mail.subject)}", text ${body.length} chars, ${runs} digit run(s), ${links} https link(s), says code: ${/code/i.test(body) ? "yes" : "no"}`;
 }
 
 /**
@@ -170,9 +210,13 @@ async function tell(d: TrackerDeps, userId: string, text: string): Promise<void>
 export async function deliverMail(d: TrackerDeps, userId: string, mail: MailMessage): Promise<MailOutcome> {
   const user = await d.store.getUser(userId);
   if (!user || !d.admissions.isRegistered(user.id) || !d.inbox) return { kind: "ignored", why: "the owner is not registered" };
-  const code = forwardingCode(mail);
-  if (code) {
-    await tell(d, user.id, `Gmail asks to confirm forwarding to your alert address. The confirmation code is ${code}: enter it in Gmail's Settings, under Forwarding and POP/IMAP. If you did not ask for this, ignore it.`);
+  const confirm = forwardingConfirmation(mail);
+  if (confirm) {
+    const how = [
+      confirm.code ? `The confirmation code is ${confirm.code}: enter it in Gmail's Settings, under Forwarding and POP/IMAP.` : "",
+      confirm.link ? `${confirm.code ? "Or open" : "Open"} Gmail's confirmation link: <${confirm.link}>` : "",
+    ].filter(Boolean).join(" ");
+    await tell(d, user.id, `Gmail asks to confirm forwarding to your alert address. ${how} If you did not ask for this, ignore it.`);
     return { kind: "confirmation" };
   }
   const alert = readEbayAlert(mail);

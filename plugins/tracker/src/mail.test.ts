@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import type { Plugin } from "../../../packages/api/contract.js";
 import worker from "../mail-worker/worker.js";
 import { readEbayAlert, sameSearch } from "./ebay-alert.js";
-import { forwardingCode, ignoredWhy, MailAddresses, parseMailConfig } from "./mail.js";
+import { forwardingCode, forwardingConfirmation, ignoredWhy, MailAddresses, parseMailConfig } from "./mail.js";
 import { decodeWords, parseMail } from "./mime.js";
 import { MIGRATIONS, migrate } from "./schema.js";
 import { query } from "./web/execute-harness.js";
@@ -217,9 +217,24 @@ describe("Gmail's forwarding confirmation", () => {
     expect(forwardingCode(parseMail(enc(qp)))).toBe("123456789");
   });
 
+  it("takes the code from any digit run in the subject, and Gmail's confirmation link from the body", () => {
+    const from = "forwarding-noreply@google.com";
+    expect(forwardingCode({ from, subject: "Gmail Forwarding Confirmation 123456789", html: null, text: "x" })).toBe("123456789");
+    expect(forwardingCode({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "Your code is\n\n  123456789\n" })).toBe("123456789");
+    const link = "https://mail-settings.google.com/mail/vf-%5BANGjdJ_x%5D-abc";
+    expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation - Receive Mail from a@b.c", html: null, text: `please click the link below to confirm the request:\n\n${link}\n\nIf you click the link and it appears to be broken, see https://support.google.com/mail` })).toEqual({ code: null, link });
+    expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: '<a href="https://mail.google.com/mail/vf?a=1&amp;b=2">confirm</a>', text: null })).toEqual({ code: null, link: "https://mail.google.com/mail/vf?a=1&b=2" });
+    // A link anywhere else is never taken, from anyone.
+    expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "https://mail.google.com.evil.example/x https://evil.example/mail.google.com/x" })).toBeNull();
+    expect(forwardingConfirmation({ from: "someone@example.com", subject: "Gmail Forwarding Confirmation", html: null, text: `https://mail.google.com/mail/vf-x` })).toBeNull();
+  });
+
   it("says why a message did nothing, without its words or a stranger's name", () => {
+    expect(ignoredWhy({ from: "forwarding-noreply@google.com", subject: "Gmail Forwarding Confirmation - Receive Mail from roshne@gmail.com", html: null, text: "no code here" })).toBe(
+      'from forwarding-noreply@google.com, text, subject names forwarding, subject shape "aaaaa aaaaaaaaaa aaaaaaaaaaaa - aaaaaaa aaaa aaaa aaaaaa@aaaaa.aaa", text 12 chars, 0 digit run(s), 0 https link(s), says code: yes',
+    );
     expect(ignoredWhy({ from: "someone@example.com", subject: "Gmail forwarding? hello", html: null, text: "hi" })).toBe("from example.com, text, subject names forwarding");
-    expect(ignoredWhy({ from: "forwarding-noreply@google.com", subject: "x", html: "<p>x</p>", text: null })).toBe("from forwarding-noreply@google.com, html, subject does not name forwarding");
+    expect(ignoredWhy({ from: "forwarding-noreply@google.com", subject: "x", html: "<p>x</p>", text: null })).toBe('from forwarding-noreply@google.com, html, subject does not name forwarding, subject shape "a", text 0 chars, 0 digit run(s), 0 https link(s), says code: no');
     expect(ignoredWhy({ from: null, subject: "", html: null, text: null })).toBe("from none, no body, subject does not name forwarding");
     expect(ignoredWhy({ from: "jane.doe@google.com", subject: "x", html: null, text: "x" })).toBe("from google.com, text, subject does not name forwarding");
     expect(ignoredWhy({ from: "a@john_smith+secret", subject: "x", html: null, text: "x" })).toBe("from john?smith?secret, text, subject does not name forwarding");
