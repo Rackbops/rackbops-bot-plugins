@@ -291,6 +291,57 @@ describe("runDigests (plan 5.5)", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("a digest to a closed DM counts toward the person's pause (#212)", async () => {
+    const db = openDatabase(":memory:");
+    const store = new SqliteStore(db);
+    const clock = fakeClock("2026-10-05T10:00:00.000Z");
+    const owner = await admit(store, OWNER, clock.now());
+    const task = await store.createTask({
+      ownerId: owner.id,
+      type: "reminder",
+      title: "call mom",
+      config: { text: "call mom" },
+      schedule: { kind: "once", at: "2026-10-05T22:00:00.000Z" },
+      lane: "notify",
+      capabilities: ["notify"],
+      at: clock.now().toISOString(),
+    });
+    await materialize(store, task, owner, clock.now());
+    const { dm } = fakeDm(() => new Error(HOST_CANNOT_MESSAGE));
+    const { log } = quietLog();
+    const health = new DeliveryHealth(db, store);
+    const notifier = createDmNotifier({ store, dm, clock, log, health });
+    clock.set(AT_HOUR);
+    expect(await runDigests({ store, notifier, log, health }, clock.now())).toEqual({ claimed: 1, sent: 0, failed: 1 });
+    expect(health.get(owner.id)?.failures).toBe(1);
+  });
+
+  it("a zone or hour changed after the day's digest went sends no second one that day (#212)", async () => {
+    const s = await setup();
+    await s.make("call mom", { kind: "once", at: "2026-10-05T22:00:00.000Z" });
+    s.clock.set(AT_HOUR);
+    expect((await s.digests()).sent).toBe(1);
+    // A later hour: the day is already claimed.
+    await setPreferences(s.store, s.owner.id, { preferredHour: 11 });
+    s.clock.set("2026-10-05T15:00:00.000Z");
+    expect(await s.digests()).toEqual({ claimed: 0, sent: 0, failed: 0 });
+    // A zone to the west, where it is still Mon Oct 5 and past the hour: the same day, still claimed.
+    await setPreferences(s.store, s.owner.id, { timeZone: "America/Los_Angeles", preferredHour: 7 });
+    expect(await s.digests()).toEqual({ claimed: 0, sent: 0, failed: 0 });
+    expect(s.calls).toHaveLength(1);
+  });
+
+  it("passes by a person whose stored zone the clock cannot read, logged, and goes on to the next (#212)", async () => {
+    const s = await setup();
+    const friend = await admit(s.store, FRIEND, s.clock.now());
+    await s.make("call mom", { kind: "once", at: "2026-10-05T22:00:00.000Z" }, friend);
+    s.db.query("UPDATE users SET time_zone = 'Not/AZone' WHERE discord_id = ?").run(OWNER);
+    s.clock.set(AT_HOUR);
+    expect(await s.digests()).toEqual({ claimed: 1, sent: 1, failed: 0 });
+    expect(s.calls.map((c) => c.userId)).toEqual([FRIEND]);
+    expect(s.warnings.some((w) => w.includes(`digest: ${s.owner.id} has a time zone the clock cannot read`))).toBe(true);
+  });
+
   it("stops between people once the tick is aborted", async () => {
     const s = await setup();
     await admit(s.store, FRIEND, s.clock.now());
