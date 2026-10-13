@@ -211,6 +211,8 @@ describe("POST /tasks/<id>/listings", () => {
     const mixedBody = await mixed.json();
     expect(mixedBody).toMatchObject({ accepted: 1, rejected: 2 });
     expect(mixedBody.message).toContain("2 were left out: each needs a title and an absolute http(s) address on eBay.");
+    // One left out is said in the singular (#230).
+    expect((await (await post("t1", [ASIA, "junk"])).json()).message).toContain("Took 1 listing from eBay for Wingspan Oceania. 1 was left out:");
     const none = await post("t1", [EVIL, BGG]);
     expect(none.status).toBe(400);
     expect((await none.json()).error.message).toBe("None of those listings could be used: each needs a `title` and an absolute http(s) `url` on eBay.");
@@ -221,6 +223,7 @@ describe("POST /tasks/<id>/listings", () => {
     const stored = query<{ task_id: string; listing: string }>(w.dbPath, "SELECT task_id, listing FROM want_inbox ORDER BY seq").map((r) => [r.task_id, JSON.parse(r.listing).url]);
     expect(stored).toEqual([
       ["t1", "https://www.ebay.com/itm/123456789"],
+      ["t1", "https://www.ebay.com/itm/223456789"],
       ["t2", "https://boardgamegeek.com/market/product/1234567"],
       ["t2", "https://www.boardgamegeek.com/market/product/7654321"],
     ]);
