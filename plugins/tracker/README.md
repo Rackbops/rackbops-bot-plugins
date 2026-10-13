@@ -107,10 +107,12 @@ done: one Job at a time across everyone (plan 5.3), on a tick of its own that ru
 background, so a slow city-hall never holds up a reminder. While that tick waits on city-hall it
 holds its tasks: the notify tick sends their DMs a minute later, and a command, button or web
 action on one of them answers "That task is with the model runner right now; try again in a
-minute." at once, so no one else's command waits behind it. city-hall unreachable or timed out
-(logged once an hour, naming only the error's kind, never its message), a 5xx, or a refused
-credential or edge redirect (logged once an hour as such, and the admins told once per Job) holds
-the run and asks again; a Job still not back after six hours is given up (docket's
+minute." at once, so no one else's command waits behind it. The one exception is a zone or hour
+change by the owner of a scout the tick holds: it waits for the tick, and so does every command,
+button and web write queued behind it (see **One task at a time** below). city-hall unreachable or
+timed out (logged once an hour, naming only the error's kind, never its message), a 5xx, or a
+refused credential or edge redirect (logged once an hour as such, and the admins told once per Job)
+holds the run and asks again; a Job still not back after six hours is given up (docket's
 `PENDING_LIMIT_MS`). A record in `executor_jobs` goes once its run is gone, or once it was
 submitted over 30 days ago and its run is no longer queued or running.
 
@@ -191,7 +193,12 @@ edits (the editor, pause, resume, delete, a zone or hour change) take that task'
 (`src/locks.ts`), so none of them overlap. The notify and poll ticks run one pass per task that has
 work; an answer that lands while its own task runs waits for that pass. The execute tick is the
 exception: it can wait on city-hall, so an answer or edit about a task it holds does not wait but
-answers "That task is with the model runner right now; try again in a minute."
+answers "That task is with the model runner right now; try again in a minute." A zone or hour
+change (`/register`, `/settings hour`, the web area's settings page) is the one edit that waits
+instead, since it re-times every recurring task that follows the zone or hour and may skip none.
+Of the tasks the execute tick holds, only a scout is one of those: a zone or hour change by its
+owner waits for the rest of that tick's pass, each city-hall call or page read in it bounded at 15
+seconds, and every command, button and web write queued behind it waits too.
 
 ## Web area
 
@@ -503,15 +510,17 @@ web editor (`409 busy`).
 its JSON type: text as a string, a whole number or a number as a JSON number. A field left out of a
 create gets the command's default; a field left out of an edit keeps what the task has, and an empty
 string does the same, except that an empty `note` clears a renewal's note and an empty `name` gives
-a price back the page's address -- exactly as the web editor's empty fields do. `null` is never a
-value: it is refused as the wrong JSON type (send `""` to clear a note).
+a price back the page's address -- exactly as the web editor's empty fields do. `null` is a value
+only for a want-list watch's `max` in a `PATCH`, where it clears the top price; anywhere else it is
+refused as the wrong JSON type (send `""` to clear a note).
 
 Which types: `GET /tasks`, `GET /tasks/<id>`, pause, resume and `DELETE` work on any task you own,
-whatever its type. `POST /tasks` takes the three editor types (reminder, renewal, price) and,
-while the model runner is set up on this bot, `research` (#82), by `/research`'s rules, and `scout`
-(#83), by `/scout new`'s; while it is not, a `research` or `scout` create answers `503 unavailable`.
-`PATCH` takes the editor types and `scout` (a scout made while the runner was set up stays
-editable): a research request cannot be edited, here or in Discord, and a `PATCH` of one answers
+whatever its type. `POST /tasks` takes the three editor types (reminder, renewal, price),
+`wantlist`, by `/want`'s rules, and, while the model runner is set up on this bot, `research`
+(#82), by `/research`'s rules, and `scout` (#83), by `/scout new`'s; while it is not, a `research`
+or `scout` create answers `503 unavailable`. `PATCH` takes the editor types, a want-list watch
+(`wantlist` or `wantjudge`) and `scout` (a scout made while the runner was set up stays editable):
+a research request cannot be edited, here or in Discord, and a `PATCH` of one answers
 `409 conflict`.
 
 | Method and path | What |
@@ -519,7 +528,7 @@ editable): a research request cannot be edited, here or in Discord, and a `PATCH
 | `GET /api/v1/me` | The token's owner (id, name, zone, preferred hour) and the token (id, name, made, expires). |
 | `GET /api/v1/types` | Each type this bot makes now (research and scout only while the model runner is set up), whether a `PATCH` takes it (`editable`; false for research, whose `edit` is empty), and its create and edit fields: name, JSON type, required (never, for an edit), description, and limits (`maxLength`, `minimum`, `maximum`, `enum`). This describes the tracker's own editor fields -- what these endpoints take -- and is **not** docket-core's `TaskType.intake` (`IntakeSpec`), which describes a type's config. |
 | `GET /api/v1/tasks` | Your tasks that are not deleted -- active, paused and done -- oldest first. Not the ones shared with you. |
-| `POST /api/v1/tasks` | Makes one: `type` is `reminder`, `renewal`, `price`, `research` or `scout`, and the rest are that type's create fields. `201`, with `Location`. A price's page is read first, and nothing is made unless a price is found in it. A research request's fields are `question` (required), `context`, `deadline` and `at`, all text. A scout's are `interests` (required, text, separated by commas or new lines), `lens`, `for` and `notes` (text) and `every` (a whole number of days). A want-list watch's (`wantlist`) are `name` (required), `target` (required but for an inbox watch), `source` (`page`, `bgg` or `ebay`), `max` (a number), `currency` (text), `hours` (a whole number) and `judge` (`"yes"` or `"no"`; `"yes"` without the model runner is a `503`); a judged one comes back as `type: "wantjudge"`, edited by the same fields but `judge`; a task's JSON shows its `source` and `target`, which no edit changes -- an inbox watch's `source` reads back as `inbox` and its `target` is its inbox key -- and for an inbox watch its `site` (`ebay` or `bgg`), its words to `search` for and a BGG `game` when one was named. |
+| `POST /api/v1/tasks` | Makes one: `type` is `reminder`, `renewal`, `price`, `research`, `scout` or `wantlist`, and the rest are that type's create fields. `201`, with `Location`. A price's page is read first, and nothing is made unless a price is found in it. A research request's fields are `question` (required), `context`, `deadline` and `at`, all text. A scout's are `interests` (required, text, separated by commas or new lines), `lens`, `for` and `notes` (text) and `every` (a whole number of days). A want-list watch's (`wantlist`) are `name` (required), `target` (required but for an inbox watch), `source` (`page`, `bgg` or `ebay`), `max` (a number), `currency` (text), `hours` (a whole number) and `judge` (`"yes"` or `"no"`; `"yes"` without the model runner is a `503`); a judged one comes back as `type: "wantjudge"`, edited by the same fields but `judge`; a task's JSON shows its `source` and `target`, which no edit changes -- an inbox watch's `source` reads back as `inbox` and its `target` is its inbox key -- and for an inbox watch its `site` (`ebay` or `bgg`), its words to `search` for and a BGG `game` when one was named. |
 | `GET /api/v1/tasks/<id>` | One of your tasks (a deleted one too), with its history: the newest runs and changes, as `/task history` shows them. |
 | `PATCH /api/v1/tasks/<id>` | Edits it: the fields to change. A price's page is not editable. |
 | `POST /api/v1/tasks/<id>/pause`, `/resume` | Body `{}`. As the web's Pause and Resume, and `/task resume`. |
@@ -657,8 +666,8 @@ From then on they `/allow` everyone else. (usr's own "Setup" step 3, in `docs/di
 ## Not yet
 
 - The rest of the web area (E5): sharing a task from the web, and the admin view's grants and
-  retry. The task API makes reminders, renewals, prices and
-  research requests -- not `/task done`, `snooze`, `decide`, `share` or the settings -- and no intake agent uses it yet
+  retry. The task API makes reminders, renewals, prices, research requests, scouts and
+  want-list watches -- not `/task done`, `snooze`, `decide`, `share` or the settings -- and no intake agent uses it yet
   (E10, deferred). Discord OAuth2 as a second sign-in
   method, if chosen (plan item 41).
 - For the want-list watcher (#83): a captured BGG response to replace the hand-written fixture once
@@ -671,7 +680,7 @@ From then on they `/allow` everyone else. (usr's own "Setup" step 3, in `docs/di
   [Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17); the research lane
   still needs a deployed city-hall with a runner).
 - Editing in Discord (the editor is on the web only; `/scout edit` is the one exception), and changing a price tracker's page or `near` after it is made (make a new one); a free-form pattern for `price` (`near` is the safe subset: a user's regular expression run on a large page could hang the bot).
-- An optional Discord-role gate (plan 5.5), and showing unconfirmed deliveries to admins anywhere but the log, or a run's deliveries in its history.
+- Showing unconfirmed deliveries to admins anywhere but the log, or a run's deliveries in its history.
 
 docket-core, docket-types and `@rackbops/styles` are `devDependencies`: `bun build` bundles them
 into `dist/plugin.js` (the theme's CSS as text), and the bot loads that file without installing

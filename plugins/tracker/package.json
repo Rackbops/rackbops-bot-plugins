@@ -35,7 +35,7 @@
         "format": "^ *[0-9]{17,20}( *, *[0-9]{17,20})* *$",
         "required": false,
         "secret": false,
-        "description": "The Discord server id whose members may use the tracker (the membership gate), or a comma-separated list of server ids (spaces around commas allowed): a member of any listed server passes. Checked on every command and button, in DMs too. Unset = no membership gate: only the admission list (/allow) applies."
+        "description": "The Discord server id whose members may use the tracker (the membership gate), or a comma-separated list of server ids (spaces around commas allowed): a member of any listed server passes. Checked on every command and button, in DMs too, except declining an invitation and opting out, so anyone can always stop the messages. Unset = no membership gate: only the admission list (/allow) applies."
       },
       {
         "key": "TRACKER_GUILD_ROLES",
