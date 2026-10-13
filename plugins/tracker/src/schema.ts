@@ -7,11 +7,13 @@ import { Database } from "bun:sqlite";
  * migration is never edited, only followed by a new one -- so migration 1 still creates the
  * `usr_subject` column and the `delivery_claims` table that migration 5 takes away.
  *
- * Every table has an `seq INTEGER PRIMARY KEY AUTOINCREMENT`: the public id is a one-letter prefix
- * plus that number (`u1`, `t12`, the same shape as docket's MemoryStore), which carries no dot, so
- * it fits a reply reference, and AUTOINCREMENT never reuses a number after a delete. Instants are
- * ISO-8601 UTC strings, compared as text, exactly as MemoryStore compares them. JSON columns hold
- * `JSON.stringify` output.
+ * Every table whose rows have a public id has an `seq INTEGER PRIMARY KEY AUTOINCREMENT`: the public
+ * id is a one-letter prefix plus that number (`u1`, `t12`, the same shape as docket's MemoryStore),
+ * which carries no dot, so it fits a reply reference, and AUTOINCREMENT never reuses a number after
+ * a delete. `task_recipients`, `deliveries` and `want_inbox` have a `seq` too, for order only; the
+ * rest are keyed by what they describe (a person, a task and person, a token's hash, a Job, notice
+ * or `tracker_meta` key). Instants are ISO-8601 UTC strings, compared as text, exactly as
+ * MemoryStore compares them. JSON columns hold `JSON.stringify` output.
  */
 export const MIGRATIONS: readonly string[] = [
   `
@@ -227,9 +229,11 @@ export const MIGRATIONS: readonly string[] = [
   //   `activate` logs it once -- the report 0.8.0 owed. None of them is owed (`retry_at` null), so
   //   none is ever resent. `seq` keeps insertion order for rows planned at one instant.
   // - `usage` and `notices`: docket's model-run charges and its once-only notice keys (budget.ts),
-  //   which the execute lane writes; the tracker runs no execute lane yet, so both stay empty.
-  // - `users.usr_subject` goes (people are not usr accounts, plan item 40): its index first, as
-  //   SQLite drops no indexed column. Never written by any release, so nothing is lost.
+  //   which the execute lane writes. At 0.9.0 the tracker ran no execute lane, so both stayed empty
+  //   until 0.11.0; since 0.18.0 the daily digest claims its day in `notices` too (digest.ts).
+  // - `users.usr_subject` goes (people are not usr accounts, plan item 40; schema 9 adds it back,
+  //   0.20.0): its index first, as SQLite drops no indexed column. Never written by any release
+  //   before it, so nothing is lost.
   // A database at 5 is refused by 0.8.0 and older (their `migrate` throws on a newer schema).
   `
   ALTER TABLE occurrences ADD COLUMN record TEXT;

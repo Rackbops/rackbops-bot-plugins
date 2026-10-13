@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Fetch } from "@rackbops/docket-core";
@@ -9,6 +9,7 @@ import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import type { Membership } from "../access.js";
 import { createPlugin } from "../index.js";
 import { HOST_CANNOT_MESSAGE } from "../notifier.js";
+import { removeDir } from "../test-dirs.js";
 import type { Source } from "@rackbops/docket-types";
 
 /**
@@ -24,10 +25,22 @@ export const STRANGER = "444444444444444444";
 export const ORIGIN = "https://clerk.example.com";
 export const START = "2026-10-01T12:00:00.000Z";
 export const dirs: string[] = [];
+/** Every plugin `world()` made, disposed by `cleanup()`. */
+const plugins: Plugin[] = [];
 
-/** Each test file's `afterEach`: removes the databases its tests made. */
-export function cleanup(): void {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+/**
+ * Each test file's `afterEach`: disposes every plugin `world()` made, closing its database, and
+ * only then removes the directories its tests made. Windows refuses to delete a file still open
+ * (#232), where Linux does not care, so it is this order that keeps the suite green on Windows. A
+ * plugin its test already disposed is disposed again, which does nothing (index.ts nulls its handle
+ * on the first). It takes only what was made before the call: a world made while it awaits is left
+ * for the next one. `remove` is for the harness's own test (web.test.ts), to see the order.
+ */
+export async function cleanup(remove: (dir: string) => void = removeDir): Promise<void> {
+  const disposing = plugins.splice(0);
+  const removing = dirs.splice(0);
+  for (const p of disposing) await p.dispose?.();
+  for (const d of removing) remove(d);
 }
 
 export function clockAt(iso: string) {
@@ -111,6 +124,7 @@ export async function world(
       ...(opts.usrFetch ? { usrFetch: opts.usrFetch } : {}),
     },
   );
+  plugins.push(plugin);
   await plugin.activate!();
   return { plugin, clock, dbPath, sent, delivery };
 }
