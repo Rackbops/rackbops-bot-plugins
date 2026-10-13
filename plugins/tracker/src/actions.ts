@@ -42,7 +42,8 @@ import type { LoginLinks } from "./web/signin-link.js";
 /**
  * What each slash command does (plan 5.5, 5.8, E2), with no discord.js in sight: discord.ts reads
  * the options, looks up membership, and renders the `content` these return, always ephemerally.
- * Everything touches the world only through the injected Store, clock and host `dm`.
+ * Everything touches the world only through the injected Store, clock, host `dm` and, for `/allow`
+ * and `/register`, the usr HTTP client (`TrackerDeps.usr`, usr.ts).
  */
 
 export interface TrackerDeps {
@@ -100,6 +101,9 @@ export interface UsrLink {
 /** A command's answer that first calls out (usr, a DM) outside the queue, then finishes in it (discord.ts's `Step`). */
 export type OutsideStep = { outside: () => Promise<unknown>; finish: (result: unknown) => Promise<string> };
 
+/** A command's answer in more than one message (#166): `content` is the answer, and each of `more` an ephemeral follow-up after it, in order (discord.ts's `run`). */
+export type Parts = { content: string; more: string[] };
+
 /** The ticks as forget-me sees them: whether one runs now, and a wait of at most `ms` for none to (false when it timed out). */
 export interface TickGate {
   busy(): boolean;
@@ -118,7 +122,30 @@ export const NO_LONGER_LISTED = "You are no longer on this tracker's list.";
 export const NO_SUCH_TASK = "You have no task with that id. `/tasks` lists yours.";
 
 export function clip(text: string, max = MAX_ANSWER): string {
-  return text.length <= max ? text : `${text.slice(0, max - 3)}...`;
+  if (text.length <= max) return text;
+  let end = max - 3;
+  // Never splits a surrogate pair: a cut just after a high surrogate would leave it alone, so cut
+  // before it. (A sequence of several code points, a flag or a ZWJ emoji, can still be cut between them.)
+  const last = text.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end--;
+  return `${text.slice(0, end)}...`;
+}
+
+/**
+ * Text on one line: each run of whitespace (line and paragraph separators too), control characters,
+ * format characters and the unassigned code points Unicode keeps invisible (U+2065, U+FFF0-U+FFF8,
+ * and those of U+E0000-U+E0FFF) becomes one space; trimmed. It keeps a few format characters real
+ * text needs: the joiners (U+200D holds an emoji together, U+200C a Persian or Indic word), the soft
+ * hyphen, and the visible number and end-of-verse signs (Arabic U+0600-U+0605, U+06DD, U+0890,
+ * U+0891, U+08E2; Syriac U+070F; Kaithi U+110BD, U+110CD). Any other, tags and new ones included, goes.
+ */
+export function oneLine(text: string): string {
+  return text
+    .replace(
+      /(?:(?!\u200d|[\u00ad\u0600-\u0605\u06dd\u070f\u0890\u0891\u08e2\u200c\u{110bd}\u{110cd}])[\s\p{Cc}\p{Cf}\u2065\ufff0-\ufff8\u{e0000}\u{e0002}-\u{e001f}\u{e0080}-\u{e00ff}\u{e01f0}-\u{e0fff}])+/gu,
+      " ",
+    )
+    .trim();
 }
 
 export type Entry = { ok: true; user: User; notice: string | null } | { ok: false; content: string };
@@ -134,6 +161,16 @@ export async function enter(d: TrackerDeps, discordId: string, membership: Membe
   if (refusal !== null || !person) return { ok: false, content: refusal ?? "" };
   const resumed = await d.health.resume(person.id, d.clock.now());
   return { ok: true, user: person, notice: resumed ? resumedNotice(resumed) : null };
+}
+
+/**
+ * A command's answer with `enter`'s notice: above the answer, unless the two would pass one message;
+ * then the answer alone and the notice as a second message, so the notice never cuts the answer
+ * short (a full `/tasks`, rackbops-bot-plugins#161).
+ */
+export function withNotice(notice: string | null, body: string): { content: string; followUp: string | null } {
+  const together = notice ? `${notice}\n\n${body}` : body;
+  return together.length <= MAX_ANSWER ? { content: together, followUp: null } : { content: clip(body), followUp: notice };
 }
 
 /**
@@ -213,6 +250,10 @@ function usrAllowed(d: TrackerDeps, usr: UsrLink, userId: string, result: unknow
   if (outcome === "gone") return "Not linked to usr: they left the tracker while usr was being asked.";
   if (outcome === "taken") return "Not linked to usr: usr's account for them is already linked to someone else here.";
   if (outcome === "unchanged") return "Linked to usr.";
+  // usr made a new account only for someone it had never seen. An existing one may still be an
+  // unfinished sign-up (usr does not say which), so the /register pointer stays, conditionally.
+  if (!answer.created)
+    return "Linked to usr, to the usr account it already had for them; if they have not signed up there yet, they can with `/register`.";
   return "Linked to usr: they can finish their usr sign-up with `/register`.";
 }
 
@@ -432,15 +473,76 @@ export async function loadTaskList(d: Pick<TrackerDeps, "store" | "health">, use
   return { entries, paused };
 }
 
-/** `/tasks`: the person's own active tasks and the ones they receive, plus their paused ones. */
+/** `/tasks`: the person's own active tasks and the ones they receive, plus their paused ones, in one message. */
 export async function listTasks(d: TrackerDeps, user: User): Promise<string> {
   const { entries, paused } = await loadTaskList(d, user);
-  const lines = [formatTaskList(entries, user, d.clock.now())];
-  for (const { task, held } of paused) {
-    if (held.length === 0) lines.push(`Paused: \`${task.id}\` ${task.title}`);
-    else lines.push(`Paused: \`${task.id}\` ${task.title} -- I could not DM ${held.join(", ")}; \`/task resume ${task.id}\` goes on without them.`);
-  }
-  return clip(lines.join("\n"));
+  const now = d.clock.now();
+  // One entry at a time, not docket's whole list split on "\n": a title may hold a newline (a web form's).
+  const active = entries.map((entry) => formatTaskList([entry], user, now));
+  const pausedLines = paused.map(({ task, held }) =>
+    held.length === 0
+      ? `Paused: \`${task.id}\` ${task.title}`
+      : `Paused: \`${task.id}\` ${task.title} -- I could not DM ${heldNames(held)}; \`/task resume ${task.id}\` goes on without them.`,
+  );
+  return fitTaskList(active, pausedLines, d.webEditor);
+}
+
+/** The most people one paused line of `/tasks` names: a task's recipients are not capped, and each name is up to 100 characters. */
+const MAX_HELD_NAMES = 3;
+
+/** Who a paused task could not DM, for `/tasks`: the first few by name, then how many more. */
+function heldNames(held: readonly string[]): string {
+  if (held.length <= MAX_HELD_NAMES) return held.join(", ");
+  return `${held.slice(0, MAX_HELD_NAMES).join(", ")} and ${held.length - MAX_HELD_NAMES} more`;
+}
+
+/** docket's `formatTaskList` for an empty list: `/tasks` with no active task says so, whatever is paused. */
+const NO_ACTIVE_TASKS = "You have no active tasks.";
+
+/**
+ * `/tasks`' answer in one message of at most `max` characters (rackbops-bot-plugins#161), cut only
+ * between whole lines. `active` holds one line per active task (a line may hold a newline: a title
+ * can), none meaning {@link NO_ACTIVE_TASKS}; `paused` one per paused task. Always shown in the
+ * documented order, the active lines and then the paused ones; when that is too long, the room goes
+ * in this order of preference:
+ *
+ * 1. The paused lines, in preference to the active ones that do not fit: a paused task sends nothing
+ *    until it is resumed, and the id this list shows is what `/task resume` needs. As many as fit,
+ *    then `...and N more paused.`
+ * 2. The active lines in the room left, then `...and N more active.`
+ * 3. With the web area set up, when anything was left out, one closing line pointing to `/web`, which
+ *    lists them all. Without it there is none: nothing else lists them, and the counts say what is missing.
+ *
+ * Every note's own length is counted. `max` must leave room for the three notes (under 100
+ * characters); `MAX_ANSWER` does.
+ */
+export function fitTaskList(active: readonly string[], paused: readonly string[], webEditor: boolean, max = MAX_ANSWER): string {
+  const render = (a: number, p: number): string => {
+    const lines = active.length === 0 ? [NO_ACTIVE_TASKS] : active.slice(0, a);
+    if (a < active.length) lines.push(`...and ${active.length - a} more active.`);
+    lines.push(...paused.slice(0, p));
+    if (p < paused.length) lines.push(`...and ${paused.length - p} more paused.`);
+    if (webEditor && (a < active.length || p < paused.length)) lines.push("The web area lists them all: `/web`.");
+    return lines.join("\n");
+  };
+  const fits = (a: number, p: number) => render(a, p).length <= max;
+  // The paused lines that fit beside the fewest active characters: none of the active lines (their
+  // note instead), or all of them (no note), whichever is shorter. A whole list that fits is kept whole.
+  const p = mostThatFit(paused.length, (k) => fits(0, k) || fits(active.length, k));
+  const a = mostThatFit(active.length, (k) => fits(k, p));
+  return render(a, p);
+}
+
+/**
+ * The most of `n` lines that fit: all of them, or else the most before the first that does not.
+ * Below `n` each line kept adds at least its newline while its note can shrink by only a digit, so
+ * the length never shrinks there; at `n` the note goes, so all `n` can fit when `n - 1` do not.
+ */
+function mostThatFit(n: number, fits: (k: number) => boolean): number {
+  if (fits(n)) return n;
+  let k = 0;
+  while (k + 1 < n && fits(k + 1)) k++;
+  return k;
 }
 
 /**

@@ -194,7 +194,7 @@ describe("/scout through city-hall", () => {
     const on = await setup();
     const larry = await signIn(on.plugin, LARRY);
     expect(await (await call(on.plugin, "GET", "/", { jar: larry })).text()).toContain('href="/tracker/new/scout"');
-    cleanup();
+    await cleanup();
     const off = await setup({});
     const jar = await signIn(off.plugin, LARRY);
     expect(await (await call(off.plugin, "GET", "/", { jar })).text()).not.toContain("/new/scout");
