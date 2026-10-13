@@ -48,7 +48,8 @@ import { META_TABLE } from "./schema.js";
  *   submit (a key city-hall knew) must hold this Job's prompt, or it is refused with a plain Error;
  * - city-hall unreachable, a timeout, a 5xx, a 429, or an answer that is not city-hall's (a
  *   redirect or page from the edge): `ExecutorUnavailableError`, so the run is asked again and never
- *   given up while city-hall is away. A 401 or 403 is the same, logged as a credential problem: it
+ *   given up while city-hall is away; unreachable or timed out is logged once an hour, by the
+ *   error's name only. A 401 or 403 is the same, logged as a credential problem: it
  *   is not the Job's fault, and the admins are told once per Job. Any other 4xx is a plain Error (a refused submit is an uncharged
  *   `error` result for the type; on a Job already out docket treats it like pending).
  *
@@ -59,7 +60,7 @@ import { META_TABLE } from "./schema.js";
 /** Each request to city-hall gives up after this; a timeout is "unavailable", never the Job's failure. */
 export const CITY_HALL_TIMEOUT_MS = 15_000;
 
-/** A credential or edge problem is logged at most this often, not on every tick. */
+/** A credential, edge or network problem is logged at most this often, not on every tick. */
 export const CREDENTIAL_LOG_EVERY_MS = 60 * 60 * 1000;
 
 /** city-hall's capability tag (city-hall#18 `isTag`): lowercase words joined by `:` or `-`. */
@@ -112,6 +113,17 @@ export const PAUSED_LOG_EVERY_MS = 60 * 60 * 1000;
  * docket's six-hour give-up applies: 48 hours from that first sight. A judgement, not a measured
  * figure: long enough for a five-hour usage window or a weekend's dead credential, short enough
  * that a runner gone for good does not hold the execute lane for ever.
+ *
+ * It also covers city-hall's requeue cap at docket-runner's real pace (#287). After a
+ * `usage_limit` the runner waits for the reset only when the CLI names one `Date.parse` reads;
+ * otherwise (inferred from the runner's tests: the CLI writes times like "3pm") it claims again
+ * after an hour (docket-runner `loop.ts`, `LIMIT_PAUSE_MS`). City-hall fails the Job when the
+ * 11th `usage_limit` outcome is posted (`CITY_HALL_MAX_REQUEUES`, default 10 requeues), about ten
+ * hours in, and a failed Job is answered before this hold is checked, so its `usage_limit` result
+ * reaches docket and docket's own pause applies. Parseable resets that add up to more than 48 h,
+ * a runner that stops claiming (down, or paused on a dead credential), or the rollback queue
+ * Rackbops/job-queue (`JOB_QUEUE_MAX_REQUEUES`, default 50) let the hold end first: the run is then
+ * given up and the Job, if it later runs, is collected by no one: the gap #287 records.
  */
 export const PAUSED_CAP_MS = 48 * 60 * 60 * 1000;
 
@@ -218,10 +230,13 @@ export class JobRecords {
    */
   prune(now: Date): number {
     const before = new Date(now.getTime() - EXECUTOR_JOBS_KEPT_MS).toISOString();
+    // Each record's run is looked up by its key: the number after the `o` (schema.ts), then the
+    // whole id compared, so an id that is not `o` + that number finds no run, as it never did.
     return this.db
       .query(
         `DELETE FROM executor_jobs WHERE job_key IN (
-           SELECT j.job_key FROM executor_jobs j LEFT JOIN occurrences o ON 'o' || o.seq = j.occurrence_id
+           SELECT j.job_key FROM executor_jobs j
+             LEFT JOIN occurrences o ON o.seq = CAST(substr(j.occurrence_id, 2) AS INTEGER) AND j.occurrence_id = 'o' || o.seq
            WHERE o.seq IS NULL OR (o.status NOT IN ('queued', 'running') AND j.created_at < ?))`,
       )
       .run(before).changes;
@@ -394,7 +409,7 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
   const timeoutMs = o.timeoutMs ?? CITY_HALL_TIMEOUT_MS;
   const lastLogged = new Map<string, number>();
 
-  /** A credential or edge problem, logged once an hour per reason. */
+  /** A credential, edge or network problem, logged once an hour per reason. */
   function warnOnce(reason: string, text: string) {
     const at = o.now().getTime();
     const last = lastLogged.get(reason);
@@ -412,8 +427,12 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
     };
   }
 
-  /** One call; the job it answers and the HTTP status, or the right docket error. Never logs a body, a prompt or the source key. */
-  async function call(method: "GET" | "POST", path: string, jobKey: string, body?: unknown): Promise<{ job: RemoteJob; status: number }> {
+  /**
+   * One call; the job it answers and the HTTP status, or the right docket error. `route` names the
+   * call in a refusal's text (`POST /api/execute/jobs`, `GET /api/execute/jobs/:id`). Never logs a
+   * body, a prompt or the source key.
+   */
+  async function call(method: "GET" | "POST", path: string, route: string, jobKey: string, body?: unknown): Promise<{ job: RemoteJob; status: number }> {
     let res: Response;
     try {
       res = await fetchImpl(`${o.config.url}${path}`, {
@@ -425,6 +444,9 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
       });
     } catch (err) {
       const why = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError") ? "timed out" : "could not be reached";
+      // The error's name only, never its message: a header value fetch refused can be echoed in
+      // the message, and that value is the key.
+      warnOnce("unreachable", `city-hall ${why} (${err instanceof Error ? err.name : typeof err}); research runs wait until it answers`);
       throw new ExecutorUnavailableError(`city-hall ${why}`);
     }
     const status = res.status;
@@ -441,7 +463,7 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
       throw new ExecutorUnavailableError(`city-hall answered with a redirect (HTTP ${status})`);
     }
     if (status >= 500 || status === 429 || status === 408) throw new ExecutorUnavailableError(`city-hall answered HTTP ${status}`);
-    if (status < 200 || status >= 300) throw new Error(`city-hall answered HTTP ${status} to ${method} ${path.replace(/\/[^/]+$/, "/:id")}`);
+    if (status < 200 || status >= 300) throw new Error(`city-hall answered HTTP ${status} to ${route}`);
     let parsed: unknown;
     try {
       parsed = await res.json();
@@ -518,7 +540,7 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
   return {
     async run(spec: JobSpec | null, occurrenceId: string, jobKey: string): Promise<JobResult> {
       if (spec !== null) {
-        const { job, status } = await call("POST", "/api/execute/jobs", jobKey, {
+        const { job, status } = await call("POST", "/api/execute/jobs", "POST /api/execute/jobs", jobKey, {
           key: jobKeyFor(o.databaseId, jobKey),
           capability: o.config.capability,
           spec,
@@ -542,7 +564,7 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
       }
       const id = o.records.get(jobKey);
       if (id === null) throw new Error(`no city-hall job is on record for ${jobKey}`);
-      const { job } = await call("GET", `/api/execute/jobs/${encodeURIComponent(id)}`, jobKey);
+      const { job } = await call("GET", `/api/execute/jobs/${encodeURIComponent(id)}`, "GET /api/execute/jobs/:id", jobKey);
       return pausedOrAnswer(job, jobKey);
     },
   };

@@ -5,13 +5,14 @@ import type { Membership, Need } from "./access.js";
 import {
   allowPerson,
   answerLatest,
-  clip,
   enter,
   listTasks,
   registerPerson,
+  type Parts,
   said,
   setHour,
   type TrackerDeps,
+  withNotice,
 } from "./actions.js";
 import { resumeTask } from "./manage.js";
 import { CURRENCY_LENGTH, DATE_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
@@ -81,8 +82,8 @@ export interface SurfaceWiring {
   queue?: Queue;
 }
 
-/** What an action answers: the text, or a DM to send outside the queue and a last step back in it. */
-export type Step = string | { outside: () => Promise<unknown>; finish: (result: unknown) => Promise<string> };
+/** What an action answers: the text, the text and more messages after it, or a DM to send outside the queue and a last step back in it. */
+export type Step = string | Parts | { outside: () => Promise<unknown>; finish: (result: unknown) => Promise<string> };
 
 function displayName(user: DiscordUser): string {
   return user.globalName ?? user.username;
@@ -102,7 +103,8 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
   /**
    * Gate, resume, act, answer: the one path every command takes. `pre` runs before the command's
    * turn in the queue (a Discord lookup); a Step's `outside` runs after it (a DM), and its `finish`
-   * takes one more turn. (Not `then`: an object with one would be awaited as a promise.)
+   * takes one more turn. (Not `then`: an object with one would be awaited as a promise.) A Step's
+   * `more` follow the answer, each an ephemeral message of its own, before any resume notice.
    */
   async function run<P>(
     interaction: ChatInputCommandInteraction,
@@ -112,6 +114,8 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
   ) {
     await interaction.deferReply(EPHEMERAL);
     let content: string;
+    let notice: string | null = null;
+    let more: string[] = [];
     try {
       const d = w.deps();
       if (!d) content = STARTING;
@@ -124,19 +128,33 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           return { notice: entry.notice, step: await act(d, entry.user, before) };
         });
         let body: string;
+        let after: string[] = [];
         if (typeof first.step === "string") body = first.step;
+        else if ("content" in first.step) ({ content: body, more: after } = first.step);
         else {
           const { outside, finish } = first.step;
           const result = await outside();
           body = await ctx.queue(() => finish(result));
         }
-        content = clip(first.notice ? `${first.notice}\n\n${body}` : body);
+        ({ content, followUp: notice } = withNotice(first.notice, body));
+        more = after;
       }
     } catch (err) {
       w.log.error(`/${interaction.commandName} failed`, err);
       content = FAILED;
     }
     await interaction.editReply({ content, ...NO_MENTIONS });
+    for (const [i, text] of more.entries()) await followUp(interaction, text, `answer's message ${i + 2}`);
+    if (notice) await followUp(interaction, notice, "resume notice");
+  }
+
+  /** One ephemeral message after the answer has landed, mentioning no one, as the answer; one that fails (an expired interaction) is logged, not thrown. */
+  async function followUp(interaction: ChatInputCommandInteraction, content: string, what: string) {
+    try {
+      await interaction.followUp({ content, ...EPHEMERAL, ...NO_MENTIONS });
+    } catch (err) {
+      w.log.warn(`could not send /${interaction.commandName}'s ${what} as a follow-up: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   const commands: PluginCommand[] = [
@@ -371,7 +389,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .addChoices(
                 { name: "a listing page you paste", value: "page" },
                 { name: "BoardGameGeek's marketplace", value: "bgg" },
-                { name: "eBay (from listings you send in; I never open eBay)", value: "ebay" },
+                { name: "eBay (from listings you send in; the watch never opens eBay)", value: "ebay" },
               ),
           )
           .addStringOption((o) =>

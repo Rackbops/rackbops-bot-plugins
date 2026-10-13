@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Fetch } from "@rackbops/docket-core";
@@ -9,6 +9,7 @@ import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import type { Membership } from "../access.js";
 import { createPlugin } from "../index.js";
 import { HOST_CANNOT_MESSAGE } from "../notifier.js";
+import { removeDir } from "../test-dirs.js";
 import type { Source } from "@rackbops/docket-types";
 
 /**
@@ -24,10 +25,22 @@ export const STRANGER = "444444444444444444";
 export const ORIGIN = "https://clerk.example.com";
 export const START = "2026-10-01T12:00:00.000Z";
 export const dirs: string[] = [];
+/** Every plugin `world()` made, disposed by `cleanup()`. */
+const plugins: Plugin[] = [];
 
-/** Each test file's `afterEach`: removes the databases its tests made. */
-export function cleanup(): void {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+/**
+ * Each test file's `afterEach`: disposes every plugin `world()` made, closing its database, and
+ * only then removes the directories its tests made. Windows refuses to delete a file still open
+ * (#232), where Linux does not care, so it is this order that keeps the suite green on Windows. A
+ * plugin its test already disposed is disposed again, which does nothing (index.ts nulls its handle
+ * on the first). It takes only what was made before the call: a world made while it awaits is left
+ * for the next one. `remove` is for the harness's own test (web.test.ts), to see the order.
+ */
+export async function cleanup(remove: (dir: string) => void = removeDir): Promise<void> {
+  const disposing = plugins.splice(0);
+  const removing = dirs.splice(0);
+  for (const p of disposing) await p.dispose?.();
+  for (const d of removing) remove(d);
 }
 
 export function clockAt(iso: string) {
@@ -111,15 +124,29 @@ export async function world(
       ...(opts.usrFetch ? { usrFetch: opts.usrFetch } : {}),
     },
   );
+  plugins.push(plugin);
   await plugin.activate!();
   return { plugin, clock, dbPath, sent, delivery };
 }
 
+/** One message a command sent after deferring: the edit of its answer, or a follow-up with its flags and whom it may mention. */
+export interface Said {
+  kind: "edit" | "followUp";
+  content: string;
+  flags?: unknown;
+  allowedMentions?: unknown;
+}
+
+/**
+ * Runs a slash command as `userId` and answers its answer's text. `said` collects what it sent after
+ * deferring, in order (its answer's edit, then any follow-ups); `followUpFails` makes every follow-up
+ * fail with it (an expired interaction).
+ */
 export async function slash(
   plugin: Plugin,
   name: string,
   userId: string,
-  o: { strings?: Record<string, string>; users?: Record<string, string>; client?: unknown; sub?: string; ints?: Record<string, number>; numbers?: Record<string, number>; booleans?: Record<string, boolean> } = {},
+  o: { strings?: Record<string, string>; users?: Record<string, string>; client?: unknown; sub?: string; ints?: Record<string, number>; numbers?: Record<string, number>; booleans?: Record<string, boolean>; said?: Said[]; followUpFails?: Error } = {},
 ): Promise<string> {
   const command = plugin.commands?.find((c) => c.name === name);
   if (!command) throw new Error(`no command ${name}`);
@@ -139,7 +166,14 @@ export async function slash(
       getUser: (k: string) => (o.users?.[k] ? { id: o.users[k], bot: false } : null),
     },
     deferReply: async (x: unknown) => void (deferred = x),
-    editReply: async (x: { content: string }) => void edits.push(x),
+    editReply: async (x: { content: string }) => {
+      edits.push(x);
+      o.said?.push({ kind: "edit", content: x.content });
+    },
+    followUp: async (x: { content: string; flags?: unknown; allowedMentions?: unknown }) => {
+      if (o.followUpFails) throw o.followUpFails;
+      o.said?.push({ kind: "followUp", content: x.content, flags: x.flags, allowedMentions: x.allowedMentions });
+    },
   };
   await command.handle(interaction as unknown as ChatInputCommandInteraction);
   expect(deferred).toMatchObject({ flags: 64 });

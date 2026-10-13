@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../packages/api/contract.js";
+import { MAX_ANSWER, NO_SUCH_TASK } from "./actions.js";
+import { DeliveryHealth, PAUSE_AFTER } from "./delivery-health.js";
 import { FetchRefusedError } from "./fetch.js";
-import { api, call, cleanup, csrfOf, LARRY, makeToken, ORIGIN, people, press, signIn, slash, world } from "./web/harness.js";
+import { HOST_CANNOT_MESSAGE } from "./notifier.js";
+import { openDatabase } from "./schema.js";
+import { SqliteStore } from "./store.js";
+import { ADMIN, api, call, cleanup, CURLY, csrfOf, LARRY, makeToken, ORIGIN, people, press, type Said, signIn, slash, world } from "./web/harness.js";
 import { parseMarketplace, type Source, SourceUnavailableError } from "@rackbops/docket-types";
 import { BGG_THING, shopSearch } from "./want-fixtures.js";
 import { EBAY_PAGE, MAX_WANT_TASKS } from "./want.js";
@@ -70,9 +75,10 @@ describe("/want", () => {
     await pollTick(w.plugin);
     expect(w.sent).toHaveLength(2);
 
-    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" } });
+    const said: Said[] = [];
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" }, said });
     expect(history).toContain("Findings: 3");
-    expect(history).toContain("Wingspan Nesting Box -- 60.00 USD -- used <https://shop.example/p/nests>");
+    expect(said[1]?.content).toContain("Wingspan Nesting Box -- 60.00 USD -- used <https://shop.example/p/nests>");
 
     const done = buttons(w.sent, 1).find((b) => b.label.toLowerCase() === "done");
     expect(done).toBeDefined();
@@ -85,6 +91,126 @@ describe("/want", () => {
     await pollTick(w.plugin);
     expect(s.reads).toHaveLength(reads);
     expect(w.sent).toHaveLength(2);
+  });
+
+  /** A watch whose first run found 20 listings, each line about 180 characters, so not all fit in one message. */
+  async function twentyListings(logs?: string[]) {
+    const items: Item[] = Array.from({ length: 20 }, (_, i) => ({
+      name: `Wingspan expansion ${String(i + 1).padStart(2, "0")}: ${"birds, eggs and nests in a box ".repeat(3).trim()}`,
+      url: `https://shop.example/p/wingspan-expansion-${i + 1}`,
+      price: 30,
+    }));
+    const { fetch } = shop(items);
+    const w = await world({ fetch, ...(logs ? { logs } : {}) });
+    await people(w.plugin);
+    await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan expansions", source: "page", target: SHOP } });
+    await pollTick(w.plugin);
+    expect(content(w.sent, 0)).toContain("Wingspan expansions: 20 new listings.");
+    expect(content(w.sent, 0)).toContain("...and 15 more: `/task history t1` lists them all.");
+    return { w, items };
+  }
+
+  it("sends a 20-listing run's findings in /task history as a second message, after the history (#166)", async () => {
+    const { w, items } = await twentyListings();
+    const said: Said[] = [];
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" }, said });
+    // The answer is the history: the count and the run, and no listing.
+    expect(history).toContain("\nFindings: 20\nRuns:\n- ");
+    expect(history).toMatch(/^Runs:\n- .+ -- done$/m);
+    expect(history).not.toContain("Wingspan expansion ");
+    // Then the findings, in one follow-up only Larry sees and that mentions no one, like the answer.
+    expect(said.map((m) => m.kind)).toEqual(["edit", "followUp"]);
+    expect(said[0]).toEqual({ kind: "edit", content: history });
+    expect(said[1]).toMatchObject({ kind: "followUp", flags: 64, allowedMentions: { parse: [] } });
+    const findings = said[1]?.content ?? "";
+    expect(findings.length).toBeLessThanOrEqual(MAX_ANSWER);
+    // The newest, whole, oldest to newest, then the count of the rest and where they are.
+    const shown = findings.split("\n").filter((l) => l.startsWith("- Wingspan expansion "));
+    expect(shown.length).toBeGreaterThan(8);
+    expect(shown.length).toBeLessThan(20);
+    expect(findings).toBe(
+      [
+        `Findings (newest ${shown.length} of 20):`,
+        ...items.slice(20 - shown.length).map((it) => `- ${it.name} -- 30.00 USD <${it.url}>`),
+        `...and ${20 - shown.length} more; the web area's task page shows the newest 50 (\`/web\`).`,
+      ].join("\n"),
+    );
+
+    // An admin sees Larry's watch as he does: the same history, then the same findings.
+    const admin: Said[] = [];
+    await slash(w.plugin, "task", ADMIN, { sub: "history", strings: { task: "t1" }, said: admin });
+    expect(admin).toEqual([{ kind: "edit", content: history }, { kind: "followUp", content: findings, flags: 64, allowedMentions: { parse: [] } }]);
+    // A typed id with spaces around it is the same watch, findings and all.
+    const padded: Said[] = [];
+    await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: " t1 " }, said: padded });
+    expect(padded).toEqual([{ kind: "edit", content: history }, { kind: "followUp", content: findings, flags: 64, allowedMentions: { parse: [] } }]);
+    // Someone the watch is not shared with sees neither.
+    const curly: Said[] = [];
+    await slash(w.plugin, "task", CURLY, { sub: "history", strings: { task: "t1" }, said: curly });
+    expect(curly).toEqual([{ kind: "edit", content: NO_SUCH_TASK }]);
+  });
+
+  it("sends /task history's findings before the resume notice, each a message of its own (#166)", async () => {
+    // A 100-character name, 5 listings, then (straight into the store) 12 runs that failed with long errors and 7 edits.
+    const title = `Wingspan expansions, ${"and the promo packs for it ".repeat(4)}`.slice(0, 100);
+    expect(title).toHaveLength(100);
+    const items: Item[] = Array.from({ length: 5 }, (_, i) => ({ name: `Wingspan expansion ${i + 1}`, url: `https://shop.example/p/wingspan-${i + 1}`, price: 30 }));
+    const { fetch } = shop(items);
+    const w = await world({ fetch });
+    await people(w.plugin);
+    await slash(w.plugin, "want", LARRY, { strings: { name: title, source: "page", target: SHOP } });
+    await pollTick(w.plugin);
+    expect(content(w.sent, 0)).toContain(`${title}: 5 new listings.`);
+    const db = openDatabase(w.dbPath);
+    try {
+      const store = new SqliteStore(db);
+      const larry = await store.findUserByDiscordId(LARRY);
+      if (!larry) throw new Error("no Larry");
+      for (let i = 0; i < 12; i++) {
+        const at = new Date(Date.parse("2026-09-01T12:00:00.000Z") + i * 3600_000).toISOString();
+        const o = await store.createOccurrence({ taskId: "t1", lane: "notify", dueAt: at, dedupeKey: `failed${i}`, at });
+        if (o) await store.updateOccurrence(o.id, { status: "failed", error: `the shop's page did not answer in time, read ${i + 1} ${"of a long and slow afternoon ".repeat(3)}` });
+      }
+      for (let i = 0; i < 7; i++) await store.addTaskEvent({ taskId: "t1", actorId: larry.id, kind: "edited", detail: "", at: w.clock.now().toISOString() });
+      // Larry's DMs fail PAUSE_AFTER times in a row: he and his watch are paused until he next uses a command.
+      const health = new DeliveryHealth(db, store);
+      for (let i = 0; i < PAUSE_AFTER; i++) await health.recordFailure(larry.id, HOST_CANNOT_MESSAGE, w.clock.now().toISOString());
+      expect(health.isPaused(larry.id)).toBe(true);
+    } finally {
+      db.close();
+    }
+
+    const said: Said[] = [];
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" }, said });
+    // The answer, then its findings, then the notice: each a message only Larry sees, mentioning no one.
+    expect(said.map((m) => m.kind)).toEqual(["edit", "followUp", "followUp"]);
+    expect(said[0]).toEqual({ kind: "edit", content: history });
+    expect(history.startsWith(`\`t1\` ${title} -- wantlist, active, `)).toBe(true);
+    expect(history).toContain("\nFindings: 5\nRuns:\n- (3 earlier)\n");
+    expect(history).not.toContain("I could not DM you");
+    expect(said[1]).toEqual({
+      kind: "followUp",
+      content: ["Findings (newest 5 of 5):", ...items.map((it) => `- ${it.name} -- 30.00 USD <${it.url}>`)].join("\n"),
+      flags: 64,
+      allowedMentions: { parse: [] },
+    });
+    const notice = said[2]?.content ?? "";
+    expect(said[2]).toMatchObject({ kind: "followUp", flags: 64, allowedMentions: { parse: [] } });
+    expect(notice).toStartWith(`I could not DM you ${PAUSE_AFTER} times in a row, so your reminders were paused. 1 task(s) are back on.`);
+    // Why the notice is a message of its own: above the answer, the two would pass one message.
+    expect(`${notice}\n\n${history}`.length).toBeGreaterThan(MAX_ANSWER);
+    expect(history.length).toBeLessThanOrEqual(MAX_ANSWER);
+  });
+
+  it("logs a /task history follow-up that fails, and still answers (#166)", async () => {
+    const logs: string[] = [];
+    const { w } = await twentyListings(logs);
+    const said: Said[] = [];
+    // `slash` awaits the command's handle(): a rejection would fail the test here.
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" }, said, followUpFails: Object.assign(new Error("Unknown interaction"), { code: 10062 }) });
+    expect(said).toEqual([{ kind: "edit", content: history }]);
+    expect(history).toContain("\nFindings: 20\nRuns:\n- ");
+    expect(logs).toContain("could not send /task's answer's message 2 as a follow-up: Unknown interaction");
   });
 
   it("holds to the top price: a listing over it waits, and is sent once it drops under", async () => {
