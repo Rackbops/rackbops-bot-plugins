@@ -7,6 +7,7 @@ import type { ChatInputCommandInteraction, MessageComponentInteraction, ModalSub
 import type { Plugin } from "../../../../packages/api/contract.js";
 import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import type { Membership } from "../access.js";
+import type { PageFetchOptions } from "../fetch.js";
 import { createPlugin } from "../index.js";
 import { HOST_CANNOT_MESSAGE } from "../notifier.js";
 import { removeDir } from "../test-dirs.js";
@@ -70,8 +71,12 @@ export async function world(
     executeStarted?: (work: Promise<void>) => void;
     /** A BGG source, as if `TRACKER_BGG_TOKEN` were set (docket-types' `bggSource`). */
     bgg?: Source;
+    /** The token's BGG reads' name lookup and HTTP, with `TRACKER_BGG_TOKEN` in `env` (index.ts `bggNetwork`). */
+    bggNetwork?: Pick<PageFetchOptions, "resolve" | "fetchImpl">;
     /** usr's HTTP, with `TRACKER_USR_*` in `env` (usr.ts, usr-identity.ts). */
     usrFetch?: typeof fetch;
+    /** Forget-me's wait for a running tick, in ms (admin.ts `TICK_WAIT_MS` by default). */
+    tickWaitMs?: number;
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "tracker-web-"));
@@ -123,7 +128,9 @@ export async function world(
       ...(opts.cityHallFetch ? { cityHallFetch: opts.cityHallFetch } : {}),
       ...(opts.executeStarted ? { executeStarted: opts.executeStarted } : {}),
       ...(opts.bgg ? { bgg: opts.bgg } : {}),
+      ...(opts.bggNetwork ? { bggNetwork: opts.bggNetwork } : {}),
       ...(opts.usrFetch ? { usrFetch: opts.usrFetch } : {}),
+      ...(opts.tickWaitMs !== undefined ? { tickWaitMs: opts.tickWaitMs } : {}),
     },
   );
   plugins.push(plugin);
@@ -169,9 +176,9 @@ export async function slash(
       getUser: (k: string) => (o.users?.[k] ? { id: o.users[k], bot: false } : null),
     },
     deferReply: async (x: unknown) => void (deferred = x),
-    editReply: async (x: { content: string }) => {
+    editReply: async (x: { content: string; flags?: unknown }) => {
       edits.push(x);
-      o.said?.push({ kind: "edit", content: x.content });
+      o.said?.push({ kind: "edit", content: x.content, ...(x.flags !== undefined ? { flags: x.flags } : {}) });
     },
     followUp: async (x: { content: string; flags?: unknown; allowedMentions?: unknown }) => {
       if (o.followUpFails) throw o.followUpFails;

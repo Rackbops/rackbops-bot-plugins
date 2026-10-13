@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createPageFetch, FetchRefusedError, isPublicAddress, MAX_REDIRECTS, NEVER_EBAY, urlProblem } from "./fetch.js";
+import { createBggFetch, createPageFetch, FetchRefusedError, isPublicAddress, MAX_REDIRECTS, NEVER_EBAY, urlProblem } from "./fetch.js";
 
 /** The price tracker's page reads (rackbops-bot-plugins#81): only the public internet, bounded. */
 
@@ -17,6 +17,7 @@ describe("isPublicAddress", () => {
       "192.0.2.1",
       "192.168.1.10",
       "198.18.0.1",
+      "198.19.255.255",
       "198.51.100.7",
       "203.0.113.9",
       "224.0.0.1",
@@ -33,6 +34,8 @@ describe("isPublicAddress", () => {
       "fe80::1%eth0",
       "ff02::1",
       "2001:db8::1",
+      "2001::1",
+      "2001:1ff::1",
       "2002:c0a8:0101::1",
       "not an address",
     ]) {
@@ -41,7 +44,7 @@ describe("isPublicAddress", () => {
   });
 
   it("allows public unicast", () => {
-    for (const ip of ["1.1.1.1", "8.8.8.8", "172.32.0.1", "100.128.0.1", "::ffff:8.8.8.8", "64:ff9b::808:808", "2606:4700:4700::1111"]) {
+    for (const ip of ["1.1.1.1", "8.8.8.8", "172.32.0.1", "100.128.0.1", "::ffff:8.8.8.8", "64:ff9b::808:808", "2606:4700:4700::1111", "2001:200::1", "198.20.0.1"]) {
       expect([ip, isPublicAddress(ip)]).toEqual([ip, true]);
     }
   });
@@ -107,9 +110,11 @@ describe("createPageFetch", () => {
       "https://short.example/s": () => new Response(null, { status: 301, headers: { location: "https://www.ebay.com/itm/1" } }),
     });
     const headers = (i: number) => f.calls[i]?.init?.headers as Record<string, string>;
-    await createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl, raw: true }).get("https://api.example/x", { Authorization: "Bearer tok" });
+    const followed = await createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl, raw: true }).get("https://api.example/x", { Authorization: "Bearer tok" });
     expect(headers(0).Authorization).toBe("Bearer tok");
     expect(headers(1).Authorization).toBeUndefined();
+    // Raw: the body as sent, not pageForExtraction's.
+    expect(followed.body).toBe("<items/>");
     const stay = await createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl, raw: true, noRedirects: true }).get("https://api.example/x", { Authorization: "Bearer tok" });
     expect(stay.status).toBe(302);
     expect(f.calls).toHaveLength(3);
@@ -153,6 +158,47 @@ describe("createPageFetch", () => {
     const f = fakeFetch({ "https://shop.example/big": () => new Response("x".repeat(10_000), { status: 200 }) });
     const response = await createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl, maxBytes: 1000 }).get("https://shop.example/big");
     expect(response.body.length).toBe(1000);
+  });
+
+  it("keeps a credential on a redirect within the same origin", async () => {
+    const f = fakeFetch({
+      "https://api.example/x": () => new Response(null, { status: 302, headers: { location: "/y" } }),
+      "https://api.example/y": () => new Response("ok", { status: 200 }),
+    });
+    await createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl }).get("https://api.example/x", { Authorization: "Bearer tok" });
+    expect(f.calls.map((c) => (c.init?.headers as Record<string, string>).Authorization)).toEqual(["Bearer tok", "Bearer tok"]);
+  });
+
+  it("refuses a name that resolves to no address", async () => {
+    const f = fakeFetch({});
+    await expect(createPageFetch({ resolve: async () => [], fetchImpl: f.impl }).get("https://shop.example/")).rejects.toThrow("the name shop.example did not resolve");
+    expect(f.calls).toHaveLength(0);
+  });
+
+  it("gives up after timeoutMs, with no signal of its own, on a slow answer or a slow name lookup (#215)", async () => {
+    const never = ((_url: string, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      })) as unknown as typeof fetch;
+    // A read the timeout does not end fails here after a second, not as a hung run.
+    const within = (p: Promise<unknown>) =>
+      Promise.race([p.then(() => "answered", (e: unknown) => (e as Error).name), Bun.sleep(1000).then(() => "still waiting")]);
+    expect(await within(createPageFetch({ resolve: PUBLIC, fetchImpl: never, timeoutMs: 20 }).get("https://shop.example/"))).toBe("TimeoutError");
+    const f = fakeFetch({});
+    const stuck = createPageFetch({ resolve: () => new Promise<string[]>(() => {}), fetchImpl: f.impl, timeoutMs: 20 });
+    expect(await within(stuck.get("https://shop.example/"))).toBe("TimeoutError");
+    expect(f.calls).toHaveLength(0);
+  });
+
+  it("the BGG reader hands back a redirect unfollowed and the body as sent (#215)", async () => {
+    const f = fakeFetch({
+      "https://boardgamegeek.com/xmlapi2/thing?id=1": () => new Response(null, { status: 302, headers: { location: "https://boardgamegeek.com/elsewhere" } }),
+      "https://boardgamegeek.com/xmlapi2/thing?id=2": () => new Response("<items><item/></items>", { status: 200 }),
+    });
+    const reader = createBggFetch({ resolve: PUBLIC, fetchImpl: f.impl });
+    expect((await reader.get("https://boardgamegeek.com/xmlapi2/thing?id=1", { Authorization: "Bearer tok" })).status).toBe(302);
+    expect(f.calls.map((c) => c.url)).toEqual(["https://boardgamegeek.com/xmlapi2/thing?id=1"]);
+    expect((await reader.get("https://boardgamegeek.com/xmlapi2/thing?id=2")).body).toBe("<items><item/></items>");
   });
 
   it("stops a read when the tick's signal aborts", async () => {

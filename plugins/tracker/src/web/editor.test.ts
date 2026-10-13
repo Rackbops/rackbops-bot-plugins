@@ -376,6 +376,36 @@ describe("price trackers", () => {
     expect((await post(w.plugin, larry, csrf, "/new/price", { url: `${SHOP}2`, near: "Price:" })).status).toBe(303);
   });
 
+  it("new: a watch that reads no page is not held by a read in flight; a page watch is, in words that fit it (#226)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const reads: string[] = [];
+    const fetch: Fetch = {
+      async get(url: string): Promise<FetchResponse> {
+        reads.push(url);
+        await gate;
+        return { status: 200, body: `<p>Price: 10.00</p>`, headers: {} };
+      },
+    };
+    const w = await world({ fetch });
+    await people(w.plugin);
+    const larry = await signIn(w.plugin, LARRY);
+    const csrf = await csrfOf(w.plugin, larry);
+    const first = post(w.plugin, larry, csrf, "/new/price", { url: SHOP, near: "Price:" });
+    for (let i = 0; i < 500 && reads.length < 1; i++) await Bun.sleep(2);
+    // An eBay watch reads nothing now: made at once, while the price's page is still being read.
+    const ebay = await post(w.plugin, larry, csrf, "/new/wantlist", { name: "Oceania", source: "ebay", judge: "no" });
+    expect(ebay.status).toBe(303);
+    const page = await post(w.plugin, larry, csrf, "/new/wantlist", { name: "Widgets", source: "page", target: `${SHOP}s`, judge: "no" });
+    expect(page.status).toBe(400);
+    expect(READING).not.toContain("your last new price tracker;");
+    expect(await page.text()).toContain(esc(READING));
+    expect(reads).toEqual([SHOP]);
+    release();
+    expect((await first).status).toBe(303);
+    expect(tasks(w.dbPath).map((t) => t.type)).toEqual(["wantlist", "price"]);
+  });
+
   it("edit: the name, interval, drop and baseline; never the page", async () => {
     const w = await setup();
     await post(w.plugin, w.larry, w.csrf, "/new/price", { url: SHOP, hours: "12" });
@@ -395,6 +425,41 @@ describe("price trackers", () => {
     expect(tasks(w.dbPath)[0]?.title).toBe("shop.example/widget");
     expect((await post(w.plugin, w.larry, w.csrf, "/tasks/t1/edit", { hours: "200" })).status).toBe(400);
     expect(w.shop.reads).toHaveLength(1);
+  });
+});
+
+describe("the editor's page reads go through the fence (#227)", () => {
+  it("with no Fetch given, a new price or page watch whose page redirects inward is refused, and the inner address is never asked", async () => {
+    const realFetch = globalThis.fetch;
+    const asked: string[] = [];
+    // The network: each public page redirects to the cloud metadata address. A fetch that follows
+    // redirects itself (anything but the fence's `manual`) reads a price there.
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      asked.push(url);
+      if (url.startsWith("http://169.254.169.254/")) return new Response("<p>Price: 1.00</p>");
+      if (init?.redirect !== "manual") {
+        asked.push("http://169.254.169.254/latest/meta-data/");
+        return new Response("<p>Price: 1.00</p>");
+      }
+      return new Response(null, { status: 302, headers: { location: "http://169.254.169.254/latest/meta-data/" } });
+    }) as unknown as typeof fetch;
+    try {
+      const w = await world();
+      await people(w.plugin);
+      const larry = await signIn(w.plugin, LARRY);
+      const csrf = await csrfOf(w.plugin, larry);
+      const price = await post(w.plugin, larry, csrf, "/new/price", { url: "http://1.1.1.1/widget", near: "Price:" });
+      expect(price.status).toBe(400);
+      expect(await price.text()).toContain("I cannot read that page: Only public web pages can be tracked.");
+      const page = await post(w.plugin, larry, csrf, "/new/wantlist", { name: "Widgets", source: "page", target: "http://1.1.1.1/widgets", judge: "no" });
+      expect(page.status).toBe(400);
+      expect(await page.text()).toContain("I cannot read that page: Only public web pages can be tracked.");
+      expect(tasks(w.dbPath)).toEqual([]);
+      expect(asked).toEqual(["http://1.1.1.1/widget", "http://1.1.1.1/widgets"]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });
 
@@ -799,6 +864,23 @@ describe("review fixes", () => {
     await post(w.plugin, w.larry, w.csrf, "/tasks/t3/edit", { text: " " });
     expect(tasks(w.dbPath)[2]).toMatchObject({ title: "tea", schedule: { unit: "week" } });
     expect(events(w.dbPath, "t3")).toEqual(["created"]);
+  });
+
+  it("an edit form never says what an empty number becomes on a new task: it keeps what the task has (#173)", async () => {
+    for (const type of EDITOR_TYPES) {
+      for (const f of fieldsFor(type, "edit")) expect(`${type}.${f.name}: ${f.help ?? ""}`).not.toContain("when empty");
+    }
+    // The new forms still name the defaults; the task API, whose PATCH refuses an empty number, says to omit it.
+    expect(fieldsFor("price", "new").find((f) => f.name === "hours")?.help).toContain("12 when empty");
+    for (const type of EDITOR_TYPES) {
+      for (const f of fieldsFor(type, "edit", "api")) expect(`${type}.${f.name}: ${f.help ?? ""}`).not.toContain("Leave it empty to keep what it has.");
+    }
+    expect(fieldsFor("renewal", "edit", "api").find((f) => f.name === "lead")?.help).toBe("Omit it to keep what it has.");
+    const w = await setup();
+    await post(w.plugin, w.larry, w.csrf, "/new/price", { url: SHOP, hours: "24", drop: "20" });
+    const form = await (await call(w.plugin, "GET", "/tasks/t1/edit", { jar: w.larry })).text();
+    expect(form).not.toContain("when empty");
+    expect(form).toContain("Leave it empty to keep what it has.");
   });
 
   it("the length limits hold on the server, and are one set of numbers for Discord, the forms and the checks", async () => {

@@ -12,10 +12,10 @@ import { fieldsFor, type NewType, type Values } from "./editor-pages.js";
 
 /**
  * What a task editor's fields say, read into the inputs of the shared rules (reminders.ts,
- * tracked.ts, price.ts, research.ts, edit.ts), for the web forms and the JSON task API alike
- * (rackbops-bot-plugins#80, slices 2 and 4): api.ts turns a JSON body into the same fields, so one
- * reading -- and so one set of defaults and messages -- serves both. Text is taken as typed; a
- * number that is not one becomes NaN, which the rules refuse with their own words.
+ * tracked.ts, price.ts, research.ts, scout.ts, want.ts, edit.ts), for the web forms and the JSON
+ * task API alike (rackbops-bot-plugins#80, slices 2 and 4): api.ts turns a JSON body into the same
+ * fields, so one reading -- and so one set of defaults and messages -- serves both. Text is taken as
+ * typed; a number that is not one becomes NaN, which the rules refuse with their own words.
  */
 
 const str = (form: URLSearchParams, name: string): string => form.get(name) ?? "";

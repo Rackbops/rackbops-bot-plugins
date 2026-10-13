@@ -9,7 +9,7 @@ import type { TickGate, TrackerDeps } from "./actions.js";
 import { Admissions } from "./admissions.js";
 import { Ceilings } from "./ceilings.js";
 import { DeliveryHealth } from "./delivery-health.js";
-import { createPageFetch } from "./fetch.js";
+import { createBggFetch, createPageFetch, type PageFetchOptions } from "./fetch.js";
 import { EXECUTE_MIN_GAP_MS, ExecuteLane } from "./execute-lane.js";
 import { type CityHallConfig, createCityHallExecutor, databaseId, JobRecords, parseCityHallConfig } from "./executor.js";
 import type { Membership } from "./access.js";
@@ -124,12 +124,32 @@ export interface TrackerOptions {
   executor?: Executor;
   /** Test seam: a BGG source in place of the token's (docket-types' `bggSource`), as if `TRACKER_BGG_TOKEN` were set. */
   bgg?: Source;
+  /** Test seam for the token's BGG reads: the name lookup and HTTP under `createBggFetch`, which still decides raw and redirects. */
+  bggNetwork?: Pick<PageFetchOptions, "resolve" | "fetchImpl">;
   /** Test seam: each execute tick's background work as it starts, so a test can await it. */
   executeStarted?: (work: Promise<void>) => void;
   /** Test seam: false leaves the daily digest (digest.ts) off the notify tick, for tests that count every DM. On by default. */
   digest?: boolean;
   /** Test seam for the usr link's HTTP (usr.ts). */
   usrFetch?: typeof fetch;
+  /** Test seam: forget-me's wait for a running tick, in ms (admin.ts `TICK_WAIT_MS` by default). */
+  tickWaitMs?: number;
+}
+
+/**
+ * `TickGate.idle`: waits until `running` (the ticks in flight, removed as each settles) is empty, at
+ * most `ms`. True when it emptied, false when the time ran out with one still running.
+ */
+export async function idleWithin(running: ReadonlySet<Promise<unknown>>, ms: number): Promise<boolean> {
+  const until = Date.now() + ms;
+  while (running.size > 0) {
+    const left = until - Date.now();
+    if (left <= 0) return false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([Promise.allSettled([...running]), new Promise((r) => (timer = setTimeout(r, left)))]);
+    clearTimeout(timer);
+  }
+  return true;
 }
 
 /** A Notifier for a host without `dm`: every send is refused, and nothing went out. */
@@ -159,7 +179,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const clock: Clock = options.clock ?? { now: () => new Date() };
   const bggToken = parseBggToken(host.env.TRACKER_BGG_TOKEN);
   // BGG's answers are XML, read by docket-types' own bounded BGG parser: the raw body, fenced like every read.
-  const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createPageFetch({ raw: true, noRedirects: true }) }) : null);
+  const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createBggFetch(options.bggNetwork ?? {}) }) : null);
   // The want-list inboxes (inbox.ts) live in the database `activate()` opens; until then, and after
   // `dispose()`, an inbox reads as empty (no tick runs then anyway). An eBay watch, and a BGG one
   // made while the bot has no BGG token, get their listings only this way: the want-list watcher
@@ -250,17 +270,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         forgetting--;
       }
     },
-    async idle(ms) {
-      const until = Date.now() + ms;
-      while (running.size > 0) {
-        const left = until - Date.now();
-        if (left <= 0) return false;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        await Promise.race([Promise.allSettled([...running]), new Promise((r) => (timer = setTimeout(r, left)))]);
-        clearTimeout(timer);
-      }
-      return true;
-    },
+    idle: (ms) => idleWithin(running, ms),
   };
 
   /**
@@ -417,6 +427,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           budgetUnlimited,
           configuredAdmins: new Set(adminIds),
           lanes,
+          ...(options.tickWaitMs !== undefined ? { tickWaitMs: options.tickWaitMs } : {}),
           webEditor: webOrigin !== null,
           research: executeOn,
           bgg: bgg !== null,

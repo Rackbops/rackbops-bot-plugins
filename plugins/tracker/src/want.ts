@@ -33,7 +33,9 @@ import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
  * look for, at what top price. Neither is editable, as no watch's target is: to look for other
  * words, make a new watch. Reading an inbox costs nothing, so an inbox watch polls every hour by
  * default (`DEFAULT_INBOX_HOURS`). Without the web area there is no task API to send listings in
- * through, so an inbox watch is refused (`INBOX_OFF`) rather than made to wait forever.
+ * through, so an inbox watch is refused (`INBOX_OFF`) rather than made to wait forever. The guard
+ * reads `TRACKER_WEB_URL` only: the host does not tell a plugin whether its HTTP is served, so with
+ * the URL set and the bot's `HTTP_PORT` unset a watch is made that nothing can send listings to.
  *
  * A watch is judged (docket-types' `wantjudge`: the model looks at each new listing before it is DMed)
  * whenever the model runner is set up (`d.research`), unless the owner says `judge: false`; without

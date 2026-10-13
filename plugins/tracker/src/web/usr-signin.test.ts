@@ -34,13 +34,14 @@ const identity = (o: Record<string, unknown> = {}) => ({ iss: "usr", sub: LARRY_
 /** A fake usr serving one JWKS; counts the fetches. */
 async function fakeUsr() {
   const k = await keyPair();
-  const state = { jwks: { keys: [{ ...k.jwk, kid: "k1" }] } as { keys: unknown[] }, fetches: 0, down: false };
+  const state = { jwks: { keys: [{ ...k.jwk, kid: "k1" }] } as { keys: unknown[] }, fetches: 0, down: false, status: 200, hold: null as Promise<void> | null };
   const usrFetch = (async (input: string | URL | Request) => {
     const url = new URL(String(input));
     if (url.pathname !== "/.well-known/jwks.json") throw new Error(`unexpected usr call ${url.pathname}`);
     state.fetches++;
+    if (state.hold) await state.hold;
     if (state.down) throw new TypeError("fetch failed");
-    return new Response(JSON.stringify(state.jwks), { headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify(state.jwks), { status: state.status, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
   return { ...k, state, usrFetch };
 }
@@ -118,6 +119,88 @@ describe("UsrVerifier", () => {
     advance(JWKS_TTL_MS);
     await v.verify(token);
     expect(usr.state.fetches).toBe(3);
+  });
+
+  it("counts a failed fetch as one, so a down usr is asked again only after 30 seconds", async () => {
+    const { usr, v, advance } = await verifier();
+    const token = await sign(usr.pair.privateKey, identity());
+    usr.state.down = true;
+    expect(await v.verify(token)).toBeNull();
+    expect(await v.verify(token)).toBeNull();
+    expect(usr.state.fetches).toBe(1);
+    usr.state.down = false;
+    advance(JWKS_RETRY_MS);
+    expect(await v.verify(token)).toEqual({ sub: LARRY_SUB, roles: ["tracker:member"] });
+    expect(usr.state.fetches).toBe(2);
+  });
+
+  it("fetches once for tokens checked at the same moment, and checks each against the keys it fetched", async () => {
+    const { usr, v } = await verifier();
+    const token = await sign(usr.pair.privateKey, identity());
+    expect(await Promise.all([v.verify(token), v.verify(token)])).toEqual([
+      { sub: LARRY_SUB, roles: ["tracker:member"] },
+      { sub: LARRY_SUB, roles: ["tracker:member"] },
+    ]);
+    expect(usr.state.fetches).toBe(1);
+  });
+
+  it("answers a token with a known key at once, while a fetch for an unknown key hangs", async () => {
+    const { usr, v, advance } = await verifier();
+    const token = await sign(usr.pair.privateKey, identity());
+    await v.verify(token);
+    let release = () => {};
+    usr.state.hold = new Promise<void>((r) => {
+      release = r;
+    });
+    advance(JWKS_RETRY_MS);
+    const next = await keyPair();
+    const unknown = v.verify(await sign(next.pair.privateKey, identity(), { alg: "ES256", kid: "k2" }));
+    while (usr.state.fetches < 2) await Bun.sleep(1);
+    // The refetch for k2 is still out; k1's token must not wait for it.
+    const known = await Promise.race([v.verify(token), Bun.sleep(200).then(() => "stalled" as const)]);
+    expect(known).toEqual({ sub: LARRY_SUB, roles: ["tracker:member"] });
+    release();
+    expect(await unknown).toBeNull();
+    expect(usr.state.fetches).toBe(2);
+  });
+
+  it("refuses a token with no sub, or an empty one", async () => {
+    const { usr, v } = await verifier();
+    const { sub: _sub, ...noSub } = identity();
+    expect(await v.verify(await sign(usr.pair.privateKey, noSub))).toBeNull();
+    expect(await v.verify(await sign(usr.pair.privateKey, identity({ sub: "" })))).toBeNull();
+  });
+
+  it("refuses a signature that is not 64 bytes", async () => {
+    // A pin, not coverage of the length check: WebCrypto already refuses such a signature by itself.
+    const { usr, v } = await verifier();
+    const [h, p, sig] = (await sign(usr.pair.privateKey, identity())).split(".") as [string, string, string];
+    const longer = Buffer.concat([Buffer.from(sig, "base64url"), Buffer.from([0])]).toString("base64url");
+    expect(await v.verify(`${h}.${p}.${longer}`)).toBeNull();
+  });
+
+  it("uses only P-256 EC keys from the JWKS, past others it cannot use", async () => {
+    const { usr, v } = await verifier();
+    const p384 = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-384" }, true, ["sign", "verify"])) as CryptoKeyPair;
+    const rsa = (await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"])) as CryptoKeyPair;
+    // A P-256 key listed as another key type: not one usr signs with, so never trusted.
+    const mislabelled = await keyPair();
+    usr.state.jwks.keys.unshift(
+      { ...(await crypto.subtle.exportKey("jwk", p384.publicKey)), kid: "k384" },
+      { ...(await crypto.subtle.exportKey("jwk", rsa.publicKey)), kid: "krsa" },
+      { ...mislabelled.jwk, kty: "OKP", kid: "k9" },
+    );
+    expect(await v.verify(await sign(usr.pair.privateKey, identity()))).toEqual({ sub: LARRY_SUB, roles: ["tracker:member"] });
+    expect(await v.verify(await sign(mislabelled.pair.privateKey, identity(), { alg: "ES256", kid: "k9" }))).toBeNull();
+  });
+
+  it("takes no keys from a JWKS over 64 KiB, a redirect or an error answer", async () => {
+    for (const odd of [{ pad: "x".repeat(65 * 1024) }, { status: 302 }, { status: 500 }]) {
+      const { usr, v } = await verifier();
+      if ("pad" in odd) usr.state.jwks = { ...usr.state.jwks, pad: odd.pad } as { keys: unknown[] };
+      else usr.state.status = odd.status;
+      expect(await v.verify(await sign(usr.pair.privateKey, identity()))).toBeNull();
+    }
   });
 
   it("keeps the keys it has when usr cannot be reached", async () => {
@@ -235,6 +318,26 @@ describe("web sign-in through usr", () => {
     jar.set("nz_id", await sign(w.usr.pair.privateKey, identity()));
     const back = await call(w.plugin, "GET", "/settings?usr=1", { jar });
     expect(back.headers.get("location")).toBe("/tracker/settings?usr=in");
+    expect(jar.has(SESSION)).toBe(true);
+  });
+
+  it("says a second /allow links the account usr moved someone to at sign-up, and signs them in once it has", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    // Larry finished signing up on usr with an account he already had: usr's cookie names that one.
+    const moved = "6f1c2a9e-0000-4000-8000-000000000099";
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity({ sub: moved }))]]);
+    const before = await call(w.plugin, "GET", "/settings", { jar });
+    expect(before.status).toBe(403);
+    expect(await before.text()).toContain("a second /allow links it");
+    // What the second /allow keeps (usr-commands.test.ts): the account usr now has for him.
+    const db = new Database(w.dbPath);
+    try {
+      db.query("UPDATE users SET usr_subject = ? WHERE discord_id = ?").run(moved, LARRY);
+    } finally {
+      db.close();
+    }
+    expect((await call(w.plugin, "GET", "/settings", { jar })).headers.get("location")).toBe("/tracker/settings?usr=in");
     expect(jar.has(SESSION)).toBe(true);
   });
 

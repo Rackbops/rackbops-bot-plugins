@@ -120,8 +120,8 @@ describe("/want", () => {
     expect(history).not.toContain("Wingspan expansion ");
     // Then the findings, in one follow-up only Larry sees and that mentions no one, like the answer.
     expect(said.map((m) => m.kind)).toEqual(["edit", "followUp"]);
-    expect(said[0]).toEqual({ kind: "edit", content: history });
-    expect(said[1]).toMatchObject({ kind: "followUp", flags: 64, allowedMentions: { parse: [] } });
+    expect(said[0]).toEqual({ kind: "edit", content: history, flags: 4 });
+    expect(said[1]).toMatchObject({ kind: "followUp", flags: 64 | 4, allowedMentions: { parse: [] } });
     const findings = said[1]?.content ?? "";
     expect(findings.length).toBeLessThanOrEqual(MAX_ANSWER);
     // The newest, whole, oldest to newest, then the count of the rest and where they are.
@@ -139,15 +139,15 @@ describe("/want", () => {
     // An admin sees Larry's watch as he does: the same history, then the same findings.
     const admin: Said[] = [];
     await slash(w.plugin, "task", ADMIN, { sub: "history", strings: { task: "t1" }, said: admin });
-    expect(admin).toEqual([{ kind: "edit", content: history }, { kind: "followUp", content: findings, flags: 64, allowedMentions: { parse: [] } }]);
+    expect(admin).toEqual([{ kind: "edit", content: history, flags: 4 }, { kind: "followUp", content: findings, flags: 64 | 4, allowedMentions: { parse: [] } }]);
     // A typed id with spaces around it is the same watch, findings and all.
     const padded: Said[] = [];
     await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: " t1 " }, said: padded });
-    expect(padded).toEqual([{ kind: "edit", content: history }, { kind: "followUp", content: findings, flags: 64, allowedMentions: { parse: [] } }]);
+    expect(padded).toEqual([{ kind: "edit", content: history, flags: 4 }, { kind: "followUp", content: findings, flags: 64 | 4, allowedMentions: { parse: [] } }]);
     // Someone the watch is not shared with sees neither.
     const curly: Said[] = [];
     await slash(w.plugin, "task", CURLY, { sub: "history", strings: { task: "t1" }, said: curly });
-    expect(curly).toEqual([{ kind: "edit", content: NO_SUCH_TASK }]);
+    expect(curly).toEqual([{ kind: "edit", content: NO_SUCH_TASK, flags: 4 }]);
   });
 
   it("sends /task history's findings before the resume notice, each a message of its own (#166)", async () => {
@@ -184,18 +184,18 @@ describe("/want", () => {
     const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" }, said });
     // The answer, then its findings, then the notice: each a message only Larry sees, mentioning no one.
     expect(said.map((m) => m.kind)).toEqual(["edit", "followUp", "followUp"]);
-    expect(said[0]).toEqual({ kind: "edit", content: history });
+    expect(said[0]).toEqual({ kind: "edit", content: history, flags: 4 });
     expect(history.startsWith(`\`t1\` ${title} -- wantlist, active, `)).toBe(true);
     expect(history).toContain("\nFindings: 5\nRuns:\n- (3 earlier)\n");
     expect(history).not.toContain("I could not DM you");
     expect(said[1]).toEqual({
       kind: "followUp",
       content: ["Findings (newest 5 of 5):", ...items.map((it) => `- ${it.name} -- 30.00 USD <${it.url}>`)].join("\n"),
-      flags: 64,
+      flags: 64 | 4,
       allowedMentions: { parse: [] },
     });
     const notice = said[2]?.content ?? "";
-    expect(said[2]).toMatchObject({ kind: "followUp", flags: 64, allowedMentions: { parse: [] } });
+    expect(said[2]).toMatchObject({ kind: "followUp", flags: 64 | 4, allowedMentions: { parse: [] } });
     expect(notice).toStartWith(`I could not DM you ${PAUSE_AFTER} times in a row, so your reminders were paused. 1 task(s) are back on.`);
     // Why the notice is a message of its own: above the answer, the two would pass one message.
     expect(`${notice}\n\n${history}`.length).toBeGreaterThan(MAX_ANSWER);
@@ -208,7 +208,7 @@ describe("/want", () => {
     const said: Said[] = [];
     // `slash` awaits the command's handle(): a rejection would fail the test here.
     const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" }, said, followUpFails: Object.assign(new Error("Unknown interaction"), { code: 10062 }) });
-    expect(said).toEqual([{ kind: "edit", content: history }]);
+    expect(said).toEqual([{ kind: "edit", content: history, flags: 4 }]);
     expect(history).toContain("\nFindings: 20\nRuns:\n- ");
     expect(logs).toContain("could not send /task's answer's message 2 as a follow-up: Unknown interaction");
   });
@@ -282,6 +282,21 @@ describe("/want", () => {
     expect(searched).toEqual(["300580"]);
     expect(content(w.sent, 0)).toContain("Oceania: 2 new listings.");
     expect(content(w.sent, 0)).toContain("<https://boardgamegeek.com/geekmarket/product/4100001> (via BoardGameGeek)");
+  });
+
+  it("with TRACKER_BGG_TOKEN set, the plugin's BGG reader never follows a redirect, so the token stays on BGG (#215)", async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      return new Response(null, { status: 302, headers: { location: "https://boardgamegeek.com/login" } });
+    }) as unknown as typeof fetch;
+    const w = await world({ fetch: shop([]).fetch, env: { TRACKER_BGG_TOKEN: "bgg-token" }, bggNetwork: { resolve: async () => ["93.184.215.14"], fetchImpl } });
+    await people(w.plugin);
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "bgg", target: "300580" } })).toContain("BoardGameGeek's marketplace");
+    await pollTick(w.plugin);
+    // The read went to BGG's API once, and the 302 came back as it was: nothing went to the login page.
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.every((u) => u.startsWith("https://boardgamegeek.com/xmlapi2/"))).toBe(true);
   });
 
   it("tells the owner once when BGG cannot be read at all, not again at the third miss", async () => {

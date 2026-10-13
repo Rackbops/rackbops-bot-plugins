@@ -36,6 +36,15 @@ describe("pageForExtraction", () => {
     expect(extractPrice(pageForExtraction('<style>.a{} <meta property="og:price:amount" content="8.00">'))).toEqual({ value: 8 });
   });
 
+  it("drops a meta tag with a '<' inside it, whose text near can still read (#209)", () => {
+    // The walk takes the last '<' before the '>' as the tag's start, so this one reads as `<b ...>`.
+    const page = '<head><meta property="product:price:amount" content="42.50" data-x="a<b"></head><body>Now 39.00</body>';
+    const out = pageForExtraction(page);
+    expect(out).not.toContain("<meta");
+    expect(extractPrice(out)).toBeNull();
+    expect(extractPrice(out, nearPattern("Now"))).toEqual({ value: 39 });
+  });
+
   // `toLowerCase` makes "İ" (U+0130) two code units, so offsets after it used to land one off (#163).
   it("an 'İ' before a meta tag does not shift it out of reach", () => {
     const page = '<title>İstanbul</title><meta property="product:price:amount" content="19.99">';
