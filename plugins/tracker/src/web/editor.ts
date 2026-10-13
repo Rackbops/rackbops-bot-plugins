@@ -71,9 +71,10 @@ export type Written = TaskResult | { ok: false; error: string };
  * The host answers a call with 504 once it has taken 10 s, without cancelling it (contract.d.ts,
  * `http`). A new price's or page watch's first read, which fetch.ts lets run 15 s, gives up
  * `WEB_READ_MS` after the request arrived -- counted from before the sign-in, the membership
- * re-check, the body read and the queue, not from when the create starts -- leaving about 2 s for
- * the finish in the queue, so a slow page makes nothing behind a 504 that a retry would then make a
- * second time (#174).
+ * re-check, the body read and the queue, not from when the create starts -- so a slow page makes
+ * nothing behind a 504 that a retry would then make a second time (#174). The about 2 s left after
+ * the read is a margin for the finish's turn in the queue, not a bound on it: a queue slower than
+ * that can still make the task after the host has answered 504.
  */
 export const WEB_READ_MS = 8_000;
 export const SLOW_PAGE = `That page did not answer within ${WEB_READ_MS / 1000} seconds, so I made nothing; try again later.`;

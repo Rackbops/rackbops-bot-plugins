@@ -214,9 +214,9 @@ describe("POST /tasks/<id>/listings", () => {
     expect(mixedBody.message).toContain("2 were left out: each needs a title and an absolute http(s) address on eBay.");
     // One left out is said in the singular (#230).
     expect((await (await post("t1", [ASIA, "junk"])).json()).message).toContain("Took 1 listing from eBay for Wingspan Oceania. 1 was left out:");
-    // A real eBay country site is taken; a look-alike `ebay.<tld>` is not.
-    const country = await post("t1", [{ ...ASIA, url: "https://www.ebay.co.uk/itm/323456789" }, { ...ASIA, url: "https://www.ebay.xyz/itm/423456789" }]);
-    expect(await country.json()).toMatchObject({ accepted: 1, rejected: 1 });
+    // A real eBay country site and its short links are taken; a look-alike `ebay.<tld>` is not.
+    const country = await post("t1", [{ ...ASIA, url: "https://www.ebay.co.uk/itm/323456789" }, { ...ASIA, url: "https://ebay.us/m/Ab3dE5" }, { ...ASIA, url: "https://www.ebay.xyz/itm/423456789" }]);
+    expect(await country.json()).toMatchObject({ accepted: 2, rejected: 1 });
     const none = await post("t1", [EVIL, BGG]);
     expect(none.status).toBe(400);
     expect((await none.json()).error.message).toBe("None of those listings could be used: each needs a `title` and an absolute http(s) `url` on eBay.");
@@ -229,13 +229,14 @@ describe("POST /tasks/<id>/listings", () => {
       ["t1", "https://www.ebay.com/itm/123456789"],
       ["t1", "https://www.ebay.com/itm/223456789"],
       ["t1", "https://www.ebay.co.uk/itm/323456789"],
+      ["t1", "https://ebay.us/m/Ab3dE5"],
       ["t2", "https://boardgamegeek.com/market/product/1234567"],
       ["t2", "https://www.boardgamegeek.com/market/product/7654321"],
     ]);
   });
 
   it("knows eBay's own domains and their subdomains, and BGG's, not look-alikes", () => {
-    for (const host of ["ebay.com", "www.ebay.com", "m.ebay.com", "www.ebay.co.uk", "m.ebay.de", "www.ebay.com.au", "befr.ebay.be", "WWW.EBAY.COM."]) {
+    for (const host of ["ebay.com", "www.ebay.com", "m.ebay.com", "ebay.us", "www.ebay.co.uk", "m.ebay.de", "www.ebay.com.au", "befr.ebay.be", "WWW.EBAY.COM."]) {
       expect([host, onWatchSite("ebay", `https://${host}/itm/123456789`)]).toEqual([host, true]);
     }
     for (const host of ["ebay.xyz", "www.ebay.app", "ebay.com.zz", "notebay.com", "ebay.com.evil.example", "ebay-deals.com", "boardgamegeek.com"]) {

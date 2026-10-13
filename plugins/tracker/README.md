@@ -580,10 +580,12 @@ unaffected. A body is at most
 16 KiB, read no further. One new price tracker's or `page` watch's first read in flight per person,
 shared with the web editor (`409 busy`). That first read gives up 8 seconds after the request
 arrived -- counted from before the token check, the membership re-check, the body and the create's
-first turn in the queue, not from when the read starts -- leaving about 2 seconds of the host's 10 s
-for making the task, and then makes nothing (`503 slow_page` with `Retry-After`; the web form says
-the same words). The person stays busy until the read itself ends (15 s at most), so a retry cannot
-start a second one.
+first turn in the queue, not from when the read starts -- and then makes nothing (`503 slow_page`
+with `Retry-After`; the web form says the same words). The person stays busy until the read itself
+ends (15 s at most), so a retry cannot start a second one. The about 2 seconds of the host's 10 s
+left after a read in time are a margin for making the task in the queue, not a bound: a queue
+slower than that can still make it after the host has answered `504`, so after a `504` on a create,
+`GET /tasks` before trying again.
 
 **Requests.** A `POST` or `PATCH` body is one JSON object with `Content-Type: application/json`
 (else `415`), and names only the fields listed for that type (else `400 unknown_field`), each of

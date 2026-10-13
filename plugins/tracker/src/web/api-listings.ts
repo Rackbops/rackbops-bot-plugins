@@ -53,6 +53,8 @@ export const EBAY_DOMAINS: readonly string[] = [
   "ebay.com.sg",
   "ebay.com.my",
   "ebay.ph",
+  // eBay's short-link domain: a shared listing's address can be one.
+  "ebay.us",
 ];
 
 /** `host` is `domain` or a subdomain of it (`www.`, `m.`, ...). */
