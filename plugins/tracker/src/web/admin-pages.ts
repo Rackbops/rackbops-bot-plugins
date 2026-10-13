@@ -14,9 +14,13 @@ import { UNLIMITED_BANNER } from "../usage.js";
  * the session's CSRF token; nothing here changes anything on a GET. No script.
  */
 
-/** Shown on a configured admin's page, where Revoke and Remove are not offered. */
+/** Shown on a configured admin's page to another admin, where Revoke and Remove are not offered. */
 export const CONFIGURED_NOTE =
   "Named in TRACKER_ADMIN_DISCORD_IDS: made an admin again at every start, so they cannot be revoked or removed here. Remove them from the configuration first.";
+
+/** Shown on a configured admin's own page, where Revoke is not offered but Remove (forgetting themselves) is. */
+export const CONFIGURED_SELF_NOTE =
+  "You are named in TRACKER_ADMIN_DISCORD_IDS: made an admin again at every start, so your flag cannot be revoked here. You may remove yourself, but the next start makes you an admin again, as a new person.";
 
 /** The word typed to confirm an erasure: the second post carries it with `confirm=yes`. */
 export const CONFIRM_WORD = "forget";
@@ -279,7 +283,7 @@ ${flash(result)}
 <li>Delivery: ${delivery(p, v.user, now)}</li>
 <li>Tasks: ${counts(p)}</li>
 </ul>
-${configured ? html`<p class="rb-muted">${CONFIGURED_NOTE}</p>` : null}
+${configured ? html`<p class="rb-muted">${p.id === v.user.id ? CONFIGURED_SELF_NOTE : CONFIGURED_NOTE}</p>` : null}
 <div class="tr-row">
 ${p.admin ? (configured ? null : post(v, p, "revoke", "Revoke admin", "rb-btn--ghost")) : post(v, p, "grant", "Make admin", "rb-btn--ghost")}
 ${p.deliveryPausedAt ? post(v, p, "resume-delivery", "Resume delivery", "rb-btn--accent") : null}
@@ -307,6 +311,11 @@ const WHAT_GOES =
   "every task (deleted ones too) with its runs, replies and history; your replies, answers and history on other people's tasks, " +
   "and your place on the tasks shared with you; decline blocks either way; delivery pauses; your settings, sign-in sessions and API tokens; and your place on the list.";
 
+/** What lives outside the tracker's store, which forget-me cannot reach (README, Forget me). */
+function outside(whose: "your" | "their"): string {
+  return `It cannot reach what is kept outside the tracker: city-hall's copy of a research request, the bot's log (which may hold ${whose} tracker id), and ${whose} usr account if linked, which is usr's to delete.`;
+}
+
 /** `/forget`: what forget-me deletes, and the button that asks for the confirmation. */
 export function forgetPage(v: Viewer, note?: string): string {
   return framed(
@@ -315,7 +324,7 @@ export function forgetPage(v: Viewer, note?: string): string {
     html`<section class="rb-card">
 <h1>Forget me</h1>
 <p>This deletes everything the tracker holds about you, at once and for good: ${WHAT_GOES}</p>
-<p>Nothing is kept or archived. Messages the bot already sent you stay in your Discord DMs, where only you can delete them. To use the tracker again later, an admin has to <code>/allow</code> you again, and you start from nothing.</p>
+<p>Nothing is kept or archived. Messages the bot already sent you stay in your Discord DMs, where only you can delete them. ${outside("your")} To use the tracker again later, an admin has to <code>/allow</code> you again, and you start from nothing.</p>
 ${note ? html`<div class="rb-alert rb-alert--warning" role="note"><p>${note}</p></div>` : null}
 <form method="post" action="${v.base}/forget">${hidden(v)}<button class="rb-btn rb-btn--danger" type="submit">Continue</button></form>
 </section>`,
@@ -326,8 +335,8 @@ ${note ? html`<div class="rb-alert rb-alert--warning" role="note"><p>${note}</p>
 export function confirmForgetPage(v: Viewer, o: { action: string; self: boolean; name: string; error?: string; note?: string }): string {
   const title = o.self ? "Delete everything about you?" : `Remove ${o.name} from the tracker?`;
   const what = o.self
-    ? html`<p>Everything the tracker holds about you is deleted: ${WHAT_GOES} You are signed out.</p>`
-    : html`<p>Everything the tracker holds about ${o.name} is deleted, as forget-me deletes it: their tasks, their replies and history, blocks, pauses, settings and sessions. They are signed out and must be allowed again to come back.</p>`;
+    ? html`<p>Everything the tracker holds about you is deleted: ${WHAT_GOES} You are signed out. ${outside("your")}</p>`
+    : html`<p>Everything the tracker holds about ${o.name} is deleted, as forget-me deletes it: their tasks, their replies and history, blocks, pauses, settings and sessions. They are signed out and must be allowed again to come back. ${outside("their")}</p>`;
   return framed(
     v,
     o.self ? "Forget me" : `Remove ${o.name}`,

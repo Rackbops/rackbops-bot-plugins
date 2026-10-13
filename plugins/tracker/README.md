@@ -241,9 +241,10 @@ served at a hashed path, cached for a year).
 | `/admin` | Admins only: everyone on the list, the decline blocks in force (each with Lift), and a form to allow a person by Discord id. |
 | `/admin/tasks` | Admins only: every task in the store, with its owner, status and how many receive it, each linking to its page. |
 | `/admin/deliveries` | Admins only: the DMs that did not arrive (below), newest first. |
-| `/admin/people/<id>` | Admins only: one person -- Discord id, registration, zone and hour, delivery, task counts, their tasks -- with Make admin or Revoke admin, Resume delivery (when paused), and Remove from the tracker. |
+| `/admin/usage` | Admins only: model usage per budget day (below). |
+| `/admin/people/<id>` | Admins only: one person -- Discord id, registration, zone and hour, delivery, task counts, their tasks -- with Make admin or Revoke admin, Resume delivery (when paused), and Remove from the tracker; their daily ceiling, with the form to change it; and their API tokens, each with Revoke. |
 | `/admin/usr-link` | Admins only, POST only, with the usr link on: Link everyone to usr (below). |
-| `/admin/allow`, `/admin/people/<id>/grant`, `/revoke`, `/resume-delivery`, `/forget`, `/admin/blocks/<id>/lift`, `/admin/tokens/<id>/revoke` | Admins only, POST only: the acts below. |
+| `/admin/allow`, `/admin/people/<id>/grant`, `/revoke`, `/resume-delivery`, `/ceiling`, `/forget`, `/admin/blocks/<id>/lift`, `/admin/tokens/<id>/revoke` | Admins only, POST only: the acts below. |
 | `/api/v1/...` | The JSON task API (below): bearer tokens only, never the cookie. |
 | `/signin` | Where a request that is not signed in is sent (a POST, or any request with the usr link off): says to run `/web`, and with the usr link on offers Sign in with usr. |
 | `/login?t=...` | The link `/web` gives. |
@@ -355,9 +356,10 @@ the function the command path runs:
 - **Make admin / Revoke admin** (plan 5.8). The last admin can be neither revoked nor removed. An
   admin who revokes themselves lands on My tasks. Each change is logged (`u1 made u2 an admin`).
   An admin named in `TRACKER_ADMIN_DISCORD_IDS` is made an admin again at every start, so their page
-  offers neither Revoke nor Remove, and both are refused: take them out of the configuration first.
-  Such an admin may still forget themselves (if another admin is left); the pages say that the next
-  start makes them again, as a new person, unless the configuration no longer names them.
+  offers another admin neither Revoke nor Remove, and both are refused: take them out of the
+  configuration first. Such an admin may still forget themselves (if another admin is left): their
+  own page offers Remove but not Revoke, and the pages say that the next start makes them again, as
+  a new person, unless the configuration no longer names them.
 - **Resume delivery** of a person paused after failed DMs: `DeliveryHealth.resume`, what the
   person's own next command does -- the count clears and the tasks nothing else holds go back on.
 - **Lift** a decline block in force: docket's `liftBlock`, recorded as that admin's lift.
@@ -441,7 +443,9 @@ and is deleted when it is on a task they were a recipient of, names their curren
 other recipient of that task has that name. A row written under an older name of theirs, or shared
 with a same-named recipient, is kept: the one known gap. A reply other people wrote on the erased
 person's own tasks is deleted with those tasks. Outside the store, nothing is touched: the DMs the
-bot sent stay in the person's Discord DMs, and the host's log may hold their tracker id. **city-hall
+bot sent stay in the person's Discord DMs, and the host's log may hold their tracker id. With the
+usr link on, their usr account -- which holds their Discord id and `tracker:member` -- is usr's:
+forget-me never calls usr, so it stays until it is removed there. **city-hall
 keeps its own copy of a research Job** -- the spec (the question and context are in its prompt) and
 the result -- under city-hall's retention, not the tracker's (Nazu, plan 5.8): forget-me deletes the
 tracker's `executor_jobs` rows for the erased runs (no tombstone is kept; the keys name only the
@@ -756,7 +760,7 @@ From then on they `/allow` everyone else. (usr's own "Setup" step 3, in `docs/di
   [Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17); the research lane
   still needs a deployed city-hall with a runner).
 - Editing in Discord (the editor is on the web only; `/scout edit` is the one exception), and changing a price tracker's page or `near` after it is made (make a new one); a free-form pattern for `price` (`near` is the safe subset: a user's regular expression run on a large page could hang the bot).
-- Showing unconfirmed deliveries to admins anywhere but the log, or a run's deliveries in its history.
+- Showing a run's deliveries in its history (admins see the ones that did not arrive on `/admin/deliveries`).
 
 docket-core, docket-types and `@rackbops/styles` are `devDependencies`: `bun build` bundles them
 into `dist/plugin.js` (the theme's CSS as text), and the bot loads that file without installing

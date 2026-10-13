@@ -8,7 +8,7 @@ import { BUSY, CONFIGURED_ADMIN, CONFIGURED_SELF, LAST_ADMIN, TICK_WAIT_MS } fro
 import { CANNOT_SHARE } from "../press.js";
 import { PAUSE_AFTER } from "../delivery-health.js";
 import { ERASED_TABLES, FORGOTTEN } from "../roster.js";
-import { CONFIGURED_NOTE, CONFIRM_WORD } from "./admin-pages.js";
+import { CONFIGURED_NOTE, CONFIGURED_SELF_NOTE, CONFIRM_WORD } from "./admin-pages.js";
 import { esc } from "./html.js";
 import {
   ADMIN,
@@ -428,10 +428,15 @@ describe("forget-me", () => {
 
     const page = await call(w.plugin, "GET", "/forget", { jar: w.larry });
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('action="/tracker/forget"');
+    const pageText = await page.text();
+    expect(pageText).toContain('action="/tracker/forget"');
+    // What it cannot reach is said too (#223).
+    expect(pageText).toContain(esc("your usr account if linked, which is usr's to delete"));
     const ask = await post(w.plugin, w.larry, w.larryCsrf, "/forget");
     expect(ask.status).toBe(200);
-    expect(await ask.text()).toContain(`Type ${CONFIRM_WORD} to confirm`);
+    const askText = await ask.text();
+    expect(askText).toContain(`Type ${CONFIRM_WORD} to confirm`);
+    expect(askText).toContain(esc("city-hall's copy of a research request"));
     const wrong = await post(w.plugin, w.larry, w.larryCsrf, "/forget", { confirm: "yes", word: "yes" });
     expect(wrong.status).toBe(400);
     expect((await post(w.plugin, w.larry, "stale", "/forget", { confirm: "yes", word: CONFIRM_WORD })).status).toBe(403);
@@ -831,6 +836,12 @@ describe("review fixes (slice 3)", () => {
     expect(page).toContain(esc(CONFIGURED_NOTE));
     expect(page).not.toContain("/admin/people/u1/revoke");
     expect(page).not.toContain("/admin/people/u1/forget");
+    // Their own page offers Remove, so it says so rather than "cannot be removed" (#223).
+    const own = await (await call(w.plugin, "GET", "/admin/people/u1", { jar: w.admin })).text();
+    expect(own).toContain(esc(CONFIGURED_SELF_NOTE));
+    expect(own).not.toContain(esc(CONFIGURED_NOTE));
+    expect(own).not.toContain("/admin/people/u1/revoke");
+    expect(own).toContain("/admin/people/u1/forget");
     expect(await (await call(w.plugin, "GET", "/forget", { jar: w.admin })).text()).toContain(esc(CONFIGURED_SELF));
     expect(await (await post(w.plugin, w.admin, w.adminCsrf, "/forget")).text()).toContain(esc(CONFIGURED_SELF));
 
