@@ -39,6 +39,8 @@ import {
   openLink,
   ORIGIN,
   people,
+  press,
+  replyText,
   SESSION,
   signIn,
   slash,
@@ -614,6 +616,141 @@ describe("escaping", () => {
     expect(esc(`<a href="x" onclick='y'>&</a>`)).toBe("&lt;a href=&quot;x&quot; onclick=&#39;y&#39;&gt;&amp;&lt;/a&gt;");
     const inner = html`<b>${"<i>"}</b>`;
     expect(html`<p>${inner}${["<", 1]}${null}${false}</p>`.value).toBe("<p><b>&lt;i&gt;</b>&lt;1</p>");
+  });
+});
+
+describe("a reply is one plain line (#205, #208)", () => {
+  const tick = (w: { plugin: Awaited<ReturnType<typeof world>>["plugin"] }) =>
+    w.plugin.ticks!.find((t) => t.name === "notify")!.run(new AbortController().signal);
+
+  /** Larry's weekly reminder t1, shared with Curly (u3, "user333"), who accepted; its first run, o1, has fired. */
+  async function sharedRun(title = "bins out") {
+    const w = await world();
+    await people(w.plugin);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: title, when: "9am", repeat: "week" } });
+    await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } });
+    await press(w.plugin, "tracker:a.t.t1", CURLY);
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await tick(w);
+    return w;
+  }
+
+  /** The text of each reply stored on t1, oldest first. */
+  function stored(dbPath: string): string[] {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const rows = db.query("SELECT payload FROM replies WHERE task_id = 't1' AND kind = 'text' ORDER BY seq").all() as { payload: string }[];
+      return rows.map((r) => (JSON.parse(r.payload) as { text: string }).text);
+    } finally {
+      db.close();
+    }
+  }
+
+  const history = (w: Awaited<ReturnType<typeof sharedRun>>) => slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" } });
+
+  const KEPT = "Reply kept with the task's history.";
+  const EMPTY = "That reply was empty.";
+
+  it("a reply is kept as one line: line breaks of every kind, tabs, control and zero-width characters become one space, trimmed", async () => {
+    const w = await sharedRun();
+    expect(await replyText(w.plugin, "o1", CURLY, " line one\r\n- Oct 1 -- done\t\u200b\u202e x\u0007y\u2028z\u2029 ")).toBe(KEPT);
+    // The bidi override and the bell are gone with the rest; so are the line and paragraph separators.
+    expect(stored(w.dbPath)).toEqual(["line one - Oct 1 -- done x y z"]);
+  });
+
+  it("a reply of only spaces, line breaks or zero-width characters is refused as empty, and nothing is stored", async () => {
+    const w = await sharedRun();
+    expect(await replyText(w.plugin, "o1", CURLY, " \n\t ")).toBe(EMPTY);
+    expect(await replyText(w.plugin, "o1", CURLY, "\u200b\u200c\ufeff")).toBe(EMPTY);
+    expect(await replyText(w.plugin, "o1", CURLY, "\u200d \u200d")).toBe(EMPTY);
+    expect(stored(w.dbPath)).toEqual([]);
+  });
+
+  it("a reply of only a blank filler, a lone mark or a variation selector is refused as empty; an emoji with its selector is kept", async () => {
+    const w = await sharedRun();
+    // The Hangul fillers, the braille blank, the combining grapheme joiner, variation selector 16.
+    for (const blank of ["\u115f", "\u1160", "\u3164", "\uffa0", "\u2800", "\u034f", "\ufe0f"]) {
+      expect(await replyText(w.plugin, "o1", CURLY, blank)).toBe(EMPTY);
+    }
+    expect(stored(w.dbPath)).toEqual([]);
+    expect(await replyText(w.plugin, "o1", CURLY, "\u2764\ufe0f")).toBe(KEPT);
+    expect(stored(w.dbPath)).toEqual(["\u2764\ufe0f"]);
+  });
+
+  it("a reply of only unassigned invisible code points is refused as empty; one between letters is a space", async () => {
+    const w = await sharedRun();
+    for (const unassigned of ["\u{e0080}", "\u2065"]) expect(await replyText(w.plugin, "o1", CURLY, unassigned)).toBe(EMPTY);
+    // One from each unassigned range; the variation selector U+E0100 is assigned and stays.
+    expect(await replyText(w.plugin, "o1", CURLY, "a\u2065b\ufff8c\u{e0000}d\u{e001f}e\u{e0080}f\u{e0fff}g\u{e0100}")).toBe(KEPT);
+    expect(stored(w.dbPath)).toEqual(["a b c d e f g\u{e0100}"]);
+  });
+
+  it("an emoji joined by zero-width joiners survives", async () => {
+    const w = await sharedRun();
+    const family = "\u{1f468}\u200d\u{1f469}\u200d\u{1f467}\u200d\u{1f466}";
+    expect(await replyText(w.plugin, "o1", CURLY, family)).toBe(KEPT);
+    expect(stored(w.dbPath)).toEqual([family]);
+  });
+
+  it("the format characters real text needs survive; a bidi override and a zero-width space between letters do not", async () => {
+    const w = await sharedRun();
+    // Persian "I want", with its zero-width non-joiner; German with a soft hyphen; every kept number sign before a 1.
+    const persian = "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645";
+    const german = "Zusammen\u00adarbeit";
+    const signs = ["\u0600", "\u0601", "\u0602", "\u0603", "\u0604", "\u0605", "\u06dd", "\u070f", "\u0890", "\u0891", "\u08e2", "\u{110bd}", "\u{110cd}"]
+      .map((sign) => `${sign}1`)
+      .join(" ");
+    for (const text of [persian, german, signs, "a\u202eb\u200bc"]) expect(await replyText(w.plugin, "o1", CURLY, text)).toBe(KEPT);
+    expect(stored(w.dbPath)).toEqual([persian, german, signs, "a b c"]);
+  });
+
+  it("history shows a reply stored before this change on one line", async () => {
+    const w = await sharedRun();
+    // As a reply kept before #205 is: line breaks and all.
+    const db = new Database(w.dbPath);
+    db.query("INSERT INTO replies (occurrence_id, task_id, user_id, kind, payload, at) VALUES ('o1', 't1', 'u3', 'text', ?, ?)").run(
+      JSON.stringify({ text: "ok\n- Oct 1, 9:00 -- done\u2028- Oct 1, 9:00 -- done\r" }),
+      "2026-10-01T13:01:00.000Z",
+    );
+    db.close();
+    const said = await history(w);
+    expect(said).toMatch(/^- Thu Oct 1, 9:00 -- \w+; user333 replied "ok - Oct 1, 9:00 -- done - Oct 1, 9:00 -- done"$/m);
+    expect(said.split(/\r\n?|[\n\u2028\u2029]/).filter((l) => l.startsWith("- Oct 1, 9:00"))).toEqual([]);
+  });
+
+  it("history escapes a masked link and a mention in a reply, in Discord only", async () => {
+    const w = await sharedRun();
+    expect(await replyText(w.plugin, "o1", CURLY, "[receipt](https://evil.example) <@123> \\ok")).toBe(KEPT);
+    expect(await history(w)).toContain('; user333 replied "\\[receipt\\]\\(https://evil.example) \\<@123> \\\\ok"');
+    // The page escapes it as HTML, and adds no backslash.
+    const page = await (await call(w.plugin, "GET", "/tasks/t1", { jar: await signIn(w.plugin, LARRY) })).text();
+    expect(page).toContain("<td>user333 replied &quot;[receipt](https://evil.example) &lt;@123&gt; \\ok&quot;</td>");
+  });
+
+  it("an escaped bracket in a reply cannot close a link the task's title opened", async () => {
+    // Discord's link text ignores escapes: `[Bins] out ... x\](https://...)` would still be one link.
+    const w = await sharedRun("[Bins] out");
+    expect(await replyText(w.plugin, "o1", CURLY, "x](https://evil.example)")).toBe(KEPT);
+    const said = await history(w);
+    expect(said).toStartWith("`t1` [Bins] out -- ");
+    expect(said).toContain('; user333 replied "x\\]\\(https://evil.example)"');
+  });
+
+  it("spoiler bars in replies to two runs cannot pair", async () => {
+    const w = await sharedRun();
+    w.clock.set("2026-10-08T13:00:00.000Z");
+    await tick(w);
+    expect(await replyText(w.plugin, "o1", CURLY, "fine ||")).toBe(KEPT);
+    expect(await replyText(w.plugin, "o2", CURLY, "|| fine")).toBe(KEPT);
+    const said = await history(w);
+    expect(said).toMatch(/^- Thu Oct 1, 9:00 -- \w+; user333 replied "fine \\\|\\\|"$/m);
+    expect(said).toMatch(/^- Thu Oct 8, 9:00 -- \w+; user333 replied "\\\|\\\| fine"$/m);
+  });
+
+  it("a reply's backticks open no code span or block", async () => {
+    const w = await sharedRun();
+    expect(await replyText(w.plugin, "o1", CURLY, "```js x``` `y`")).toBe(KEPT);
+    expect(await history(w)).toContain('; user333 replied "\\`\\`\\`js x\\`\\`\\` \\`y\\`"');
   });
 });
 

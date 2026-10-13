@@ -64,8 +64,16 @@ so anyone can always stop the messages; the Reply button checks membership when 
 
 **Buttons.** The owner's DM carries Done, Snooze 1h and Reply; a recipient's copy carries the
 opt-out and Reply; the consent DM carries Accept and Decline. Reply opens a modal whose text is
-kept on the task. docket decides who may answer what (the owner alone answers a run, item 34).
-A pressed DM is edited to say what happened.
+kept on the task as one plain line: each run of line breaks, spaces, control characters and
+invisible format characters becomes one space, but for a few format characters real text needs
+(the zero-width joiner in an emoji, the non-joiner in a Persian or Indic word, the soft hyphen,
+and the signs Arabic, Syriac and Kaithi write with a number). A reply of only spaces, line breaks,
+zero-width characters or blank fillers is refused as empty. `/task history`, the web task page and
+the task API show up to 80 characters of it, on one line; in `/task history` a masked link,
+mention, timestamp, spoiler or code in it is shown as typed, except that a mention or timestamp
+typed right after a bare link may still show as one. A mention there never pings. docket decides
+who may answer what (the owner alone answers a run, item 34). A pressed DM is edited to say what
+happened.
 
 **Pause after failed DMs** (plan 5.5). Three DMs in a row that the host says cannot be delivered
 pause the person's delivery and every active task that would DM them, theirs and the ones they
