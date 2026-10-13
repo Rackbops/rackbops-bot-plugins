@@ -121,9 +121,9 @@ async function slash(plugin: Plugin, name: string, userId: string, o: Options = 
       getUser: (k: string) => (o.users?.[k] ? { id: o.users[k], bot: false } : null),
     },
     deferReply: async (x: unknown) => void (deferred = x),
-    editReply: async (x: { content: string }) => {
+    editReply: async (x: { content: string; flags?: unknown }) => {
       edits.push(x);
-      o.said?.push({ kind: "edit", content: x.content });
+      o.said?.push({ kind: "edit", content: x.content, ...(x.flags !== undefined ? { flags: x.flags } : {}) });
     },
     followUp: async (x: { content: string; flags?: unknown; allowedMentions?: unknown }) => {
       if (o.followUpFails) throw o.followUpFails;
@@ -913,6 +913,30 @@ describe("one message (#161, #205 discord-1)", () => {
     const again: Said[] = [];
     await slash(w.plugin, "tasks", LARRY, { said: again });
     expect(again.map((m) => m.kind)).toEqual(["edit"]);
+  });
+
+  it("/task history goes out with link previews off, its answer and its follow-up alike (#286)", async () => {
+    const w = world();
+    await withLarry(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "water the plants", when: "9am", repeat: "day" } });
+    // Four replies a day for four days: a history long enough that the resume notice follows it.
+    for (const [i, day] of ["01", "02", "03", "04"].entries()) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await tick(w.plugin);
+      for (let n = 0; n < 4; n++) {
+        const text = `see https://example.com/${i}/${n} ${"x".repeat(60)}`;
+        expect(await submitModal(w.plugin, `tracker:m.o.o${i + 1}`, LARRY, text)).toBe("Reply kept with the task's history.");
+      }
+    }
+    await larryPausedAndBack(w);
+    const said: Said[] = [];
+    const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" }, said });
+    expect(history).toContain("https://example.com/");
+    // SuppressEmbeds (4) on the answer; Ephemeral (64) and SuppressEmbeds on the resume notice after it.
+    expect(said).toHaveLength(2);
+    expect(said[0]).toEqual({ kind: "edit", content: history, flags: 4 });
+    expect(said[1]).toMatchObject({ kind: "followUp", flags: 64 | 4, allowedMentions: { parse: [] } });
+    expect(said[1]?.content).toContain("I could not DM you");
   });
 
   it("a follow-up that fails after the answer landed is logged, never thrown to the host", async () => {

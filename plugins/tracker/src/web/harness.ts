@@ -166,9 +166,9 @@ export async function slash(
       getUser: (k: string) => (o.users?.[k] ? { id: o.users[k], bot: false } : null),
     },
     deferReply: async (x: unknown) => void (deferred = x),
-    editReply: async (x: { content: string }) => {
+    editReply: async (x: { content: string; flags?: unknown }) => {
       edits.push(x);
-      o.said?.push({ kind: "edit", content: x.content });
+      o.said?.push({ kind: "edit", content: x.content, ...(x.flags !== undefined ? { flags: x.flags } : {}) });
     },
     followUp: async (x: { content: string; flags?: unknown; allowedMentions?: unknown }) => {
       if (o.followUpFails) throw o.followUpFails;
