@@ -765,8 +765,9 @@ describe("a slow first read (#174)", () => {
     await untilRead(slow.s, 1);
     jest.advanceTimersByTime(WEB_READ_MS);
     const res = await first;
-    expect(res.status).toBe(400);
-    expect((await body(res)).error).toEqual({ code: "invalid", message: SLOW_PAGE });
+    expect(res.status).toBe(503);
+    expect(res.headers.get("retry-after")).toBe("10");
+    expect((await body(res)).error).toEqual({ code: "slow_page", message: SLOW_PAGE });
     // The read is still running: a retry now is refused, not read alongside it.
     const retry = await api(w.plugin, "POST", "/tasks", make);
     expect(retry.status).toBe(409);
@@ -778,6 +779,35 @@ describe("a slow first read (#174)", () => {
     expect((await body(await api(w.plugin, "GET", "/tasks", { token: w.token }))).tasks).toEqual([]);
     expect((await api(w.plugin, "POST", "/tasks", make)).status).toBe(201);
     expect((await body(await api(w.plugin, "GET", "/tasks", { token: w.token }))).tasks).toHaveLength(1);
+  });
+
+  it("counts the deadline from the request's arrival: a slow membership re-check leaves the read less time", async () => {
+    const slow = slowShop();
+    const CHECK_MS = 2500;
+    const membership: WebLookup = () => new Promise((resolve) => setTimeout(() => resolve("member"), CHECK_MS));
+    const w = await setup({ fetch: slow.fetch, guild: true, webMembership: membership });
+    w.clock.advance(MEMBER_RECHECK_MS);
+    jest.useFakeTimers();
+    let answered = false;
+    const first = api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "price", url: SHOP, near: "Price:" } }).finally(() => {
+      answered = true;
+    });
+    await settle();
+    expect(slow.s.reads).toBe(0);
+    jest.advanceTimersByTime(CHECK_MS);
+    await untilRead(slow.s, 1);
+    // The read began 2.5 s in; it gets what is left of the 8 s, not 8 s of its own.
+    jest.advanceTimersByTime(WEB_READ_MS - CHECK_MS - 1);
+    await settle();
+    expect(answered).toBe(false);
+    jest.advanceTimersByTime(1);
+    const res = await first;
+    expect(res.status).toBe(503);
+    expect((await body(res)).error.code).toBe("slow_page");
+    slow.release();
+    await settle();
+    jest.useRealTimers();
+    expect((await body(await api(w.plugin, "GET", "/tasks", { token: w.token }))).tasks).toEqual([]);
   });
 
   it("a page watch's first read is bounded the same way, from the web editor too", async () => {
@@ -879,7 +909,7 @@ describe("guards a green suite used to miss (#230)", () => {
     const config = { source: "inbox", target: `ebay-${"a".repeat(24)}`, search: "Wingspan" };
     const task = await store.createTask({ ownerId: larry.id, type: "wantlist", title: "Wingspan", config, schedule: null, lane: "notify", capabilities: ["notify"], at: START });
     const d = { store, inbox: null, clock: { now: () => new Date(START) } } as unknown as TrackerDeps;
-    const writer: Writer = { d, queue: (fn) => fn(), reading: new Set(), userId: larry.id };
+    const writer: Writer = { d, queue: (fn) => fn(), reading: new Set(), userId: larry.id, arrived: performance.now() };
     const res = await listingsAnswer(writer, larry, task.id, { listings: [{ title: "Wingspan", url: "https://www.ebay.com/itm/123456789" }] });
     expect(res).toMatchObject({ status: 503, body: { error: { code: "unavailable" } } });
   });

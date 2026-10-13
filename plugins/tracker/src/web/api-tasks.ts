@@ -7,7 +7,7 @@ import { FINISHED, ownLiveTask } from "../manage.js";
 import { RESEARCH_OFF } from "../research.js";
 import { SCOUT_OFF } from "../scout.js";
 import { INBOX_OFF, JUDGE_OFF, type WatchConfig, watchSite } from "../want.js";
-import { actOn, editableTask, makeTask, READING, saveEdit, type TaskAction, type Writer, type Written } from "./editor.js";
+import { actOn, editableTask, makeTask, READING, saveEdit, SLOW_PAGE, type TaskAction, type Writer, type Written } from "./editor.js";
 import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_TYPES, type NewType } from "./editor-pages.js";
 import { editValues } from "./form-input.js";
 
@@ -122,6 +122,8 @@ export function refusal(error: string): ApiAnswer {
   if (error === NO_SUCH_TASK) return notFound();
   if (error === NO_LONGER_LISTED) return problem(401, "invalid_token", "The token's owner is no longer on this tracker's list.");
   if (error === READING || error === TASK_BUSY) return problem(409, "busy", error);
+  // The page did not answer before the host's deadline (editor.ts, #174): nothing made, worth a retry.
+  if (error === SLOW_PAGE) return problem(503, "slow_page", error, { "Retry-After": "10" });
   if (error === NOT_EDITABLE) return problem(409, "conflict", error);
   if (error === RESEARCH_OFF || error === SCOUT_OFF) return problem(503, "unavailable", error);
   if (error === FINISHED || /^That task is [a-z]+, not [a-z]+\.$/.test(error)) return problem(409, "conflict", error);

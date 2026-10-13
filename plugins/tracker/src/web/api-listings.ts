@@ -1,5 +1,5 @@
 import type { User } from "@rackbops/docket-core";
-import { BGG_HOST, isEbayHost, type Listing } from "@rackbops/docket-types";
+import { BGG_HOST, type Listing } from "@rackbops/docket-types";
 import { acceptListing, type InboxSite, MAX_LISTINGS_PER_POST } from "../inbox.js";
 import { ownLiveTask } from "../manage.js";
 import { WANT_TYPES, type WatchConfig, watchSite } from "../want.js";
@@ -18,7 +18,8 @@ import type { Writer } from "./editor.js";
  * (inbox.ts's `acceptListing`): the valid ones are kept and the rest only counted, so one odd card
  * on a results page does not cost the others; a body with none valid is a 400. `price` may be a
  * number or text such as "$12.50"; `url` must be an absolute http(s) address on the watch's own
- * site -- eBay's for an eBay watch, boardgamegeek.com for a BGG one -- since the agent posting them
+ * site -- one of `EBAY_DOMAINS` for an eBay watch, boardgamegeek.com for a BGG one, each or a
+ * subdomain -- since the agent posting them
  * reads untrusted pages, and the watch's DM links each listing to its owner (#229).
  *
  * Only the token owner's own live watch (active or paused) whose source is an inbox: anyone else's,
@@ -27,11 +28,41 @@ import type { Writer } from "./editor.js";
  * task as the store has it then.
  */
 
+/**
+ * eBay's own marketplace domains, named one by one: docket-types' `isEbayHost` is a pattern for
+ * refusing eBay (it takes any `ebay.<tld>`, such as `ebay.xyz`), too wide for deciding which links
+ * may reach an owner's DM. Not checked against a list eBay publishes: extend it when a real eBay
+ * country site is refused.
+ */
+export const EBAY_DOMAINS: readonly string[] = [
+  "ebay.com",
+  "ebay.ca",
+  "ebay.co.uk",
+  "ebay.com.au",
+  "ebay.de",
+  "ebay.at",
+  "ebay.ch",
+  "ebay.fr",
+  "ebay.be",
+  "ebay.nl",
+  "ebay.ie",
+  "ebay.it",
+  "ebay.es",
+  "ebay.pl",
+  "ebay.com.hk",
+  "ebay.com.sg",
+  "ebay.com.my",
+  "ebay.ph",
+];
+
+/** `host` is `domain` or a subdomain of it (`www.`, `m.`, ...). */
+const under = (host: string, domain: string) => host === domain || host.endsWith(`.${domain}`);
+
 /** Whether a listing's address (already absolute http(s), `acceptListing`) is on the inbox watch's own site. */
 export function onWatchSite(site: InboxSite | null, url: string): boolean {
   const host = new URL(url).hostname.replace(/\.$/, "").toLowerCase();
-  if (site === "ebay") return isEbayHost(host);
-  if (site === "bgg") return host === BGG_HOST || host.endsWith(`.${BGG_HOST}`);
+  if (site === "ebay") return EBAY_DOMAINS.some((d) => under(host, d));
+  if (site === "bgg") return under(host, BGG_HOST);
   return true;
 }
 

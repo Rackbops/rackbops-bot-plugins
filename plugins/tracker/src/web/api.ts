@@ -75,6 +75,8 @@ export interface ApiWiring {
   limiter: RateLimiter;
   /** The one bucket for failed token lookups, keyed by `FAILED_KEY` only, so its memory is one entry. */
   failed: RateLimiter;
+  /** `performance.now()` when the request arrived, before authentication: a create's first page read counts from it (editor.ts). */
+  arrived: number;
   /** The web's membership re-check, for a token's owner (app.ts). */
   recheck(user: User, checkedAt: string | null): Promise<Recheck>;
 }
@@ -233,7 +235,7 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
   const allowed = allowedMethods(r);
   const method = request.method;
   if (!allowed.split(", ").includes(method)) return json(problem(405, "method_not_allowed", `Use ${allowed}.`, { Allow: allowed }));
-  const writer: Writer = { d: w.d, queue: w.queue, reading: w.reading, userId: user.id };
+  const writer: Writer = { d: w.d, queue: w.queue, reading: w.reading, userId: user.id, arrived: w.arrived };
   const base = `${w.base}${API_PREFIX}`;
 
   if (method === "POST" || method === "PATCH") {

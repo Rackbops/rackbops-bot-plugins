@@ -35,6 +35,8 @@ export interface Editor {
   queue: Queue;
   /** Who has a new price's or watch's page read in flight (tracker user ids): one at a time per person. */
   reading: Set<string>;
+  /** `performance.now()` when the host handed app.ts the request: a first page read's deadline counts from it. */
+  arrived: number;
 }
 
 /** Who writes, and through what: the web editor's viewer or an API token's owner. */
@@ -44,13 +46,15 @@ export interface Writer {
   /** Shared by the web and the API: one new price tracker's page read per person, wherever it was asked. */
   reading: Set<string>;
   userId: string;
+  /** `performance.now()` when the request arrived (app.ts, api.ts), before any sign-in or membership check. */
+  arrived: number;
 }
 
 export const READING = "I am still reading the page of your last new price tracker; try again when it is done.";
 
 const GONE = NO_LONGER_LISTED;
 
-const writer = (e: Editor): Writer => ({ d: e.d, queue: e.queue, reading: e.reading, userId: e.v.user.id });
+const writer = (e: Editor): Writer => ({ d: e.d, queue: e.queue, reading: e.reading, userId: e.v.user.id, arrived: e.arrived });
 
 /** Runs `fn` in the queue with the writer as the store has them now. */
 function asUser<T extends { ok: boolean }>(w: Writer, fn: (user: User) => Promise<T>): Promise<T | { ok: false; error: string }> {
@@ -64,18 +68,20 @@ export type Written = TaskResult | { ok: false; error: string };
 
 /**
  * The host answers a call with 504 once it has taken 10 s, without cancelling it (contract.d.ts,
- * `http`). A new price's or page watch's first read, which fetch.ts lets run 15 s, gives up here
- * first, counted from when the request came in, so a slow page makes nothing behind a 504 that a
- * retry would then make a second time (#174).
+ * `http`). A new price's or page watch's first read, which fetch.ts lets run 15 s, gives up
+ * `WEB_READ_MS` after the request arrived -- counted from before the sign-in, the membership
+ * re-check, the body read and the queue, not from when the create starts -- leaving about 2 s for
+ * the finish in the queue, so a slow page makes nothing behind a 504 that a retry would then make a
+ * second time (#174).
  */
 export const WEB_READ_MS = 8_000;
 export const SLOW_PAGE = `That page did not answer within ${WEB_READ_MS / 1000} seconds, so I made nothing; try again later.`;
 
-/** `read`'s result, or null once `WEB_READ_MS` from `begun` (a `performance.now()`) has passed first. */
-async function within<T>(read: Promise<T>, begun: number): Promise<T | null> {
+/** `read`'s result, or null once `WEB_READ_MS` from `arrived` (a `performance.now()`) has passed first. */
+async function within<T>(read: Promise<T>, arrived: number): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), Math.max(0, WEB_READ_MS - (performance.now() - begun)));
+    timer = setTimeout(() => resolve(null), Math.max(0, WEB_READ_MS - (performance.now() - arrived)));
   });
   try {
     return await Promise.race([read, late]);
@@ -104,8 +110,7 @@ export async function makeTask(w: Writer, type: NewType, form: URLSearchParams):
   if (type === "wantlist") return makeWant(w, form);
   const input = priceInput(form);
   // One page read per person at a time: the web has no Discord rate limit in front of it, and
-  // each read is an outbound request of up to 15 s (cut to `WEB_READ_MS` here).
-  const begun = performance.now();
+  // each read is an outbound request of up to 15 s (cut to `WEB_READ_MS` after arrival here).
   if (w.reading.has(w.userId)) return { ok: false, error: READING };
   w.reading.add(w.userId);
   let late: Promise<unknown> | null = null;
@@ -115,7 +120,7 @@ export async function makeTask(w: Writer, type: NewType, form: URLSearchParams):
     // The page is read outside the queue, as `/price` reads it: a slow page holds up no one else.
     const { pending } = started;
     const read = previewPrice(w.d, pending);
-    const seen = await within(read, begun);
+    const seen = await within(read, w.arrived);
     if (seen === null) {
       late = read;
       return { ok: false, error: SLOW_PAGE };
@@ -129,7 +134,6 @@ export async function makeTask(w: Writer, type: NewType, form: URLSearchParams):
 /** `/want`'s rules, a page read outside the queue as a new price's is, under the same one-read-per-person guard and bound. */
 async function makeWant(w: Writer, form: URLSearchParams): Promise<Written> {
   const input = wantInput(form);
-  const begun = performance.now();
   if (w.reading.has(w.userId)) return { ok: false, error: READING };
   w.reading.add(w.userId);
   let late: Promise<unknown> | null = null;
@@ -138,7 +142,7 @@ async function makeWant(w: Writer, form: URLSearchParams): Promise<Written> {
     if (!started.ok) return started;
     const { start } = started;
     const read = previewWant(w.d, start);
-    const seen = await within(read, begun);
+    const seen = await within(read, w.arrived);
     if (seen === null) {
       late = read;
       return { ok: false, error: SLOW_PAGE };

@@ -4,6 +4,7 @@ import type { Plugin } from "../../../packages/api/contract.js";
 import { MAX_LISTINGS_PER_POST } from "./inbox.js";
 import { DEFAULT_INBOX_HOURS, ebaySearchUrl, INBOX_OFF } from "./want.js";
 import { MAX_API_BYTES, MAX_LISTINGS_BYTES } from "./web/api.js";
+import { onWatchSite } from "./web/api-listings.js";
 import { CITY_HALL, dmsTo, fakeCityHall, query } from "./web/execute-harness.js";
 import { api, call, cleanup, CURLY, csrfOf, LARRY, makeToken, ORIGIN, people, signIn, slash, world } from "./web/harness.js";
 
@@ -213,6 +214,9 @@ describe("POST /tasks/<id>/listings", () => {
     expect(mixedBody.message).toContain("2 were left out: each needs a title and an absolute http(s) address on eBay.");
     // One left out is said in the singular (#230).
     expect((await (await post("t1", [ASIA, "junk"])).json()).message).toContain("Took 1 listing from eBay for Wingspan Oceania. 1 was left out:");
+    // A real eBay country site is taken; a look-alike `ebay.<tld>` is not.
+    const country = await post("t1", [{ ...ASIA, url: "https://www.ebay.co.uk/itm/323456789" }, { ...ASIA, url: "https://www.ebay.xyz/itm/423456789" }]);
+    expect(await country.json()).toMatchObject({ accepted: 1, rejected: 1 });
     const none = await post("t1", [EVIL, BGG]);
     expect(none.status).toBe(400);
     expect((await none.json()).error.message).toBe("None of those listings could be used: each needs a `title` and an absolute http(s) `url` on eBay.");
@@ -224,9 +228,21 @@ describe("POST /tasks/<id>/listings", () => {
     expect(stored).toEqual([
       ["t1", "https://www.ebay.com/itm/123456789"],
       ["t1", "https://www.ebay.com/itm/223456789"],
+      ["t1", "https://www.ebay.co.uk/itm/323456789"],
       ["t2", "https://boardgamegeek.com/market/product/1234567"],
       ["t2", "https://www.boardgamegeek.com/market/product/7654321"],
     ]);
+  });
+
+  it("knows eBay's own domains and their subdomains, and BGG's, not look-alikes", () => {
+    for (const host of ["ebay.com", "www.ebay.com", "m.ebay.com", "www.ebay.co.uk", "m.ebay.de", "www.ebay.com.au", "befr.ebay.be", "WWW.EBAY.COM."]) {
+      expect([host, onWatchSite("ebay", `https://${host}/itm/123456789`)]).toEqual([host, true]);
+    }
+    for (const host of ["ebay.xyz", "www.ebay.app", "ebay.com.zz", "notebay.com", "ebay.com.evil.example", "ebay-deals.com", "boardgamegeek.com"]) {
+      expect([host, onWatchSite("ebay", `https://${host}/itm/123456789`)]).toEqual([host, false]);
+    }
+    for (const host of ["boardgamegeek.com", "www.boardgamegeek.com"]) expect(onWatchSite("bgg", `https://${host}/market/product/1`)).toBe(true);
+    for (const host of ["fakeboardgamegeek.com", "boardgamegeek.com.evil.example", "www.ebay.com"]) expect(onWatchSite("bgg", `https://${host}/market/product/1`)).toBe(false);
   });
 
   it("is the owner's own live inbox watch only: another's is 404, a page watch or a reminder is 409 or 404", async () => {

@@ -274,7 +274,9 @@ without the member role, or for an account linked to no one registered here, sho
 admin for. While signed in, a usr cookie for the person's own account that no longer carries
 `tracker:member` signs them out of every session and revokes their API tokens. That happens only on
 a web request carrying the cookie: the task API never reads usr, so a token keeps working until the
-person next opens the web area (revoking their tokens or admission in the tracker ends them at once). Sign out ends the
+person next uses the web area while still signed in to it; opened signed out, it only shows the
+not-member page and the tokens stay (revoking their tokens or admission in the tracker ends them at
+once). Sign out ends the
 tracker's session only, not usr's: for 12 hours after it, a plain GET does not sign back in from
 usr's cookie; the sign-in page's "Sign in with usr" button (and usr's trip back from it) or a `/web`
 link does. Any site under usr's cookie domain can set an
@@ -576,9 +578,11 @@ token does not look up (unknown, revoked, expired, malformed) share one global b
 refilled at one every two seconds; past it they get `429` instead of `401`, and valid tokens are
 unaffected. A body is at most
 16 KiB, read no further. One new price tracker's or page watch's page read in flight per person,
-shared with the web editor (`409 busy`). That first read gives up 8 seconds after the request came
-in, before the host's 10 s `504`, and makes nothing (`400 invalid`, "try again later"); the person
-stays busy until the read itself ends (15 s at most), so a retry cannot start a second one.
+shared with the web editor (`409 busy`). That first read gives up 8 seconds after the request
+arrived -- counted from before the token check, the membership re-check and the body, not from when
+the create starts -- leaving about 2 seconds of the host's 10 s for making the task, and then makes
+nothing (`503 slow_page` with `Retry-After`; the web form says the same words). The person stays
+busy until the read itself ends (15 s at most), so a retry cannot start a second one.
 
 **Requests.** A `POST` or `PATCH` body is one JSON object with `Content-Type: application/json`
 (else `415`), and names only the fields listed for that type (else `400 unknown_field`), each of
@@ -593,8 +597,8 @@ Which types: `GET /tasks`, `GET /tasks/<id>`, pause, resume and `DELETE` work on
 whatever its type. `POST /tasks` takes `reminder`, `renewal` and `price`, by the web editor's rules,
 `wantlist`, by `/want`'s rules, and, while the model runner is set up on this bot, `research`
 (#82), by `/research`'s rules, and `scout` (#83), by `/scout new`'s; while it is not, a `research`
-or `scout` create answers `503 unavailable`. `PATCH` takes the editor types, a want-list watch
-(`wantlist` or `wantjudge`) and `scout` (a scout made while the runner was set up stays editable):
+or `scout` create answers `503 unavailable`. `PATCH` takes `reminder`, `renewal`, `price`, a
+want-list watch (`wantlist` or `wantjudge`) and `scout` (a scout made while the runner was set up stays editable):
 a research request cannot be edited, here or in Discord, and a `PATCH` of one answers
 `409 conflict`.
 
@@ -607,7 +611,7 @@ a research request cannot be edited, here or in Discord, and a `PATCH` of one an
 | `GET /api/v1/tasks/<id>` | One of your tasks (a deleted one too), with its history: the newest runs and changes, as `/task history` shows them. |
 | `PATCH /api/v1/tasks/<id>` | Edits it: the fields to change. A price's page is not editable. |
 | `POST /api/v1/tasks/<id>/pause`, `/resume` | Body `{}`. As the web's Pause and Resume, and `/task resume`. |
-| `POST /api/v1/tasks/<id>/listings` | Sends listings in to your inbox watch (an eBay watch, or a BGG one made without BGG's API): `{"listings": [{"title", "url", "price", "currency", "condition", "seller"}, ...]}`, 1 to 40 of them, `title` and an absolute http(s) `url` on the watch's own site (eBay's for an eBay watch, `boardgamegeek.com` for a BGG one) required, `price` a number or text such as `"$30.00"`, `currency` three letters. Each is cleaned by docket-types' `submittedListing` (an eBay item's address becomes its bare `/itm/<number>`, so one item stays one listing); the usable ones are kept, the others counted: `200 {"accepted", "rejected", "message"}`. None usable, or the wrong shape, is `400`; more than 40 is `400 too_many`; anyone else's, a deleted or finished watch, or not a watch, is `404`; a page or BGG-API watch is `409` (its listings are read, not sent). The next look DMs the new ones within the watch's limits, each once. The newest 100 per watch are kept, as many as one look reads: more than 100 sent between two looks loses the oldest. Body up to 64 KiB. |
+| `POST /api/v1/tasks/<id>/listings` | Sends listings in to your inbox watch (an eBay watch, or a BGG one made without BGG's API): `{"listings": [{"title", "url", "price", "currency", "condition", "seller"}, ...]}`, 1 to 40 of them, `title` and an absolute http(s) `url` on the watch's own site (one of eBay's own domains, `EBAY_DOMAINS` in `src/web/api-listings.ts`, or a subdomain, for an eBay watch; `boardgamegeek.com` or a subdomain for a BGG one) required, `price` a number or text such as `"$30.00"`, `currency` three letters. Each is cleaned by docket-types' `submittedListing` (an eBay item's address becomes its bare `/itm/<number>`, so one item stays one listing); the usable ones are kept, the others counted: `200 {"accepted", "rejected", "message"}`. None usable, or the wrong shape, is `400`; more than 40 is `400 too_many`; anyone else's, a deleted or finished watch, or not a watch, is `404`; a page or BGG-API watch is `409` (its listings are read, not sent). The next look DMs the new ones within the watch's limits, each once. The newest 100 per watch are kept, as many as one look reads: more than 100 sent between two looks loses the oldest. Body up to 64 KiB. |
 | `DELETE /api/v1/tasks/<id>` | Deletes it as the web does: archived, nothing more sent, history kept. No confirmation step. |
 
 A task is `{"id", "type", "title", "status", "cadence", "nextAt", "createdAt", "updatedAt",
@@ -639,6 +643,7 @@ and a `PATCH` naming it is refused (`unknown_field`). A write answers
 | 413 | `too_large` | Body over 16 KiB (64 KiB for `/listings`). |
 | 415 | `unsupported_media_type` | Not `application/json`. |
 | 429 | `rate_limited` | With `Retry-After`: this token's bucket, or the shared one for bad tokens. |
+| 503 | `slow_page` | A new price's or page watch's page did not answer within 8 seconds of the request's arrival: nothing was made. With `Retry-After`. |
 | 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours (the lookup goes through the Discord client of the last command or button the bot handled, so after a restart none runs until someone uses one); the type is not available on this bot. |
 
 **Example.**
