@@ -5,7 +5,8 @@ import { TASK_BUSY } from "./locks.js";
 /**
  * Pausing, resuming and deleting a task (rackbops-bot-plugins#80, plan 5.10's task editor): the
  * owner's own acts on their own task, with no discord.js, for the web editor and `/task resume`
- * alike. Every write here runs in the surface's one queue, under the task's lock (locks.ts).
+ * alike. Every write here runs in the surface's one queue, under the task's lock (locks.ts); a pause,
+ * and a resume's dealings with a pause for failed DMs, also take DeliveryHealth's lock after it.
  *
  * - A pause by the owner sets the task `paused`; its queued run stays, and docket runs no paused
  *   task's due runs and holds its owed sends, so nothing is sent. It is told apart from a pause for
@@ -40,7 +41,10 @@ function locked(d: TrackerDeps, taskId: string, act: () => Promise<Done>): Promi
 }
 
 export function pauseTask(d: TrackerDeps, user: User, taskId: string): Promise<Done> {
-  return locked(d, taskId, () => pauseLocked(d, user, taskId));
+  // On DeliveryHealth's lock too, taken after the task's as a resume takes it: a pause for failed
+  // DMs (delivery-health.ts) pauses tasks without their lock, and landing between this check and
+  // this write it would make the owner's pause one for failed DMs, which the person's resume undoes.
+  return locked(d, taskId, () => d.health.exclusive(() => pauseLocked(d, user, taskId)));
 }
 
 async function pauseLocked(d: TrackerDeps, user: User, taskId: string): Promise<Done> {

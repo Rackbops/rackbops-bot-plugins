@@ -59,3 +59,67 @@ describe("pageForExtraction", () => {
     }
   });
 });
+
+/**
+ * A `near` price ends at its last digit (#164): a `.` or `,` right after the number is punctuation,
+ * and captured it would hide the decimal part from `parsePrice` ("19.99," read as 1999).
+ */
+describe("nearPattern on a page", () => {
+  const nearPrice = (html: string, near: string) => extractPrice(pageForExtraction(html), nearPattern(near));
+
+  it("a price followed by a comma is read as written", () => {
+    expect(nearPrice("<p>Price: 19.99, free shipping</p>", "Price:")).toEqual({ value: 19.99 });
+  });
+
+  it("a price that ends a sentence is read as written", () => {
+    expect(nearPrice("<p>Now 49.90. Order today</p>", "Now")).toEqual({ value: 49.9 });
+  });
+
+  it("a JSON price followed by its next key is read as written", () => {
+    const html = '<html><body><p>Widget</p><script>window.product = {"price":19.99,"currency":"EUR"};</script></body></html>';
+    expect(nearPrice(html, '"price":')).toEqual({ value: 19.99 });
+  });
+
+  it("a thousands separator is kept", () => {
+    expect(nearPrice("<p>Total: 1,299.99, with tax</p>", "Total:")).toEqual({ value: 1299.99 });
+    expect(nearPrice("<p>Total: 1.299,99. Mit MwSt.</p>", "Total:")).toEqual({ value: 1299.99 });
+  });
+
+  it("a one-digit price is read", () => {
+    expect(nearPrice("<p>Price: 7, today</p>", "Price:")).toEqual({ value: 7 });
+  });
+
+  it("a two- or three-digit price followed by a comma is read whole", () => {
+    expect(nearPrice("<p>Price: 10, today</p>", "Price:")).toEqual({ value: 10 });
+    expect(nearPrice("<p>Price: 120, today</p>", "Price:")).toEqual({ value: 120 });
+  });
+
+  it("a price with one decimal digit is read as written", () => {
+    expect(nearPrice("<p>Price: 19.5, today</p>", "Price:")).toEqual({ value: 19.5 });
+  });
+
+  it("a price under 1 is read", () => {
+    expect(nearPrice("<p>Price: 0.99, today</p>", "Price:")).toEqual({ value: 0.99 });
+  });
+
+  it("the gap after the near text is at most 40 characters", () => {
+    expect(nearPrice(`x${"-".repeat(40)}5`, "x")).toEqual({ value: 5 });
+    expect(nearPrice(`x${"-".repeat(41)}5`, "x")).toBeNull();
+  });
+
+  it("the gap after the near text may hold commas and full stops", () => {
+    expect(nearPrice("<p>Price, incl. VAT: 19.99, today</p>", "Price")).toEqual({ value: 19.99 });
+  });
+
+  it("a near text with regular-expression characters is matched as written", () => {
+    // Two decoys come first: a number (an unescaped `|` would read it) and the words with `x` where
+    // the near text has `.` (an unescaped `.` would match it).
+    const html = "<p>Ships in 3 days.</p><p>Total (inclx VAT) [EUR\\GBP] | 5.00</p><p>Total (incl. VAT) [EUR\\GBP] | 19.99, today</p>";
+    expect(nearPrice(html, "Total (incl. VAT) [EUR\\GBP] |")).toEqual({ value: 19.99 });
+  });
+
+  it("the capture stays bounded", () => {
+    const digits = "1234567890".repeat(4);
+    expect(new RegExp(nearPattern("x"), "i").exec(`x ${digits}`)?.[1]).toBe(digits.slice(0, 16));
+  });
+});

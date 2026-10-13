@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { ChatInputCommandInteraction, MessageComponentInteraction, ModalSubmitInteraction } from "discord.js";
 import type { HostApi, HostMessage, Plugin } from "../../../packages/api/contract.js";
 import { makeFakeHost } from "../../../packages/testkit/index.js";
-import { NOT_ADMIN, NOT_ADMITTED, NOT_MEMBER, NOT_REGISTERED, type Membership } from "./access.js";
+import { MEMBERSHIP_UNKNOWN, NOT_ADMIN, NOT_ADMITTED, NOT_MEMBER, NOT_REGISTERED, type Membership } from "./access.js";
 import { PAUSE_AFTER } from "./delivery-health.js";
 import { NO_SUCH_TASK } from "./actions.js";
 import { lookupMembership, type Interactionish } from "./discord.js";
@@ -37,7 +37,11 @@ interface Sent {
   message: HostMessage;
 }
 
-function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: Set<string> } = {}) {
+/**
+ * `members` turns the membership gate on (`TRACKER_GUILD_ID`); a Discord id in `unknown` then gets
+ * "unknown" from the lookup, as when Discord cannot be asked, whatever `members` holds.
+ */
+function world(opts: { members?: Set<string>; unknown?: Set<string>; unreachable?: Set<string>; gone?: Set<string>; web?: boolean } = {}) {
   const clock = clockAt(START);
   const sent: Sent[] = [];
   const unreachable = opts.unreachable ?? new Set<string>();
@@ -51,10 +55,15 @@ function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: 
   };
   const warnings: string[] = [];
   const members = opts.members;
+  const unknown = opts.unknown;
   const plugin = createPlugin(
     makeFakeHost({
       name: "tracker",
-      env: { TRACKER_ADMIN_DISCORD_IDS: ADMIN, ...(members ? { TRACKER_GUILD_ID: GUILD } : {}) },
+      env: {
+        TRACKER_ADMIN_DISCORD_IDS: ADMIN,
+        ...(members ? { TRACKER_GUILD_ID: GUILD } : {}),
+        ...(opts.web ? { TRACKER_WEB_URL: "https://clerk.example.com" } : {}),
+      },
       log: { info() {}, warn: (m) => void warnings.push(m), error() {} },
       dm,
     }),
@@ -63,13 +72,34 @@ function world(opts: { members?: Set<string>; unreachable?: Set<string>; gone?: 
       dbPath: ":memory:",
       // These tests count every DM; the daily digest has its own (digest.test.ts).
       digest: false,
-      ...(members ? { membership: async (_i: Interactionish, id: string): Promise<Membership> => (members.has(id) ? "member" : "not-member") } : {}),
+      ...(members
+        ? { membership: async (_i: Interactionish, id: string): Promise<Membership> => (unknown?.has(id) ? "unknown" : members.has(id) ? "member" : "not-member") }
+        : {}),
     },
   );
   return { plugin, clock, sent, unreachable, warnings };
 }
 
-type Options = { sub?: string; strings?: Record<string, string>; ints?: Record<string, number>; users?: Record<string, string>; client?: unknown; guildId?: string };
+type Options = {
+  sub?: string;
+  strings?: Record<string, string>;
+  ints?: Record<string, number>;
+  numbers?: Record<string, number>;
+  users?: Record<string, string>;
+  client?: unknown;
+  guildId?: string;
+  /** Collects what the command sent after deferring, in order: its answer's edit, then any follow-up. */
+  said?: Said[];
+  /** Makes every follow-up fail with this (an expired interaction). */
+  followUpFails?: Error;
+};
+
+/** One message a command sent after deferring: the edit of its answer, or a follow-up and its flags. */
+interface Said {
+  kind: "edit" | "followUp";
+  content: string;
+  flags?: unknown;
+}
 
 /** Runs a slash command as `userId` and returns the ephemeral answer's text. */
 async function slash(plugin: Plugin, name: string, userId: string, o: Options = {}): Promise<string> {
@@ -86,10 +116,18 @@ async function slash(plugin: Plugin, name: string, userId: string, o: Options = 
       getSubcommand: () => o.sub ?? "",
       getString: (k: string) => o.strings?.[k] ?? null,
       getInteger: (k: string) => o.ints?.[k] ?? null,
+      getNumber: (k: string) => o.numbers?.[k] ?? null,
       getUser: (k: string) => (o.users?.[k] ? { id: o.users[k], bot: false } : null),
     },
     deferReply: async (x: unknown) => void (deferred = x),
-    editReply: async (x: { content: string }) => void edits.push(x),
+    editReply: async (x: { content: string }) => {
+      edits.push(x);
+      o.said?.push({ kind: "edit", content: x.content });
+    },
+    followUp: async (x: { content: string; flags?: unknown }) => {
+      if (o.followUpFails) throw o.followUpFails;
+      o.said?.push({ kind: "followUp", content: x.content, flags: x.flags });
+    },
   };
   await command.handle(interaction as unknown as ChatInputCommandInteraction);
   expect(deferred).toMatchObject({ flags: 64 });
@@ -649,6 +687,118 @@ describe("a recipient's delivery pause is theirs, the owner's and admins' to see
   });
 });
 
+describe("the Reply path's gates (#162)", () => {
+  /** Larry's "water the plants", fired: run o1, with Done, Snooze and Reply on Larry's DM. */
+  async function firedReminder(w: ReturnType<typeof world>) {
+    await withLarry(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "water the plants", when: "9am" } });
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await tick(w.plugin);
+    expect(buttonIds(w.sent.at(-1))).toEqual(["tracker:d.o.o1", "tracker:s.o.o1", "tracker:r.o.o1"]);
+  }
+
+  /** Larry's weekly "bins out" shared with Curly, who accepts; run o1 fired, with opt-out and Reply on Curly's DM. */
+  async function sharedAndFired(w: ReturnType<typeof world>) {
+    await withLarry(w);
+    await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
+    await slash(w.plugin, "register", CURLY);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "week" } });
+    expect(await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } })).toContain("Invited");
+    expect((await pressButton(w.plugin, "tracker:a.t.t1", CURLY)).edits[0]?.content).toContain("-- Accepted");
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await tick(w.plugin);
+    expect(buttonIds(w.sent.at(-1))).toEqual(["tracker:q.o.o1", "tracker:r.o.o1"]);
+  }
+
+  /** A task's history as the admin -- every run, every reply -- read from the store by `/task history`. */
+  const historyOf = (w: ReturnType<typeof world>, task = "t1") => slash(w.plugin, "task", ADMIN, { sub: "history", strings: { task } });
+
+  it("a recipient who left the server is refused at the Reply modal, and nothing is stored", async () => {
+    const members = new Set([ADMIN, LARRY, CURLY]);
+    const w = world({ members });
+    await sharedAndFired(w);
+    // The button checks no membership (its answer has to be the modal): it opens, then Curly leaves.
+    expect((await pressButton(w.plugin, "tracker:r.o.o1", CURLY)).modals).toHaveLength(1);
+    members.delete(CURLY);
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", CURLY, "done it already")).toBe(NOT_MEMBER);
+    expect(await historyOf(w)).not.toContain("replied");
+    // Back in the server, the same submit is stored and shows: the history above would have shown it.
+    members.add(CURLY);
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", CURLY, "back again")).toBe("Reply kept with the task's history.");
+    const history = await historyOf(w);
+    expect(history).toContain('user333 replied "back again"');
+    expect(history).not.toContain("done it already");
+  });
+
+  it("a recipient who opted out after opening the Reply modal is refused at its submit, and nothing is stored", async () => {
+    const w = world();
+    await sharedAndFired(w);
+    expect((await pressButton(w.plugin, "tracker:r.o.o1", CURLY)).modals).toHaveLength(1);
+    expect((await pressButton(w.plugin, "tracker:q.o.o1", CURLY, "bins out")).edits[0]?.content).toContain("-- You will not get this task's messages any more.");
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", CURLY, "done it already")).toBe("That is not yours to reply to.");
+    expect(await historyOf(w)).not.toContain("replied");
+    // The owner's submit to the same run is stored and shows: the history above would have shown Curly's.
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", LARRY, "bins are out")).toBe("Reply kept with the task's history.");
+    const history = await historyOf(w);
+    expect(history).toContain('Larry replied "bins are out"');
+    expect(history).not.toContain("done it already");
+  });
+
+  it("the Reply button refuses someone it does not know, and shows no modal", async () => {
+    const w = world();
+    await firedReminder(w);
+    expect(await pressButton(w.plugin, "tracker:r.o.o1", STRANGER)).toEqual({ edits: [], followUps: [], replies: [NOT_ADMITTED], modals: [] });
+  });
+
+  it("the Reply button refuses someone admitted but not registered, and shows no modal; its modal and a button refuse them too", async () => {
+    const w = world();
+    await firedReminder(w);
+    expect(await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } })).toContain("Allowed");
+    expect(await pressButton(w.plugin, "tracker:r.o.o1", CURLY)).toEqual({ edits: [], followUps: [], replies: [NOT_REGISTERED], modals: [] });
+    // A modal kept open from before, or a press, meets the same gate at the submit and the press.
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", CURLY, "x")).toBe(NOT_REGISTERED);
+    expect(await pressButton(w.plugin, "tracker:d.o.o1", CURLY)).toEqual({ edits: [], followUps: [NOT_REGISTERED], replies: [], modals: [] });
+  });
+
+  it("a button pressed while membership cannot be checked is refused, and changes nothing", async () => {
+    const unknown = new Set<string>();
+    const w = world({ members: new Set([ADMIN, LARRY]), unknown });
+    await firedReminder(w);
+    // A renewal inside its lead asks at once (t2), with keep, cancel and renewed: docket's decision buttons.
+    await slash(w.plugin, "renewal", LARRY, { strings: { name: "Netflix", currency: "usd", renews: "2026-10-03" }, numbers: { amount: 15.99 } });
+    await tick(w.plugin);
+    const renewed = w.sent.at(-1)?.message.buttons?.find((b) => b.label === "renewed")?.customId as string;
+    expect(renewed).toStartWith("tracker:");
+    const before = [await historyOf(w), await historyOf(w, "t2")];
+    unknown.add(LARRY);
+    for (const id of ["tracker:d.o.o1", "tracker:s.o.o1", renewed]) {
+      expect(await pressButton(w.plugin, id, LARRY)).toEqual({ edits: [], followUps: [MEMBERSHIP_UNKNOWN], replies: [], modals: [] });
+    }
+    expect([await historyOf(w), await historyOf(w, "t2")]).toEqual(before);
+    expect(before[0]).not.toContain("Larry done");
+    expect(before[1]).not.toContain("Larry chose");
+    // Once Larry can be checked, the same presses are the runs' first answers.
+    unknown.delete(LARRY);
+    expect((await pressButton(w.plugin, "tracker:d.o.o1", LARRY, "water the plants")).edits[0]?.content).toBe("water the plants\n\n-- Marked done.");
+    expect(await historyOf(w)).toContain("- Thu Oct 1, 9:00 -- done; Larry done");
+    expect((await pressButton(w.plugin, renewed, LARRY, "Netflix")).edits[0]?.content).toBe("Netflix\n\n-- Recorded: renewed.");
+    expect(await historyOf(w, "t2")).toContain("Larry chose renewed");
+  });
+
+  it("a modal submitted while membership cannot be checked is refused, and nothing is stored", async () => {
+    const unknown = new Set<string>();
+    const w = world({ members: new Set([ADMIN, LARRY]), unknown });
+    await firedReminder(w);
+    expect((await pressButton(w.plugin, "tracker:r.o.o1", LARRY)).modals).toHaveLength(1);
+    unknown.add(LARRY);
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", LARRY, "watered")).toBe(MEMBERSHIP_UNKNOWN);
+    expect(await historyOf(w)).not.toContain("replied");
+    unknown.delete(LARRY);
+    expect(await submitModal(w.plugin, "tracker:m.o.o1", LARRY, "watered, late")).toBe("Reply kept with the task's history.");
+    expect(await historyOf(w)).toContain('Larry replied "watered, late"');
+  });
+});
+
 describe("share refusals", () => {
   it("read the same whatever docket's reason, except a block the target chose", async () => {
     const w = world();
@@ -662,5 +812,146 @@ describe("share refusals", () => {
     expect(await share(LARRY)).toBe(`<@${LARRY}> ${CANNOT_SHARE}`); // themself
     await pressButton(w.plugin, "tracker:x.t.t1", CURLY);
     expect(await share(CURLY)).toContain("declined an earlier invitation from you");
+  });
+});
+describe("one message (#161, #205 discord-1)", () => {
+  /** Larry's `t1`, shared with Curly, paused because Curly cannot be DMed (as above). */
+  async function pausedForCurly(w: ReturnType<typeof world>) {
+    await withLarry(w);
+    await slash(w.plugin, "allow", ADMIN, { users: { user: CURLY } });
+    await slash(w.plugin, "register", CURLY);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } });
+    await pressButton(w.plugin, "tracker:a.t.t1", CURLY);
+    w.unreachable.add(CURLY);
+    for (const day of ["01", "02", "03", "04"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await tick(w.plugin);
+    }
+  }
+
+  /** `n` daily reminders for Larry, each answered as set. */
+  async function reminders(w: ReturnType<typeof world>, n: number, text: (i: number) => string) {
+    for (let i = 1; i <= n; i++) {
+      expect(await slash(w.plugin, "remind", LARRY, { strings: { text: text(i), repeat: "day" } })).toContain("set:");
+    }
+  }
+
+  const PAUSED_T1 = "Paused: `t1` bins out -- I could not DM user333; `/task resume t1` goes on without them.";
+  const porch = (i: number) => `water the plants on the back porch, pot ${i}`;
+
+  /** The count in `/tasks`' `...and N more active.` line (NaN when there is none). */
+  const moreActive = (list: string) => Number(list.match(/^\.\.\.and (\d+) more active\.$/m)?.[1]);
+
+  it("/tasks with 40 tasks and a paused one keeps the paused one's id and says how many it left out", async () => {
+    const w = world();
+    await pausedForCurly(w);
+    await reminders(w, 40, porch);
+    const list = await slash(w.plugin, "tasks", LARRY);
+    expect(list.length).toBeLessThanOrEqual(2000);
+    const shown = list.split("\n").filter((l) => l.includes("water the plants on the back porch")).length;
+    expect(shown + moreActive(list)).toBe(40);
+    // Without the web area there is no closing line: the paused one is last.
+    expect(list.endsWith(`\n${PAUSED_T1}`)).toBe(true);
+    expect(list).not.toContain("/web");
+  });
+
+  it("/tasks with the web area set up points to /web for the rest", async () => {
+    const w = world({ web: true });
+    await withLarry(w);
+    await reminders(w, 40, porch);
+    const list = await slash(w.plugin, "tasks", LARRY);
+    expect(list.length).toBeLessThanOrEqual(2000);
+    expect(list.endsWith("\nThe web area lists them all: `/web`.")).toBe(true);
+    const shown = list.split("\n").filter((l) => l.includes("water the plants on the back porch")).length;
+    expect(shown + moreActive(list)).toBe(40);
+  });
+
+  it("/tasks keeps a task whose title holds a newline whole: never its first line without its second", async () => {
+    const w = world();
+    await withLarry(w);
+    await reminders(w, 40, (i) => `water the plants on the back porch\npot ${i}`);
+    const list = await slash(w.plugin, "tasks", LARRY);
+    expect(list.length).toBeLessThanOrEqual(2000);
+    const lines = list.split("\n");
+    const firsts = lines.flatMap((l, i) => (/^`t\d+` water the plants on the back porch$/.test(l) ? [i] : []));
+    expect(firsts.length).toBeGreaterThan(0);
+    expect(firsts.length + moreActive(list)).toBe(40);
+    for (const i of firsts) expect(lines[i + 1]).toMatch(/^pot \d+ -- /);
+  });
+
+  /** Larry's own DMs fail for four days (his tasks pause), then work again. */
+  async function larryPausedAndBack(w: ReturnType<typeof world>) {
+    w.unreachable.add(LARRY);
+    for (const day of ["05", "06", "07", "08"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await tick(w.plugin);
+    }
+    w.unreachable.delete(LARRY);
+  }
+
+  it("the first command after a pause answers a full /tasks uncut by the notice, and tells of the resume in a second message", async () => {
+    const w = world();
+    await pausedForCurly(w);
+    await reminders(w, 40, porch);
+    await larryPausedAndBack(w);
+    const said: Said[] = [];
+    const list = await slash(w.plugin, "tasks", LARRY, { said });
+    expect(list.length).toBeLessThanOrEqual(2000);
+    // The answer is the list alone, from its first task line to its paused one.
+    expect(list).toMatch(/^`t\d+` water the plants on the back porch, pot \d+ -- /);
+    expect(list).not.toContain("I could not DM you");
+    expect(list).toMatch(/^\.\.\.and \d+ more active\.$/m);
+    expect(list.endsWith(`\n${PAUSED_T1}`)).toBe(true);
+    // The answer first, then the notice, which only Larry sees, like the answer.
+    expect(said).toHaveLength(2);
+    expect(said[0]).toEqual({ kind: "edit", content: list });
+    expect(said[1]).toMatchObject({ kind: "followUp", flags: 64 });
+    expect(said[1]?.content).toContain(`I could not DM you ${PAUSE_AFTER} times in a row, so your reminders were paused.`);
+    // Next time there is no notice, and nothing follows.
+    const again: Said[] = [];
+    await slash(w.plugin, "tasks", LARRY, { said: again });
+    expect(again.map((m) => m.kind)).toEqual(["edit"]);
+  });
+
+  it("a follow-up that fails after the answer landed is logged, never thrown to the host", async () => {
+    const w = world();
+    await withLarry(w);
+    await reminders(w, 40, porch);
+    await larryPausedAndBack(w);
+    const said: Said[] = [];
+    // `slash` awaits the command's handle(): a rejection would fail the test here.
+    const list = await slash(w.plugin, "tasks", LARRY, { said, followUpFails: Object.assign(new Error("Unknown interaction"), { code: 10062 }) });
+    expect(said).toEqual([{ kind: "edit", content: list }]);
+    expect(list).toMatch(/^\.\.\.and \d+ more active\.$/m);
+    expect(w.warnings).toContain("could not send /tasks's resume notice as a follow-up: Unknown interaction");
+  });
+
+  it("a button pressed on a 2000-character DM keeps its status", async () => {
+    const w = world();
+    await withLarry(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "water the plants", when: "9am" } });
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await tick(w.plugin);
+    const pressed = await pressButton(w.plugin, buttonIds(w.sent[0])[0] as string, LARRY, "x".repeat(2000));
+    const content = pressed.edits[0]?.content ?? "";
+    expect(content.endsWith("\n\n-- Marked done.")).toBe(true);
+    expect(content.length).toBeLessThanOrEqual(2000);
+    expect(content.startsWith(`${"x".repeat(1980)}...`)).toBe(true);
+  });
+
+  it("a button pressed on a DM cut inside an emoji keeps the emoji whole or leaves it out, never half", async () => {
+    const w = world();
+    await withLarry(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "water the plants", when: "9am" } });
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await tick(w.plugin);
+    const dm = `${"x".repeat(1979)}${"😀".repeat(11)}`;
+    const content = (await pressButton(w.plugin, buttonIds(w.sent[0])[0] as string, LARRY, dm)).edits[0]?.content ?? "";
+    expect(content.endsWith("\n\n-- Marked done.")).toBe(true);
+    expect(content.length).toBeLessThanOrEqual(2000);
+    // No lone surrogate: half an emoji shows as a broken character.
+    expect(content).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    expect(content).toBe(`${"x".repeat(1979)}...\n\n-- Marked done.`);
   });
 });

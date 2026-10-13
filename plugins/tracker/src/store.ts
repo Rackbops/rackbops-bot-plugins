@@ -71,7 +71,7 @@ function idOf(prefix: string, seq: unknown): string {
 }
 
 /** The row number behind an id, or null when `id` is not one of this prefix's (so it matches nothing). */
-function seqOf(prefix: string, id: string): number | null {
+export function seqOf(prefix: string, id: string): number | null {
   if (!id.startsWith(prefix)) return null;
   const rest = id.slice(prefix.length);
   return /^[1-9][0-9]*$/.test(rest) ? Number(rest) : null;
