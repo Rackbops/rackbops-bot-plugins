@@ -138,6 +138,16 @@ describe("Link everyone to usr", () => {
     expect(await finished(down)).toContain("Linking to usr stopped, since it would fail for everyone:");
     expect(down.usr.calls).toHaveLength(1);
 
+    // usr.ts's timeout ends a call usr never answers (usr.test.ts); the run ends with it, so a later press starts afresh.
+    const hung = await setup(() => {
+      throw new DOMException("The operation timed out.", "TimeoutError");
+    });
+    await press(hung);
+    expect(await finished(hung)).toContain("Linking to usr stopped, since it would fail for everyone: usr timed out.");
+    expect((await press(hung)).status).toBe(303);
+    await finished(hung);
+    expect(hung.usr.calls).toHaveLength(2);
+
     const v = await setup((b, n) => (b.discord_user_id === LARRY ? { status: 400, body: { error: "display_name is too long" } } : ok(n)));
     await press(v);
     const mixed = await finished(v);

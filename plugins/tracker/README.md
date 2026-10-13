@@ -37,7 +37,7 @@ as in a server (plan 5.5, item 39).
 
 | Command | Who | What |
 |---|---|---|
-| `/allow user` | a tracker admin | Admits a person: they can now `/register`. With the usr link on (0.21.0), run in a server, it also allows them in usr as `tracker:member` and keeps their usr user id. The admin must be linked in usr and hold `tracker:register` and `tracker:member` there. Run again, it asks usr again (usr only ever adds), so it links someone not yet linked and relinks someone whose usr link was made anew. A usr refusal or outage leaves the admission standing and says what to do; in a DM it says to run it in the server. |
+| `/allow user` | a tracker admin | Admits a person: they can now `/register`. With the usr link on (0.21.0), run in a server, it also allows them in usr as `tracker:member` and keeps their usr user id. The admin must be linked in usr and hold `tracker:register` and `tracker:member` there. Run again, it asks usr again (usr only ever adds), so it links someone not yet linked and relinks someone whose usr link was made anew. The usr user id is final only once they have signed up on usr: one who finishes signing up while signed in to a usr account they already had is moved to it by usr, and the account `/allow` made is dropped, so their usr sign-in fails until a second `/allow` links the one they have. A usr refusal or outage leaves the admission standing and says what to do; in a DM it says to run it in the server. |
 | `/register [hour] [zone]` | an admitted person | Signs up, or changes the preferred hour (0-23, default 9) and time zone (default `America/New_York`). The reply says an admin can see every task. With the usr link on (0.21.0), run in a server, it also carries a linked person's one-time usr sign-up link, until usr says they have signed up; in a DM it says to run it in the server. If usr says they are not allowed yet (a usr admin removed their link), it forgets their link and says to ask for `/allow` again. See **First admin and usr** below. |
 | `/remind text [when] [repeat]` | a registered person | A reminder by DM. `when` is docket's `parseWhen` grammar (`in 20 minutes`, `tomorrow 9am`, `fri at 17:30`); `repeat` is once (the default), daily, weekly or monthly. A repeating one with no `when` starts today at the preferred hour. |
 | `/renewal name amount currency renews [unit] [every] [lead] [note]` | registered | A subscription, domain, warranty or membership (docket's `renewal`, a `period` schedule). `renews` is the next renewal or expiry date, `YYYY-MM-DD`, today or later; `unit` yearly (the default), monthly, weekly or daily, `every` how many of those; the ask comes `lead` days before (default 7) at the preferred hour, with Keep, Cancel, Renewed and Snooze. If that ask is already past but the date is not, the first ask comes within a minute (a zone or hour change before it fires drops it for the next period's). Keep and Renewed record what was paid; Cancel ends it. |
@@ -727,7 +727,8 @@ admin as the one who allowed them; then links them. usr records each link agains
 instead. Only a 400 from usr about the person's own details is theirs, listed by name while the rest go on; any other
 refusal or failure (the admin not linked in usr or missing `tracker:register` or `tracker:member`,
 the key, usr unreachable) stops the run, since it would fail everyone the same way. It never starts
-on its own.
+on its own. It passes over everyone already linked, so it does not fix a link usr moved at sign-up
+(`/allow` above): run `/allow` for that person again.
 
 **First admin and usr.** usr's `/api/discord/allow` needs the admin running `/allow` to be linked in
 usr already, so the first admin cannot be `/allow`ed by anyone. With the usr link on, a configured
