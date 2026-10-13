@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.24.0] - 2026-10-13
+
+### Added
+
+- **eBay's saved-search alert emails reach eBay watches** (#83, Rod's "build the email route"),
+  while `TRACKER_MAIL_DOMAIN` and `TRACKER_MAIL_KEY` are set. Each person gets one private alert
+  address at the domain (`m-` and 24 random hex digits), shown by `/want source: ebay` and on the
+  web settings page. Cloudflare Email Routing hands the domain's mail to the Email Worker in
+  `mail-worker/worker.js`, which posts each message as it came to the new
+  `POST /tracker/mail/inbound` (its own bearer, `TRACKER_MAIL_KEY`). An eBay alert's matches -- never
+  its "You might also like" suggestions -- go into the inbox of each of the person's live eBay
+  watches with the saved search's words, as listings sent through the task API do; Gmail's
+  forwarding confirmation code is DMed; an alert no watch searches for gets one DM saying so; anything
+  else is dropped, and no message is stored or logged. The reader was built from the first real
+  alert (2026-10-13), kept, with its tracking and account names taken out, as a test fixture.
+  Forget-me deletes the address.
+
+### Schema
+
+- Migration 10: a new `mail_addresses` table, purely additive. A database at 10 is refused by
+  0.23.0 and older.
+
 ## [0.23.0] - 2026-10-07
 
 ### Added

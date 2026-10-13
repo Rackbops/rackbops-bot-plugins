@@ -447,10 +447,19 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     case "admin-usage":
     case "admin-person":
       return adminGet(a, r);
-    default:
+    default: {
+      // The alert address (mail.ts) is made the first time it is shown, in the one queue.
+      const mail = d.mail;
+      const alerts = mail ? await w.queue(async () => mail.addressFor(auth.user.id, d.clock.now())) : undefined;
       return htmlResponse(
-        settingsPage(v, { hour: String(auth.user.preferredHour), zone: auth.user.timeZone, saved: url.searchParams.get("saved") === "1" }),
+        settingsPage(v, {
+          hour: String(auth.user.preferredHour),
+          zone: auth.user.timeZone,
+          saved: url.searchParams.get("saved") === "1",
+          ...(alerts ? { alerts } : {}),
+        }),
       );
+    }
     }
   };
 }

@@ -206,9 +206,10 @@ describe("migration 9", () => {
     const before = { indexes: indexes(), tables: tables(), users: all("SELECT * FROM users ORDER BY seq") as Record<string, unknown>[] };
 
     expect(migrate(db)).toBe(8);
-    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(9);
-    expect(tables()).toEqual(before.tables);
-    expect(indexes().filter((i) => i.name !== "users_usr_subject")).toEqual(before.indexes);
+    // Every later migration runs too; migration 10's mail_addresses has its own test (mail.test.ts).
+    expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
+    expect(tables().filter((t) => t !== "mail_addresses")).toEqual(before.tables);
+    expect(indexes().filter((i) => i.name !== "users_usr_subject" && !i.name.includes("mail_addresses"))).toEqual(before.indexes);
     expect(all("SELECT * FROM users ORDER BY seq")).toEqual(before.users.map((u) => ({ ...u, usr_subject: null })));
   });
 

@@ -380,6 +380,19 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE users ADD COLUMN usr_subject TEXT;
   CREATE UNIQUE INDEX users_usr_subject ON users (usr_subject) WHERE usr_subject IS NOT NULL;
   `,
+  // 10 (0.24.0; eBay's saved-search alert emails reach eBay watches, Rod's "build the email route"):
+  // purely additive, one new table; no existing table or row is touched.
+  // - `mail_addresses`: each person's alert address (mail.ts), made the first time it is shown to
+  //   them. `local` is the part before the @, `m-` and 24 random hex digits: whoever knows it can
+  //   send listings to that person's eBay watches, so it is never guessable and never reused. One per
+  //   person; forget-me deletes it (roster.ts). A database at 10 is refused by 0.23.0 and older.
+  `
+  CREATE TABLE mail_addresses (
+    user_id TEXT PRIMARY KEY,
+    local TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];
 
 /** How long a statement waits on another connection's lock before SQLITE_BUSY. */

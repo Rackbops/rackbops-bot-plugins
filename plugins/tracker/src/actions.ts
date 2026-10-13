@@ -38,6 +38,7 @@ import { type AllowResult, type RegisterLink, type UsrClient, UsrError } from ".
 import type { ApiTokens } from "./web/api-tokens.js";
 import type { Sessions } from "./web/sessions.js";
 import type { LoginLinks } from "./web/signin-link.js";
+import type { MailAddresses } from "./mail.js";
 
 /**
  * What each slash command does (plan 5.5, 5.8, E2), with no discord.js in sight: discord.ts reads
@@ -82,6 +83,8 @@ export interface TrackerDeps {
   bgg?: boolean;
   /** The want-list inboxes: the listings sent in for a watch (inbox.ts); the task API's listings route writes them. */
   inbox?: WantInbox;
+  /** People's alert addresses (mail.ts), while the alert-email route is on (`TRACKER_MAIL_*`). */
+  mail?: MailAddresses | null;
   /** The link to our usr (usr.ts), when `TRACKER_USR_URL` is set: `/allow` links people, `/register` hands out usr's sign-up link. */
   usr?: UsrLink | null;
 }

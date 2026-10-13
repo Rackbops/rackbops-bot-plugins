@@ -63,6 +63,8 @@ describe("createPlugin", () => {
       "TRACKER_USR_URL",
       "TRACKER_USR_KEY",
       "TRACKER_USR_APP",
+      "TRACKER_MAIL_DOMAIN",
+      "TRACKER_MAIL_KEY",
     ]);
   });
 

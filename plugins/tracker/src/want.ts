@@ -140,15 +140,23 @@ export function watchWhere(c: WantConfig): string {
 }
 
 /** How listings reach an inbox watch, for its confirmation: never by the tracker opening the site. */
-function inboxNote(c: WatchConfig, taskId: string): string[] {
+/** `alerts`: the owner's alert address (mail.ts) while the alert-email route is on, else null. */
+function inboxNote(c: WatchConfig, taskId: string, alerts: string | null): string[] {
   const site = watchSite(c);
   const words = c.search ?? "";
   const send = `send them in through the task API (\`POST /tasks/${taskId}/listings\`, with a token from the web area's API tokens page)`;
   if (site === "ebay") {
     const cap = c.maxPrice !== undefined ? ` at or under ${money(c.maxPrice, c.currency ?? "")}` : "";
     return [
-      `I never open eBay myself. Listings reach this watch when you search eBay in your own browser with Claude in Chrome and ${send}, and soon from eBay's saved-search alert emails.`,
+      alerts
+        ? `I never open eBay myself. Listings reach this watch from eBay's saved-search alert emails, and when you search eBay in your own browser with Claude in Chrome and ${send}.`
+        : `I never open eBay myself. Listings reach this watch when you search eBay in your own browser with Claude in Chrome and ${send}.`,
       `The eBay search for "${words}"${cap}: <${ebaySearchUrl(words, c.maxPrice)}>`,
+      ...(alerts
+        ? [
+            `For the alert emails: save that search on eBay with email alerts on, and have your mail forward eBay's alerts to ${alerts} (yours alone; keep it private). I match an alert to this watch by its words, so keep the saved search's words the same as this watch's.`,
+          ]
+        : []),
     ];
   }
   if (site === "bgg") {
@@ -292,7 +300,7 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
         start.judge
           ? `I look at ${where} every ${plural(start.hours, "hour")}, and the model looks at each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before -- whether it is the thing, and ${shows} -- then I DM you the ones worth a look, with its notes; the first look starts within a minute. Those looks are model runs, charged like research; \`judge: false\` makes a watch without them. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`
           : `I look at ${where} every ${plural(start.hours, "hour")} and DM you each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before; ${first}. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`,
-        ...inboxNote(c, task.id),
+        ...inboxNote(c, task.id, d.mail && watchSite(c) === "ebay" ? d.mail.addressFor(user.id, now) : null),
       ].join("\n"),
     ),
   };
