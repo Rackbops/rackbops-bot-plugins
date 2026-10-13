@@ -3,6 +3,7 @@ import type { Fetch } from "@rackbops/docket-core";
 import type { Plugin } from "../../../packages/api/contract.js";
 import { MAX_LISTINGS_PER_POST } from "./inbox.js";
 import { DEFAULT_INBOX_HOURS, ebaySearchUrl, INBOX_OFF } from "./want.js";
+import { MAX_API_BYTES, MAX_LISTINGS_BYTES } from "./web/api.js";
 import { CITY_HALL, dmsTo, fakeCityHall, query } from "./web/execute-harness.js";
 import { api, call, cleanup, CURLY, csrfOf, LARRY, makeToken, ORIGIN, people, signIn, slash, world } from "./web/harness.js";
 
@@ -166,6 +167,33 @@ describe("POST /tasks/<id>/listings", () => {
     expect((await post({ listings: "x" })).status).toBe(400);
     expect((await post({ listings: many(1), extra: 1 })).status).toBe(400);
     expect((await api(w.plugin, "GET", "/tasks/t1/listings", { token })).status).toBe(405);
+    expect(query(w.dbPath, "SELECT 1 FROM want_inbox")).toHaveLength(MAX_LISTINGS_PER_POST);
+  });
+
+  it(`takes a body up to ${MAX_LISTINGS_BYTES} bytes, past the other routes' ${MAX_API_BYTES}: ${MAX_LISTINGS_PER_POST} long listings fit (#175)`, async () => {
+    const w = await setup();
+    await slash(w.plugin, "want", LARRY, { strings: { name: "W", source: "ebay" } });
+    const token = await tokenFor(w);
+    // As a results page gives them: long titles, tracking on every address, seller and condition.
+    const long = (pad: number) =>
+      Array.from({ length: MAX_LISTINGS_PER_POST }, (_, i) => ({
+        title: `Wingspan Oceania Expansion ${i} `.padEnd(300, "x"),
+        url: `https://www.ebay.com/itm/${100000000 + i}?_trksid=${"p".repeat(pad)}`,
+        price: "$30.00",
+        currency: "USD",
+        condition: "Used -- like new, all cards sleeved, box has light shelf wear".padEnd(120, "."),
+        seller: "meeplebarn (1,204) 99.8% positive".padEnd(80, "."),
+      }));
+    const size = (pad: number) => new TextEncoder().encode(JSON.stringify({ listings: long(pad) })).byteLength;
+    expect(size(340)).toBeGreaterThan(MAX_API_BYTES);
+    expect(size(340)).toBeLessThan(MAX_LISTINGS_BYTES);
+    const fits = await api(w.plugin, "POST", "/tasks/t1/listings", { token, body: { listings: long(340) } });
+    expect(fits.status).toBe(200);
+    expect((await fits.json()).accepted).toBe(MAX_LISTINGS_PER_POST);
+    expect(size(1200)).toBeGreaterThan(MAX_LISTINGS_BYTES);
+    const over = await api(w.plugin, "POST", "/tasks/t1/listings", { token, body: { listings: long(1200) } });
+    expect(over.status).toBe(413);
+    expect((await over.json()).error.code).toBe("too_large");
     expect(query(w.dbPath, "SELECT 1 FROM want_inbox")).toHaveLength(MAX_LISTINGS_PER_POST);
   });
 
