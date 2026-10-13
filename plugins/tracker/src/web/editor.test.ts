@@ -9,6 +9,7 @@ import { MAX_LIVE_TASKS, MAX_NEAR, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WH
 import { MAX_PRICE_TASKS, nearPattern } from "../price.js";
 import { MAX_FORM_BYTES } from "./app.js";
 import { READING } from "./editor.js";
+import { EDITOR_TYPES, fieldsFor } from "./editor-pages.js";
 import { ADMIN, api, call, cleanup, csrfOf, CURLY, hidden, type Jar, LARRY, makeToken, ORIGIN, people, press, signIn, slash, STRANGER, world } from "./harness.js";
 import { esc } from "./html.js";
 import { DMS_PAUSED } from "./pages.js";
@@ -786,6 +787,19 @@ describe("review fixes", () => {
     await post(w.plugin, w.larry, w.csrf, "/tasks/t3/edit", { text: " " });
     expect(tasks(w.dbPath)[2]).toMatchObject({ title: "tea", schedule: { unit: "week" } });
     expect(events(w.dbPath, "t3")).toEqual(["created"]);
+  });
+
+  it("an edit form never says what an empty number becomes on a new task: it keeps what the task has (#173)", async () => {
+    for (const type of EDITOR_TYPES) {
+      for (const f of fieldsFor(type, "edit")) expect(`${type}.${f.name}: ${f.help ?? ""}`).not.toContain("when empty");
+    }
+    // The new forms still name the defaults.
+    expect(fieldsFor("price", "new").find((f) => f.name === "hours")?.help).toContain("12 when empty");
+    const w = await setup();
+    await post(w.plugin, w.larry, w.csrf, "/new/price", { url: SHOP, hours: "24", drop: "20" });
+    const form = await (await call(w.plugin, "GET", "/tasks/t1/edit", { jar: w.larry })).text();
+    expect(form).not.toContain("when empty");
+    expect(form).toContain("Leave it empty to keep what it has.");
   });
 
   it("the length limits hold on the server, and are one set of numbers for Discord, the forms and the checks", async () => {
