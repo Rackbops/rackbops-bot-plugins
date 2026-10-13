@@ -129,11 +129,24 @@ export async function world(
   return { plugin, clock, dbPath, sent, delivery };
 }
 
+/** One message a command sent after deferring: the edit of its answer, or a follow-up with its flags and whom it may mention. */
+export interface Said {
+  kind: "edit" | "followUp";
+  content: string;
+  flags?: unknown;
+  allowedMentions?: unknown;
+}
+
+/**
+ * Runs a slash command as `userId` and answers its answer's text. `said` collects what it sent after
+ * deferring, in order (its answer's edit, then any follow-ups); `followUpFails` makes every follow-up
+ * fail with it (an expired interaction).
+ */
 export async function slash(
   plugin: Plugin,
   name: string,
   userId: string,
-  o: { strings?: Record<string, string>; users?: Record<string, string>; client?: unknown; sub?: string; ints?: Record<string, number>; numbers?: Record<string, number>; booleans?: Record<string, boolean> } = {},
+  o: { strings?: Record<string, string>; users?: Record<string, string>; client?: unknown; sub?: string; ints?: Record<string, number>; numbers?: Record<string, number>; booleans?: Record<string, boolean>; said?: Said[]; followUpFails?: Error } = {},
 ): Promise<string> {
   const command = plugin.commands?.find((c) => c.name === name);
   if (!command) throw new Error(`no command ${name}`);
@@ -153,7 +166,14 @@ export async function slash(
       getUser: (k: string) => (o.users?.[k] ? { id: o.users[k], bot: false } : null),
     },
     deferReply: async (x: unknown) => void (deferred = x),
-    editReply: async (x: { content: string }) => void edits.push(x),
+    editReply: async (x: { content: string }) => {
+      edits.push(x);
+      o.said?.push({ kind: "edit", content: x.content });
+    },
+    followUp: async (x: { content: string; flags?: unknown; allowedMentions?: unknown }) => {
+      if (o.followUpFails) throw o.followUpFails;
+      o.said?.push({ kind: "followUp", content: x.content, flags: x.flags, allowedMentions: x.allowedMentions });
+    },
   };
   await command.handle(interaction as unknown as ChatInputCommandInteraction);
   expect(deferred).toMatchObject({ flags: 64 });

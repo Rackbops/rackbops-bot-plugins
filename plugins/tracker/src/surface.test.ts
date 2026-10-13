@@ -94,11 +94,12 @@ type Options = {
   followUpFails?: Error;
 };
 
-/** One message a command sent after deferring: the edit of its answer, or a follow-up and its flags. */
+/** One message a command sent after deferring: the edit of its answer, or a follow-up with its flags and whom it may mention. */
 interface Said {
   kind: "edit" | "followUp";
   content: string;
   flags?: unknown;
+  allowedMentions?: unknown;
 }
 
 /** Runs a slash command as `userId` and returns the ephemeral answer's text. */
@@ -124,9 +125,9 @@ async function slash(plugin: Plugin, name: string, userId: string, o: Options = 
       edits.push(x);
       o.said?.push({ kind: "edit", content: x.content });
     },
-    followUp: async (x: { content: string; flags?: unknown }) => {
+    followUp: async (x: { content: string; flags?: unknown; allowedMentions?: unknown }) => {
       if (o.followUpFails) throw o.followUpFails;
-      o.said?.push({ kind: "followUp", content: x.content, flags: x.flags });
+      o.said?.push({ kind: "followUp", content: x.content, flags: x.flags, allowedMentions: x.allowedMentions });
     },
   };
   await command.handle(interaction as unknown as ChatInputCommandInteraction);
@@ -903,10 +904,10 @@ describe("one message (#161, #205 discord-1)", () => {
     expect(list).not.toContain("I could not DM you");
     expect(list).toMatch(/^\.\.\.and \d+ more active\.$/m);
     expect(list.endsWith(`\n${PAUSED_T1}`)).toBe(true);
-    // The answer first, then the notice, which only Larry sees, like the answer.
+    // The answer first, then the notice, which only Larry sees and which mentions no one, like the answer.
     expect(said).toHaveLength(2);
     expect(said[0]).toEqual({ kind: "edit", content: list });
-    expect(said[1]).toMatchObject({ kind: "followUp", flags: 64 });
+    expect(said[1]).toMatchObject({ kind: "followUp", flags: 64, allowedMentions: { parse: [] } });
     expect(said[1]?.content).toContain(`I could not DM you ${PAUSE_AFTER} times in a row, so your reminders were paused.`);
     // Next time there is no notice, and nothing follows.
     const again: Said[] = [];

@@ -100,6 +100,9 @@ export interface UsrLink {
 /** A command's answer that first calls out (usr, a DM) outside the queue, then finishes in it (discord.ts's `Step`). */
 export type OutsideStep = { outside: () => Promise<unknown>; finish: (result: unknown) => Promise<string> };
 
+/** A command's answer in more than one message (#166): `content` is the answer, and each of `more` an ephemeral follow-up after it, in order (discord.ts's `run`). */
+export type Parts = { content: string; more: string[] };
+
 /** The ticks as forget-me sees them: whether one runs now, and a wait of at most `ms` for none to (false when it timed out). */
 export interface TickGate {
   busy(): boolean;
