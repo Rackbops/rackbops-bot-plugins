@@ -40,13 +40,19 @@ export interface PriceInput {
 
 /**
  * The owner's `near` text as the price type's `pattern`: the text, then up to 40 characters that
- * are not digits, then the price. Built here, never typed by a person, so it is always a literal
- * followed by bounded classes and cannot backtrack for long on a large page (a free-form regular
- * expression could hang the bot's one thread).
+ * are not digits, then the price -- at most 16 characters of digits, `.` and `,` that start and end
+ * at a digit. Built here, never typed by a person, so it is always a literal followed by bounded
+ * classes and cannot backtrack for long on a large page (a free-form regular expression could hang
+ * the bot's one thread).
+ *
+ * The price ends at its last digit (#164): a `.` or `,` right after the number ("19.99, free
+ * shipping", "Now 49.90.", JSON's `"price":19.99,"currency"`) is punctuation, not a decimal point.
+ * Captured, it would hide the real decimal part from docket-types' `parsePrice`, which looks for it
+ * at the very end of the capture and, finding none there, reads "19.99," as 1999.
  */
 export function nearPattern(near: string): string {
   const literal = near.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return `${literal}[^0-9]{0,40}([0-9][0-9.,]{0,15})`;
+  return `${literal}[^0-9]{0,40}([0-9](?:[0-9.,]{0,14}[0-9])?)`;
 }
 
 export interface PriceSettings {

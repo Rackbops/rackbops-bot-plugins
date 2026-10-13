@@ -39,7 +39,7 @@ import { readBody } from "./html.js";
  *   further than that (`MAX_LISTINGS_BYTES` for the listings route, whose 40 listings with their
  *   addresses need more). Errors are `{"error": {"code", "message"}}`.
  * - `POST /tasks/<id>/listings` (0.19.0, api-listings.ts) sends listings in to the owner's inbox
- *   watch -- an eBay watch, or a BGG one on a bot without BGG access -- since the tracker never opens
+ *   watch -- an eBay watch, or a BGG one on a bot without BGG access -- since such a watch never opens
  *   either site itself; `GET /tasks` shows such a watch's `site`, its words to `search` for and its
  *   top price, for the browser helper that finds them.
  */
