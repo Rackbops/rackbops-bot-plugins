@@ -27,8 +27,9 @@ import type { DeliveryHealth } from "./delivery-health.js";
  * Each "cannot be messaged" and each unknown user counts toward pausing the person's delivery (so
  * the owner of a task hears when a recipient's account is gone), and each DM that goes through
  * clears the count (delivery-health.ts). Nothing else counts: not a refused message, not a
- * deferral, not an unconfirmed send. A failure to count is logged, never in place of the send's
- * own error.
+ * deferral, not an unconfirmed send. Counting and clearing are both best effort: a failure of
+ * either is logged, never in place of the send's own result -- its error, or the delivered DM's
+ * message id.
  */
 
 /** What the host rejects `dm` with when Discord says the user cannot be messaged (its code 50007). */
@@ -168,7 +169,12 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
         }
         throw mapped;
       }
-      d.health?.recordSuccess(userId);
+      // The DM went out: a failure to clear the count is logged, never in place of its message id.
+      try {
+        d.health?.recordSuccess(userId);
+      } catch (err) {
+        d.log.error(`could not clear the failure count of ${userId}`, err);
+      }
       return { messageId: delivery.messageId };
     },
   };
