@@ -496,9 +496,10 @@ eBay's saved-search alerts reach eBay watches by mail (0.25.0), while `TRACKER_M
   not in the plugin's npm bundle.
 - **What a message does.** Gmail's forwarding confirmation: its code is DMed, to enter in Gmail's
   Forwarding and POP/IMAP settings. Since 0.26.0 it is any sender at Google naming forwarding, with
-  the code as a run of digits standing alone in the subject or shortly after "code" in the body,
-  and since 0.27.0 Gmail's confirmation link (on `mail.google.com`, `mail-settings.google.com` or
-  a subdomain of either, nowhere else) too. An eBay alert: the
+  the code as a run of digits standing alone in the subject or shortly after the word "code" in the body,
+  and since 0.27.0 Gmail's verify link (a `/mail/vf-` address on `mail.google.com`,
+  `mail-settings.google.com` or a subdomain of either, never its cancel link) too; digits inside
+  an address are never the code. An eBay alert: the
   matches above "You might also like" (never eBay's suggestions) -- title, the item's bare
   `/itm/<number>` address, the price's lower end -- go into the inbox of each of the person's live
   eBay watches whose words are the saved search's (case and spacing aside), exactly as listings sent
@@ -508,8 +509,9 @@ eBay's saved-search alerts reach eBay watches by mail (0.25.0), while `TRACKER_M
   dropped. A message is never stored, only the listings read from it, and its words are never
   logged: one that does nothing is logged only with why (the owner is not registered, or its
   sender's domain -- a Google no-reply sender whole -- which bodies it had, and whether its
-  subject names forwarding; for Google's no-reply senders also its subject's shape, letters `a` and
-  digits `9`, and counts from its text).
+  subject names forwarding; for Google's no-reply senders also its subject's shape, letters `a`,
+  digits `9` and each address `<addr>`, and counts from its body as read, plain text else the
+  HTML's text).
 - **Only eBay's own domains** (ebay.com, .co.uk, .de, .ca, .com.au and the rest of eBay's sites;
   never a lookalike such as `ebay.com.de`) count as eBay, for the sender and for every item link.
   The sender is its `From` address, not a checked signature: the private address is the guard, and

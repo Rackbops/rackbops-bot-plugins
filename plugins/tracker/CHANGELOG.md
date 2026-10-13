@@ -7,13 +7,14 @@
 - **Gmail's forwarding confirmation, again** (#83). 0.26.0 also left the re-sent one unread: from
   `forwarding-noreply@google.com`, plain text, forwarding named, but no code where it looked. The
   code is now a run of 6 to 12 digits standing alone in the subject (never digits inside an
-  address there), or one shortly after the word "code" in the body; and Gmail's confirmation link
-  (an https address on `mail.google.com`, `mail-settings.google.com` or a subdomain of either,
-  its `/mail/vf-` verify link first) is DMed too, or alone when there is no code.
+  address), or one shortly after the word "code" in the body (never inside an address); and
+  Gmail's verify link (an https `/mail/vf-` address on `mail.google.com`,
+  `mail-settings.google.com` or a subdomain of either; never its `/mail/uf-` cancel link or any
+  other) is DMed too, or alone when there is no code.
 - An unread message from one of Google's no-reply senders now also logs its subject's shape
-  (letters `a`, digits `9`), its body's length (plain text, else the HTML's text), and how many
-  digit runs and https links it has,
-  and whether it says "code" -- still never its words.
+  (letters `a`, digits `9`, each address `<addr>`), its body's length (plain text, else the
+  HTML's text), how many digit runs and https links it has, and whether it says "code" -- still
+  never its words.
 
 ### Schema
 

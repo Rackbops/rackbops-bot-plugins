@@ -223,7 +223,7 @@ describe("Gmail's forwarding confirmation", () => {
     expect(forwardingCode({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "Your code is\n\n  123456789\n" })).toBe("123456789");
     const link = "https://mail-settings.google.com/mail/vf-%5BANGjdJ_x%5D-abc";
     expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation - Receive Mail from a@b.c", html: null, text: `please click the link below to confirm the request:\n\n${link}\n\nIf you click the link and it appears to be broken, see https://support.google.com/mail` })).toEqual({ code: null, link });
-    expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: '<a href="https://mail.google.com/mail/vf?a=1&amp;b=2">confirm</a>', text: null })).toEqual({ code: null, link: "https://mail.google.com/mail/vf?a=1&b=2" });
+    expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: '<a href="https://mail.google.com/mail/vf-a?a=1&amp;b=2">confirm</a>', text: null })).toEqual({ code: null, link: "https://mail.google.com/mail/vf-a?a=1&b=2" });
     // A link anywhere else is never taken, from anyone.
     expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "https://mail.google.com.evil.example/x https://evil.example/mail.google.com/x" })).toBeNull();
     expect(forwardingConfirmation({ from: "someone@example.com", subject: "Gmail Forwarding Confirmation", html: null, text: `https://mail.google.com/mail/vf-x` })).toBeNull();
@@ -233,11 +233,26 @@ describe("Gmail's forwarding confirmation", () => {
     // The verify link before any other Gmail link, without a sentence's full stop; numeric `&`.
     expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: null, text: `See https://mail.google.com/mail/u/0/#settings or ${link}.` })?.link).toBe(link);
     expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: '<a href="https://mail.google.com/mail/vf-a?b=1&#38;c=2">x</a>', text: null })?.link).toBe("https://mail.google.com/mail/vf-a?b=1&c=2");
+    // Never the cancel link or another Gmail link; no markdown or bidi marks ride along.
+    expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "https://mail-settings.google.com/mail/uf-cancel https://mail.google.com/mail/?view=cm&to=x" })).toBeNull();
+    expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "https://mail.google.com/mail/vf-a`**@everyone**`" })?.link).toBe("https://mail.google.com/mail/vf-a");
+    expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "https://mail.google.com/mail/vf-a\u202ex" })?.link).toBe("https://mail.google.com/mail/vf-a");
+    // Digits in an address in the body are not the code either.
+    expect(forwardingCode({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "Use the code below, then forward to m-ab1234567cd@alerts.example.com" })).toBeNull();
+    expect(forwardingCode({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "forward: the confirmation code is 123456789." })).toBe("123456789");
+  });
+
+  it("reads a long subject or body in linear time", () => {
+    const from = "forwarding-noreply@google.com";
+    const started = performance.now();
+    forwardingConfirmation({ from, subject: `Forwarding ${"1".repeat(500_000)}`, html: null, text: `forward ${"https://mail.google.com/".concat(".".repeat(999), "x\n").repeat(1000)}` });
+    ignoredWhy({ from, subject: "x".repeat(500_000), html: null, text: "y" });
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 
   it("says why a message did nothing, without its words or a stranger's name", () => {
     expect(ignoredWhy({ from: "forwarding-noreply@google.com", subject: "Gmail Forwarding Confirmation - Receive Mail from someone@example.com", html: null, text: "no code here" })).toBe(
-      'from forwarding-noreply@google.com, text, subject names forwarding, subject shape "aaaaa aaaaaaaaaa aaaaaaaaaaaa - aaaaaaa aaaa aaaa aaaaaaa@aaaaaaa.aaa", body 12 chars, 0 digit run(s), 0 https link(s), says code: yes',
+      'from forwarding-noreply@google.com, text, subject names forwarding, subject shape "aaaaa aaaaaaaaaa aaaaaaaaaaaa - aaaaaaa aaaa aaaa <addr>", body 12 chars, 0 digit run(s), 0 https link(s), says code: yes',
     );
     expect(ignoredWhy({ from: "someone@example.com", subject: "Gmail forwarding? hello", html: null, text: "hi" })).toBe("from example.com, text, subject names forwarding");
     expect(ignoredWhy({ from: "forwarding-noreply@google.com", subject: "x", html: "<p>x</p>", text: null })).toBe('from forwarding-noreply@google.com, html, subject does not name forwarding, subject shape "a", body 1 chars, 0 digit run(s), 0 https link(s), says code: no');

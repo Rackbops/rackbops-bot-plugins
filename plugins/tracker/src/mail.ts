@@ -19,7 +19,7 @@ import { WANT_TYPES, type WatchConfig, watchSite } from "./want.js";
  * `TRACKER_MAIL_KEY` as its bearer and the address it was sent to (web/mail-inbound.ts). Here:
  *
  * - **Gmail's forwarding confirmation** (from Google, `forwardingConfirmation`): its code, and its
- *   confirmation link on Gmail's own hosts, are DMed to the person, so they can finish turning
+ *   verify link on Gmail's own hosts, are DMed to the person, so they can finish turning
  *   forwarding on in Gmail. Nothing else from it goes on.
  * - **An eBay alert** (ebay-alert.ts): its listings go into the inbox of each of the person's live
  *   eBay watches whose words are the alert's (case and spacing aside), exactly as if Claude in
@@ -101,17 +101,33 @@ export interface ForwardingConfirmation {
   link: string | null;
 }
 
-const GMAIL_LINK = /https:\/\/(?:[a-z0-9-]{1,63}\.){0,4}(?:mail|mail-settings)\.google\.com\/[^\s"'<>)\]]{1,1000}/gi;
+// Only URL-safe ASCII in the path: nothing that reorders text or is Discord markdown.
+const GMAIL_LINK = /https:\/\/(?:[a-z0-9-]{1,63}\.){0,4}(?:mail|mail-settings)\.google\.com\/[A-Za-z0-9\-._~%/?#&=+:@!$,;]{1,1000}/gi;
 
 function decodedHtmlLinks(html: string): string {
   // `&amp;` (or its numeric forms) in an href is `&` in the address.
   return html.slice(0, MAX_HTML_CHARS).replace(/&(?:amp|#38|#x26);/gi, "&");
 }
 
-/** Gmail's link in `s`: its verify link if it has one, else the first; null when none. */
+/** `s` without a sentence's closing marks at its end. */
+function trimClosingMarks(s: string): string {
+  let end = s.length;
+  while (end > 0 && ".,;:!?".includes(s.charAt(end - 1))) end--;
+  return s.slice(0, end);
+}
+
+/** Gmail's verify (`/mail/vf-`) link in `s`, or null: never its cancel link or any other. */
 function gmailLink(s: string): string | null {
-  const all = (s.match(GMAIL_LINK) ?? []).map((l) => l.replace(/[.,;:!?]+$/, ""));
-  return all.find((l) => /\/mail\/vf-/i.test(l)) ?? all[0] ?? null;
+  for (const l of s.match(GMAIL_LINK) ?? []) {
+    const link = trimClosingMarks(l);
+    if (/^https:\/\/[^/]+\/mail\/vf-/i.test(link)) return link;
+  }
+  return null;
+}
+
+/** `s` with every word holding an `@` (an address) taken out, in linear time. */
+function withoutAddresses(s: string): string {
+  return s.split(/\s+/).filter((w) => !w.includes("@")).join(" ");
 }
 
 /** The body as the reader sees it: plain text, else the HTML's text. */
@@ -127,11 +143,12 @@ function bodyText(mail: MailMessage): string {
  * - from Google, naming forwarding in its subject or body (or, in any language, a subject that
  *   starts `(#<digits>)` as Gmail's has);
  * - the code: that leading `(#<digits>)`, else a run of 6 to 12 digits standing alone in the
- *   subject (never part of an address), else one within a few characters after the word "code" in
- *   the body (plain text, else the HTML's text);
- * - the link: an https address on Gmail's own hosts (`mail.google.com`, `mail-settings.google.com`,
- *   or a subdomain of either) in the body, the plain text's or the HTML's links; a `/mail/vf-`
- *   (verify) link before any other, and without a sentence's closing mark.
+ *   subject, else one within a few characters after the word "code" in the body (plain text, else
+ *   the HTML's text); never digits inside an address;
+ * - the link: Gmail's verify link, an https `/mail/vf-` address on Gmail's own hosts
+ *   (`mail.google.com`, `mail-settings.google.com`, or a subdomain of either), found in the plain
+ *   text, else anywhere in the HTML's markup, without a sentence's closing mark. Never its cancel
+ *   (`/mail/uf-`) link or any other.
  *
  * Anyone can forge a From line, but what is read only goes to the address's own owner, who asked
  * Gmail for it.
@@ -141,18 +158,18 @@ export function forwardingConfirmation(mail: MailMessage): ForwardingConfirmatio
   const leading = /^\(#(\d{6,12})\)/.exec(mail.subject)?.[1] ?? null;
   const body = bodyText(mail);
   if (!leading && !/forwarding/i.test(mail.subject) && !/forward/i.test(body)) return null;
-  // An address in the subject (the requester's) may hold digits that are not the code.
-  const subject = mail.subject.replace(/\S*@\S*/g, " ");
+  // An address (the requester's, or the alert address) may hold digits that are not the code.
+  const subject = withoutAddresses(mail.subject.slice(0, 500));
   const code =
     leading ??
     /(?:^|[\s#(])(\d{6,12})(?=$|[\s).,:;])/.exec(subject)?.[1] ??
-    /\bcode\b\D{0,40}?(\d{6,12})(?!\d)/i.exec(body)?.[1] ??
+    /\bcode\b\D{0,40}?(?<![\w.@-])(\d{6,12})(?!\d)/i.exec(withoutAddresses(body))?.[1] ??
     null;
   const link = gmailLink(mail.text ?? "") ?? (mail.html !== null ? gmailLink(decodedHtmlLinks(mail.html)) : null);
   return code || link ? { code, link } : null;
 }
 
-/** The code alone, as 0.25.0 and 0.26.0 read it (kept for its callers and tests). */
+/** The code alone, as 0.25.0 and 0.26.0 read it (kept for the tests). */
 export function forwardingCode(mail: MailMessage): string | null {
   return forwardingConfirmation(mail)?.code ?? null;
 }
@@ -160,6 +177,11 @@ export function forwardingCode(mail: MailMessage): string | null {
 /** A string's shape for the log: letters `a`, digits `9`, everything else kept, capped. */
 function shape(s: string): string {
   return s.replace(/\p{L}/gu, "a").replace(/\p{N}/gu, "9").replace(/[^\x20-\x7e]/g, "?").slice(0, 160);
+}
+
+/** A subject's shape, with each address in it only `<addr>`: no address's length reaches the log. */
+function subjectShape(subject: string): string {
+  return subject.slice(0, 500).split(/\s+/).map((w) => (w.includes("@") ? "<addr>" : shape(w))).join(" ").slice(0, 160);
 }
 
 /** What a message that did nothing was, for the log: never its words or its sender's name. */
@@ -176,7 +198,7 @@ export function ignoredWhy(mail: MailMessage): string {
   const body = bodyText(mail);
   const runs = (body.match(/\d{6,12}/g) ?? []).length;
   const links = (body.match(/https:\/\/[a-z0-9.-]{1,253}/gi) ?? []).length;
-  return `${base}, subject shape "${shape(mail.subject)}", body ${body.length} chars, ${runs} digit run(s), ${links} https link(s), says code: ${/code/i.test(body) ? "yes" : "no"}`;
+  return `${base}, subject shape "${subjectShape(mail.subject)}", body ${body.length} chars, ${runs} digit run(s), ${links} https link(s), says code: ${/code/i.test(body) ? "yes" : "no"}`;
 }
 
 /**

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-13T19:34:36.305Z",
+  "generatedAt": "2026-10-13T19:41:25.205Z",
   "plugins": [
     {
       "name": "mcp",
@@ -307,7 +307,7 @@
           "version": "0.27.0",
           "publishedAt": "2026-10-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.27.0",
-          "notes": "### Fixed\n\n- **Gmail's forwarding confirmation, again** (#83). 0.26.0 also left the re-sent one unread: from\n  `forwarding-noreply@google.com`, plain text, forwarding named, but no code where it looked. The\n  code is now a run of 6 to 12 digits standing alone in the subject (never digits inside an\n  address there), or one shortly after the word \"code\" in the body; and Gmail's confirmation link\n  (an https address on `mail.google.com`, `mail-settings.google.com` or a subdomain of either,\n  its `/mail/vf-` verify link first) is DMed too, or alone when there is no code.\n- An unread message from one of Google's no-reply senders now also logs its subject's shape\n  (letters `a`, digits `9`), its body's length (plain text, else the HTML's text), and how many\n  digit runs and https links it has,\n  and whether it says \"code\" -- still never its words.\n\n### Schema\n\n- No change. Still at 10."
+          "notes": "### Fixed\n\n- **Gmail's forwarding confirmation, again** (#83). 0.26.0 also left the re-sent one unread: from\n  `forwarding-noreply@google.com`, plain text, forwarding named, but no code where it looked. The\n  code is now a run of 6 to 12 digits standing alone in the subject (never digits inside an\n  address), or one shortly after the word \"code\" in the body (never inside an address); and\n  Gmail's verify link (an https `/mail/vf-` address on `mail.google.com`,\n  `mail-settings.google.com` or a subdomain of either; never its `/mail/uf-` cancel link or any\n  other) is DMed too, or alone when there is no code.\n- An unread message from one of Google's no-reply senders now also logs its subject's shape\n  (letters `a`, digits `9`, each address `<addr>`), its body's length (plain text, else the\n  HTML's text), how many digit runs and https links it has, and whether it says \"code\" -- still\n  never its words.\n\n### Schema\n\n- No change. Still at 10."
         },
         {
           "version": "0.26.0",
