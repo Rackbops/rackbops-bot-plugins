@@ -6,9 +6,9 @@ The fixes from the 2026-10-07 code review (epics #265 and #266).
 
 ### Added
 
-- **Resume DMs on the web** (#168, #288): a person whose DMs are paused sees a banner on every web
-  page with a Resume DMs button (`POST /resume-dms`). It resumes them as their next command would,
-  and My tasks then says how many tasks are back on.
+- **Resume DMs on the web** (#168, #288): a person whose DMs are paused sees a banner on every
+  signed-in page with a Resume DMs button (`POST /resume-dms`). It resumes them as their next
+  command would, and My tasks then says so.
 
 ### Fixed
 
@@ -35,6 +35,8 @@ The fixes from the 2026-10-07 code review (epics #265 and #266).
   watcher refuses eBay (#165, #270); the queue, the membership gate and the task API (#204, #283);
   city-hall's requeue cap as how a `usage_limit` reaches docket (#213, #285); the core's comments,
   with the unused `localIdentity` dropped (#202, #290).
+- The 48 h hold's comment and tests say that city-hall's requeue cap fails a Job inside it at the
+  runner's hourly pace, and which paths let the hold end first (#287, #293).
 - Tests pin the Reply path's membership and registration gates (#162, #272), and close what each
   opened before removing its temp directory, so the suite passes on Windows (#232, #276).
 
