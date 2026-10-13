@@ -73,7 +73,9 @@ export async function handleMailInbound(m: MailInbound, request: Request): Promi
     if (userId === null) return answer(404, { error: "no_such_address" });
     const outcome = await deliverMail(d, userId, parseMail(raw));
     if (outcome.kind === "stored") d.log.info(`mail: an eBay alert gave ${outcome.listings} listing(s) to ${outcome.watches} watch(es)`);
+    else if (outcome.kind === "ignored") d.log.info(`mail: one message ignored (${outcome.why})`);
     else d.log.info(`mail: one message ${outcome.kind}`);
+    if (outcome.kind === "ignored") return answer(200, { result: "ignored" });
     const { kind, ...rest } = outcome;
     return answer(200, { result: kind, ...rest });
   });

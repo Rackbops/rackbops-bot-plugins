@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.26.0] - 2026-10-13
+
+### Fixed
+
+- **Gmail's forwarding confirmation reaches its owner** (#83). The first real one, sent to Rod's
+  alert address on 2026-10-13, was logged as ignored and its code never DMed. It is now read
+  loosely: any sender at Google, forwarding named in the subject or body, and the code as
+  `#<digits>` in the subject or after "confirmation code" in the plain or HTML body.
+- A message that does nothing is logged with why -- the owner is not registered, or its sender's
+  domain (a Google sender whole), which bodies it had, and whether its subject names forwarding --
+  never its words or a stranger's name. The answer to the Worker is unchanged.
+
+### Schema
+
+- No change. Still at 10.
+
 ## [0.25.0] - 2026-10-13
 
 ### Added

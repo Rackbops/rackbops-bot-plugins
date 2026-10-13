@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-13T14:17:04.784Z",
+  "generatedAt": "2026-10-13T17:54:11.797Z",
   "plugins": [
     {
       "name": "mcp",
@@ -170,7 +170,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.25.0",
+      "version": "0.26.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
@@ -304,6 +304,12 @@
       ],
       "releases": [
         {
+          "version": "0.26.0",
+          "publishedAt": "2026-10-13T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.26.0",
+          "notes": "### Fixed\n\n- **Gmail's forwarding confirmation reaches its owner** (#83). The first real one, sent to Rod's\n  alert address on 2026-10-13, was logged as ignored and its code never DMed. It is now read\n  loosely: any sender at Google, forwarding named in the subject or body, and the code as\n  `#<digits>` in the subject or after \"confirmation code\" in the plain or HTML body.\n- A message that does nothing is logged with why -- the owner is not registered, or its sender's\n  domain (a Google sender whole), which bodies it had, and whether its subject names forwarding --\n  never its words or a stranger's name. The answer to the Worker is unchanged.\n\n### Schema\n\n- No change. Still at 10."
+        },
+        {
           "version": "0.25.0",
           "publishedAt": "2026-10-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.25.0",
@@ -356,12 +362,6 @@
           "publishedAt": "2026-10-05T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.18.1",
           "notes": "### Changed\n\n- **The scout and want-list types now come from `@rackbops/docket-types` 0.6.0** (plan item 104,\n  Rackbops/docket#25), and docket-core goes to 0.6.0 with them. `scout`, `wantlist`, `wantjudge`\n  and their page and BGG sources moved there unchanged; the plugin's own copies\n  (`scout-type.ts`, `wantlist-type.ts`, `wantjudge-type.ts`, `want-sources.ts`, `want-bgg.ts`)\n  are gone, and their unit tests moved with them. The fenced page fetch still honours and strips\n  the `NEVER_EBAY` header, now imported from docket-types. No behaviour change: same commands,\n  same DMs, same stored state."
-        },
-        {
-          "version": "0.18.0",
-          "publishedAt": "2026-10-05T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.18.0",
-          "notes": "### Added\n\n- **The daily \"today and overdue\" digest** (plan 5.5). Once a day, at each person's preferred hour\n  in their own zone (the hour `/register` and `/settings` set, 9:00 by default), Clerk DMs them one\n  message listing their own reminders and renewals that are **overdue** -- the latest run fired\n  before today and was never marked done or decided -- and those **due today**: a run still to come\n  today, or one that already went out today and waits on an answer. Each line names the task id\n  and the time, and the message ends with the commands that answer them (`/task done`,\n  `/task decide`, `/task snooze`). Price checks, want-list watches, scouts and research run on\n  their own and owe nothing, so they are not listed; nor are tasks the person only receives, since\n  only the owner answers a run. A renewal's line says when it was asked (its lead days before the\n  date), not the date itself. A snoozed run is not overdue: its snooze is what is due. At most 10\n  lines a section, the rest counted.\n- Nothing due and nothing overdue: no DM at all.\n- Exactly once per person per day, by research-triage's claim pattern: the day is claimed in the\n  store (docket's once-only notice key `digest:<person>:<date>`) before their tasks are read or anything is sent,\n  so a restart or an overlapping tick never sends it twice; a send that fails is logged and not\n  retried that day. Notify lane only, on the `notify` tick after the runs due now, with no model\n  call. A digest the bot was down for goes out when it is back, until the person's midnight; a\n  person whose DMs are paused after failures gets theirs later that day if the pause lifts.\n- Forget-me erases the person's digest claims too."
         }
       ]
     },

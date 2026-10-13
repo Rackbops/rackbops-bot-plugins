@@ -494,8 +494,8 @@ eBay's saved-search alerts reach eBay watches by mail (0.25.0), while `TRACKER_M
   an outage, bounces to the mailbox that forwarded it; that day's alert is not retried. The Worker
   is deployed by pasting `mail-worker/worker.js` into the Cloudflare dashboard's Worker editor; it is
   not in the plugin's npm bundle.
-- **What a message does.** Gmail's forwarding confirmation (from `forwarding-noreply@google.com`):
-  its code is DMed, to enter in Gmail's Forwarding and POP/IMAP settings. An eBay alert: the
+- **What a message does.** Gmail's forwarding confirmation (from Google, naming forwarding, its
+  code as `#<digits>` in the subject or after "confirmation code" in the body; since 0.26.0): its code is DMed, to enter in Gmail's Forwarding and POP/IMAP settings. An eBay alert: the
   matches above "You might also like" (never eBay's suggestions) -- title, the item's bare
   `/itm/<number>` address, the price's lower end -- go into the inbox of each of the person's live
   eBay watches whose words are the saved search's (case and spacing aside), exactly as listings sent

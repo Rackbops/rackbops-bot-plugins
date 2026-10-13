@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { User } from "@rackbops/docket-core";
 import type { Listing } from "@rackbops/docket-types";
 import type { TrackerDeps } from "./actions.js";
-import { readEbayAlert, SEARCH_MARKS, sameSearch } from "./ebay-alert.js";
+import { htmlText, MAX_HTML_CHARS, readEbayAlert, SEARCH_MARKS, sameSearch } from "./ebay-alert.js";
 import { acceptListing } from "./inbox.js";
 import type { MailMessage } from "./mime.js";
 import { WANT_TYPES, type WatchConfig, watchSite } from "./want.js";
@@ -18,7 +18,7 @@ import { WANT_TYPES, type WatchConfig, watchSite } from "./want.js";
  * (`mail-worker/`), which posts it as it came to `POST /<plugin>/mail/inbound` with
  * `TRACKER_MAIL_KEY` as its bearer and the address it was sent to (web/mail-inbound.ts). Here:
  *
- * - **Gmail's forwarding confirmation** (from `forwarding-noreply@google.com`): its code is DMed to
+ * - **Gmail's forwarding confirmation** (from Google, `forwardingCode`): its code is DMed to
  *   the person, so they can finish turning forwarding on in Gmail. Only the digits go on.
  * - **An eBay alert** (ebay-alert.ts): its listings go into the inbox of each of the person's live
  *   eBay watches whose words are the alert's (case and spacing aside), exactly as if Claude in
@@ -37,7 +37,6 @@ export const MAIL_KEY_KEY = "TRACKER_MAIL_KEY";
 export const MAIL_DOMAIN_FORMAT = "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$";
 /** The shortest key taken: the Worker's bearer guards every person's watches at once. */
 export const MIN_MAIL_KEY = 32;
-export const GMAIL_FORWARDING = "forwarding-noreply@google.com";
 
 const LOCAL = /^m-[0-9a-f]{24}$/;
 
@@ -90,12 +89,35 @@ export class MailAddresses {
   }
 }
 
-/** Gmail's forwarding confirmation code in `mail`, or null when it is not one. */
+/** Whether `address` is at google.com or one of its subdomains. */
+function fromGoogle(address: string | null): boolean {
+  const host = address?.slice(address.lastIndexOf("@") + 1) ?? "";
+  return host === "google.com" || host.endsWith(".google.com");
+}
+
+/**
+ * Gmail's forwarding confirmation code in `mail`, or null when it is not one. Read loosely, since
+ * the first real one (2026-10-13) went unread by a stricter reader: from Google, naming forwarding
+ * in its subject or body, with the code as `#<digits>` in the subject or after "confirmation code"
+ * in the body (plain text, else the HTML's text). Anyone can forge a From line, but the code only
+ * goes to the address's own owner, who asked Gmail for it.
+ */
 export function forwardingCode(mail: MailMessage): string | null {
-  if (mail.from !== GMAIL_FORWARDING || !/forwarding confirmation/i.test(mail.subject)) return null;
-  const inSubject = /\(#(\d{6,12})\)/.exec(mail.subject)?.[1];
+  if (!fromGoogle(mail.from)) return null;
+  const body = mail.text ?? (mail.html !== null ? htmlText(mail.html.slice(0, MAX_HTML_CHARS)) : "");
+  if (!/forwarding/i.test(mail.subject) && !/forward/i.test(body)) return null;
+  const inSubject = /#\s?(\d{6,12})\b/.exec(mail.subject)?.[1];
   if (inSubject) return inSubject;
-  return /confirmation code:\s*(\d{6,12})/i.exec(mail.text ?? mail.html ?? "")?.[1] ?? null;
+  return /confirmation code\W{0,20}(\d{6,12})\b/i.exec(body)?.[1] ?? null;
+}
+
+/** What a message that did nothing was, for the log: never its words or its sender's name. */
+export function ignoredWhy(mail: MailMessage): string {
+  // A sender at Google is a system address (the confirmation's own sender, when it went unread), so
+  // it is named whole; anyone else's only by their domain.
+  const domain = mail.from ? (fromGoogle(mail.from) ? mail.from : mail.from.slice(mail.from.lastIndexOf("@") + 1)) : "none";
+  const parts = [mail.html !== null ? "html" : "", mail.text !== null ? "text" : ""].filter(Boolean).join("+") || "no body";
+  return `from ${domain.replace(/[^a-z0-9.@_+-]/g, "?").slice(0, 100)}, ${parts}, subject ${/forwarding/i.test(mail.subject) ? "names" : "does not name"} forwarding`;
 }
 
 /**
@@ -112,7 +134,7 @@ export type MailOutcome =
   | { kind: "confirmation" }
   | { kind: "stored"; watches: number; listings: number }
   | { kind: "unmatched" }
-  | { kind: "ignored" };
+  | { kind: "ignored"; why: string };
 
 /** The person's live eBay inbox watches searching for `search`. */
 async function watchesFor(d: TrackerDeps, user: User, search: string) {
@@ -143,14 +165,14 @@ async function tell(d: TrackerDeps, userId: string, text: string): Promise<void>
  */
 export async function deliverMail(d: TrackerDeps, userId: string, mail: MailMessage): Promise<MailOutcome> {
   const user = await d.store.getUser(userId);
-  if (!user || !d.admissions.isRegistered(user.id) || !d.inbox) return { kind: "ignored" };
+  if (!user || !d.admissions.isRegistered(user.id) || !d.inbox) return { kind: "ignored", why: "the address's owner is not registered" };
   const code = forwardingCode(mail);
   if (code) {
     await tell(d, user.id, `Gmail asks to confirm forwarding to your alert address. The confirmation code is ${code}: enter it in Gmail's Settings, under Forwarding and POP/IMAP. If you did not ask for this, ignore it.`);
     return { kind: "confirmation" };
   }
   const alert = readEbayAlert(mail);
-  if (!alert) return { kind: "ignored" };
+  if (!alert) return { kind: "ignored", why: ignoredWhy(mail) };
   const listings: Listing[] = [];
   for (const raw of alert.listings) {
     const l = acceptListing(raw);
