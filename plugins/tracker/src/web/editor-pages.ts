@@ -115,7 +115,7 @@ export function fieldsFor(type: NewType, mode: "new" | "edit"): readonly Field[]
             kind: "text",
             maxlength: MAX_URL,
             help:
-              "A shop's listing or search page, or a BGG game's address or id. For eBay, the words to search for (the name when empty): I never open eBay, so its listings reach the watch when you send them in through the task API, such as from Claude in Chrome in your own browser. BGG works the same way while this bot has no BGG access.",
+              "A shop's listing or search page, or a BGG game's address or id. For eBay, the words to search for (the name when empty): a watch never opens eBay, so its listings reach the watch when you send them in through the task API, such as from Claude in Chrome in your own browser. BGG works the same way while this bot has no BGG access.",
           } as const,
           {
             name: "judge",

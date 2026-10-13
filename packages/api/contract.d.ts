@@ -1,8 +1,10 @@
 // The host<->plugin contract — types plus one integer constant, nothing else. This module must stay
 // free of runtime imports and side effects: the Plugin Index (the JSON these types describe) is read
 // at boot BEFORE the discord.js Client exists (intents are frozen at construction, so they have to
-// come from data, never from plugin code), and the plugins repo vendors this file verbatim to
-// type-check plugins against it. Design: docs/adr/0004-plugins-fetched-from-a-published-manifest.md.
+// come from data, never from plugin code), and the plugins repo vendors this file verbatim, as
+// `packages/api/contract.d.ts`, to type-check plugins against it; its `check-contract` script compares
+// that copy byte for byte with this file on `main`, so any edit here, a comment's included, needs a
+// re-vendor there. Design: docs/adr/0004-plugins-fetched-from-a-published-manifest.md.
 import type {
   AutocompleteInteraction,
   ChatInputCommandInteraction,
@@ -310,7 +312,10 @@ export interface HostApi {
    *  host that predates it (#736), so `typeof host.post === "function"` is how a plugin feature-detects. */
   post?(guildId: string, destination: string, message: HostMessage): Promise<HostDelivery>;
   /** DMs `userId`; rejects cleanly (never throws a raw Discord error) when the recipient's DMs are
-   *  closed. Sends as the bot. Optional, like `post` (#736). */
+   *  closed. Sends as the bot. Optional, like `post` (#736). Any other Discord refusal of `post`, `dm`
+   *  or `edit` rejects with an `Error` carrying Discord's message, `name`, `status`, `method` and its
+   *  `code` (a 5xx has none), never the request that was sent (#508; a host before that rejects with
+   *  discord.js's own error, whose `requestBody` holds the message). */
   dm?(userId: string, message: HostMessage): Promise<HostDelivery>;
   /** Edits a message `post`/`dm` delivered. Refuses a message this bot did not author — a plugin
    *  already reaches the live `Client` via `interaction.client`, so per-plugin ownership is not a
@@ -325,6 +330,9 @@ export interface PluginCommand {
   /** Bare name. The host hands `build` an ALREADY-NAMED builder (`COMMAND_PREFIX` applied), so a plugin cannot register outside the namespace. */
   name: string;
   build(builder: SlashCommandBuilder): { toJSON(): RESTPostAPIChatInputApplicationCommandsJSONBody };
+  /** Runs the command; called only while the plugin is running (#407). A throw is logged and isolated: the
+   *  host sends a best-effort ephemeral error reply on the plugin's behalf only if it hasn't replied or
+   *  deferred yet, as for `PluginInteractionHandler`. */
   handle(interaction: ChatInputCommandInteraction): Promise<void>;
   /**
    * Answers Discord's picker for an option this command built with `setAutocomplete(true)` (#287). The
@@ -387,8 +395,8 @@ export interface PluginHttpInfo {
    *  resolved, still percent-encoded). `/<name>//x` arrives as `"//x"`, a protocol-relative URL:
    *  never redirect to it unchecked. */
   path: string;
-  /** `CF-Connecting-IP`, falling back to the socket address, or `"unknown"`. Trustworthy only for
-   *  what really came through Cloudflare's tunnel (ADR-0007 decision 2). */
+  /** `CF-Connecting-IP` when the request came through the deployment's own tunnel, falling back to the
+   *  socket address, or `"unknown"` (ADR-0007 decision 2 and its #319 amendment). */
   clientIp: string;
 }
 
@@ -401,9 +409,16 @@ export interface Plugin {
    * so synchronous work inside it is never cut short, but time spent awaiting counts. Past that the plugin
    * is recorded as failed, the way a throw is, and stays off until the next restart; the call is not
    * cancelled. If it resolves later, the host calls `dispose()` once to release what it set up; if it rejects
-   * later, the host only logs it. Until #407 lands, slash commands are the exception to "off": the host
-   * dispatches a plugin's commands whether or not it is running, including after that late `dispose()`,
-   * so a command handler must cope with state its `activate()` never finished setting up.
+   * later, the host only logs it. "Off" covers every dispatch: the host hands nothing to a plugin that is
+   * not running — no tick, HTTP request, slash command (#407), component, modal or autocomplete — and a
+   * plugin stops running the moment its `dispose()` begins (#409), not when it settles. What a plugin
+   * starts in the background — a timer, a listener, a promise nothing awaits — is outside the host's
+   * isolation (#470): an uncaught throw or an unhandled rejection there ends the whole process, every other
+   * plugin with it (Bun's default; the host installs no process-level handler), so contain it. A host from before
+   * #407/#409, with the same `HOST_API_VERSION`, still dispatches slash commands to a plugin that is not
+   * running, keeps it running until `dispose()` settles, and neither isolates nor answers a throw from
+   * `handle()` (it is only logged), so a command handler that must run there should still cope with state
+   * its `activate()` never finished setting up.
    */
   activate?(): Promise<void>;
   /**
@@ -426,7 +441,12 @@ export interface Plugin {
    * (`info.path`). `request` carries the full URL, headers, query and body, the body already read
    * into memory and capped at 1 MiB (a bigger one is answered `413` before you are called; enforce
    * your own tighter limit). Its host comes from the client's `Host` header, so never build an
-   * absolute URL from it. The host answers for you with `504` once you have taken 10 s (without
+   * absolute URL from it. `CF-Connecting-IP` and `X-Forwarded-For` carry `info.clientIp`: the host
+   * overwrites whatever the client sent in them, and removes `Forwarded`, `X-Real-IP`,
+   * `True-Client-IP` and `CF-Connecting-IPv6` (#472); `Content-Length` is the buffered body's length,
+   * with no `Transfer-Encoding`, and neither is present without a body. Any other header is as the client sent it, and a host from before #472
+   * passes all of them through, so read `info.clientIp`, never a header. The
+   * host answers for you with `504` once you have taken 10 s (without
    * cancelling the call), and with `500` if you throw. Every plugin shares one browser origin: scope a
    * cookie to `Path=/<name>/`. A request is not a critical section: a restart does not wait for it, so
    * write through `HostStorage`. Optional: a plugin that serves no HTTP omits it; a host from before
