@@ -496,8 +496,9 @@ eBay's saved-search alerts reach eBay watches by mail (0.25.0), while `TRACKER_M
   not in the plugin's npm bundle.
 - **What a message does.** Gmail's forwarding confirmation: its code is DMed, to enter in Gmail's
   Forwarding and POP/IMAP settings. Since 0.26.0 it is any sender at Google naming forwarding, with
-  the code as a run of digits in the subject or shortly after "code" in the body, and since 0.27.0
-  Gmail's confirmation link (on `mail.google.com` or `mail-settings.google.com` only) too. An eBay alert: the
+  the code as a run of digits standing alone in the subject or shortly after "code" in the body,
+  and since 0.27.0 Gmail's confirmation link (on `mail.google.com`, `mail-settings.google.com` or
+  a subdomain of either, nowhere else) too. An eBay alert: the
   matches above "You might also like" (never eBay's suggestions) -- title, the item's bare
   `/itm/<number>` address, the price's lower end -- go into the inbox of each of the person's live
   eBay watches whose words are the saved search's (case and spacing aside), exactly as listings sent

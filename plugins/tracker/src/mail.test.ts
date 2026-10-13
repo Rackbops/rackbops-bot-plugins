@@ -203,7 +203,7 @@ describe("Gmail's forwarding confirmation", () => {
   });
 
   it("reads it loosely: another Google sender, an HTML-only body, a code without brackets", () => {
-    const html = "<p>roshne@gmail.com has requested to automatically forward mail to your address.</p><p>Confirmation code: <b>987654321</b></p>";
+    const html = "<p>someone@example.com has requested to automatically forward mail to your address.</p><p>Confirmation code: <b>987654321</b></p>";
     expect(forwardingCode({ from: "noreply@accounts.google.com", subject: "Gmail Forwarding Confirmation", html, text: null })).toBe("987654321");
     expect(forwardingCode({ from: "forwarding-noreply@google.com", subject: "#123456789 Gmail Forwarding Confirmation", html: null, text: null })).toBe("123456789");
     expect(forwardingCode({ from: "forwarding-noreply@google.com", subject: "Your receipt", html: null, text: "Order 123456789" })).toBeNull();
@@ -227,14 +227,22 @@ describe("Gmail's forwarding confirmation", () => {
     // A link anywhere else is never taken, from anyone.
     expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "https://mail.google.com.evil.example/x https://evil.example/mail.google.com/x" })).toBeNull();
     expect(forwardingConfirmation({ from: "someone@example.com", subject: "Gmail Forwarding Confirmation", html: null, text: `https://mail.google.com/mail/vf-x` })).toBeNull();
+    // Digits inside the requester's address are not the code; "barcode" is not "code".
+    expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation - Receive Mail from jane1985062@gmail.com", html: null, text: `forward ${link}` })).toEqual({ code: null, link });
+    expect(forwardingCode({ from, subject: "Gmail Forwarding Confirmation", html: null, text: "barcode 1234567 forward" })).toBeNull();
+    // The verify link before any other Gmail link, without a sentence's full stop; numeric `&`.
+    expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: null, text: `See https://mail.google.com/mail/u/0/#settings or ${link}.` })?.link).toBe(link);
+    expect(forwardingConfirmation({ from, subject: "Gmail Forwarding Confirmation", html: '<a href="https://mail.google.com/mail/vf-a?b=1&#38;c=2">x</a>', text: null })?.link).toBe("https://mail.google.com/mail/vf-a?b=1&c=2");
   });
 
   it("says why a message did nothing, without its words or a stranger's name", () => {
-    expect(ignoredWhy({ from: "forwarding-noreply@google.com", subject: "Gmail Forwarding Confirmation - Receive Mail from roshne@gmail.com", html: null, text: "no code here" })).toBe(
-      'from forwarding-noreply@google.com, text, subject names forwarding, subject shape "aaaaa aaaaaaaaaa aaaaaaaaaaaa - aaaaaaa aaaa aaaa aaaaaa@aaaaa.aaa", text 12 chars, 0 digit run(s), 0 https link(s), says code: yes',
+    expect(ignoredWhy({ from: "forwarding-noreply@google.com", subject: "Gmail Forwarding Confirmation - Receive Mail from someone@example.com", html: null, text: "no code here" })).toBe(
+      'from forwarding-noreply@google.com, text, subject names forwarding, subject shape "aaaaa aaaaaaaaaa aaaaaaaaaaaa - aaaaaaa aaaa aaaa aaaaaaa@aaaaaaa.aaa", body 12 chars, 0 digit run(s), 0 https link(s), says code: yes',
     );
     expect(ignoredWhy({ from: "someone@example.com", subject: "Gmail forwarding? hello", html: null, text: "hi" })).toBe("from example.com, text, subject names forwarding");
-    expect(ignoredWhy({ from: "forwarding-noreply@google.com", subject: "x", html: "<p>x</p>", text: null })).toBe('from forwarding-noreply@google.com, html, subject does not name forwarding, subject shape "a", text 0 chars, 0 digit run(s), 0 https link(s), says code: no');
+    expect(ignoredWhy({ from: "forwarding-noreply@google.com", subject: "x", html: "<p>x</p>", text: null })).toBe('from forwarding-noreply@google.com, html, subject does not name forwarding, subject shape "a", body 1 chars, 0 digit run(s), 0 https link(s), says code: no');
+    // An HTML-only body is counted as the reader sees it.
+    expect(ignoredWhy({ from: "forwarding-noreply@google.com", subject: "x", html: "<p>code 123456789 https://mail.google.com/x</p>", text: null })).toBe('from forwarding-noreply@google.com, html, subject does not name forwarding, subject shape "a", body 40 chars, 1 digit run(s), 1 https link(s), says code: yes');
     expect(ignoredWhy({ from: null, subject: "", html: null, text: null })).toBe("from none, no body, subject does not name forwarding");
     expect(ignoredWhy({ from: "jane.doe@google.com", subject: "x", html: null, text: "x" })).toBe("from google.com, text, subject does not name forwarding");
     expect(ignoredWhy({ from: "a@john_smith+secret", subject: "x", html: null, text: "x" })).toBe("from john?smith?secret, text, subject does not name forwarding");
@@ -343,6 +351,16 @@ describe("POST /mail/inbound", () => {
     const other = "From: someone@example.com\r\nSubject: hello\r\n\r\nhi";
     expect(await (await inbound(w.plugin, address, other)).json()).toEqual({ result: "ignored" });
     expect(w.sent.length).toBe(before + 2);
+    // Gmail's link alone, then with a code: each wording says what to do.
+    const vf = "https://mail-settings.google.com/mail/vf-abc";
+    const linkOnly = `From: forwarding-noreply@google.com\r\nSubject: Gmail Forwarding Confirmation\r\n\r\nClick to confirm forwarding:\r\n${vf}\r\n`;
+    expect(await (await inbound(w.plugin, address, linkOnly)).json()).toEqual({ result: "confirmation" });
+    const both = linkOnly.replace("Confirmation", "Confirmation 123456789");
+    expect(await (await inbound(w.plugin, address, both)).json()).toEqual({ result: "confirmation" });
+    const [onlyLink, codeAndLink] = contents(w.sent.slice(before + 2));
+    expect(onlyLink).toContain(`Open Gmail's confirmation link: <${vf}>`);
+    expect(onlyLink).not.toContain("confirmation code");
+    expect(codeAndLink).toContain(`The confirmation code is 123456789: enter it in Gmail's Settings, under Forwarding and POP/IMAP. Or open Gmail's confirmation link: <${vf}>`);
   });
 
   it("feeds every live eBay watch with the words, paused ones too, and never a BGG or page watch", async () => {

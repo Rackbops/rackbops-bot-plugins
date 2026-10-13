@@ -96,6 +96,29 @@ function fromGoogle(address: string | null): boolean {
   return host === "google.com" || host.endsWith(".google.com");
 }
 
+export interface ForwardingConfirmation {
+  code: string | null;
+  link: string | null;
+}
+
+const GMAIL_LINK = /https:\/\/(?:[a-z0-9-]{1,63}\.){0,4}(?:mail|mail-settings)\.google\.com\/[^\s"'<>)\]]{1,1000}/gi;
+
+function decodedHtmlLinks(html: string): string {
+  // `&amp;` (or its numeric forms) in an href is `&` in the address.
+  return html.slice(0, MAX_HTML_CHARS).replace(/&(?:amp|#38|#x26);/gi, "&");
+}
+
+/** Gmail's link in `s`: its verify link if it has one, else the first; null when none. */
+function gmailLink(s: string): string | null {
+  const all = (s.match(GMAIL_LINK) ?? []).map((l) => l.replace(/[.,;:!?]+$/, ""));
+  return all.find((l) => /\/mail\/vf-/i.test(l)) ?? all[0] ?? null;
+}
+
+/** The body as the reader sees it: plain text, else the HTML's text. */
+function bodyText(mail: MailMessage): string {
+  return mail.text || (mail.html !== null ? htmlText(mail.html.slice(0, MAX_HTML_CHARS)) : "");
+}
+
 /**
  * Gmail's forwarding confirmation in `mail`: its code, its confirmation link, both, or null when it
  * is not one. Read loosely, since the first two real ones (2026-10-13) went unread by stricter
@@ -103,37 +126,29 @@ function fromGoogle(address: string | null): boolean {
  *
  * - from Google, naming forwarding in its subject or body (or, in any language, a subject that
  *   starts `(#<digits>)` as Gmail's has);
- * - the code: that leading `(#<digits>)`, else any run of 6 to 12 digits in the subject, else one
- *   within a few characters after "code" in the body (plain text, else the HTML's text);
- * - the link: the first https address on Gmail's own hosts (`mail.google.com` and its subdomains,
- *   `mail-settings.google.com`) in the body, the plain text's or the HTML's links.
+ * - the code: that leading `(#<digits>)`, else a run of 6 to 12 digits standing alone in the
+ *   subject (never part of an address), else one within a few characters after the word "code" in
+ *   the body (plain text, else the HTML's text);
+ * - the link: an https address on Gmail's own hosts (`mail.google.com`, `mail-settings.google.com`,
+ *   or a subdomain of either) in the body, the plain text's or the HTML's links; a `/mail/vf-`
+ *   (verify) link before any other, and without a sentence's closing mark.
  *
  * Anyone can forge a From line, but what is read only goes to the address's own owner, who asked
  * Gmail for it.
  */
-export interface ForwardingConfirmation {
-  code: string | null;
-  link: string | null;
-}
-
-const GMAIL_LINK = /https:\/\/(?:[a-z0-9-]{1,63}\.){0,4}(?:mail|mail-settings)\.google\.com\/[^\s"'<>)\]]{1,1000}/i;
-
-function decodedHtmlLinks(html: string): string {
-  // `&amp;` in an href is `&` in the address.
-  return html.slice(0, MAX_HTML_CHARS).replace(/&amp;/gi, "&");
-}
-
 export function forwardingConfirmation(mail: MailMessage): ForwardingConfirmation | null {
   if (!fromGoogle(mail.from)) return null;
   const leading = /^\(#(\d{6,12})\)/.exec(mail.subject)?.[1] ?? null;
-  const body = mail.text || (mail.html !== null ? htmlText(mail.html.slice(0, MAX_HTML_CHARS)) : "");
+  const body = bodyText(mail);
   if (!leading && !/forwarding/i.test(mail.subject) && !/forward/i.test(body)) return null;
+  // An address in the subject (the requester's) may hold digits that are not the code.
+  const subject = mail.subject.replace(/\S*@\S*/g, " ");
   const code =
     leading ??
-    /(?:^|\D)(\d{6,12})(?!\d)/.exec(mail.subject)?.[1] ??
-    /code\D{0,40}?(\d{6,12})(?!\d)/i.exec(body)?.[1] ??
+    /(?:^|[\s#(])(\d{6,12})(?=$|[\s).,:;])/.exec(subject)?.[1] ??
+    /\bcode\b\D{0,40}?(\d{6,12})(?!\d)/i.exec(body)?.[1] ??
     null;
-  const link = GMAIL_LINK.exec(mail.text ?? "")?.[0] ?? (mail.html !== null ? GMAIL_LINK.exec(decodedHtmlLinks(mail.html))?.[0] : undefined) ?? null;
+  const link = gmailLink(mail.text ?? "") ?? (mail.html !== null ? gmailLink(decodedHtmlLinks(mail.html)) : null);
   return code || link ? { code, link } : null;
 }
 
@@ -157,11 +172,11 @@ export function ignoredWhy(mail: MailMessage): string {
   const base = `from ${domain.replace(/[^a-z0-9.@-]/g, "?").slice(0, 100)}, ${parts}, subject ${/forwarding/i.test(mail.subject) ? "names" : "does not name"} forwarding`;
   if (!system) return base;
   // From Google's own system senders only: the subject's shape (no letters or digits survive) and
-  // counts from the body, so the next unread confirmation says what it looked like.
-  const body = mail.text ?? "";
+  // counts from the body as the reader sees it, so the next unread confirmation says what it was.
+  const body = bodyText(mail);
   const runs = (body.match(/\d{6,12}/g) ?? []).length;
   const links = (body.match(/https:\/\/[a-z0-9.-]{1,253}/gi) ?? []).length;
-  return `${base}, subject shape "${shape(mail.subject)}", text ${body.length} chars, ${runs} digit run(s), ${links} https link(s), says code: ${/code/i.test(body) ? "yes" : "no"}`;
+  return `${base}, subject shape "${shape(mail.subject)}", body ${body.length} chars, ${runs} digit run(s), ${links} https link(s), says code: ${/code/i.test(body) ? "yes" : "no"}`;
 }
 
 /**
