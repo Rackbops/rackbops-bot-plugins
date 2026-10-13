@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { NOT_MEMBER } from "../access.js";
 import { JWKS_RETRY_MS, JWKS_TTL_MS, UsrVerifier } from "../usr-identity.js";
 import { USR_NO_COOKIE, USR_RECHECK_FAILED, USR_NOT_LINKED, USR_NOT_MEMBER } from "./app.js";
-import { call, csrfOf, cleanup, CURLY, type Jar, LARRY, openLink, ORIGIN, people, SESSION, signIn, slash, tokenOf, type WebLookup, world } from "./harness.js";
+import { call, csrfOf, cleanup, CURLY, type Jar, LARRY, linkToken, openLink, ORIGIN, people, SESSION, signIn, slash, type WebLookup, world } from "./harness.js";
 
 /**
  * The web area's sign-in through usr's `nz_id` cookie (usr-identity.ts, app.ts `usrSignIn`): a fake
@@ -198,14 +198,14 @@ describe("web sign-in through usr", () => {
     expect(jar.has(SESSION)).toBe(true);
   });
 
-  it("a /web sign-in ends the signed-out mark too", async () => {
+  it("a one-time link sign-in ends the signed-out mark too", async () => {
     const w = await usrWorld();
     linkLarry(w.dbPath);
     const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
     await call(w.plugin, "GET", "/", { jar });
     await call(w.plugin, "POST", "/logout", { jar, form: { csrf: await csrfOf(w.plugin, jar) }, origin: ORIGIN });
     expect(jar.has("__Secure-tracker-out")).toBe(true);
-    const { form } = await openLink(w.plugin, tokenOf(await slash(w.plugin, "web", LARRY)), jar);
+    const { form } = await openLink(w.plugin, await linkToken(w.plugin, LARRY), jar);
     await call(w.plugin, "POST", "/login", { jar, form: form ?? {}, origin: ORIGIN });
     expect(jar.has(SESSION)).toBe(true);
     expect(jar.has("__Secure-tracker-out")).toBe(false);
@@ -261,13 +261,17 @@ describe("web sign-in through usr", () => {
     expect(res.headers.get("location")).toStartWith(`${USR}/api/auth/sso/refresh?return=`);
   });
 
-  it("keeps the one-time /web link working beside it, and offers usr on the sign-in page", async () => {
+  it("points /web at usr instead of a one-time link, and offers only usr on the sign-in page", async () => {
     const w = await usrWorld();
-    const jar = await signIn(w.plugin, CURLY);
-    expect((await call(w.plugin, "GET", "/", { jar })).status).toBe(200);
+    const answer = await slash(w.plugin, "web", CURLY);
+    expect(answer).toContain("<https://clerk.example.com/tracker/?usr=go>");
+    expect(answer).not.toContain("/login?t=");
     const help = await (await call(w.plugin, "GET", "/signin")).text();
     expect(help).toContain('href="/tracker/?usr=go">Sign in with usr</a>');
-    expect(help).toContain("Or run <code>/web</code>");
+    expect(help).not.toContain("<code>/web</code>");
+    // A link issued before usr was turned on still signs in until it expires.
+    const jar = await signIn(w.plugin, CURLY);
+    expect((await call(w.plugin, "GET", "/", { jar })).status).toBe(200);
   });
 
   it("does nothing new with the usr link off: no session means the sign-in page", async () => {

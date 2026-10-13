@@ -56,7 +56,7 @@ export const LEFT_SERVER = `You are signed out. ${NOT_MEMBER}`;
  * fetched, the clocks disagree, or usr minted no token. (A cookie domain that misses this site never
  * gets here: usr refuses the return address and keeps the browser.)
  */
-export const USR_NO_COOKIE = "I could not confirm your usr sign-in. Try again in a minute, or run /web in Discord for a one-time link. If it keeps happening, tell an admin.";
+export const USR_NO_COOKIE = "I could not confirm your usr sign-in. Try again in a minute. If it keeps happening, tell an admin.";
 /** usr's sign-in was fine, but server membership could not be checked to open the session. */
 export const USR_RECHECK_FAILED = "I could not check that you are a member of this tracker's server. Try again in a minute.";
 export const USR_NOT_MEMBER = "Your usr account does not have this tracker's member role yet: ask an admin to run /allow for you in the server.";

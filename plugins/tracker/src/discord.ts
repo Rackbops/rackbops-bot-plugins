@@ -534,7 +534,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
     },
     {
       name: "web",
-      build: (b: SlashCommandBuilder) => b.setDescription("Get a one-time link to sign in to the tracker's web area"),
+      build: (b: SlashCommandBuilder) => b.setDescription("Get the link to sign in to the tracker's web area"),
       handle: (interaction) => run(interaction, "registered", async (d, user) => webLink(d, user, w.web)),
     },
   ];

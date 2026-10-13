@@ -12,15 +12,20 @@ export interface WebLocation {
   name: string;
   /** `TRACKER_GUILD_ID` is set: `/web` ran only after the gate confirmed membership. */
   gated: boolean;
+  /** The link to our usr is on (`TRACKER_USR_*`): people sign in through usr, not a one-time link. */
+  usr: boolean;
 }
 
 /**
- * `/web` (rackbops-bot-plugins#80): a one-time sign-in link, answered ephemerally, so only the
+ * `/web` (rackbops-bot-plugins#80). With the usr link on, the address of the usr sign-in (the
+ * one-time link was retired once usr's Google sign-in was published, Rod 2026-10-08 "Keep until
+ * published"). Without it, a one-time sign-in link, answered ephemerally, so only the
  * person sees it. The link is wrapped in `<...>` so Discord shows no preview of it (a preview only
  * opens the page, which never uses the link up, but there is nothing to preview).
  */
 export function webLink(d: Pick<TrackerDeps, "logins" | "clock">, user: User, web: WebLocation | null): string {
   if (!web) return WEB_NOT_CONFIGURED;
+  if (web.usr) return usrSignInLine(web);
   const now = d.clock.now();
   // The command's gate refuses anyone it could not confirm a member, so with a gate this is now.
   const token = d.logins.issue(user.id, now, web.gated ? now.toISOString() : null);
@@ -28,5 +33,13 @@ export function webLink(d: Pick<TrackerDeps, "logins" | "clock">, user: User, we
   return [
     `Your sign-in link for the tracker's web area. It works once, within ${minutes} minutes; do not share it.`,
     `<${web.origin}/${web.name}/login?t=${token}>`,
+  ].join("\n");
+}
+
+/** `/web` with the usr link on: the sign-in page's "Sign in with usr" address, which nothing uses up. */
+export function usrSignInLine(web: WebLocation): string {
+  return [
+    "The tracker's web area signs you in with your usr account:",
+    `<${web.origin}/${web.name}/?usr=go>`,
   ].join("\n");
 }

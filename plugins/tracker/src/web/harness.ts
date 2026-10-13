@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { expect } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,6 +11,7 @@ import type { Membership } from "../access.js";
 import { createPlugin } from "../index.js";
 import { HOST_CANNOT_MESSAGE } from "../notifier.js";
 import { removeDir } from "../test-dirs.js";
+import { LoginLinks } from "./signin-link.js";
 import type { Source } from "@rackbops/docket-types";
 
 /**
@@ -27,6 +29,8 @@ export const START = "2026-10-01T12:00:00.000Z";
 export const dirs: string[] = [];
 /** Every plugin `world()` made, disposed by `cleanup()`. */
 const plugins: Plugin[] = [];
+/** Each world's database, so `linkToken` can issue a one-time link where `/web` points at usr instead. */
+const dbPaths = new WeakMap<Plugin, string>();
 
 /**
  * Each test file's `afterEach`: disposes every plugin `world()` made, closing its database, and
@@ -125,6 +129,7 @@ export async function world(
     },
   );
   plugins.push(plugin);
+  dbPaths.set(plugin, dbPath);
   await plugin.activate!();
   return { plugin, clock, dbPath, sent, delivery };
 }
@@ -246,10 +251,29 @@ export async function openLink(plugin: Plugin, token: string, jar: Jar) {
   return { res, body, form: body.includes('name="t"') ? { t: hidden(body, "t"), csrf: hidden(body, "csrf") } : null };
 }
 
+/**
+ * A one-time sign-in token for `discordId`: `/web`'s, or with the usr link on (where `/web` points at
+ * usr instead) one issued straight into the database, as a link issued before usr was turned on.
+ */
+export async function linkToken(plugin: Plugin, discordId: string): Promise<string> {
+  const answer = await slash(plugin, "web", discordId);
+  if (answer.includes("/login?t=")) return tokenOf(answer);
+  const dbPath = dbPaths.get(plugin);
+  if (!dbPath) throw new Error(`no link in: ${answer}`);
+  const db = new Database(dbPath);
+  try {
+    const row = db.query("SELECT seq FROM users WHERE discord_id = ?").get(discordId) as { seq: number } | null;
+    if (!row) throw new Error(`no tracker user for ${discordId}`);
+    return new LoginLinks(db).issue(`u${row.seq}`, new Date(START));
+  } finally {
+    db.close();
+  }
+}
+
 /** `/web`, open the link, press Sign in: a jar holding a session. */
 export async function signIn(plugin: Plugin, discordId: string): Promise<Jar> {
   const jar: Jar = new Map();
-  const { form } = await openLink(plugin, tokenOf(await slash(plugin, "web", discordId)), jar);
+  const { form } = await openLink(plugin, await linkToken(plugin, discordId), jar);
   const res = await call(plugin, "POST", "/login", { jar, form: form ?? {}, origin: ORIGIN });
   expect(res.status).toBe(303);
   expect(jar.has(SESSION)).toBe(true);

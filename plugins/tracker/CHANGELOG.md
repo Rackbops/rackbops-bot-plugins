@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.26.0] - 2026-10-13
+
+### Changed
+
+- **`/web` points at usr instead of handing out a one-time link while the usr link is on**
+  (`TRACKER_USR_URL` and `TRACKER_USR_KEY` set). Rod kept the one-time link until usr's Google
+  sign-in was published (2026-10-08, "Keep until published"); it was published on 2026-10-13. `/web`
+  now answers the web area's "Sign in with usr" address, which nothing uses up. The sign-in page
+  offers only usr, and the "could not confirm your usr sign-in" page no longer sends people to
+  `/web`. A link issued before the switch still works until it expires. With the usr link off,
+  `/web` and the sign-in page are as before. The command's description now reads "Get the link to
+  sign in to the tracker's web area".
+
 ## [0.25.0] - 2026-10-13
 
 ### Added

@@ -191,7 +191,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     roleGate,
     log: host.log,
     queue,
-    web: webOrigin ? { origin: webOrigin, name: host.name, gated: guildIds !== null } : null,
+    web: webOrigin ? { origin: webOrigin, name: host.name, gated: guildIds !== null, usr: usrConfig !== null } : null,
     ...(options.membership ? { membership: options.membership } : {}),
   });
 
