@@ -75,8 +75,8 @@ export function typesAnswer(d: Pick<TrackerDeps, "research">): ApiAnswer {
       types: offeredTypes(d).map((type) => ({
         type,
         editable: type !== "research",
-        create: describe(fieldsFor(type, "new"), "new"),
-        edit: describe(fieldsFor(type, "edit"), "edit"),
+        create: describe(fieldsFor(type, "new", "api"), "new"),
+        edit: describe(fieldsFor(type, "edit", "api"), "edit"),
       })),
     },
   };
