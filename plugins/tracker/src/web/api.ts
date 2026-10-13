@@ -46,7 +46,7 @@ import { readBody } from "./html.js";
  * - `POST /tasks/<id>/sources` and `POST /tasks/<id>/sources/ready` (0.28.0, api-sources.ts) send
  *   the pages the owner's browser gathered in to their research request made with `sources:
  *   browser`, then start its run on them (body up to `MAX_SOURCES_BYTES`: ten pages of text);
- *   `GET /tasks` shows such a request's `sources: "sent"`, its `pages` and `waitingForPages`.
+ *   `GET /tasks` shows such a request's `sources: "browser"`, its `pages` and `waitingForPages`.
  */
 
 export const API_PREFIX = "/api/v1";

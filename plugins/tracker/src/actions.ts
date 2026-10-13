@@ -488,10 +488,11 @@ export async function listTasks(d: TrackerDeps, user: User): Promise<string> {
   for (const entry of entries) active.push(`${formatTaskList([entry], user, now)}${await pagesNote(d, entry.task)}`);
   const pausedLines: string[] = [];
   for (const { task, held } of paused) {
+    const note = await pagesNote(d, task);
     pausedLines.push(
       held.length === 0
-        ? `Paused: \`${task.id}\` ${task.title}${await pagesNote(d, task)}`
-        : `Paused: \`${task.id}\` ${task.title} -- I could not DM ${heldNames(held)}; \`/task resume ${task.id}\` goes on without them.`,
+        ? `Paused: \`${task.id}\` ${task.title}${note}`
+        : `Paused: \`${task.id}\` ${task.title}${note} -- I could not DM ${heldNames(held)}; \`/task resume ${task.id}\` goes on without them.`,
     );
   }
   return fitTaskList(active, pausedLines, d.webEditor);

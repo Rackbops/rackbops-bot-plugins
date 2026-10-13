@@ -1,8 +1,8 @@
 import { reschedule, ScheduleError, type User } from "@rackbops/docket-core";
-import { gatheredPages } from "@rackbops/docket-types";
+import { type GatheredPage, gatheredPages } from "@rackbops/docket-types";
 import { TASK_BUSY } from "../locks.js";
 import { ownLiveTask } from "../manage.js";
-import { MAX_SOURCES_PER_POST, MAX_SOURCES_PER_TASK, sentResearch, waitingForPages } from "../research-sources.js";
+import { MAX_SOURCES_CHARS, MAX_SOURCES_PER_POST, MAX_SOURCES_PER_TASK, sentResearch, waitingForPages } from "../research-sources.js";
 import { type ApiAnswer, NOT_FOUND_MESSAGE, problem } from "./api-tasks.js";
 import type { Writer } from "./editor.js";
 
@@ -14,19 +14,40 @@ import type { Writer } from "./editor.js";
  * run to now, and the execute lane's next tick submits it with the pages quoted into its prompt.
  *
  * - `POST /tasks/<id>/sources`: `{"pages": [{url, title, text}, ...]}`, at most
- *   `MAX_SOURCES_PER_POST` a request. Each is cleaned by docket-types' own `gatheredPages` (an
- *   absolute http(s) address, a one-line title, the text capped at `MAX_PAGE_CHARS`), which also
- *   drops a second page with the same address; a page whose address the request already holds
- *   replaces it. More than `MAX_SOURCES_PER_TASK` in all is a 409 that says how many it holds.
+ *   `MAX_SOURCES_PER_POST` a request. Each is cleaned on its own by docket-types' `gatheredPages`
+ *   (an absolute http(s) address, a one-line title, the text capped at `MAX_PAGE_CHARS`), and a
+ *   second page with the same address in one request is left out; a page whose address the request
+ *   already holds replaces it. More than `MAX_SOURCES_PER_TASK` in all is a 409 that says how many it
+ *   holds. A page whose text would take the request past `MAX_SOURCES_CHARS` in all is left out whole
+ *   and counted apart (`overBudget`), not with the unusable ones (`rejected`); when that leaves none
+ *   stored, a 409.
  * - `POST /tasks/<id>/sources/ready`: `{}`. Needs at least one page in (else 409), then moves the
- *   run to now through docket-core's `reschedule`, under the task's lock (locks.ts), as an edit
- *   moves one. That move is what ends the waiting (research-sources.ts's `waitingForPages`), so
- *   neither route takes the request after it, nor once a run of it has started.
+ *   run to now through docket-core's `reschedule`, as an edit moves one. That move is what ends the
+ *   waiting (research-sources.ts's `waitingForPages`), so neither route takes the request after it,
+ *   nor once a run of it has started.
  *
  * Only the token owner's own live research request on browser pages: anyone else's, an unknown id,
  * or a deleted or finished one answers the API's same 404; a web request, or one no longer waiting,
- * a 409. Both written in the surface's one queue, against the task as the store has it then.
+ * a 409. Both run in the surface's one queue and under the task's lock (locks.ts), so neither lands
+ * while the execute tick holds the task (that is a 409 `busy` at once): the tick starts a run only
+ * of a task it holds, so the check that the request still waits and the write after it cannot
+ * straddle a run's start, and the pages a run reads are the ones every later try of it reads.
  */
+
+/** Each raw page cleaned on its own (so one page's length never cuts another's), the first of each address kept. */
+function cleanPages(raw: readonly unknown[]): GatheredPage[] {
+  const out: GatheredPage[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    const [p] = gatheredPages([item]);
+    if (!p || seen.has(p.url)) continue;
+    seen.add(p.url);
+    out.push(p);
+  }
+  return out;
+}
+
+const plural = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
 
 /** The sources route's answer to a body `body` for task `id`. */
 export async function sourcesAnswer(w: Writer, user: User, id: string, body: Record<string, unknown>): Promise<ApiAnswer> {
@@ -36,32 +57,43 @@ export async function sourcesAnswer(w: Writer, user: User, id: string, body: Rec
   if (!Array.isArray(raw)) return problem(400, "invalid", '`pages` must be an array of pages: {"url", "title", "text"}.');
   if (raw.length === 0) return problem(400, "invalid", "`pages` is empty.");
   if (raw.length > MAX_SOURCES_PER_POST) return problem(400, "too_many", `At most ${MAX_SOURCES_PER_POST} pages a request.`);
-  const pages = gatheredPages(raw);
+  const pages = cleanPages(raw);
   const rejected = raw.length - pages.length;
   if (pages.length === 0) return problem(400, "invalid", "None of those pages could be used: each needs an absolute http(s) `url` and its `text`.");
-  return w.queue(async (): Promise<ApiAnswer> => {
-    const task = await ownLiveTask(w.d, user, id);
-    if (!task || task.type !== "research" || (task.status !== "active" && task.status !== "paused")) return problem(404, "not_found", NOT_FOUND_MESSAGE);
-    if (!sentResearch(task)) return problem(409, "conflict", "That research request searches the web itself: pages are sent in only to one made with `sources: browser`.");
-    const sources = w.d.sources;
-    if (!sources) return problem(503, "unavailable", "This bot cannot take pages just now; try again later.");
-    if (!(await waitingForPages(w.d.store, task))) return problem(409, "conflict", "That research request has started: it takes no more pages.");
-    const added = sources.add(task.id, pages, w.d.clock.now());
-    if (!added.ok) {
-      return problem(409, "too_many", `A request holds at most ${MAX_SOURCES_PER_TASK} pages, and this one holds ${added.held}: send at most ${MAX_SOURCES_PER_TASK - added.held} new ones (a page sent again replaces itself).`);
-    }
-    const skipped = rejected > 0 ? ` ${rejected === 1 ? "1 was" : `${rejected} were`} left out: each needs an absolute http(s) address and its text, once.` : "";
-    const replaced = added.replaced > 0 ? ` (${added.replaced} replaced)` : "";
-    return {
-      status: 200,
-      body: {
-        accepted: pages.length,
-        rejected,
-        pages: added.held,
-        message: `Took ${pages.length === 1 ? "1 page" : `${pages.length} pages`}${replaced} for ${task.title}; it holds ${added.held}.${skipped} Send ready when they are all in.`,
+  return w.queue(() =>
+    w.d.locks.turn(
+      id.trim(),
+      async (): Promise<ApiAnswer> => {
+        const task = await ownLiveTask(w.d, user, id);
+        if (!task || task.type !== "research" || (task.status !== "active" && task.status !== "paused")) return problem(404, "not_found", NOT_FOUND_MESSAGE);
+        if (!sentResearch(task)) return problem(409, "conflict", "That research request searches the web itself: pages are sent in only to one made with `sources: browser`.");
+        const sources = w.d.sources;
+        if (!sources) return problem(503, "unavailable", "This bot cannot take pages just now; try again later.");
+        if (!(await waitingForPages(w.d.store, task))) return problem(409, "conflict", "That research request has started: it takes no more pages.");
+        const added = sources.add(task.id, pages, w.d.clock.now());
+        if (!added.ok) {
+          return problem(409, "too_many", `A request holds at most ${MAX_SOURCES_PER_TASK} pages, and this one holds ${added.held}: send at most ${MAX_SOURCES_PER_TASK - added.held} new ones (a page sent again replaces itself).`);
+        }
+        const budget = `a request holds at most ${MAX_SOURCES_CHARS.toLocaleString("en-US")} characters of page text in all, and this one holds ${added.chars.toLocaleString("en-US")}: send shorter text, or a page again with less to replace it`;
+        const stored = added.added + added.replaced;
+        if (stored === 0) return problem(409, "too_much_text", `None of those pages fit: ${budget}.`);
+        const skipped = rejected > 0 ? ` ${rejected === 1 ? "1 was" : `${rejected} were`} left out: each needs an absolute http(s) address and its text, once.` : "";
+        const over = added.overBudget > 0 ? ` ${added.overBudget === 1 ? "1 did" : `${added.overBudget} did`} not fit: ${budget}.` : "";
+        const replaced = added.replaced > 0 ? ` (${added.replaced} replaced)` : "";
+        return {
+          status: 200,
+          body: {
+            accepted: stored,
+            rejected,
+            overBudget: added.overBudget,
+            pages: added.held,
+            message: `Took ${plural(stored, "page", "pages")}${replaced} for ${task.title}; it holds ${added.held}.${skipped}${over} Send ready when they are all in.`,
+          },
+        };
       },
-    };
-  });
+      () => problem(409, "busy", TASK_BUSY),
+    ),
+  );
 }
 
 /** The ready route's answer for task `id`: the run moved to now, or why not. */

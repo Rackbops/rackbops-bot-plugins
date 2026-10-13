@@ -175,9 +175,10 @@ export async function taskJson(d: TrackerDeps, user: User, task: Task) {
     ...(task.type === "price" ? { url: String((task.config as PriceConfig).url) } : {}),
     // A watch's source and target: read-only too, since another place to look is another watch.
     ...(task.type === "wantlist" || task.type === "wantjudge" ? watchJson(task.config as WatchConfig) : {}),
-    // A browser research request (0.28.0): its pages come from the owner's browser, how many are in,
-    // and whether it still waits for them (`POST /tasks/<id>/sources`, then `/sources/ready`).
-    ...(sentResearch(task) ? { sources: "sent", pages: d.sources?.count(task.id) ?? 0, waitingForPages: await waitingForPages(d.store, task) } : {}),
+    // A browser research request (0.28.0): its pages come from the owner's browser (`browser`, the
+    // same word as `settings.sources` and the create field; docket's config calls it `sent`), how many
+    // are in, and whether it still waits for them (`POST /tasks/<id>/sources`, then `/sources/ready`).
+    ...(sentResearch(task) ? { sources: "browser", pages: d.sources?.count(task.id) ?? 0, waitingForPages: await waitingForPages(d.store, task) } : {}),
   };
 }
 

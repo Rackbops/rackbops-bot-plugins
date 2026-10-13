@@ -2,7 +2,7 @@ import { type Actor, createTask, formatInstant, parseWhen, type User } from "@ra
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, type ResearchConfig } from "@rackbops/docket-types";
 import { clip, liveTaskCap, said, type TaskResult, type TrackerDeps } from "./actions.js";
 import { MAX_TITLE, MAX_WHEN } from "./limits.js";
-import { MAX_SOURCES_PER_TASK, SOURCES_WAIT_DAYS, SOURCES_WAIT_MS } from "./research-sources.js";
+import { MAX_SOURCES_PER_TASK, SOURCES_DEADLINE_MARGIN_MINUTES, SOURCES_WAIT_DAYS, sourcesExpiry } from "./research-sources.js";
 
 /**
  * The one-off research request (category 5, plan 1.2 row 5; rackbops-bot-plugins#82): `/research`'s
@@ -18,10 +18,11 @@ import { MAX_SOURCES_PER_TASK, SOURCES_WAIT_DAYS, SOURCES_WAIT_MS } from "./rese
  * the request answers from pages the owner's own browser gathers -- Claude in Chrome, when they ask
  * it to -- and sends in through the task API (research-sources.ts, web/api-sources.ts), since
  * BoardGameGeek refuses the runner and eBay is never opened from here. Its run is queued at the
- * latest it may wait, the deadline or `SOURCES_WAIT_DAYS` from now, whichever is sooner, and
+ * latest it may wait, `SOURCES_WAIT_DAYS` from now or `SOURCES_DEADLINE_MARGIN_MINUTES` before the
+ * deadline, whichever is sooner (`sourcesExpiry`: a run started past the deadline makes no call), and
  * `sources/ready` moves it to now once the pages are in; so `at` is refused with it. A request whose
- * pages never come runs then on none: docket makes no model call, tells the owner no pages were
- * gathered for it, and ends it.
+ * `ready` never comes runs then on whatever pages are in; with none, docket makes no model call,
+ * tells the owner no pages were gathered for it, and ends it.
  */
 
 export { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "@rackbops/docket-types";
@@ -108,8 +109,8 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
     ...(browser ? { sources: "sent" as const } : {}),
   };
   // A browser request's run waits as long as it may; `sources/ready` moves it to now.
-  const expiry = new Date(Math.min(now.getTime() + SOURCES_WAIT_MS, deadline ? deadline.getTime() : Number.POSITIVE_INFINITY));
-  const runAt = browser ? expiry : start;
+  const expiry = sourcesExpiry(now, deadline);
+  const runAt = browser ? expiry.at : start;
   const actor: Actor = { userId: user.id, admin: user.admin };
   const { task } = await createTask(d.store, actor, user, { type, title: clip(question, MAX_TITLE), config, schedule: { kind: "once", at: runAt.toISOString() } }, now);
   if (browser) {
@@ -119,8 +120,8 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
       text: clip(
         `Research \`${task.id}\` is waiting for pages: ${clip(question, 200)}\n` +
           `Ask Claude in Chrome to gather them in your own browser and send them in for \`${task.id}\` (up to ${MAX_SOURCES_PER_TASK} pages, through the task API's \`POST /api/v1/tasks/${task.id}/sources\`, then \`/sources/ready\`); ` +
-          `the research starts once they are in. A second run checks the answer against them before I DM it to you. ` +
-          `With no pages by ${formatInstant(expiry, user.timeZone, now)}${deadline && expiry.getTime() === deadline.getTime() ? " (your deadline)" : ` (${SOURCES_WAIT_DAYS} days)`}, nothing is run. Requests share a daily budget.`,
+          `the research starts when your browser sends ready. A second run checks the answer against the pages before I DM it to you. ` +
+          `If ready never comes, it runs on ${formatInstant(expiry.at, user.timeZone, now)}${expiry.byDeadline ? ` (up to ${SOURCES_DEADLINE_MARGIN_MINUTES} minutes before your deadline)` : ` (in ${SOURCES_WAIT_DAYS} days)`} on whatever pages are in by then; with none, nothing is run. Requests share a daily budget.`,
       ),
     };
   }
