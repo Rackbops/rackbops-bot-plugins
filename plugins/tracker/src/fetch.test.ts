@@ -114,7 +114,7 @@ describe("createPageFetch", () => {
     expect(stay.status).toBe(302);
     expect(f.calls).toHaveLength(3);
     const reader = createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl });
-    await expect(reader.get("https://short.example/s", { [NEVER_EBAY]: "1" })).rejects.toThrow("it leads to eBay, which I never read");
+    await expect(reader.get("https://short.example/s", { [NEVER_EBAY]: "1" })).rejects.toThrow("it leads to eBay, which a want-list watch never reads");
     expect(f.calls.filter((c) => c.url.includes("ebay"))).toHaveLength(0);
     expect(headers(3)[NEVER_EBAY]).toBeUndefined();
   });

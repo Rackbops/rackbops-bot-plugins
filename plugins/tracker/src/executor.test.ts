@@ -537,6 +537,40 @@ describe("a Job once paused stays held until it finishes, for at most 48 h (revi
     expect(w.records.pausedAt("o7")).toBeNull();
   });
 
+  it("a Job the runner retries hourly is failed at city-hall's cap inside the hold, and its usage_limit result reaches docket (#287)", async () => {
+    let body: unknown = paused;
+    const w = setup(() => json(200, body));
+    w.records.put("o7", "o7", "j-1", NOW.toISOString());
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    // docket-runner claims again an hour after each usage_limit; city-hall requeues ten times.
+    for (let attempt = 2; attempt <= 11; attempt++) {
+      w.later(60 * 60 * 1000);
+      body = { job: job("queued", { attempts: attempt, lastOutcome: "usage_limit" }), runs: [] };
+      expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    }
+    const limit = { kind: "usage_limit" as const, detail: "limit reached", durationMs: 1 };
+    body = { job: job("failed", { attempts: 11, result: limit, error: "requeued 10 times after auth_failed or usage_limit" }), runs: [] };
+    expect(await w.executor.run(null, "o7", "o7")).toEqual(limit);
+    expect(w.notices.filter((n) => n.key.startsWith("city-hall:paused-cap:"))).toHaveLength(0);
+  });
+
+  it("a Job requeued ten times across more than 48 h is given up past the hold, yet still answers its result once failed (#287)", async () => {
+    let body: unknown = paused;
+    const w = setup(() => json(200, body));
+    w.records.put("o7", "o7", "j-1", NOW.toISOString());
+    expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    // Ten requeues six hours apart (a reset the runner could parse that did not free the limit): 60 h.
+    for (let attempt = 2; attempt <= 11; attempt++) {
+      w.later(6 * 60 * 60 * 1000);
+      body = { job: job("queued", { attempts: attempt, lastOutcome: "usage_limit" }), runs: [] };
+      const err = await thrown(w.executor.run(null, "o7", "o7"));
+      expect(err).toBeInstanceOf((attempt - 1) * 6 > 48 ? JobPendingError : ExecutorUnavailableError);
+    }
+    const limit = { kind: "usage_limit" as const, detail: "limit reached", durationMs: 1 };
+    body = { job: job("failed", { attempts: 11, result: limit, error: "requeued 10 times after auth_failed or usage_limit" }), runs: [] };
+    expect(await w.executor.run(null, "o7", "o7")).toEqual(limit);
+  });
+
   it("past 48 h from the first sight it answers pending, so docket's give-up applies, and the admins are told once", async () => {
     let body: unknown = paused;
     const w = setup(() => json(200, body));
@@ -549,6 +583,6 @@ describe("a Job once paused stays held until it finishes, for at most 48 h (revi
     body = { job: job("running", { attempts: 3, lastOutcome: "usage_limit" }), runs: [] };
     expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(JobPendingError);
     expect(w.notices.filter((n) => n.key.startsWith("city-hall:paused-cap:"))).toHaveLength(1);
-    expect(w.notices.find((n) => n.key.startsWith("city-hall:paused-cap:"))?.text).toContain("48 h");
+    expect(w.notices.find((n) => n.key.startsWith("city-hall:paused-cap:"))?.text).toContain("for over 48 h;");
   });
 });

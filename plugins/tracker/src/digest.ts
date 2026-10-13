@@ -1,6 +1,7 @@
 import { formatInstant, hasFired, wallClock, zonedInstant, type Notifier, type Occurrence, type Store, type Task, type User } from "@rackbops/docket-core";
 import type { PluginLog } from "../../../packages/api/contract.js";
 import type { DeliveryHealth } from "./delivery-health.js";
+import { MAX_CONTENT, wrapBareUrls } from "./notifier.js";
 
 /**
  * The daily "today and overdue" digest (plan 5.5): one DM per person a day, at their preferred hour
@@ -30,7 +31,8 @@ import type { DeliveryHealth } from "./delivery-health.js";
  * A renewal's run is its ask, `lead` days before the date, so an overdue renewal's line says "asked",
  * not "due". docket keeps one scheduled run queued at a time, so a reminder that comes twice a day
  * shows its next run only; a run that never fired (the lane was off) is in neither list until it
- * fires.
+ * fires. A digest too long for one message caps both sections at the same, smaller number of lines
+ * (the most that fit) and counts the rest.
  *
  * Late but same-day: the digest goes at the first `notify` tick at or after the hour, so one the bot
  * was down for goes out when it is back, until the person's midnight; a day missed entirely is not
@@ -43,7 +45,7 @@ export const DIGEST_TYPES: ReadonlySet<string> = new Set(["reminder", "renewal"]
 /** The replies that answer a run: a reminder's done, a renewal's decision. A snooze moves it instead. */
 const ANSWERS: ReadonlySet<string> = new Set(["done", "decision"]);
 
-/** Lines shown per section; the rest is counted. */
+/** The most lines shown per section; the rest is counted. */
 export const MAX_LINES = 10;
 
 /** docket's once-only notice key for a person's digest on one local day. */
@@ -118,10 +120,11 @@ function waitingOn(task: Task): string {
   return task.type === "renewal" ? "waiting on your keep, cancel or renewed" : "not marked done yet";
 }
 
-function section(title: string, items: readonly DigestItem[], line: (item: DigestItem) => string): string[] {
+/** A section's title, its first `shown` lines and a count of the rest (of all, when none is shown); nothing when it is empty. */
+function section(title: string, items: readonly DigestItem[], line: (item: DigestItem) => string, shown: number): string[] {
   if (items.length === 0) return [];
-  const lines = [title, ...items.slice(0, MAX_LINES).map(line)];
-  if (items.length > MAX_LINES) lines.push(`- and ${items.length - MAX_LINES} more`);
+  const lines = [title, ...items.slice(0, shown).map(line)];
+  if (items.length > shown) lines.push(shown === 0 ? `- ${items.length} in all` : `- and ${items.length - shown} more`);
   return lines;
 }
 
@@ -130,16 +133,23 @@ export function formatDigest(digest: Digest, user: User, now: Date): string | nu
   if (digest.overdue.length === 0 && digest.today.length === 0) return null;
   const zone = user.timeZone;
   const title = (t: Task) => (t.title.length > 80 ? `${t.title.slice(0, 77)}...` : t.title);
-  const lines = [
-    `Your day, ${dateLabel(now, zone)}:`,
-    ...section("**Overdue**", digest.overdue, (i) => `- \`${i.task.id}\` ${title(i.task)} -- ${i.task.type === "renewal" ? "asked" : "due"} ${formatInstant(i.run.dueAt, zone, now)}, ${waitingOn(i.task)}`),
-    ...section("**Due today**", digest.today, (i) =>
-      i.waiting ? `- \`${i.task.id}\` ${title(i.task)} -- ${clockTime(i.run.dueAt, zone)}, ${waitingOn(i.task)}` : `- \`${i.task.id}\` ${title(i.task)} -- ${clockTime(i.run.dueAt, zone)}`,
-    ),
-    "`/task done` marks a reminder done, `/task decide` answers a renewal, `/task snooze` puts either off; `/tasks` lists everything.",
-  ];
-  // The notifier cuts a message past Discord's bound (notifier.ts `toHostMessage`).
-  return lines.join("\n");
+  const overdue = (i: DigestItem) => `- \`${i.task.id}\` ${title(i.task)} -- ${i.task.type === "renewal" ? "asked" : "due"} ${formatInstant(i.run.dueAt, zone, now)}, ${waitingOn(i.task)}`;
+  const today = (i: DigestItem) =>
+    i.waiting ? `- \`${i.task.id}\` ${title(i.task)} -- ${clockTime(i.run.dueAt, zone)}, ${waitingOn(i.task)}` : `- \`${i.task.id}\` ${title(i.task)} -- ${clockTime(i.run.dueAt, zone)}`;
+  const render = (shown: number) =>
+    [
+      `Your day, ${dateLabel(now, zone)}:`,
+      ...section("**Overdue**", digest.overdue, overdue, shown),
+      ...section("**Due today**", digest.today, today, shown),
+      "`/task done` marks a reminder done, `/task decide` answers a renewal, `/task snooze` puts either off; `/tasks` lists everything.",
+    ].join("\n");
+  // Built to fit one message as the host measures it (after wrapping bare links): one cap for both
+  // sections, the most lines that fit, so a long Overdue cannot push Due today out. The notifier's
+  // cut (notifier.ts `toHostMessage`) stays as the backstop.
+  let shown = MAX_LINES;
+  let text = render(shown);
+  while (shown > 0 && wrapBareUrls(text).length > MAX_CONTENT) text = render(--shown);
+  return text;
 }
 
 export interface DigestDeps {

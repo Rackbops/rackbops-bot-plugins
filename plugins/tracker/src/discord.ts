@@ -5,13 +5,13 @@ import type { Membership, Need } from "./access.js";
 import {
   allowPerson,
   answerLatest,
-  clip,
   enter,
   listTasks,
   registerPerson,
   said,
   setHour,
   type TrackerDeps,
+  withNotice,
 } from "./actions.js";
 import { resumeTask } from "./manage.js";
 import { CURRENCY_LENGTH, DATE_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
@@ -112,6 +112,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
   ) {
     await interaction.deferReply(EPHEMERAL);
     let content: string;
+    let notice: string | null = null;
     try {
       const d = w.deps();
       if (!d) content = STARTING;
@@ -130,13 +131,20 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           const result = await outside();
           body = await ctx.queue(() => finish(result));
         }
-        content = clip(first.notice ? `${first.notice}\n\n${body}` : body);
+        ({ content, followUp: notice } = withNotice(first.notice, body));
       }
     } catch (err) {
       w.log.error(`/${interaction.commandName} failed`, err);
       content = FAILED;
     }
     await interaction.editReply({ content, ...NO_MENTIONS });
+    if (!notice) return;
+    // The answer has landed; a follow-up that fails (an expired interaction) is logged, not thrown.
+    try {
+      await interaction.followUp({ content: notice, ...EPHEMERAL });
+    } catch (err) {
+      w.log.warn(`could not send /${interaction.commandName}'s resume notice as a follow-up: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   const commands: PluginCommand[] = [
@@ -371,7 +379,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .addChoices(
                 { name: "a listing page you paste", value: "page" },
                 { name: "BoardGameGeek's marketplace", value: "bgg" },
-                { name: "eBay (from listings you send in; I never open eBay)", value: "ebay" },
+                { name: "eBay (from listings you send in; the watch never opens eBay)", value: "ebay" },
               ),
           )
           .addStringOption((o) =>

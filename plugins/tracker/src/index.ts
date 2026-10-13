@@ -49,7 +49,9 @@ import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_ID
  * and overdue" digest after the runs on the `notify` tick (plan 5.5, digest.ts).
  *
  * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID`, `TRACKER_GUILD_ROLES`,
- * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts) and `TRACKER_BUDGET_UNLIMITED` (usage.ts) and nothing else. The database is opened in `activate()` and closed in `dispose()`.
+ * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts), the `TRACKER_USR_*` settings (usr.ts: a
+ * half-set link refuses to load) and `TRACKER_BUDGET_UNLIMITED` (usage.ts), reads `TRACKER_BGG_TOKEN`, and
+ * nothing else. The database is opened in `activate()` and closed in `dispose()`.
  */
 
 /** The tracker's database: `<dataDir>/tracker/tracker.sqlite`, a directory of its own (mcp's convention). */
@@ -148,8 +150,9 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   // BGG's answers are XML, read by docket-types' own bounded BGG parser: the raw body, fenced like every read.
   const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createPageFetch({ raw: true, noRedirects: true }) }) : null);
   // The want-list inboxes (inbox.ts) live in the database `activate()` opens; until then, and after
-  // `dispose()`, an inbox reads as empty (no tick runs then anyway). eBay and BoardGameGeek reach a
-  // watch only this way: the tracker never opens either site (Rod, 2026-10-05).
+  // `dispose()`, an inbox reads as empty (no tick runs then anyway). An eBay watch, and a BGG one
+  // made while the bot has no BGG token, get their listings only this way: the want-list watcher
+  // never opens eBay, and an inbox watch opens neither site (Rod, 2026-10-05).
   let inbox: WantInbox | null = null;
   const readInbox: ReadInbox = async (key) => inbox?.read(key) ?? [];
   const types = options.types ?? { ...TRACKER_TYPES, ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}) }) };
