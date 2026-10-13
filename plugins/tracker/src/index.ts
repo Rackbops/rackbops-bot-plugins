@@ -132,6 +132,24 @@ export interface TrackerOptions {
   digest?: boolean;
   /** Test seam for the usr link's HTTP (usr.ts). */
   usrFetch?: typeof fetch;
+  /** Test seam: forget-me's wait for a running tick, in ms (admin.ts `TICK_WAIT_MS` by default). */
+  tickWaitMs?: number;
+}
+
+/**
+ * `TickGate.idle`: waits until `running` (the ticks in flight, removed as each settles) is empty, at
+ * most `ms`. True when it emptied, false when the time ran out with one still running.
+ */
+export async function idleWithin(running: ReadonlySet<Promise<unknown>>, ms: number): Promise<boolean> {
+  const until = Date.now() + ms;
+  while (running.size > 0) {
+    const left = until - Date.now();
+    if (left <= 0) return false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([Promise.allSettled([...running]), new Promise((r) => (timer = setTimeout(r, left)))]);
+    clearTimeout(timer);
+  }
+  return true;
 }
 
 /** A Notifier for a host without `dm`: every send is refused, and nothing went out. */
@@ -252,17 +270,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         forgetting--;
       }
     },
-    async idle(ms) {
-      const until = Date.now() + ms;
-      while (running.size > 0) {
-        const left = until - Date.now();
-        if (left <= 0) return false;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        await Promise.race([Promise.allSettled([...running]), new Promise((r) => (timer = setTimeout(r, left)))]);
-        clearTimeout(timer);
-      }
-      return true;
-    },
+    idle: (ms) => idleWithin(running, ms),
   };
 
   /**
@@ -419,6 +427,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           budgetUnlimited,
           configuredAdmins: new Set(adminIds),
           lanes,
+          ...(options.tickWaitMs !== undefined ? { tickWaitMs: options.tickWaitMs } : {}),
           webEditor: webOrigin !== null,
           research: executeOn,
           bgg: bgg !== null,

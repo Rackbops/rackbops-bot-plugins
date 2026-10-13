@@ -73,6 +73,8 @@ export async function world(
     bggNetwork?: Pick<PageFetchOptions, "resolve" | "fetchImpl">;
     /** usr's HTTP, with `TRACKER_USR_*` in `env` (usr.ts, usr-identity.ts). */
     usrFetch?: typeof fetch;
+    /** Forget-me's wait for a running tick, in ms (admin.ts `TICK_WAIT_MS` by default). */
+    tickWaitMs?: number;
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "tracker-web-"));
@@ -126,6 +128,7 @@ export async function world(
       ...(opts.bgg ? { bgg: opts.bgg } : {}),
       ...(opts.bggNetwork ? { bggNetwork: opts.bggNetwork } : {}),
       ...(opts.usrFetch ? { usrFetch: opts.usrFetch } : {}),
+      ...(opts.tickWaitMs !== undefined ? { tickWaitMs: opts.tickWaitMs } : {}),
     },
   );
   plugins.push(plugin);

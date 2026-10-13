@@ -60,7 +60,8 @@ export const USR_NO_COOKIE = "I could not confirm your usr sign-in. Try again in
 /** usr's sign-in was fine, but server membership could not be checked to open the session. */
 export const USR_RECHECK_FAILED = "I could not check that you are a member of this tracker's server. Try again in a minute.";
 export const USR_NOT_MEMBER = "Your usr account does not have this tracker's member role yet: ask an admin to run /allow for you in the server.";
-export const USR_NOT_LINKED = "Your usr account is not linked to anyone on this tracker yet: ask an admin to run /allow for you in the server, then run /register.";
+export const USR_NOT_LINKED =
+  "Your usr account is not linked to anyone on this tracker yet: ask an admin to run /allow for you in the server, then run /register if you have not. If you were allowed before you finished signing up on usr with a usr account you already had, usr moved you to that account, and a second /allow links it.";
 /** The mark on the address usr sends the browser back to, so a missing cookie never loops. */
 export const USR_BACK = "usr";
 /** `?usr=go`: the sign-in page's "Sign in with usr" button, which signs in even after a sign-out. */
