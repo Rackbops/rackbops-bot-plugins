@@ -57,16 +57,21 @@ const BASELINE_OPTIONS = [["last", "the last price seen"], ["first", "the first 
 
 type Mode = "new" | "edit";
 
+/** Who reads the help: the web form, or the task API's `types` answer, whose PATCH refuses an empty number. */
+export type Surface = "web" | "api";
+
 /**
  * What an empty number field means: on a new task, the default (`onNew`); on an edit, the task's own
- * value, since form-input.ts leaves an empty number out and the rules keep what the task has.
+ * value, since form-input.ts leaves an empty number out and the rules keep what the task has. The
+ * API keeps a field it is not sent, and refuses `""` where a number goes.
  */
-const empty = (mode: Mode, onNew: string): string => (mode === "new" ? onNew : "Leave it empty to keep what it has.");
+const empty = (mode: Mode, onNew: string, surface: Surface): string =>
+  mode === "new" ? onNew : surface === "web" ? "Leave it empty to keep what it has." : "Omit it to keep what it has.";
 
-const priceSettings = (mode: Mode): readonly Field[] => [
+const priceSettings = (mode: Mode, surface: Surface): readonly Field[] => [
   { name: "name", label: "Name", kind: "text", maxlength: MAX_TITLE, help: "Leave it empty to use the page's address." },
-  { name: "hours", label: "Hours between checks", kind: "number", min: 1, max: MAX_POLL_HOURS, help: `1 to ${MAX_POLL_HOURS}. ${empty(mode, "12 when empty.")}` },
-  { name: "drop", label: "Alert on a drop of at least (percent)", kind: "text", decimal: true, help: `1 to 90. ${empty(mode, "10 when empty.")}` },
+  { name: "hours", label: "Hours between checks", kind: "number", min: 1, max: MAX_POLL_HOURS, help: `1 to ${MAX_POLL_HOURS}. ${empty(mode, "12 when empty.", surface)}` },
+  { name: "drop", label: "Alert on a drop of at least (percent)", kind: "text", decimal: true, help: `1 to 90. ${empty(mode, "10 when empty.", surface)}` },
   { name: "baseline", label: "Measure the drop from", kind: "select", options: BASELINE_OPTIONS },
 ];
 
@@ -85,32 +90,35 @@ const LENS_OPTIONS = [
   ["christmas", "Christmas: tied to their interests"],
 ] as const;
 
-/** `/scout`'s options; the same on an edit, where each field shows what the scout has. */
-const scoutFields = (mode: Mode): readonly Field[] => [
+/** `/scout`'s options; the same on an edit (but for what an empty number means), where each field shows what the scout has. */
+const scoutFields = (mode: Mode, surface: Surface): readonly Field[] => [
   { name: "interests", label: "Interests", kind: "textarea", required: true, maxlength: MAX_INTERESTS_TEXT, help: "Separated by commas or one per line, at most 20." },
   { name: "lens", label: "Gift lens", kind: "select", options: LENS_OPTIONS },
   { name: "for", label: "Who it is for", kind: "text", maxlength: MAX_FOR_CHARS, help: "Leave it empty if it is for you." },
   { name: "notes", label: "Notes", kind: "textarea", maxlength: MAX_SCOUT_NOTES, help: "Anything else to weigh: a budget, what they own already. It goes to the model." },
-  { name: "every", label: "Days between runs", kind: "number", min: 1, max: MAX_SCOUT_EVERY, help: `1 to ${MAX_SCOUT_EVERY}. ${empty(mode, "1 when empty.")} Each run is at your preferred hour.` },
+  { name: "every", label: "Days between runs", kind: "number", min: 1, max: MAX_SCOUT_EVERY, help: `1 to ${MAX_SCOUT_EVERY}. ${empty(mode, "1 when empty.", surface)} Each run is at your preferred hour.` },
 ];
 
 const SOURCE_OPTIONS = [["page", "a listing page I paste"], ["bgg", "BoardGameGeek's marketplace"], ["ebay", "eBay, from listings I send in"]] as const;
 const JUDGE_OPTIONS = [["yes", "yes: the model checks each new listing and its seller first"], ["no", "no: DM me every new listing"]] as const;
 
-/** `/want`'s limits, the same on an edit: where it looks is fixed once made. */
-const wantLimits = (mode: Mode): readonly Field[] => [
+/** `/want`'s limits, the same on an edit (but for what an empty number means): where it looks is fixed once made. */
+const wantLimits = (mode: Mode, surface: Surface): readonly Field[] => [
   { name: "max", label: "Top price", kind: "text", decimal: true, help: "Only listings at or under it, and so only listings that show a price. Leave it empty for any price." },
   { name: "currency", label: "Currency", kind: "text", maxlength: CURRENCY_LENGTH, help: "Only listings in it, such as USD. Leave it empty for any." },
-  { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}. ${empty(mode, `When empty, ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG, and ${DEFAULT_INBOX_HOURS} for eBay (or BGG, when this bot has no BGG access), whose listings are sent in.`)}` },
+  { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}. ${empty(mode, `When empty, ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG, and ${DEFAULT_INBOX_HOURS} for eBay (or BGG, when this bot has no BGG access), whose listings are sent in.`, surface)}` },
 ];
 
-/** The fields each form shows, in order. An edit of a price leaves out the page itself; a research request has no edit. */
-export function fieldsFor(type: NewType, mode: Mode): readonly Field[] {
+/**
+ * The fields each form shows, in order. An edit of a price leaves out the page itself; a research
+ * request has no edit. `surface` changes only the help's words (the task API's `types` passes "api").
+ */
+export function fieldsFor(type: NewType, mode: Mode, surface: Surface = "web"): readonly Field[] {
   switch (type) {
   case "research":
     return mode === "new" ? RESEARCH_FIELDS : [];
   case "scout":
-    return scoutFields(mode);
+    return scoutFields(mode, surface);
   case "wantlist":
   case "wantjudge":
     return [
@@ -135,7 +143,7 @@ export function fieldsFor(type: NewType, mode: Mode): readonly Field[] {
           } as const,
         ]
         : []),
-      ...wantLimits(mode),
+      ...wantLimits(mode, surface),
     ];
   case "reminder":
     return [
@@ -159,16 +167,16 @@ export function fieldsFor(type: NewType, mode: Mode): readonly Field[] {
       { name: "currency", label: "Currency", kind: "text", required: true, maxlength: CURRENCY_LENGTH, help: "A three-letter code, such as USD or EUR." },
       { name: "renews", label: "Next renewal or expiry date", kind: "date", required: true },
       { name: "unit", label: "Renews", kind: "select", options: UNIT_OPTIONS },
-      { name: "every", label: "Every how many of those", kind: "number", min: 1, max: MAX_EVERY, help: empty(mode, "1 when empty.") },
-      { name: "lead", label: "Days before the date to ask", kind: "number", min: 0, max: MAX_LEAD_DAYS, help: empty(mode, "7 when empty.") },
+      { name: "every", label: "Every how many of those", kind: "number", min: 1, max: MAX_EVERY, help: empty(mode, "1 when empty.", surface) },
+      { name: "lead", label: "Days before the date to ask", kind: "number", min: 0, max: MAX_LEAD_DAYS, help: empty(mode, "7 when empty.", surface) },
       { name: "note", label: "Note", kind: "text", maxlength: MAX_NOTE, help: "Carried on every ask: where to cancel, which account." },
     ];
   case "price":
     return mode === "edit"
-      ? priceSettings(mode)
+      ? priceSettings(mode, surface)
       : [
         { name: "url", label: "Product page", kind: "url", required: true, maxlength: MAX_URL },
-        ...priceSettings(mode),
+        ...priceSettings(mode, surface),
         { name: "near", label: "Words just before the price", kind: "text", maxlength: MAX_NEAR, help: "Only if I cannot find the price on my own." },
       ];
   }

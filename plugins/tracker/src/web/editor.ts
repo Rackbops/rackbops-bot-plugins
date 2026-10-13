@@ -89,9 +89,9 @@ export async function makeTask(w: Writer, type: NewType, form: URLSearchParams):
 }
 
 /**
- * `/want`'s rules, a page read outside the queue as a new price's is. Only a `page` watch reads
- * anything now (BGG and the inbox watches do not), so only it takes the one-read-per-person guard,
- * and only once `startWant` has said which it is.
+ * `/want`'s rules, a page read outside the queue as a new price's is. Only a `page` watch has a first
+ * read (a BGG or inbox watch reads nothing when it is made), so only it takes the
+ * one-read-per-person guard, and only once `startWant` has said which it is.
  */
 async function makeWant(w: Writer, form: URLSearchParams): Promise<Written> {
   const started = await asUser(w, (u) => startWant(w.d, u, wantInput(form)));

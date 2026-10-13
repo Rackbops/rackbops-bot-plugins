@@ -454,6 +454,7 @@ describe("the editor's page reads go through the fence (#227)", () => {
       expect(await price.text()).toContain("I cannot read that page: Only public web pages can be tracked.");
       const page = await post(w.plugin, larry, csrf, "/new/wantlist", { name: "Widgets", source: "page", target: "http://1.1.1.1/widgets", judge: "no" });
       expect(page.status).toBe(400);
+      expect(await page.text()).toContain("I cannot read that page: Only public web pages can be tracked.");
       expect(tasks(w.dbPath)).toEqual([]);
       expect(asked).toEqual(["http://1.1.1.1/widget", "http://1.1.1.1/widgets"]);
     } finally {
@@ -857,8 +858,12 @@ describe("review fixes", () => {
     for (const type of EDITOR_TYPES) {
       for (const f of fieldsFor(type, "edit")) expect(`${type}.${f.name}: ${f.help ?? ""}`).not.toContain("when empty");
     }
-    // The new forms still name the defaults.
+    // The new forms still name the defaults; the task API, whose PATCH refuses an empty number, says to omit it.
     expect(fieldsFor("price", "new").find((f) => f.name === "hours")?.help).toContain("12 when empty");
+    for (const type of EDITOR_TYPES) {
+      for (const f of fieldsFor(type, "edit", "api")) expect(`${type}.${f.name}: ${f.help ?? ""}`).not.toContain("Leave it empty to keep what it has.");
+    }
+    expect(fieldsFor("renewal", "edit", "api").find((f) => f.name === "lead")?.help).toBe("Omit it to keep what it has.");
     const w = await setup();
     await post(w.plugin, w.larry, w.csrf, "/new/price", { url: SHOP, hours: "24", drop: "20" });
     const form = await (await call(w.plugin, "GET", "/tasks/t1/edit", { jar: w.larry })).text();
