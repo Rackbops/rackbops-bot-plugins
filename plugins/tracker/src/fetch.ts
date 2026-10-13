@@ -238,7 +238,12 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
   return {
     async get(raw: string, headers: Record<string, string> = {}): Promise<FetchResponse> {
       const signal = o.signal ? AbortSignal.any([o.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
-      let url = new URL(raw);
+      let url: URL;
+      try {
+        url = new URL(raw);
+      } catch {
+        throw new FetchRefusedError("it is not a web address");
+      }
       const origin = url.origin;
       const neverEbay = Object.keys(headers).some((k) => k.toLowerCase() === NEVER_EBAY);
       const sent = Object.fromEntries(Object.entries(headers).filter(([k]) => k.toLowerCase() !== NEVER_EBAY));
@@ -255,7 +260,11 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
         if (response.status >= 300 && response.status < 400 && location && !o.noRedirects) {
           await response.body?.cancel().catch(() => {});
           if (hop >= MAX_REDIRECTS) throw new FetchRefusedError(`more than ${MAX_REDIRECTS} redirects`);
-          url = new URL(location, url);
+          try {
+            url = new URL(location, url);
+          } catch {
+            throw new FetchRefusedError("it redirects to something that is not a web address");
+          }
           continue;
         }
         const out: Record<string, string> = {};
