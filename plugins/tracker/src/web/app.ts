@@ -66,6 +66,10 @@ export const USR_NOT_LINKED =
 export const USR_BACK = "usr";
 /** `?usr=go`: the sign-in page's "Sign in with usr" button, which signs in even after a sign-out. */
 export const USR_GO = "go";
+/** `?usr=in`: the address a usr sign-in sends the browser on to, with its new session cookie. */
+export const USR_IN = "in";
+/** Arrived marked `?usr=in` without the session: the browser did not keep the cookie. */
+export const USR_COOKIE_DROPPED = "You signed in through usr, but your browser did not keep the tracker's sign-in cookie. Allow cookies for this site and try again, or run /web in Discord for a one-time link.";
 /**
  * After Sign out, how long a GET does not sign the person back in from usr's cookie on its own:
  * longer than usr's longest `nz_id` (30 minutes by default). Signing out here does not sign out of usr.
@@ -88,8 +92,11 @@ export interface WebWiring {
 }
 
 /**
- * The biggest form body read. The longest form is a reminder of 1500 characters, which
- * percent-encoded can take about 13.5 KiB; anything bigger is refused before it is parsed.
+ * The biggest form body read. The longest form is a research request (a 1000-character question,
+ * 2000 of context and two 100-character dates), which percent-encoded at nine bytes a character can
+ * take about 28.2 KiB; anything bigger is refused before it is parsed. editor.test.ts fills each
+ * field of every editor form that has a maxlength to it (others 32 characters) and checks it still
+ * fits, so a raised limit fails a test rather than a person.
  */
 export const MAX_FORM_BYTES = 32 * 1024;
 
@@ -264,33 +271,48 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     return redirect(`${base}/`, [cookie(SESSION_COOKIE, id, { base, maxAgeSeconds: SESSION_TTL_MS / 1000, sameSite: "Lax" }), clear(LOGIN_COOKIE), clear(OUT_COOKIE)]);
   }
 
+  /** The address's own query, without our mark: kept across the trip to usr and back. */
+  function queryOf(url: URL): string {
+    const query = new URLSearchParams(url.searchParams);
+    query.delete(USR_BACK);
+    return query.toString();
+  }
+
+  /**
+   * The trip to usr's refresh and back to this address, marked `?usr=1`: usr mints a fresh `nz_id`
+   * from its own session (or shows its sign-in) and sends the browser back. The return address is
+   * built from TRACKER_WEB_URL and our own path, never from the request's Host.
+   */
+  function toUsr(usr: UsrLink, origin: string, path: string, rest: string, cookies: readonly string[]): Response {
+    const back = refreshUrl(usr.url, `${origin}${base}${path}?${rest ? `${rest}&` : ""}${USR_BACK}=1`);
+    const h = new Headers({ Location: back, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
+    for (const c of cookies) h.append("Set-Cookie", c);
+    return new Response(null, { status: 303, headers: h });
+  }
+
   /**
    * Sign-in through usr (usr-identity.ts): a valid `nz_id` naming a usr account linked to a
    * registered person, holding `<app>:member`, opens a session as `/login` does, and the browser goes
-   * on to the page it asked for. With no valid cookie the browser is sent to usr once to get one,
-   * marked so that coming back without it shows why instead of going round again. The one-time
-   * `/web` link stays beside it.
+   * on to the page it asked for, marked `?usr=in` so that arriving there without the session (a
+   * browser that refuses the cookie) shows why instead of signing in again on every hop. With no
+   * valid cookie, or one without the member role (it may predate an `/allow`: usr's `nz_id` lives 30
+   * minutes by default), the browser is sent to usr once for a fresh one, marked so that coming back
+   * without it shows why instead of going round again. The one-time `/web` link stays beside it.
    */
   async function usrSignIn(d: TrackerDeps, usr: UsrLink, request: Request, path: string, url: URL, origin: string, stale: string[]): Promise<Response> {
     const asked = url.searchParams.get(USR_BACK);
-    // Signed out a moment ago: only the sign-in page's button signs back in, never any GET.
-    // (usr's trip back carries `?usr=1`, so the button's sign-in survives an expired `nz_id`.)
-    if (readCookie(request, OUT_COOKIE) !== null && asked !== USR_GO && asked !== "1") return redirect(`${base}/signin?out=1`, stale);
-    const identity = await usr.verifier.verify(readCookie(request, SSO_COOKIE));
     const help = (note: string) => htmlResponse(signInHelpPage(base, note), 403, stale[0] ? { "Set-Cookie": stale[0] } : {});
-    // The address's own query, without our mark, kept across the trip to usr and back.
-    const query = new URLSearchParams(url.searchParams);
-    query.delete(USR_BACK);
-    const rest = query.toString();
-    if (!identity) {
-      if (asked === "1") return help(USR_NO_COOKIE);
-      // An address built from TRACKER_WEB_URL and our own path, never from the request's Host.
-      const back = refreshUrl(usr.url, `${origin}${base}${path}?${rest ? `${rest}&` : ""}${USR_BACK}=1`);
-      const h = new Headers({ Location: back, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
-      for (const c of stale) h.append("Set-Cookie", c);
-      return new Response(null, { status: 303, headers: h });
-    }
-    if (!identity.roles.includes(`${usr.app}:${MEMBER_ROLE}`)) return help(USR_NOT_MEMBER);
+    if (asked === USR_IN) return help(USR_COOKIE_DROPPED);
+    // Signed out a moment ago: only a GET carrying the sign-in page's button's `?usr=go` signs back
+    // in. The button's trip to usr clears the mark, so usr's trip back (`?usr=1`) needs no exception
+    // of its own, and a hand-made `?usr=1` is refused like any other GET.
+    const out = readCookie(request, OUT_COOKIE) !== null;
+    if (out && asked !== USR_GO) return redirect(`${base}/signin?out=1`, stale);
+    const rest = queryOf(url);
+    const away = () => toUsr(usr, origin, path, rest, out ? [...stale, clear(OUT_COOKIE)] : stale);
+    const identity = await usr.verifier.verify(readCookie(request, SSO_COOKIE));
+    if (!identity) return asked === "1" ? help(USR_NO_COOKIE) : away();
+    if (!identity.roles.includes(`${usr.app}:${MEMBER_ROLE}`)) return asked === "1" ? help(USR_NOT_MEMBER) : away();
     const userId = usr.links.userOfSubject(identity.sub);
     const user = userId ? await d.store.getUser(userId) : null;
     if (!user || !d.admissions.isRegistered(user.id)) return help(USR_NOT_LINKED);
@@ -301,22 +323,27 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     if (member !== "ok") return help(USR_RECHECK_FAILED);
     const now = d.clock.now();
     const { id } = d.sessions.create(user.id, now, w.guildIds === null ? null : now.toISOString());
-    return redirect(`${base}${path}${rest ? `?${rest}` : ""}`, [cookie(SESSION_COOKIE, id, { base, maxAgeSeconds: SESSION_TTL_MS / 1000, sameSite: "Lax" }), clear(OUT_COOKIE)]);
+    return redirect(`${base}${path}?${rest ? `${rest}&` : ""}${USR_BACK}=${USR_IN}`, [cookie(SESSION_COOKIE, id, { base, maxAgeSeconds: SESSION_TTL_MS / 1000, sameSite: "Lax" }), clear(OUT_COOKIE)]);
   }
 
   /**
    * A signed-in person whose usr cookie, for their own linked account, no longer carries
-   * `<app>:member` (an admin took it away in usr) is signed out of every session now, not when the
-   * session ends. Without the cookie nothing is known, and the session stands.
+   * `<app>:member` (an admin took it away in usr) is signed out of every session and loses their API
+   * tokens now, not when the session ends. The cookie may only predate the role (usr's `nz_id` lives
+   * 30 minutes by default, and `/allow` or Link everyone grants the role), so a request not already
+   * back from usr goes there first for a fresh one ("refresh"), a POST included: a POST never
+   * revokes. Only a GET back from usr (`?usr=1`) with a cookie still role-less revokes. Without the
+   * cookie nothing is known, and the session stands.
    */
-  async function usrRevoked(d: TrackerDeps, request: Request, user: User): Promise<boolean> {
+  async function usrRevoked(d: TrackerDeps, request: Request, user: User, url: URL): Promise<"ok" | "refresh" | "revoked"> {
     const usr = d.usr;
-    if (!usr) return false;
+    if (!usr) return "ok";
     const identity = await usr.verifier.verify(readCookie(request, SSO_COOKIE));
-    if (!identity || identity.sub !== usr.links.subjectOf(user.id) || identity.roles.includes(`${usr.app}:${MEMBER_ROLE}`)) return false;
+    if (!identity || identity.sub !== usr.links.subjectOf(user.id) || identity.roles.includes(`${usr.app}:${MEMBER_ROLE}`)) return "ok";
+    if (request.method !== "GET" || url.searchParams.get(USR_BACK) !== "1") return "refresh";
     d.sessions.deleteForUser(user.id);
     d.apiTokens.deleteForUser(user.id);
-    return true;
+    return "revoked";
   }
 
   async function settingsPost(d: TrackerDeps, v: Viewer, form: URLSearchParams): Promise<Response> {
@@ -378,6 +405,9 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     const path = info.path;
     const url = new URL(request.url);
     const only = (allowed: "GET" | "POST") => (method === allowed ? null : plain(405, "Method not allowed", { Allow: allowed }));
+    // The bare `/<name>` reaches us as "/" too, but a browser sends it none of our `Path=/<name>/`
+    // cookies: on to `/<name>/` first, or every visit there would read as signed out.
+    if (path === "/" && url.pathname === base) return only("GET") ?? redirect(`${base}/${url.search}`);
 
     // Public.
     if (path === STYLESHEET_PATH) {
@@ -407,7 +437,20 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       if (method === "GET" && d.usr && w.origin !== null) return usrSignIn(d, d.usr, request, path, url, w.origin, stale);
       return redirect(`${base}/signin`, stale);
     }
-    if (await usrRevoked(d, request, auth.user)) return htmlResponse(signInHelpPage(base, USR_NOT_MEMBER), 403, { "Set-Cookie": clear(SESSION_COOKIE) });
+    const revoked = await usrRevoked(d, request, auth.user, url);
+    if (revoked === "refresh" && d.usr && w.origin !== null) {
+      // A POST's form is not replayed: back from usr, the browser GETs this page if it has one, or
+      // My tasks, and that GET decides.
+      if (method === "GET") return toUsr(d.usr, w.origin, path, queryOf(url), []);
+      return toUsr(d.usr, w.origin, allowed.split(", ").includes("GET") ? path : "/", "", []);
+    }
+    if (revoked === "revoked") return htmlResponse(signInHelpPage(base, USR_NOT_MEMBER), 403, { "Set-Cookie": clear(SESSION_COOKIE) });
+    // Signed in, on a GET still marked by a trip to usr or a sign-in: the same page without the mark,
+    // so a reload later is not taken for a trip back from usr.
+    if (method === "GET" && d.usr && url.searchParams.has(USR_BACK)) {
+      const rest = queryOf(url);
+      return redirect(`${base}${path}${rest ? `?${rest}` : ""}`);
+    }
     // The one admin definition, read from the store on this request (authenticate re-read the row):
     // an admin whose flag was revoked a moment ago is refused now, not at their next sign-in.
     if (admin && !auth.user.admin) return unknownPage(base);

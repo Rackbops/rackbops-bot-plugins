@@ -28,6 +28,8 @@ export const START = "2026-10-01T12:00:00.000Z";
 export const dirs: string[] = [];
 /** Every plugin `world()` made, disposed by `cleanup()`. */
 const plugins: Plugin[] = [];
+/** Each world's clock, by its plugin: the jar's `Max-Age` runs on it. */
+const clocks = new WeakMap<Plugin, { now(): Date }>();
 
 /**
  * Each test file's `afterEach`: disposes every plugin `world()` made, closing its database, and
@@ -132,6 +134,7 @@ export async function world(
     },
   );
   plugins.push(plugin);
+  clocks.set(plugin, clock);
   await plugin.activate!();
   return { plugin, clock, dbPath, sent, delivery };
 }
@@ -205,27 +208,69 @@ export interface Call {
   headers?: Record<string, string>;
 }
 
+/**
+ * What a jar's cookies were set with, as a browser keeps it: the path they are sent to, and when
+ * they lapse (ms on the world's clock; null = never). A cookie put in the jar by hand has none, and
+ * goes with every request.
+ */
+const scopes = new WeakMap<Jar, Map<string, { path: string; expiresAt: number | null }>>();
+
+/** RFC 6265 5.1.4: the cookie path is the request path, or a prefix of it ending at a `/`. */
+function pathMatches(requestPath: string, cookiePath: string): boolean {
+  if (requestPath === cookiePath) return true;
+  if (!requestPath.startsWith(cookiePath)) return false;
+  return cookiePath.endsWith("/") || requestPath[cookiePath.length] === "/";
+}
+
+/**
+ * One request as the browser and the host make it: `pathAndQuery` is under `/tracker` (empty for
+ * the bare `/tracker`), `info.path` is what the host passes for it (`"/"` for `/tracker` and
+ * `/tracker/`), and the jar sends only the cookies whose `Path` matches and whose `Max-Age` has not
+ * run out on the world's clock.
+ */
 export async function call(plugin: Plugin, method: string, pathAndQuery: string, c: Call = {}): Promise<Response> {
-  const [path = "/", query] = pathAndQuery.split("?");
+  const [path = "", query] = pathAndQuery.split("?");
+  const full = `/tracker${path}`;
+  const now = clocks.get(plugin)?.now().getTime() ?? Date.now();
   const headers = new Headers(c.headers ?? {});
-  if (c.jar && c.jar.size > 0) headers.set("cookie", [...c.jar].map(([k, v]) => `${k}=${v}`).join("; "));
+  if (c.jar) {
+    const scope = scopes.get(c.jar);
+    const sent: string[] = [];
+    for (const [k, v] of c.jar) {
+      const s = scope?.get(k);
+      if (s && s.expiresAt !== null && now >= s.expiresAt) {
+        c.jar.delete(k);
+        scope?.delete(k);
+      } else if (!s || pathMatches(full, s.path)) sent.push(`${k}=${v}`);
+    }
+    if (sent.length > 0) headers.set("cookie", sent.join("; "));
+  }
   if (c.form) headers.set("content-type", "application/x-www-form-urlencoded");
   if (c.origin !== undefined && c.origin !== null) headers.set("origin", c.origin);
   // The Host header is whatever the client says: the handler must never build from it.
-  const request = new Request(`https://evil.example.net/tracker${path}${query ? `?${query}` : ""}`, {
+  const request = new Request(`https://evil.example.net${full}${query ? `?${query}` : ""}`, {
     method,
     headers,
     ...(c.form ? { body: new URLSearchParams(c.form).toString() } : {}),
   });
-  const res = await plugin.http!(request, { path, clientIp: "unknown" });
+  // The host's mapping (rackbops-discord-bot `routeHttpRequest`): the path after `/tracker`, or "/".
+  const res = await plugin.http!(request, { path: /^\/[^/]+(\/.*)?$/.exec(full)?.[1] ?? "/", clientIp: "unknown" });
   if (c.jar) {
+    let scope = scopes.get(c.jar);
+    if (!scope) scopes.set(c.jar, (scope = new Map()));
     for (const sc of res.headers.getSetCookie()) {
       const [pair = ""] = sc.split(";");
       const eq = pair.indexOf("=");
       const k = pair.slice(0, eq);
       const v = pair.slice(eq + 1);
-      if (/Max-Age=0\b/.test(sc)) c.jar.delete(k);
-      else c.jar.set(k, v);
+      const maxAge = /;\s*Max-Age=(-?[0-9]+)/i.exec(sc)?.[1];
+      if (maxAge !== undefined && Number(maxAge) <= 0) {
+        c.jar.delete(k);
+        scope.delete(k);
+      } else {
+        c.jar.set(k, v);
+        scope.set(k, { path: /;\s*Path=([^;]*)/i.exec(sc)?.[1]?.trim() ?? "/", expiresAt: maxAge === undefined ? null : now + Number(maxAge) * 1000 });
+      }
     }
   }
   return res;

@@ -9,6 +9,8 @@ import { isTokenShape, randomToken, sha256 } from "./secrets.js";
  */
 
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Live sessions one person may hold: far more browsers than anyone signs in from in a week. */
+export const MAX_SESSIONS_PER_USER = 20;
 
 export interface Session {
   userId: string;
@@ -21,7 +23,11 @@ export interface Session {
 export class Sessions {
   constructor(private readonly db: Database) {}
 
-  /** A new session for `userId`; answers the id for the cookie. Drops expired sessions on the way. */
+  /**
+   * A new session for `userId`; answers the id for the cookie. Drops expired sessions on the way,
+   * and the person's oldest beyond `MAX_SESSIONS_PER_USER`: a browser that never keeps the cookie
+   * signs in again on every visit, and must not grow the table without bound.
+   */
   create(userId: string, now: Date, memberCheckedAt: string | null = null): { id: string; session: Session } {
     const id = randomToken();
     const at = now.toISOString();
@@ -30,6 +36,10 @@ export class Sessions {
     this.db
       .query("INSERT INTO web_sessions (id_hash, user_id, csrf, created_at, expires_at, member_checked_at) VALUES (?, ?, ?, ?, ?, ?)")
       .run(sha256(id), userId, session.csrf, at, session.expiresAt, memberCheckedAt);
+    // Newest first by creation, then by insertion (rowid) for sessions made in the same millisecond.
+    this.db
+      .query("DELETE FROM web_sessions WHERE user_id = ? AND rowid NOT IN (SELECT rowid FROM web_sessions WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?)")
+      .run(userId, userId, MAX_SESSIONS_PER_USER);
     return { id, session };
   }
 

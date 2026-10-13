@@ -268,24 +268,30 @@ minutes, fetched again on an unknown key at most every 30 seconds), `iss` "usr",
 never a delegation token. A valid token whose account holds `tracker:member` and is linked to a
 registered person (`users.usr_subject`) opens a session as the one-time link does, once server
 membership is checked (as `/web` checks it), and the browser goes on to the page and query it asked
-for. With no valid token the browser is sent to usr's `/api/auth/sso/refresh` once, returning to
+for, marked `?usr=in`: arriving there without the session (a browser that refuses the cookie) says
+so instead of signing in again. A signed-in GET still carrying a `?usr=` mark goes on to the same
+address without it. With no valid token the browser is sent to usr's `/api/auth/sso/refresh` once, returning to
 the same address marked `?usr=1`; coming back still without one (usr's keys could not be fetched,
 the clocks disagree) says the sign-in could not be confirmed, instead of going round again. A token
-without the member role, or for an account linked to no one registered here, shows what to ask an
-admin for. While signed in, a usr cookie for the person's own account that no longer carries
-`tracker:member` signs them out of every session and revokes their API tokens. That happens only on
-a web request carrying the cookie: the task API never reads usr, so a token keeps working until the
-person next uses the web area while still signed in to it; opened signed out, it only shows the
-not-member page and the tokens stay (revoking their tokens or admission in the tracker ends them at
-once). Sign out ends the
-tracker's session only, not usr's: for 12 hours after it, a plain GET does not sign back in from
-usr's cookie; the sign-in page's "Sign in with usr" button (and usr's trip back from it) or a `/web`
-link does. Any site under usr's cookie domain can set an
+without the member role goes the same way once, since it can predate an `/allow` (an `nz_id` lives
+30 minutes by default); still without it, or for an account linked to no one registered here, the
+page shows what to ask an admin for. While signed in, a usr cookie for the person's own account that
+no longer carries `tracker:member` signs them out of every session and revokes their API tokens, but
+only on a GET back from usr's refresh: any other request with it, a POST included, is first sent
+there (a POST's form is not kept: the browser comes back to that page, or to My tasks). That happens
+only in the web area: the task API never reads usr, so a token keeps working until the person next
+uses the web area while still signed in to it; opened signed out, it only shows the not-member page
+and the tokens stay (revoking their tokens or admission in the tracker ends them at once). Sign out
+ends the tracker's session only, not usr's: for 12 hours after it, a GET does not sign back in from
+usr's cookie unless it carries `?usr=go` (the sign-in page's "Sign in with usr" button, whose trip to
+usr ends those 12 hours); a `/web` link signs in as always. Any site under usr's cookie domain can set an
 `nz_id` of its own, so every host under that domain must be trusted. The one-time `/web` link stays
 beside it. `src/usr-identity.ts` uses WebCrypto only.
 
 **Sessions and forms.** The session cookie is `__Secure-tracker-session`, `HttpOnly; Secure;
-SameSite=Lax; Path=/tracker/`, for 7 days from sign-in. The store keeps only SHA-256 hashes of
+SameSite=Lax; Path=/tracker/`, for 7 days from sign-in; a browser never sends it to the bare
+`/tracker`, which redirects to `/tracker/` first. A person holds at most 20 sessions: a 21st ends
+their oldest. The store keeps only SHA-256 hashes of
 link tokens and session ids. Every request re-reads the person: one no longer in the tracker's
 store, or no longer registered, is signed out of every session. Every state change is a POST
 carrying the session's CSRF token (compared in constant time), and a POST with an `Origin` other
