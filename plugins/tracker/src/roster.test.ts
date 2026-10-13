@@ -104,9 +104,17 @@ describe("the Deliveries page's read", () => {
     expect(total).toBe(1);
     expect(rows.map((r) => [r.occurrenceId, r.taskId, r.title, r.ownerId, r.dueAt])).toEqual([[run, task.id, "pills", larry.id, AT]]);
     const read = asked.find((sql) => sql.includes("JOIN occurrences")) ?? "";
-    const plan = (db.query(`EXPLAIN QUERY PLAN ${read}`).all("failed", "unconfirmed", "deferred", AT, 200) as { detail: string }[]).map((p) => p.detail);
+    const steps = db.query(`EXPLAIN QUERY PLAN ${read}`).all("failed", "unconfirmed", "deferred", AT, 200) as { id: number; parent: number; detail: string }[];
+    const plan = steps.map((p) => p.detail);
     expect(plan).toContainEqual(expect.stringMatching(/^SEARCH o USING INTEGER PRIMARY KEY/));
     expect(plan).toContainEqual(expect.stringMatching(/^SEARCH t USING INTEGER PRIMARY KEY/));
     expect(plan.filter((p) => /^SCAN (o|t)\b/.test(p))).toEqual([]);
+    // The rows are picked, sorted and cut to `limit` in their own subquery before any join: SQLite
+    // flattens that subquery into the join (sorting after it) unless the LIMIT is inside it.
+    const picked = steps.find((p) => p.detail === "CO-ROUTINE d");
+    expect(picked).toBeDefined();
+    const inside = steps.filter((p) => p.parent === picked?.id).map((p) => p.detail);
+    expect(inside).toContainEqual(expect.stringMatching(/^SEARCH d USING INDEX deliveries_status/));
+    expect(inside).toContain("USE TEMP B-TREE FOR ORDER BY");
   });
 });

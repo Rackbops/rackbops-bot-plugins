@@ -253,11 +253,12 @@ function usrAllowed(d: TrackerDeps, usr: UsrLink, userId: string, result: unknow
   if (outcome === "gone") return "Not linked to usr: they left the tracker while usr was being asked.";
   if (outcome === "taken") return "Not linked to usr: usr's account for them is already linked to someone else here.";
   if (outcome === "unchanged") return "Linked to usr.";
-  // usr moves a person's Discord link, and drops the account /allow made, when they finish signing
-  // up while signed in to a usr account they already had (usr docs/discord-registration.md): the id
-  // kept here goes stale until an /allow learns the new one, and their usr sign-in fails till then.
+  // usr moves a person's Discord link to another account it already had, for example when they
+  // finish signing up while signed in to a usr account they already had (usr
+  // docs/discord-registration.md): the id kept here was stale until this /allow learned the new one.
+  // usr does not say whether that account finished signing up, so the /register pointer stays, conditionally.
   if (outcome === "relinked" && !answer.created)
-    return "Linked to usr again, to the account usr now has for them (usr moves them to it when they finish signing up with a usr account they already had), so they can sign in to the web area through usr.";
+    return "Linked to usr again, to another account usr already had for them (usr moves them there, for example, when they finish signing up with a usr account they already had); if they have not signed up there yet, they can with `/register`.";
   // usr made a new account only for someone it had never seen. An existing one may still be an
   // unfinished sign-up (usr does not say which), so the /register pointer stays, conditionally.
   if (!answer.created)

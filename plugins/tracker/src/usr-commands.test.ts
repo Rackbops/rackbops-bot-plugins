@@ -201,8 +201,10 @@ describe("/allow with the usr link on", () => {
     w.usr.answers["/api/discord/allow"]!.push(allowed(), allowed(undefined, existing, false));
     expect(await slash(w.plugin, "allow", ADMIN, { target: LARRY })).toContain("Linked to usr: they can finish");
     const again = await slash(w.plugin, "allow", ADMIN, { target: LARRY });
-    expect(again).toContain("Linked to usr again, to the account usr now has for them");
-    expect(again).not.toContain("/register");
+    expect(again).toContain("Linked to usr again, to another account usr already had for them (usr moves them there, for example,");
+    // That account may be an unfinished sign-up too: the pointer stays, conditionally.
+    expect(again).toContain("if they have not signed up there yet, they can with `/register`.");
+    expect(again).not.toContain("they can finish their usr sign-up");
   });
 
   it("says usr could not be reached, and asks for a server when run in a DM", async () => {

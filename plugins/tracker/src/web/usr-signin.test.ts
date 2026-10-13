@@ -34,11 +34,12 @@ const identity = (o: Record<string, unknown> = {}) => ({ iss: "usr", sub: LARRY_
 /** A fake usr serving one JWKS; counts the fetches. */
 async function fakeUsr() {
   const k = await keyPair();
-  const state = { jwks: { keys: [{ ...k.jwk, kid: "k1" }] } as { keys: unknown[] }, fetches: 0, down: false, status: 200 };
+  const state = { jwks: { keys: [{ ...k.jwk, kid: "k1" }] } as { keys: unknown[] }, fetches: 0, down: false, status: 200, hold: null as Promise<void> | null };
   const usrFetch = (async (input: string | URL | Request) => {
     const url = new URL(String(input));
     if (url.pathname !== "/.well-known/jwks.json") throw new Error(`unexpected usr call ${url.pathname}`);
     state.fetches++;
+    if (state.hold) await state.hold;
     if (state.down) throw new TypeError("fetch failed");
     return new Response(JSON.stringify(state.jwks), { status: state.status, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
@@ -134,6 +135,26 @@ describe("UsrVerifier", () => {
     expect(usr.state.fetches).toBe(1);
   });
 
+  it("answers a token with a known key at once, while a fetch for an unknown key hangs", async () => {
+    const { usr, v, advance } = await verifier();
+    const token = await sign(usr.pair.privateKey, identity());
+    await v.verify(token);
+    let release = () => {};
+    usr.state.hold = new Promise<void>((r) => {
+      release = r;
+    });
+    advance(JWKS_RETRY_MS);
+    const next = await keyPair();
+    const unknown = v.verify(await sign(next.pair.privateKey, identity(), { alg: "ES256", kid: "k2" }));
+    while (usr.state.fetches < 2) await Bun.sleep(1);
+    // The refetch for k2 is still out; k1's token must not wait for it.
+    const known = await Promise.race([v.verify(token), Bun.sleep(200).then(() => "stalled" as const)]);
+    expect(known).toEqual({ sub: LARRY_SUB, roles: ["tracker:member"] });
+    release();
+    expect(await unknown).toBeNull();
+    expect(usr.state.fetches).toBe(2);
+  });
+
   it("refuses a token with no sub, or an empty one", async () => {
     const { usr, v } = await verifier();
     const { sub: _sub, ...noSub } = identity();
@@ -142,6 +163,7 @@ describe("UsrVerifier", () => {
   });
 
   it("refuses a signature that is not 64 bytes", async () => {
+    // A pin, not coverage of the length check: WebCrypto already refuses such a signature by itself.
     const { usr, v } = await verifier();
     const [h, p, sig] = (await sign(usr.pair.privateKey, identity())).split(".") as [string, string, string];
     const longer = Buffer.concat([Buffer.from(sig, "base64url"), Buffer.from([0])]).toString("base64url");

@@ -78,7 +78,7 @@ export function parseUsrConfig(env: Readonly<Record<string, string | undefined>>
 
 /**
  * usr refused or could not be reached; `message` is safe to show an admin: never the key or the
- * request, and of usr's answer only its own `error` reason, cleaned and cut to 200 characters.
+ * request, and of usr's answer only its status and its own `error` reason, cleaned and cut to 200 characters.
  */
 export class UsrError extends Error {
   constructor(
