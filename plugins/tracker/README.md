@@ -79,8 +79,9 @@ happened.
 pause the person's delivery and every active task that would DM them, theirs and the ones they
 receive (a `paused` event in each task's history; one for a recipient is shown only to that
 recipient, the task's owner and admins -- a row from before 0.6.0, only to the owner and admins;
-another recipient sees a plain `paused: delivery paused` in its place, the resume after it names no
-one, and a failed run's error that names another recipient reads `a recipient cannot be messaged`);
+another recipient sees `paused: delivery paused` in its place, as they see the owner's own delivery
+pause, and `resumed: delivery resumed` for the resume after either, and a failed run's error that
+names another recipient, forgotten or not, reads `a recipient cannot be messaged`);
 a DM to them still owed waits for the resume.
 A task that comes to DM them while they stay paused -- one made on the web or through the task API,
 one its owner had paused and resumes by hand, one a pause stopped part way never reached -- pauses

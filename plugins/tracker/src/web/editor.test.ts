@@ -675,11 +675,12 @@ describe("another recipient learns nothing of a recipient from the history (#273
     for (const who of [LARRY, ADMIN, CURLY]) expect((await seen(w, who)).discord).toEqual([pause, "resumed: delivery resumed"]);
   });
 
-  it("(B) the owner goes on without Curly: another recipient sees a pause above the owner's resume", async () => {
+  it("(B) the owner goes on without Curly: another recipient sees a delivery pause and its resume", async () => {
     const w = await pausedForCurly();
     expect(await slash(w.plugin, "task", LARRY, { sub: "resume", strings: { task: "t1" } })).toContain("Resumed `t1`");
     const theirs = await seen(w, STRANGER);
-    expect(theirs.discord).toEqual(["paused: delivery paused", "resumed: resumed by the owner"]);
+    // As the owner's own delivery pause and its resume read (manage.ts resumes that with "delivery resumed").
+    expect(theirs.discord).toEqual(["paused: delivery paused", "resumed: delivery resumed"]);
     expect(theirs.web).toEqual(theirs.discord);
     for (const who of [LARRY, ADMIN]) expect((await seen(w, who)).discord).toEqual([pause, "resumed: resumed by the owner"]);
   });
@@ -699,7 +700,34 @@ describe("another recipient learns nothing of a recipient from the history (#273
     for (const who of [LARRY, ADMIN]) expect((await seen(w, who)).discord).toEqual(["resumed: resumed: a recipient left the tracker"]);
   });
 
-  it("(E) a run from before 0.9.0 that failed for Curly: another recipient's Runs do not name him", async () => {
+  it("the owner's own delivery pause and a pause for another recipient read the same to a recipient", async () => {
+    const w = await setup();
+    await slash(w.plugin, "allow", ADMIN, { users: { user: STRANGER } });
+    await slash(w.plugin, "register", STRANGER);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    for (const who of [CURLY, STRANGER]) {
+      await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: who } });
+      await press(w.plugin, "tracker:a.t.t1", who);
+    }
+    w.delivery.unreachable.add(LARRY);
+    for (const day of ["01", "02", "03"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await notifyTick(w.plugin);
+    }
+    const owners = await seen(w, STRANGER);
+    expect(owners.discord).toEqual(["paused: delivery paused"]);
+    expect(owners.web).toEqual(owners.discord);
+    const curlys = await seen(await pausedForCurly(), STRANGER);
+    expect(curlys.discord).toEqual(owners.discord);
+    expect(curlys.web).toEqual(owners.web);
+    // Larry's command resumes him, and the task: the same pair as (A) and (B) to Stranger.
+    w.delivery.unreachable.delete(LARRY);
+    expect((await seen(w, LARRY)).discord).toEqual([`paused: ${PAUSE_DETAIL}`, "resumed: delivery resumed"]);
+    expect((await seen(w, STRANGER)).discord).toEqual(["paused: delivery paused", "resumed: delivery resumed"]);
+  });
+
+  /** Larry's t1, accepted by Curly (u3) and Stranger (u4), its first run stored as failed for Curly as before 0.9.0. */
+  async function legacyFailedRun() {
     const w = await setup();
     await slash(w.plugin, "allow", ADMIN, { users: { user: STRANGER } });
     await slash(w.plugin, "register", STRANGER);
@@ -714,20 +742,37 @@ describe("another recipient learns nothing of a recipient from the history (#273
     const db = new Database(w.dbPath);
     db.query("UPDATE occurrences SET status = 'failed', error = 'recipient u3 cannot be messaged' WHERE seq = 1").run();
     db.close();
-    const run = async (who: string) => {
-      const history = await slash(w.plugin, "task", who, { sub: "history", strings: { task: "t1" } });
-      const page = await (await call(w.plugin, "GET", "/tasks/t1", { jar: await signIn(w.plugin, who) })).text();
-      return { line: history.split("\n").find((l) => l.includes("Thu Oct 1, 9:00")), page };
-    };
-    const theirs = await run(STRANGER);
+    return w;
+  }
+
+  /** `who`'s /task history line for the first run, and their page. */
+  async function firstRun(w: Awaited<ReturnType<typeof setup>>, who: string) {
+    const history = await slash(w.plugin, "task", who, { sub: "history", strings: { task: "t1" } });
+    const page = await (await call(w.plugin, "GET", "/tasks/t1", { jar: await signIn(w.plugin, who) })).text();
+    return { line: history.split("\n").find((l) => l.includes("Thu Oct 1, 9:00")), page };
+  }
+
+  it("(E) a run from before 0.9.0 that failed for Curly: another recipient's Runs do not name him", async () => {
+    const w = await legacyFailedRun();
+    const theirs = await firstRun(w, STRANGER);
     expect(theirs.line).toBe("- Thu Oct 1, 9:00 -- failed: a recipient cannot be messaged");
     expect(theirs.page).toContain("a recipient cannot be messaged");
     expect(theirs.page).not.toContain("u3");
     for (const who of [LARRY, ADMIN, CURLY]) {
-      const r = await run(who);
+      const r = await firstRun(w, who);
       expect(r.line).toBe("- Thu Oct 1, 9:00 -- failed: recipient u3 cannot be messaged");
       expect(r.page).toContain("recipient u3 cannot be messaged");
     }
+  });
+
+  it("(E) once Curly is forgotten, the redacted error still does not reach another recipient", async () => {
+    const w = await legacyFailedRun();
+    const admin = await signIn(w.plugin, ADMIN);
+    expect((await post(w.plugin, admin, await csrfOf(w.plugin, admin), "/admin/people/u3/forget", { confirm: "yes", word: CONFIRM_WORD })).status).toBe(200);
+    const theirs = await firstRun(w, STRANGER);
+    expect(theirs.line).toBe("- Thu Oct 1, 9:00 -- failed: a recipient cannot be messaged");
+    expect(theirs.page).not.toContain("forgotten");
+    for (const who of [LARRY, ADMIN]) expect((await firstRun(w, who)).line).toBe("- Thu Oct 1, 9:00 -- failed: recipient (forgotten) cannot be messaged");
   });
 });
 

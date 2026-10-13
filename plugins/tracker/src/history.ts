@@ -131,8 +131,14 @@ export function findingView(f: StoredFinding, viewer: User, now: Date): FindingV
   return { claim: f.text, source, at: formatInstant(f.at, viewer.timeZone, now), atIso: f.at };
 }
 
-/** What another recipient's pause reads as, to a viewer who may not see it (#273). */
+/**
+ * What a delivery pause reads as to a viewer who is neither the task's owner nor an admin (#273):
+ * another recipient's (`isRecipientPause`) and the owner's own (`PAUSE_DETAIL`) alike, so the two
+ * cannot be told apart.
+ */
 export const NEUTRAL_PAUSE = "delivery paused";
+/** The `paused` details such a viewer reads as stored: a pause by hand names no one. */
+const OPEN_PAUSES: ReadonlySet<string> = new Set(["paused by the owner"]);
 /** The `resumed` details anyone may read; any other reads as `NEUTRAL_RESUME` (#273). */
 const NEUTRAL_RESUMES: ReadonlySet<string> = new Set(["delivery resumed", "resumed by the owner"]);
 const NEUTRAL_RESUME = "delivery resumed";
@@ -140,25 +146,32 @@ const NEUTRAL_RESUME = "delivery resumed";
 /**
  * A task's changes as a viewer who is neither its owner nor an admin sees them (#167, #273): nothing
  * names or implies another recipient. A pause for another recipient (delivery-health.ts
- * `isRecipientPause`) reads as the task's own `NEUTRAL_PAUSE`, so the `resumed` row that ends it
- * reads as the task's own resume; it is left out while the task already shows paused. A `resumed`
- * row reads as `NEUTRAL_RESUME` unless its detail is one of `NEUTRAL_RESUMES` (forget-me's
- * `LEFT_DETAIL` says a recipient left), and is left out with no pause shown above it (forget-me
- * deletes the pause row that named the person it forgot). Stored rows are not rewritten.
+ * `isRecipientPause`) reads as `NEUTRAL_PAUSE`, as the owner's own delivery pause does (any pause
+ * but one by hand or the viewer's own), and the `resumed` row that ends it as `NEUTRAL_RESUME`, so
+ * the pair reads as the task's own; another recipient's is left out while the task already shows
+ * paused. Any other `resumed` row reads as `NEUTRAL_RESUME` unless its detail is one of
+ * `NEUTRAL_RESUMES` (forget-me's `LEFT_DETAIL` says a recipient left), and is left out with no
+ * pause shown above it (forget-me deletes the pause row that named the person it forgot). Stored
+ * rows are not rewritten.
  */
 export function changesForRecipient(events: readonly TaskEvent[], viewerId: string): TaskEvent[] {
   const shown: TaskEvent[] = [];
   let paused = false;
+  // The pause shown is `NEUTRAL_PAUSE`: its resume reads `NEUTRAL_RESUME` whatever it says, so an
+  // owner going on without a recipient reads as an owner's own delivery resuming (manage.ts resumes
+  // that with `health.resume`, "delivery resumed").
+  let neutral = false;
   for (const e of events) {
     if (e.kind === "paused") {
-      const hidden = isRecipientPause(e) && !pauseNames(e.detail, viewerId);
-      if (hidden && paused) continue;
+      const own = isRecipientPause(e) && pauseNames(e.detail, viewerId);
+      if (isRecipientPause(e) && !own && paused) continue;
       paused = true;
-      shown.push(hidden ? { ...e, detail: NEUTRAL_PAUSE } : e);
+      neutral = !own && !OPEN_PAUSES.has(e.detail);
+      shown.push(neutral ? { ...e, detail: NEUTRAL_PAUSE } : e);
     } else if (e.kind === "resumed") {
       if (!paused) continue;
       paused = false;
-      shown.push(NEUTRAL_RESUMES.has(e.detail) ? e : { ...e, detail: NEUTRAL_RESUME });
+      shown.push(!neutral && NEUTRAL_RESUMES.has(e.detail) ? e : { ...e, detail: NEUTRAL_RESUME });
     } else {
       shown.push(e);
     }

@@ -9,13 +9,22 @@ const read = (events: TaskEvent[], viewer = "u4") => changesForRecipient(events,
 describe("changesForRecipient (#273: another recipient's pause, as a recipient who is not its owner sees it)", () => {
   it("another recipient's pause reads as the task's own, and the resume after it as its own resume", () => {
     expect(read([row("paused", recipientPauseDetail("u3")), row("resumed", "delivery resumed")])).toEqual([`paused: ${NEUTRAL_PAUSE}`, "resumed: delivery resumed"]);
-    expect(read([row("paused", recipientPauseDetail("u3")), row("resumed", "resumed by the owner")])).toEqual([`paused: ${NEUTRAL_PAUSE}`, "resumed: resumed by the owner"]);
+    // The owner going on without them reads as the owner's own delivery resuming.
+    expect(read([row("paused", recipientPauseDetail("u3")), row("resumed", "resumed by the owner")])).toEqual([`paused: ${NEUTRAL_PAUSE}`, "resumed: delivery resumed"]);
+    // A pause by hand keeps its own resume.
+    expect(read([row("paused", "paused by the owner"), row("resumed", "resumed by the owner")])).toEqual(["paused: paused by the owner", "resumed: resumed by the owner"]);
   });
 
-  it("their own pause, the owner's and a pause by hand read as stored", () => {
-    for (const detail of [recipientPauseDetail("u4"), PAUSE_DETAIL, "paused by the owner"]) {
+  it("their own pause and a pause by hand read as stored", () => {
+    for (const detail of [recipientPauseDetail("u4"), "paused by the owner"]) {
       expect(read([row("paused", detail), row("resumed", "delivery resumed")])).toEqual([`paused: ${detail}`, "resumed: delivery resumed"]);
     }
+  });
+
+  it("the owner's own delivery pause reads exactly as another recipient's does", () => {
+    const owners = read([row("paused", PAUSE_DETAIL), row("resumed", "delivery resumed")]);
+    expect(owners).toEqual([`paused: ${NEUTRAL_PAUSE}`, "resumed: delivery resumed"]);
+    expect(read([row("paused", recipientPauseDetail("u3")), row("resumed", "delivery resumed")])).toEqual(owners);
   });
 
   it("a resume that says a recipient left reads neutrally; one with no pause shown above it is left out", () => {
