@@ -50,9 +50,12 @@ export interface EbayAlert {
 
 const SUGGESTIONS = /you might also like/i;
 const HREF = /\bhref="(https:\/\/[^"\s]{1,2000})"/gi;
-const ITEM_PATH = /^\/itm\/(\d{6,15})$/;
-// After an item link's address: the rest of its tag, then (optionally in a <span>) its <h3> title.
-const TITLE = /^[^>]{0,2000}>\s{0,200}(?:<span[^>]{0,200}>\s{0,200})?<h3\b[^>]{0,1000}>([^<]{1,1000})<\/h3>/i;
+// An item's address, bare or with a title slug before its number, as docket's own `ebayItem` reads it.
+const ITEM_PATH = /^\/itm\/(?:[^/]{1,300}\/)?(\d{6,15})\/?$/;
+// After an item link's address: the rest of its tag, then (optionally in a <span>) its <h3>.
+const TITLE_OPEN = /^[^>]{0,2000}>\s{0,200}(?:<span[^>]{0,200}>\s{0,200})?<h3\b[^>]{0,1000}>/i;
+/** The longest title markup read, inline tags and all. */
+const MAX_TITLE_HTML = 2000;
 const PRICE = /<p\b[^>]{0,500}\bclass="[^"]{0,200}\bprice\b[^"]{0,200}"[^>]{0,500}>([^<]{1,200})<\/p>/i;
 /** How far past an item link its title and price are looked for. */
 const WINDOW = 4000;
@@ -61,17 +64,20 @@ const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', a
 
 /** HTML text: tags out, entities decoded, white space made single spaces. */
 export function htmlText(s: string): string {
-  return s
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|[a-z]{2,8});/gi, (all, e: string) => {
-      if (e[0] === "#") {
-        const n = e[1] === "x" || e[1] === "X" ? Number.parseInt(e.slice(2), 16) : Number.parseInt(e.slice(1), 10);
-        return Number.isFinite(n) && n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : " ";
-      }
-      return NAMED[e.toLowerCase()] ?? all;
-    })
+  // `[^<>]`: a scan from one `<` stops at the next, so no run of `<` makes this quadratic.
+  return decodeEntities(s.replace(/<[^<>]{0,2000}>/g, " "))
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function decodeEntities(s: string): string {
+  return s.replace(/&(#x[0-9a-f]{1,6}|#[0-9]{1,7}|[a-z]{2,8});/gi, (all, e: string) => {
+    if (e[0] === "#") {
+      const n = e[1] === "x" || e[1] === "X" ? Number.parseInt(e.slice(2), 16) : Number.parseInt(e.slice(1), 10);
+      return Number.isFinite(n) && n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : " ";
+    }
+    return NAMED[e.toLowerCase()] ?? all;
+  });
 }
 
 /** Whether `host` is one of eBay's domains or under one. */
@@ -84,7 +90,8 @@ export function isEbayDomain(host: string): boolean {
 /** An https address on one of eBay's sites (bare or `www.`), or null. */
 function ebayUrl(href: string): URL | null {
   try {
-    const url = new URL(htmlText(href));
+    // An attribute's text: entities decoded, nothing else (a tag pattern has no business here).
+    const url = new URL(decodeEntities(href));
     const host = url.hostname.replace(/^www\./, "");
     return url.protocol === "https:" && EBAY_DOMAINS.has(host) ? url : null;
   } catch {
@@ -145,13 +152,16 @@ export function readEbayAlert(mail: MailMessage): EbayAlert | null {
     const number = ITEM_PATH.exec(l.url.pathname)?.[1] ?? "";
     if (seen.has(number) || listings.length >= MAX_ALERT_LISTINGS) return;
     const window = html.slice(l.end, l.end + WINDOW);
-    const titled = TITLE.exec(window);
-    const title = titled ? htmlText(titled[1] ?? "") : "";
-    if (!titled || !title) return;
+    const open = TITLE_OPEN.exec(window);
+    const close = open ? window.indexOf("</h3>", open[0].length) : -1;
+    if (!open || close < 0 || close - open[0].length > MAX_TITLE_HTML) return;
+    const title = htmlText(window.slice(open[0].length, close));
+    if (!title) return;
     seen.add(number);
     // The price line after this title, and before the next titled item's link.
+    const titleEnd = close + "</h3>".length;
     const next = items.slice(i + 1).find((n) => ITEM_PATH.exec(n.url.pathname)?.[1] !== number);
-    const after = window.slice(titled[0].length, next ? Math.max(titled[0].length, next.end - l.end) : WINDOW);
+    const after = window.slice(titleEnd, next ? Math.max(titleEnd, next.end - l.end) : WINDOW);
     const line = PRICE.exec(after);
     const price = line ? priceOf(htmlText(line[1] ?? "")) : undefined;
     const currency = price ? currencyOf(price, l.url.hostname) : undefined;

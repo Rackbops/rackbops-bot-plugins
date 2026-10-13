@@ -163,6 +163,13 @@ describe("readEbayAlert", () => {
     expect(one("$39.00", "www.ebay.com.au")?.currency).toBeUndefined();
   });
 
+  it("reads a title with inline tags and an item address with a slug", () => {
+    const html = `<a href="https://www.ebay.com/itm/wingspan-oceania/123456789?x=1"><h3><b>New</b> Wingspan &amp; more</h3></a><p class="price">$30.00</p>`;
+    expect(readEbayAlert({ from: "ebay@ebay.com", subject: "w: 1", html, text: null })?.listings).toEqual([
+      { title: "New Wingspan & more", url: "https://www.ebay.com/itm/123456789", price: "$30.00", currency: "USD" },
+    ]);
+  });
+
   it("strips a forward's prefix from the subject's words", () => {
     const html = `<a href="https://www.ebay.com/itm/123456789"><h3>T</h3></a>`;
     expect(readEbayAlert({ from: "ebay@ebay.com", subject: "Fwd: Re: wingspan: 2 new matches", html, text: null })?.search).toBe("wingspan");
@@ -174,6 +181,9 @@ describe("readEbayAlert", () => {
     expect(readEbayAlert({ from, subject: "x: 1", html: "<a ".repeat(80_000), text: null })).toBeNull();
     expect(readEbayAlert({ from, subject: "x: 1", html: '<a href="https://www.ebay.com/itm/1234567"><h3>'.repeat(8_000), text: null })).toBeNull();
     expect(readEbayAlert({ from, subject: "x: 1", html: `<a href="https://www.ebay.com/itm/1234567"${" x".repeat(200_000)}`, text: null })).toBeNull();
+    expect(readEbayAlert({ from, subject: "x: 1", html: `<a href="https://${"<".repeat(1990)}">`.repeat(250), text: null })).toBeNull();
+    // A title of nothing but `<`: read (it is text), once, and quickly.
+    expect(readEbayAlert({ from, subject: "x: 1", html: `<a href="https://www.ebay.com/itm/1234567"><h3>${"<".repeat(1990)}</h3>`.repeat(200), text: null })?.listings).toHaveLength(1);
     expect(performance.now() - started).toBeLessThan(2000);
   });
 
@@ -220,12 +230,15 @@ describe("migration 10", () => {
     expect(migrate(db)).toBe(9);
     expect(MIGRATIONS).toHaveLength(10);
     expect(schema().filter((s) => !s.name.includes("mail_addresses"))).toEqual(before);
+    for (const id of ["1", "2"]) db.exec(`INSERT INTO users (discord_id, display_name, time_zone, preferred_hour, admin, created_at) VALUES ('${id}', 'x', 'UTC', 9, 0, 'now')`);
     const mail = new MailAddresses(db, DOMAIN);
     const at = new Date("2026-10-13T12:00:00.000Z");
-    const a = mail.addressFor("u1", at);
+    const a = mail.addressFor("u1", at) ?? "";
     expect(a).toMatch(ADDRESS);
     expect(mail.addressFor("u1", at)).toBe(a);
     expect(mail.addressFor("u2", at)).not.toBe(a);
+    expect(mail.addressFor("u3", at)).toBeNull();
+    expect(mail.addressFor("someone", at)).toBeNull();
     expect(mail.userOf(a)).toBe("u1");
     expect(mail.userOf(a.toUpperCase())).toBe("u1");
     expect(mail.userOf(a.replace(DOMAIN, "other.example.com"))).toBeNull();

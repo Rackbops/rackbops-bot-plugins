@@ -64,8 +64,13 @@ export class MailAddresses {
     readonly domain: string,
   ) {}
 
-  /** The person's alert address, made now when they have none. */
-  addressFor(userId: string, now: Date): string {
+  /**
+   * The person's alert address, made now when they have none; null when they are no longer in the
+   * store (forgotten while the request waited), so forget-me's erasure is never undone.
+   */
+  addressFor(userId: string, now: Date): string | null {
+    const seq = /^u([1-9][0-9]*)$/.exec(userId)?.[1];
+    if (seq === undefined || this.db.query("SELECT 1 FROM users WHERE seq = ?").get(Number(seq)) === null) return null;
     const row = this.db.query("SELECT local FROM mail_addresses WHERE user_id = ?").get(userId) as { local: string } | null;
     if (row) return `${row.local}@${this.domain}`;
     const local = `m-${randomBytes(12).toString("hex")}`;
