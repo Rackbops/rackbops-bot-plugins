@@ -1,6 +1,7 @@
+import type { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Lanes, materialize, type Clock, type Schedule, type User } from "@rackbops/docket-core";
 import { makeFakeDelivery, makeFakeHost } from "../../../packages/testkit/index.js";
@@ -14,6 +15,7 @@ import { admit, setPreferences } from "./people.js";
 import { Roster } from "./roster.js";
 import { openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
+import { removeDir } from "./test-dirs.js";
 
 // Mon 2026-10-05 in New York is UTC-4: 9:00 there is 13:00Z.
 const BEFORE_HOUR = "2026-10-05T12:59:00.000Z";
@@ -299,12 +301,17 @@ describe("forget-me", () => {
 describe("the plugin's notify tick", () => {
   it("sends the digest after the runs due now, on a real data file", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "tracker-digest-"));
+    // The plugin and a second connection to its file, closed before the directory goes: Windows
+    // refuses to delete an open file (#232).
+    let plugin: ReturnType<typeof createPlugin> | null = null;
+    let db: Database | null = null;
     try {
       const clock = fakeClock("2026-10-05T10:00:00.000Z");
       const delivery = makeFakeDelivery();
-      const plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: OWNER }, ...delivery }), { clock });
+      plugin = createPlugin(makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: OWNER }, ...delivery }), { clock });
       await plugin.activate!();
-      const store = new SqliteStore(openDatabase(join(dataDir, DB_DIR, DB_FILE)));
+      db = openDatabase(join(dataDir, DB_DIR, DB_FILE));
+      const store = new SqliteStore(db);
       const owner = await admit(store, OWNER, clock.now());
       const task = await store.createTask({
         ownerId: owner.id,
@@ -333,9 +340,10 @@ describe("the plugin's notify tick", () => {
       clock.set("2026-10-05T13:01:00.000Z");
       await plugin.ticks![0]!.run(new AbortController().signal);
       expect(delivery.calls.dm).toHaveLength(2);
-      await plugin.dispose!();
     } finally {
-      rmSync(dataDir, { recursive: true, force: true });
+      await plugin?.dispose?.();
+      db?.close();
+      removeDir(dataDir);
     }
   });
 });
