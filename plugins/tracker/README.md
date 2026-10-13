@@ -291,8 +291,8 @@ you in as someone else. Sign out is a POST too.
 **The task editor** (slice 2). The forms take the options of `/remind`, `/renewal`, `/price` and
 `/research` (#82), and the same functions check and make them: the same defaults, limits and messages, the page read
 once before a price tracker is made, at most 20 price trackers per person wherever they were made,
-and `near` turned into the same bounded pattern; a person has one new price tracker's page read in
-flight at a time. Every person may have at most 200 active or paused tasks of all types together,
+and `near` turned into the same bounded pattern; a person has one first page read (a new price
+tracker's or `page` watch's) in flight at a time. Every person may have at most 200 active or paused tasks of all types together,
 made anywhere. The length limits are one set (`src/limits.ts`) for the slash options, the forms
 and the server's checks. An edit changes a reminder's text, time and repeat
 (an empty time keeps the one it has, unless the repeat changes); a renewal's name, amount,
@@ -573,8 +573,8 @@ with `Retry-After`. A limited request is refused before its owner is looked up. 
 token does not look up (unknown, revoked, expired, malformed) share one global bucket of 30,
 refilled at one every two seconds; past it they get `429` instead of `401`, and valid tokens are
 unaffected. A body is at most
-16 KiB, read no further. One new price tracker's page read in flight per person, shared with the
-web editor (`409 busy`).
+16 KiB, read no further. One new price tracker's or `page` watch's first read in flight per person,
+shared with the web editor (`409 busy`).
 
 **Requests.** A `POST` or `PATCH` body is one JSON object with `Content-Type: application/json`
 (else `415`), and names only the fields listed for that type (else `400 unknown_field`), each of
@@ -680,7 +680,7 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 | Admin, forget-me | `src/admin.ts`, `src/roster.ts`; `src/web/admin.ts`, `src/web/admin-pages.ts` | The admin acts and forget-me, Discord-free; the SQL docket's Store has no method for (listing people and blocks, erasing a person); the routes and pages. |
 | Web area | `src/web/` | `app.ts` authenticates and dispatches (pure over the injected store and clock), `routes.ts` names the paths; `pages.ts`, `editor-pages.ts` and `html.ts` render; `form-input.ts` reads the editor's fields and `editor.ts` calls the shared rules with them; `signin-link.ts` and `sessions.ts` hold the sign-in; `theme.ts` the stylesheet; `command.ts` is `/web`. |
 | Task API | `src/web/api.ts`, `src/web/api-tasks.ts`, `src/web/api-tokens.ts`, `src/web/tokens.ts`, `src/web/token-pages.ts` | The JSON API's authentication, gates and rate limit; its task routes over editor.ts's writes; the tokens (SQL, hashed); the tokens page and its routes. |
-| Task rules | `src/reminders.ts`, `src/tracked.ts`, `src/price.ts`, `src/edit.ts`, `src/manage.ts`, `src/limits.ts` | What makes, edits, pauses, resumes and deletes a task, and the limits on it, Discord-free, for the commands and the web editor alike. |
+| Task rules | `src/reminders.ts`, `src/tracked.ts`, `src/price.ts`, `src/research.ts`, `src/scout.ts`, `src/want.ts`, `src/edit.ts`, `src/manage.ts`, `src/limits.ts` | What makes, edits, pauses, resumes and deletes a task, and the limits on it, Discord-free, for the commands and the web editor alike. |
 
 ## Configuration
 
