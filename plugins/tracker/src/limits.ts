@@ -1,8 +1,11 @@
 /**
- * The length limits on what a person types, in one place (rackbops-bot-plugins#80): discord.ts sets
- * them as each slash option's `setMaxLength`, the web forms as each field's `maxlength`, and the
- * shared rules (reminders.ts, tracked.ts, price.ts) check them on the server, so a form post that
- * skips the browser meets the same limit a slash command does. A limit is on the trimmed text.
+ * The limits on what a person types, in one place (rackbops-bot-plugins#80), and the cap on how many
+ * tasks they keep (`MAX_LIVE_TASKS`, last, checked by actions.ts's `liveTaskCap`). The length
+ * limits: discord.ts sets them as each slash option's `setMaxLength`, the web forms as each field's
+ * `maxlength`, and the shared rules (reminders.ts, tracked.ts, price.ts, research.ts, want.ts),
+ * `/task snooze`'s `until` (actions.ts) and the settings form (web/app.ts) check them on the server,
+ * so a form post that skips the browser meets the same limit a slash command does. A length limit is
+ * on the trimmed text.
  */
 
 /** A task's name, and a renewal's or a price's name option. */

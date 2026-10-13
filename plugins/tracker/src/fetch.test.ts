@@ -114,7 +114,7 @@ describe("createPageFetch", () => {
     expect(stay.status).toBe(302);
     expect(f.calls).toHaveLength(3);
     const reader = createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl });
-    await expect(reader.get("https://short.example/s", { [NEVER_EBAY]: "1" })).rejects.toThrow("it leads to eBay, which I never read");
+    await expect(reader.get("https://short.example/s", { [NEVER_EBAY]: "1" })).rejects.toThrow("it leads to eBay, which a want-list watch never reads");
     expect(f.calls.filter((c) => c.url.includes("ebay"))).toHaveLength(0);
     expect(headers(3)[NEVER_EBAY]).toBeUndefined();
   });
@@ -131,6 +131,22 @@ describe("createPageFetch", () => {
     await expect(reader.get("https://shop.example/evil")).rejects.toThrow("Only public web pages can be tracked.");
     await expect(reader.get("https://shop.example/loop")).rejects.toThrow(`more than ${MAX_REDIRECTS} redirects`);
     expect(f.calls.filter((c) => c.url === "http://127.0.0.1/admin")).toHaveLength(0);
+  });
+
+  it("a malformed address is refused, not thrown as a TypeError", async () => {
+    const f = fakeFetch({});
+    const err = await createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl }).get("not a url").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FetchRefusedError);
+    expect((err as Error).message).toBe("it is not a web address");
+    expect(f.calls).toHaveLength(0);
+  });
+
+  it("a redirect to a malformed Location is refused", async () => {
+    const f = fakeFetch({ "https://shop.example/a": () => new Response(null, { status: 302, headers: { location: "http://[" } }) });
+    const err = await createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl }).get("https://shop.example/a").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FetchRefusedError);
+    expect((err as Error).message).toBe("it redirects to something that is not a web address");
+    expect(f.calls).toHaveLength(1);
   });
 
   it("keeps at most maxBytes of the body", async () => {

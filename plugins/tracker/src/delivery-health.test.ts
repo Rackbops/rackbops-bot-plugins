@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { defineTaskType, ExecutorUnavailableError, materialize, type Clock, type TaskType } from "@rackbops/docket-core";
 import type { HostApi, HostMessage } from "../../../packages/api/contract.js";
 import type { TrackerDeps } from "./actions.js";
-import { decidePause, DeliveryHealth, PAUSE_AFTER, recipientPauseDetail } from "./delivery-health.js";
+import { decidePause, DeliveryHealth, isRecipientPause, PAUSE_AFTER, PAUSE_DETAIL, pauseNames, recipientPauseDetail } from "./delivery-health.js";
 import { TRACKER_TYPES } from "./index.js";
 import { TaskLocks } from "./locks.js";
 import { deleteTask, type Done, pauseTask, resumeTask } from "./manage.js";
@@ -49,6 +49,31 @@ describe("decidePause", () => {
   });
 });
 
+describe("isRecipientPause and pauseNames (#167: a recipient's pause is theirs, the owner's and admins' to see)", () => {
+  const legacy = `delivery to Bob paused: ${PAUSE_AFTER} DMs in a row could not be delivered`;
+
+  it("a pause for a recipient is one, by id or, from before 0.6.0, by name; the owner's own pause and a resume are not", () => {
+    expect(isRecipientPause({ kind: "paused", detail: recipientPauseDetail("u3") })).toBe(true);
+    expect(isRecipientPause({ kind: "paused", detail: legacy })).toBe(true);
+    expect(isRecipientPause({ kind: "paused", detail: PAUSE_DETAIL })).toBe(false);
+    expect(isRecipientPause({ kind: "paused", detail: "paused by the owner" })).toBe(false);
+    // Every detail a resume is written with (DeliveryHealth.release's callers, manage.ts), and a resume whatever its detail.
+    for (const detail of ["delivery resumed", "resumed by the owner", "resumed: a recipient left the tracker", recipientPauseDetail("u3")]) {
+      expect(isRecipientPause({ kind: "resumed", detail })).toBe(false);
+    }
+  });
+
+  it("names the recipient it is for, by id only: never another id, and a row from before 0.6.0 names nobody", () => {
+    expect(pauseNames(recipientPauseDetail("u3"), "u3")).toBe(true);
+    expect(pauseNames(recipientPauseDetail("u3"), "u5")).toBe(false);
+    expect(pauseNames(recipientPauseDetail("u3"), "u31")).toBe(false);
+    expect(pauseNames(recipientPauseDetail("u31"), "u3")).toBe(false);
+    expect(pauseNames(legacy, "u3")).toBe(false);
+    // A pre-0.6.0 row whose stored display name holds a braced id names nobody, that id included.
+    expect(pauseNames(`delivery to Zed {u4} paused: ${PAUSE_AFTER} DMs in a row could not be delivered`, "u4")).toBe(false);
+  });
+});
+
 describe("DeliveryHealth", () => {
   it("a DM that goes through clears the count, so only failures in a row pause", async () => {
     const s = await setup();
@@ -59,6 +84,16 @@ describe("DeliveryHealth", () => {
     const third = await s.health.recordFailure(s.owner.id, HOST_CANNOT_MESSAGE, "2026-10-01T12:02:00.000Z");
     expect(third).toEqual({ failures: 1, paused: false });
     expect((await s.store.getTask(s.task.id))?.status).toBe("active");
+  });
+
+  it("a DM that goes through after the pause leaves the pause and its count alone: only a resume ends it", async () => {
+    const s = await setup();
+    for (let i = 0; i < PAUSE_AFTER; i++) await s.health.recordFailure(s.owner.id, HOST_CANNOT_MESSAGE, "2026-10-01T12:00:00.000Z");
+    // A DM already out when the pause landed (an invitation, say) goes through after it.
+    s.health.recordSuccess(s.owner.id);
+    expect(s.health.get(s.owner.id)).toMatchObject({ failures: PAUSE_AFTER, pausedAt: "2026-10-01T12:00:00.000Z" });
+    expect(s.health.isPaused(s.owner.id)).toBe(true);
+    expect((await s.store.getTask(s.task.id))?.status).toBe("paused");
   });
 
   it("pauses the person's active tasks on record, and resume sets back only what it paused", async () => {
@@ -286,6 +321,15 @@ describe("the notifier counting toward the pause", () => {
     expect(s.health.get(s.owner.id)?.failures).toBe(2);
   });
 
+  it("an unconfirmed send neither counts nor clears the count", async () => {
+    const s = await setup();
+    await s.health.recordFailure(s.owner.id, HOST_CANNOT_MESSAGE, "2026-10-01T12:00:00.000Z");
+    // Neither a refusal nor a delivery: it may have gone out, so it is the error itself, unchanged.
+    const timeout = new Error("request timed out");
+    await expect(failingWith(s, timeout, s.health).sendDm(s.owner.id, { text: "hi" })).rejects.toBe(timeout);
+    expect(s.health.get(s.owner.id)).toMatchObject({ failures: 1, pausedAt: null });
+  });
+
   it("a count that fails is logged, and the send's own error is still what docket gets", async () => {
     const s = await setup();
     const broken = new Error("database is locked");
@@ -298,6 +342,69 @@ describe("the notifier counting toward the pause", () => {
     const notifier = failingWith(s, new Error(HOST_CANNOT_MESSAGE), health, errors);
     await expect(notifier.sendDm(s.owner.id, { text: "hi" })).rejects.toMatchObject({ message: HOST_CANNOT_MESSAGE, unreachable: true });
     expect(errors).toEqual([broken]);
+  });
+
+  it("a delivered DM whose count cannot be cleared still reports its message id, and the failure is logged", async () => {
+    const s = await setup();
+    const broken = new Error("database is locked");
+    const health = Object.assign(Object.create(s.health) as DeliveryHealth, {
+      recordSuccess: () => {
+        throw broken;
+      },
+    });
+    const calls: string[] = [];
+    const errors: [string, unknown][] = [];
+    const notifier = createDmNotifier({
+      store: s.store,
+      dm: async (userId) => {
+        calls.push(userId);
+        return { guildId: null, channelId: "c", messageId: "m1" };
+      },
+      clock: s.clock,
+      log: { info() {}, warn() {}, error: (m: string, e?: unknown) => void errors.push([m, e]) },
+      health,
+    });
+    // Resolving, not rejecting: docket settles the delivery sent, with its message id, not unconfirmed.
+    expect(await notifier.sendDm(s.owner.id, { text: "hi" })).toEqual({ messageId: "m1" });
+    expect(calls).toEqual([OWNER]);
+    expect(errors).toEqual([[`could not clear the failure count of ${s.owner.id}`, broken]]);
+  });
+});
+
+describe("the notify tick counting toward the pause", () => {
+  it("a DM that goes through clears the count, so only refusals in a row pause, however far apart", async () => {
+    const s = await setup();
+    let refuse = true;
+    const sent: string[] = [];
+    const dm: NonNullable<HostApi["dm"]> = async (userId) => {
+      if (refuse) throw new Error(HOST_CANNOT_MESSAGE);
+      sent.push(userId);
+      return { guildId: null, channelId: "c", messageId: `m${sent.length}` };
+    };
+    const log = { info() {}, warn() {}, error() {} };
+    const deps = { store: s.store, clock: s.clock, types: TRACKER_TYPES, dm, log, health: s.health };
+    // One tick a week: each fires the one run owed (after the first, a late one), so the refusals are weeks apart.
+    let week = 0;
+    const run = async (refused: boolean) => {
+      refuse = refused;
+      s.clock.set(new Date(Date.UTC(2026, 9, 1 + 7 * week++, 13)).toISOString());
+      expect(await runNotifyTick(deps)).toEqual({ kind: "ran", result: { ran: 1, failed: 0, skipped: 0 } });
+    };
+    await run(true);
+    await run(true);
+    expect(s.health.get(s.owner.id)?.failures).toBe(PAUSE_AFTER - 1);
+    await run(false);
+    expect(sent).toEqual([OWNER]);
+    await run(true);
+    expect(s.health.get(s.owner.id)).toMatchObject({ failures: 1, pausedAt: null });
+    expect((await s.store.getTask(s.task.id))?.status).toBe("active");
+    // The count still pauses once the refusals are in a row again.
+    await run(true);
+    expect(s.health.isPaused(s.owner.id)).toBe(false);
+    await run(true);
+    expect(s.health.get(s.owner.id)?.failures).toBe(PAUSE_AFTER);
+    expect(s.health.isPaused(s.owner.id)).toBe(true);
+    expect((await s.store.getTask(s.task.id))?.status).toBe("paused");
   });
 });
 
@@ -315,6 +422,8 @@ describe("a recipient's failures (plan 5.5: the task pauses and the owner is tol
     };
     const log = { info() {}, warn() {}, error() {} };
     const deps = { store: s.store, clock: s.clock, types: TRACKER_TYPES, dm, log, health };
+    // The owner once had a DM refused: each of their copies below goes through and clears that.
+    await health.recordFailure(s.owner.id, HOST_CANNOT_MESSAGE, "2026-10-01T12:00:00.000Z");
     // docket 0.4.0 sends each person's copy on its own: the owner's goes, the friend's fails for
     // good at once (unreachable), and the run is done. One run, one count toward the pause.
     for (let day = 1; day <= PAUSE_AFTER; day++) {
@@ -329,7 +438,7 @@ describe("a recipient's failures (plan 5.5: the task pauses and the owner is tol
   it("pauses the task, tells the owner once, and resumes it when the recipient comes back", async () => {
     const s = await failingFriend();
     expect(s.health.isPaused(s.friend.id)).toBe(true);
-    expect(s.health.get(s.owner.id)?.failures ?? 0).toBe(0);
+    expect(s.health.get(s.owner.id)).toMatchObject({ failures: 0, pausedAt: null });
     expect((await s.store.getTask(s.task.id))?.status).toBe("paused");
     expect(s.told).toHaveLength(1);
     expect(s.told[0]?.owner).toBe(s.owner.id);

@@ -6,8 +6,9 @@ import { pageForExtraction } from "./page.js";
 
 /**
  * docket's Fetch port for the price tracker (rackbops-bot-plugins#81, plan 5.3: "the price
- * tracker's fetch and compare" on the notify side, no model). Any registered person names the URL,
- * and the bot runs on roshne's own host, so a read is fenced to the public internet:
+ * tracker's fetch and compare" on the notify side, no model) and for the want-list's `page` source
+ * (docket-types' `pageSource`). Any registered person names the URL, and the bot runs on roshne's
+ * own host, so a read is fenced to the public internet:
  *
  * - `http:` or `https:` only, on the scheme's default port, with no user name or password in it;
  * - every address the host name resolves to must be public: no loopback, private, link-local,
@@ -16,8 +17,9 @@ import { pageForExtraction } from "./page.js";
  * - redirects are followed by hand, at most `MAX_REDIRECTS`, each hop checked the same way;
  * - a read gives up after `TIMEOUT_MS`, or when the tick's signal aborts, and keeps at most
  *   `MAX_BYTES` of the body (a price is in the page's head or its JSON-LD, well inside that);
- * - the body handed back is `pageForExtraction`'s (page.ts): only what price extraction reads,
- *   rebuilt so docket's extraction patterns cannot take quadratic time on it.
+ * - the body handed back is `pageForExtraction`'s (page.ts): only what price extraction and the
+ *   `page` source's JSON-LD reading need, rebuilt so docket's extraction patterns cannot take
+ *   quadratic time on it.
  *
  * The check resolves the name and then `fetch` resolves it again, so a DNS server that answers
  * differently the second time (rebinding) is not stopped by this; the host's own network is the
@@ -55,9 +57,11 @@ export interface PageFetchOptions {
 }
 
 /**
- * docket-types' page reads carry `NEVER_EBAY`: a directive to this port, never sent. Any hop to
- * eBay is refused, so a pasted page that redirects to eBay is not read either (roshne's rule:
- * the tracker never reads eBay; an eBay watch gets its listings sent in, inbox.ts).
+ * docket-types' `page` source (the want-list watcher's page reads) carries `NEVER_EBAY`: a
+ * directive to this port, never sent. Any hop to eBay is refused, so a pasted page that redirects
+ * to eBay is not read either (roshne's rule: the want-list watcher never reads eBay; an eBay watch
+ * gets its listings sent in, inbox.ts). `/price`'s reads carry no such header, so a price may
+ * track an eBay page (roshne, 2026-10-11, #165).
  */
 export { isEbayHost, NEVER_EBAY };
 
@@ -180,7 +184,7 @@ function orAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
 async function checkHost(url: URL, resolve: Resolve, signal: AbortSignal, neverEbay = false): Promise<void> {
   const problem = urlProblem(url.href);
   if (problem) throw new FetchRefusedError(problem);
-  if (neverEbay && isEbayHost(url.hostname)) throw new FetchRefusedError("it leads to eBay, which I never read");
+  if (neverEbay && isEbayHost(url.hostname)) throw new FetchRefusedError("it leads to eBay, which a want-list watch never reads");
   const host = url.hostname.replace(/^\[|\]$/g, "");
   let addresses: string[];
   if (isIP(host) !== 0) addresses = [host];
@@ -234,7 +238,12 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
   return {
     async get(raw: string, headers: Record<string, string> = {}): Promise<FetchResponse> {
       const signal = o.signal ? AbortSignal.any([o.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
-      let url = new URL(raw);
+      let url: URL;
+      try {
+        url = new URL(raw);
+      } catch {
+        throw new FetchRefusedError("it is not a web address");
+      }
       const origin = url.origin;
       const neverEbay = Object.keys(headers).some((k) => k.toLowerCase() === NEVER_EBAY);
       const sent = Object.fromEntries(Object.entries(headers).filter(([k]) => k.toLowerCase() !== NEVER_EBAY));
@@ -251,7 +260,11 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
         if (response.status >= 300 && response.status < 400 && location && !o.noRedirects) {
           await response.body?.cancel().catch(() => {});
           if (hop >= MAX_REDIRECTS) throw new FetchRefusedError(`more than ${MAX_REDIRECTS} redirects`);
-          url = new URL(location, url);
+          try {
+            url = new URL(location, url);
+          } catch {
+            throw new FetchRefusedError("it redirects to something that is not a web address");
+          }
           continue;
         }
         const out: Record<string, string> = {};
