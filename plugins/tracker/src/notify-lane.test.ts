@@ -320,6 +320,36 @@ describe("runNotifyTick", () => {
     expect((await taskStore(s.store, other.id).listDeliveries({ dueBefore: DUE })).map((d) => d.occurrenceId)).toEqual([second?.id ?? ""]);
   });
 
+  it("picks up a fired run a dead tick left running, so docket's stale sweep puts it back and finishes it (#212)", async () => {
+    // A daily reminder's first run goes out; its record stands in for the second run's, fired
+    // fifteen minutes ago by a tick that died before finishing it (no restart since).
+    const s = await setup({ kind: "calendar", every: 1, unit: "day", start: "2026-10-01", hour: 9 });
+    const { dm, calls } = fakeDm();
+    const { log } = silentLog();
+    const deps = { store: s.store, clock: s.clock, types: TASK_TYPES, dm, log };
+    s.clock.set(s.occurrence.dueAt);
+    await runNotifyTick(deps);
+    const fired = (await s.store.getOccurrence(s.occurrence.id))?.record;
+    const next = (await s.store.listOccurrences({ status: "queued" })).find((o) => o.taskId === s.task.id);
+    if (!next || !fired) throw new Error("no second run");
+    s.clock.set(new Date(Date.parse(next.dueAt) + 15 * 60_000).toISOString());
+    await s.store.updateOccurrence(next.id, { status: "running", startedAt: next.dueAt, record: fired });
+    expect(await tasksWithWork(s.store, s.clock.now(), () => true)).toEqual([s.task.id]);
+    await runNotifyTick(deps);
+    expect((await s.store.getOccurrence(next.id))?.status).toBe("done");
+    expect(calls).toHaveLength(2);
+  });
+
+  it("asks keep about a task the store no longer has, and leaves it out when keep says no (#212)", async () => {
+    const s = await setup();
+    s.clock.set(DUE);
+    const gone = Object.create(s.store) as typeof s.store;
+    gone.getTask = async () => null;
+    const asked: unknown[] = [];
+    expect(await tasksWithWork(gone, s.clock.now(), (t) => (asked.push(t), false))).toEqual([]);
+    expect(asked).toEqual([null]);
+  });
+
   it("cuts a long message so it fits after the host wraps its links, even when the cut splits one", () => {
     const text = `${"a ".repeat(990)}https://example.com/${"x".repeat(100)}`;
     const out = toHostMessage({ text });

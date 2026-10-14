@@ -15,7 +15,13 @@ import { api, call, cleanup, csrfOf, CURLY, hidden, type Jar, LARRY, makeToken, 
  * queues its run, which the execute tick (research.test.ts) submits.
  */
 
-afterEach(cleanup);
+/** Each silent city-hall's `hangUp`, called before `cleanup` however the test ended (as in execute-lane.test.ts). */
+const hangUps: (() => void)[] = [];
+
+afterEach(async () => {
+  for (const hangUp of hangUps.splice(0)) hangUp();
+  await cleanup();
+});
 
 const CITY_HALL = {
   TRACKER_CITY_HALL_URL: "https://city-hall.example.com",
@@ -264,6 +270,54 @@ describe("research from the task API", () => {
 
   it("a task the execute tick holds answers 409 busy, not 400", () => {
     expect(refusal(TASK_BUSY)).toEqual({ status: 409, body: { error: { code: "busy", message: TASK_BUSY } } });
+  });
+});
+
+describe("a task the execute tick holds, on the web (#227)", () => {
+  it("Pause, Delete and a scout's Save answer busy at once, change nothing, and hold up no one else", async () => {
+    // A city-hall that never answers while the test runs: the execute tick holds its tasks throughout.
+    const out: ((err: Error) => void)[] = [];
+    let over = false;
+    const cityHallFetch = (async () => {
+      if (over) throw new Error("city-hall hung up");
+      return new Promise<Response>((_, reject) => void out.push(reject));
+    }) as unknown as typeof fetch;
+    hangUps.push(() => {
+      over = true;
+      for (const fail of out.splice(0)) fail(new Error("city-hall hung up"));
+    });
+    const started: Promise<void>[] = [];
+    const w = await world({ env: CITY_HALL, cityHallFetch, executeStarted: (p) => void started.push(p) });
+    await people(w.plugin);
+    const larry = await signIn(w.plugin, LARRY);
+    const csrf = await csrfOf(w.plugin, larry);
+    expect((await post(w.plugin, larry, csrf, "/new/research", { question: "What is the best way to store sourdough starter?" })).status).toBe(303);
+    expect((await post(w.plugin, larry, csrf, "/new/scout", { interests: "birding", every: "1" })).status).toBe(303);
+    // Past the preferred hour (9:00 in New York), so the scout's first run is due with the request's.
+    w.clock.set("2026-10-01T13:00:30.000Z");
+    await w.plugin.ticks?.find((t) => t.name === "execute")?.run(new AbortController().signal);
+    expect(started).toHaveLength(1);
+    const before = tasks(w.dbPath);
+
+    const curly = await signIn(w.plugin, CURLY);
+    const curlyCsrf = await csrfOf(w.plugin, curly);
+    const begun = Date.now();
+    const stalled = new Promise<"stalled">((r) => setTimeout(() => r("stalled"), 2000));
+    const [pause, del, edit, theirs] = await Promise.all([
+      Promise.race([post(w.plugin, larry, csrf, "/tasks/t1/pause"), stalled]),
+      Promise.race([post(w.plugin, larry, csrf, "/tasks/t1/delete", { confirm: "yes" }), stalled]),
+      Promise.race([post(w.plugin, larry, csrf, "/tasks/t2/edit", { interests: "baking", every: "3" }), stalled]),
+      Promise.race([post(w.plugin, curly, curlyCsrf, "/new/reminder", { text: "water the plants", when: "in 1 hour" }), stalled]),
+    ]);
+    expect(Date.now() - begun).toBeLessThan(1000);
+    for (const res of [pause, del, edit]) {
+      if (res === "stalled") throw new Error("a web write waited on the execute tick");
+      expect(res.status).toBe(400);
+      expect(await res.text()).toContain(TASK_BUSY);
+    }
+    if (theirs === "stalled") throw new Error("another person's write waited on the execute tick");
+    expect(theirs.status).toBe(303);
+    expect(tasks(w.dbPath).slice(0, 2)).toEqual(before);
   });
 });
 

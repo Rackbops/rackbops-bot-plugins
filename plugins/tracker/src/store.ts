@@ -702,6 +702,16 @@ export class SqliteStore implements Store {
     return this.run("INSERT INTO notices (key, at) VALUES (?, ?) ON CONFLICT (key) DO NOTHING", key, at).changes === 1;
   }
 
+  /**
+   * The notice whose key starts with `prefix` and whose `at` is the latest, or null. Reads only: a
+   * range over the key's primary-key index (the bound `prefix` + U+FFFF holds for the ASCII keys
+   * written here). The daily digest reads a person's last claimed day with it (digest.ts).
+   */
+  async lastNotice(prefix: string): Promise<{ key: string; at: string } | null> {
+    const r = this.one("SELECT key, at FROM notices WHERE key >= ? AND key < ? ORDER BY at DESC LIMIT 1", prefix, `${prefix}\uffff`);
+    return r ? { key: String(r.key), at: String(r.at) } : null;
+  }
+
   // --- deliveries (docket's delivery.ts: one row per run and person, claimed before each send) --
 
   private delivery(occurrenceId: string, userId: string): Delivery | null {

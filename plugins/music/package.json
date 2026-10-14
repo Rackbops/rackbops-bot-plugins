@@ -20,21 +20,21 @@
     "env": [
       {
         "key": "SETLISTFM_API_KEY",
-        "format": "^\\S+$",
+        "format": "^[!-~]+$",
         "required": false,
         "secret": true,
         "description": "setlist.fm API key (free for non-commercial use, requested from your setlist.fm account settings); unset = /setlist reports the feature unconfigured."
       },
       {
         "key": "SPOTIFY_CLIENT_ID",
-        "format": "^\\S+$",
+        "format": "^[!-~]+$",
         "required": false,
         "secret": true,
         "description": "Spotify app client id from developer.spotify.com; unset = /spotify and /setlist report the feature unconfigured."
       },
       {
         "key": "SPOTIFY_CLIENT_SECRET",
-        "format": "^\\S+$",
+        "format": "^[!-~]+$",
         "required": false,
         "secret": true,
         "description": "Spotify app client secret."

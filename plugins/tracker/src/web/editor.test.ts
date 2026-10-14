@@ -4,11 +4,13 @@ import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import { SlashCommandBuilder } from "discord.js";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import { NO_SUCH_TASK } from "../actions.js";
-import { PAUSE_DETAIL } from "../delivery-health.js";
+import { PAUSE_AFTER, PAUSE_DETAIL } from "../delivery-health.js";
 import { MAX_LIVE_TASKS, MAX_NEAR, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
 import { MAX_PRICE_TASKS, nearPattern } from "../price.js";
+import { CONFIRM_WORD } from "./admin-pages.js";
 import { MAX_FORM_BYTES } from "./app.js";
 import { READING } from "./editor.js";
+import { EDITOR_TYPES, type Field, fieldsFor, NEW_TYPES } from "./editor-pages.js";
 import { ADMIN, api, call, cleanup, csrfOf, CURLY, hidden, type Jar, LARRY, makeToken, ORIGIN, people, press, signIn, slash, STRANGER, world } from "./harness.js";
 import { esc } from "./html.js";
 import { DMS_PAUSED } from "./pages.js";
@@ -375,6 +377,36 @@ describe("price trackers", () => {
     expect((await post(w.plugin, larry, csrf, "/new/price", { url: `${SHOP}2`, near: "Price:" })).status).toBe(303);
   });
 
+  it("new: a watch that reads no page is not held by a read in flight; a page watch is, in words that fit it (#226)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const reads: string[] = [];
+    const fetch: Fetch = {
+      async get(url: string): Promise<FetchResponse> {
+        reads.push(url);
+        await gate;
+        return { status: 200, body: `<p>Price: 10.00</p>`, headers: {} };
+      },
+    };
+    const w = await world({ fetch });
+    await people(w.plugin);
+    const larry = await signIn(w.plugin, LARRY);
+    const csrf = await csrfOf(w.plugin, larry);
+    const first = post(w.plugin, larry, csrf, "/new/price", { url: SHOP, near: "Price:" });
+    for (let i = 0; i < 500 && reads.length < 1; i++) await Bun.sleep(2);
+    // An eBay watch reads nothing now: made at once, while the price's page is still being read.
+    const ebay = await post(w.plugin, larry, csrf, "/new/wantlist", { name: "Oceania", source: "ebay", judge: "no" });
+    expect(ebay.status).toBe(303);
+    const page = await post(w.plugin, larry, csrf, "/new/wantlist", { name: "Widgets", source: "page", target: `${SHOP}s`, judge: "no" });
+    expect(page.status).toBe(400);
+    expect(READING).not.toContain("your last new price tracker;");
+    expect(await page.text()).toContain(esc(READING));
+    expect(reads).toEqual([SHOP]);
+    release();
+    expect((await first).status).toBe(303);
+    expect(tasks(w.dbPath).map((t) => t.type)).toEqual(["wantlist", "price"]);
+  });
+
   it("edit: the name, interval, drop and baseline; never the page", async () => {
     const w = await setup();
     await post(w.plugin, w.larry, w.csrf, "/new/price", { url: SHOP, hours: "12" });
@@ -394,6 +426,41 @@ describe("price trackers", () => {
     expect(tasks(w.dbPath)[0]?.title).toBe("shop.example/widget");
     expect((await post(w.plugin, w.larry, w.csrf, "/tasks/t1/edit", { hours: "200" })).status).toBe(400);
     expect(w.shop.reads).toHaveLength(1);
+  });
+});
+
+describe("the editor's page reads go through the fence (#227)", () => {
+  it("with no Fetch given, a new price or page watch whose page redirects inward is refused, and the inner address is never asked", async () => {
+    const realFetch = globalThis.fetch;
+    const asked: string[] = [];
+    // The network: each public page redirects to the cloud metadata address. A fetch that follows
+    // redirects itself (anything but the fence's `manual`) reads a price there.
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      asked.push(url);
+      if (url.startsWith("http://169.254.169.254/")) return new Response("<p>Price: 1.00</p>");
+      if (init?.redirect !== "manual") {
+        asked.push("http://169.254.169.254/latest/meta-data/");
+        return new Response("<p>Price: 1.00</p>");
+      }
+      return new Response(null, { status: 302, headers: { location: "http://169.254.169.254/latest/meta-data/" } });
+    }) as unknown as typeof fetch;
+    try {
+      const w = await world();
+      await people(w.plugin);
+      const larry = await signIn(w.plugin, LARRY);
+      const csrf = await csrfOf(w.plugin, larry);
+      const price = await post(w.plugin, larry, csrf, "/new/price", { url: "http://1.1.1.1/widget", near: "Price:" });
+      expect(price.status).toBe(400);
+      expect(await price.text()).toContain("I cannot read that page: Only public web pages can be tracked.");
+      const page = await post(w.plugin, larry, csrf, "/new/wantlist", { name: "Widgets", source: "page", target: "http://1.1.1.1/widgets", judge: "no" });
+      expect(page.status).toBe(400);
+      expect(await page.text()).toContain("I cannot read that page: Only public web pages can be tracked.");
+      expect(tasks(w.dbPath)).toEqual([]);
+      expect(asked).toEqual(["http://1.1.1.1/widget", "http://1.1.1.1/widgets"]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 });
 
@@ -527,7 +594,7 @@ describe("only the owner", () => {
 });
 
 describe("a recipient's delivery pause (#167)", () => {
-  it("is not on another recipient's page or /task history, nor in its count; the owner's own pause and resume are, and the owner's page names them", async () => {
+  it("reads as the task's own pause on another recipient's page and /task history, naming no one (#273); the owner's own pause and resume are as they are, and the owner's page names them", async () => {
     const w = await setup();
     await slash(w.plugin, "allow", ADMIN, { users: { user: STRANGER } });
     await slash(w.plugin, "register", STRANGER);
@@ -537,7 +604,7 @@ describe("a recipient's delivery pause (#167)", () => {
       await press(w.plugin, "tracker:a.t.t1", who);
     }
     // The owner pauses and resumes it by hand, twice (the web is the one place to pause by hand):
-    // Stranger then sees more changes than are shown, the hidden pause among the newest five.
+    // Stranger then sees more changes than are shown, the neutral pause among the newest five.
     for (let i = 0; i < 2; i++) {
       for (const act of ["pause", "resume"]) expect((await post(w.plugin, w.larry, w.csrf, `/tasks/t1/${act}`)).status).toBe(303);
     }
@@ -550,12 +617,12 @@ describe("a recipient's delivery pause (#167)", () => {
     expect(history.slice(history.indexOf("Changes:"))).toBe(
       [
         "Changes:",
-        "- (2 earlier)",
-        "- Thu Oct 1, 8:00 recipient accepted",
+        "- (3 earlier)",
         "- Thu Oct 1, 8:00 paused: paused by the owner",
         "- Thu Oct 1, 8:00 resumed: resumed by the owner",
         "- Thu Oct 1, 8:00 paused: paused by the owner",
         "- Thu Oct 1, 8:00 resumed: resumed by the owner",
+        "- Sat Oct 3, 9:00 paused: delivery paused",
       ].join("\n"),
     );
     const page = async (who: string) => (await call(w.plugin, "GET", "/tasks/t1", { jar: await signIn(w.plugin, who) })).text();
@@ -563,6 +630,149 @@ describe("a recipient's delivery pause (#167)", () => {
     const theirs = await page(STRANGER);
     expect(theirs).toContain("bins out");
     expect(theirs).not.toContain("delivery to");
+  });
+});
+
+describe("another recipient learns nothing of a recipient from the history (#273)", () => {
+  /** Larry's daily t1, accepted by Curly (u3) and Stranger (u4); Curly's DMs fail until t1 pauses for him. */
+  async function pausedForCurly() {
+    const w = await setup();
+    await slash(w.plugin, "allow", ADMIN, { users: { user: STRANGER } });
+    await slash(w.plugin, "register", STRANGER);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    for (const who of [CURLY, STRANGER]) {
+      await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: who } });
+      await press(w.plugin, "tracker:a.t.t1", who);
+    }
+    w.delivery.unreachable.add(CURLY);
+    for (const day of ["01", "02", "03"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await notifyTick(w.plugin);
+    }
+    expect(tasks(w.dbPath)[0]?.status).toBe("paused");
+    return w;
+  }
+
+  /** The pause and resume lines of `who`'s /task history and of their page, without the times. */
+  async function seen(w: Awaited<ReturnType<typeof setup>>, who: string) {
+    const strip = (lines: string[]) => lines.filter((l) => / (paused|resumed)/.test(l)).map((l) => l.replace(/^.*? (paused|resumed)/, "$1"));
+    const history = await slash(w.plugin, "task", who, { sub: "history", strings: { task: "t1" } });
+    const page = await (await call(w.plugin, "GET", "/tasks/t1", { jar: await signIn(w.plugin, who) })).text();
+    const items = [...page.matchAll(/<li>([^<]*)<\/li>/g)].map((m) => m[1] ?? "");
+    return { discord: strip(history.slice(history.indexOf("Changes:")).split("\n")), web: strip(items), history, page };
+  }
+
+  const pause = `paused: delivery to user333 paused: ${PAUSE_AFTER} DMs in a row could not be delivered`;
+
+  it("(A) Curly comes back: another recipient sees the task's own pause, then its resume", async () => {
+    const w = await pausedForCurly();
+    w.delivery.unreachable.delete(CURLY);
+    await slash(w.plugin, "tasks", CURLY);
+    expect(tasks(w.dbPath)[0]?.status).toBe("active");
+    const theirs = await seen(w, STRANGER);
+    expect(theirs.discord).toEqual(["paused: delivery paused", "resumed: delivery resumed"]);
+    expect(theirs.web).toEqual(theirs.discord);
+    for (const who of [LARRY, ADMIN, CURLY]) expect((await seen(w, who)).discord).toEqual([pause, "resumed: delivery resumed"]);
+  });
+
+  it("(B) the owner goes on without Curly: another recipient sees a delivery pause and its resume", async () => {
+    const w = await pausedForCurly();
+    expect(await slash(w.plugin, "task", LARRY, { sub: "resume", strings: { task: "t1" } })).toContain("Resumed `t1`");
+    const theirs = await seen(w, STRANGER);
+    // As the owner's own delivery pause and its resume read (manage.ts resumes that with "delivery resumed").
+    expect(theirs.discord).toEqual(["paused: delivery paused", "resumed: delivery resumed"]);
+    expect(theirs.web).toEqual(theirs.discord);
+    for (const who of [LARRY, ADMIN]) expect((await seen(w, who)).discord).toEqual([pause, "resumed: resumed by the owner"]);
+  });
+
+  it("(C) an admin forgets Curly: another recipient sees no resume that says a recipient left", async () => {
+    const w = await pausedForCurly();
+    const admin = await signIn(w.plugin, ADMIN);
+    const done = await post(w.plugin, admin, await csrfOf(w.plugin, admin), "/admin/people/u3/forget", { confirm: "yes", word: CONFIRM_WORD });
+    expect(done.status).toBe(200);
+    expect(tasks(w.dbPath)[0]?.status).toBe("active");
+    const theirs = await seen(w, STRANGER);
+    // Forget-me deleted the pause that named Curly, so no pause is left to pair the resume with.
+    expect(theirs.discord).toEqual([]);
+    expect(theirs.web).toEqual([]);
+    expect(theirs.history).not.toContain("left the tracker");
+    expect(theirs.page).not.toContain("left the tracker");
+    for (const who of [LARRY, ADMIN]) expect((await seen(w, who)).discord).toEqual(["resumed: resumed: a recipient left the tracker"]);
+  });
+
+  it("the owner's own delivery pause and a pause for another recipient read the same to a recipient", async () => {
+    const w = await setup();
+    await slash(w.plugin, "allow", ADMIN, { users: { user: STRANGER } });
+    await slash(w.plugin, "register", STRANGER);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    for (const who of [CURLY, STRANGER]) {
+      await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: who } });
+      await press(w.plugin, "tracker:a.t.t1", who);
+    }
+    w.delivery.unreachable.add(LARRY);
+    for (const day of ["01", "02", "03"]) {
+      w.clock.set(`2026-10-${day}T13:00:00.000Z`);
+      await notifyTick(w.plugin);
+    }
+    const owners = await seen(w, STRANGER);
+    expect(owners.discord).toEqual(["paused: delivery paused"]);
+    expect(owners.web).toEqual(owners.discord);
+    const curlys = await seen(await pausedForCurly(), STRANGER);
+    expect(curlys.discord).toEqual(owners.discord);
+    expect(curlys.web).toEqual(owners.web);
+    // Larry's command resumes him, and the task: the same pair as (A) and (B) to Stranger.
+    w.delivery.unreachable.delete(LARRY);
+    expect((await seen(w, LARRY)).discord).toEqual([`paused: ${PAUSE_DETAIL}`, "resumed: delivery resumed"]);
+    expect((await seen(w, STRANGER)).discord).toEqual(["paused: delivery paused", "resumed: delivery resumed"]);
+  });
+
+  /** Larry's t1, accepted by Curly (u3) and Stranger (u4), its first run stored as failed for Curly as before 0.9.0. */
+  async function legacyFailedRun() {
+    const w = await setup();
+    await slash(w.plugin, "allow", ADMIN, { users: { user: STRANGER } });
+    await slash(w.plugin, "register", STRANGER);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    for (const who of [CURLY, STRANGER]) {
+      await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: who } });
+      await press(w.plugin, "tracker:a.t.t1", who);
+    }
+    w.clock.set("2026-10-01T13:00:00.000Z");
+    await notifyTick(w.plugin);
+    // What the notifier stored on the run before 0.9.0 (roster.ts `errorForms`).
+    const db = new Database(w.dbPath);
+    db.query("UPDATE occurrences SET status = 'failed', error = 'recipient u3 cannot be messaged' WHERE seq = 1").run();
+    db.close();
+    return w;
+  }
+
+  /** `who`'s /task history line for the first run, and their page. */
+  async function firstRun(w: Awaited<ReturnType<typeof setup>>, who: string) {
+    const history = await slash(w.plugin, "task", who, { sub: "history", strings: { task: "t1" } });
+    const page = await (await call(w.plugin, "GET", "/tasks/t1", { jar: await signIn(w.plugin, who) })).text();
+    return { line: history.split("\n").find((l) => l.includes("Thu Oct 1, 9:00")), page };
+  }
+
+  it("(E) a run from before 0.9.0 that failed for Curly: another recipient's Runs do not name him", async () => {
+    const w = await legacyFailedRun();
+    const theirs = await firstRun(w, STRANGER);
+    expect(theirs.line).toBe("- Thu Oct 1, 9:00 -- failed: a recipient cannot be messaged");
+    expect(theirs.page).toContain("a recipient cannot be messaged");
+    expect(theirs.page).not.toContain("u3");
+    for (const who of [LARRY, ADMIN, CURLY]) {
+      const r = await firstRun(w, who);
+      expect(r.line).toBe("- Thu Oct 1, 9:00 -- failed: recipient u3 cannot be messaged");
+      expect(r.page).toContain("recipient u3 cannot be messaged");
+    }
+  });
+
+  it("(E) once Curly is forgotten, the redacted error still does not reach another recipient", async () => {
+    const w = await legacyFailedRun();
+    const admin = await signIn(w.plugin, ADMIN);
+    expect((await post(w.plugin, admin, await csrfOf(w.plugin, admin), "/admin/people/u3/forget", { confirm: "yes", word: CONFIRM_WORD })).status).toBe(200);
+    const theirs = await firstRun(w, STRANGER);
+    expect(theirs.line).toBe("- Thu Oct 1, 9:00 -- failed: a recipient cannot be messaged");
+    expect(theirs.page).not.toContain("forgotten");
+    for (const who of [LARRY, ADMIN]) expect((await firstRun(w, who)).line).toBe("- Thu Oct 1, 9:00 -- failed: recipient (forgotten) cannot be messaged");
   });
 });
 
@@ -630,6 +840,18 @@ describe("the gates", () => {
     const long = { text: "\u3042".repeat(1500), when: "tomorrow", repeat: "none" };
     expect((await post(w.plugin, w.larry, w.csrf, "/new/reminder", long)).status).toBe(303);
     expect(tasks(w.dbPath)).toHaveLength(1);
+  });
+
+  it("every editor form, each field at its longest in a script that percent-encodes to nine bytes a character, fits the cap", () => {
+    // A field with a maxlength filled to it; any other (a number, a date, a select) given 32
+    // characters, far more than a real value. The csrf token is 43 characters.
+    const worst = (fields: readonly Field[]) =>
+      new URLSearchParams({ csrf: "x".repeat(43), ...Object.fromEntries(fields.map((f) => [f.name, "あ".repeat(f.maxlength ?? 32)])) }).toString().length;
+    const forms = [...NEW_TYPES.map((t) => fieldsFor(t, "new")), ...EDITOR_TYPES.map((t) => fieldsFor(t, "edit"))];
+    // Research (a question and its context) is the longest; were docket-types to raise its limits
+    // past the cap, a legitimate request would get a bare "Bad request" and lose what was typed.
+    expect(Math.max(...forms.map(worst))).toBe(worst(fieldsFor("research", "new")));
+    for (const fields of forms) expect(worst(fields)).toBeLessThanOrEqual(MAX_FORM_BYTES);
   });
 
   it("the page names only fixed notices: nothing from the address is echoed", async () => {
@@ -786,6 +1008,23 @@ describe("review fixes", () => {
     await post(w.plugin, w.larry, w.csrf, "/tasks/t3/edit", { text: " " });
     expect(tasks(w.dbPath)[2]).toMatchObject({ title: "tea", schedule: { unit: "week" } });
     expect(events(w.dbPath, "t3")).toEqual(["created"]);
+  });
+
+  it("an edit form never says what an empty number becomes on a new task: it keeps what the task has (#173)", async () => {
+    for (const type of EDITOR_TYPES) {
+      for (const f of fieldsFor(type, "edit")) expect(`${type}.${f.name}: ${f.help ?? ""}`).not.toContain("when empty");
+    }
+    // The new forms still name the defaults; the task API, whose PATCH refuses an empty number, says to omit it.
+    expect(fieldsFor("price", "new").find((f) => f.name === "hours")?.help).toContain("12 when empty");
+    for (const type of EDITOR_TYPES) {
+      for (const f of fieldsFor(type, "edit", "api")) expect(`${type}.${f.name}: ${f.help ?? ""}`).not.toContain("Leave it empty to keep what it has.");
+    }
+    expect(fieldsFor("renewal", "edit", "api").find((f) => f.name === "lead")?.help).toBe("Omit it to keep what it has.");
+    const w = await setup();
+    await post(w.plugin, w.larry, w.csrf, "/new/price", { url: SHOP, hours: "24", drop: "20" });
+    const form = await (await call(w.plugin, "GET", "/tasks/t1/edit", { jar: w.larry })).text();
+    expect(form).not.toContain("when empty");
+    expect(form).toContain("Leave it empty to keep what it has.");
   });
 
   it("the length limits hold on the server, and are one set of numbers for Discord, the forms and the checks", async () => {

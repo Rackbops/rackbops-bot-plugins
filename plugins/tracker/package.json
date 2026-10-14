@@ -67,7 +67,7 @@
       },
       {
         "key": "TRACKER_CITY_HALL_KEY",
-        "format": "^\\S+$",
+        "format": "^[!-~]+$",
         "required": false,
         "secret": true,
         "description": "The source bearer key the tracker submits and reads its Jobs with (city-hall's CITY_HALL_API_KEY, Lepid-Labs/city-hall#18). Never logged."
@@ -81,21 +81,21 @@
       },
       {
         "key": "TRACKER_CITY_HALL_ACCESS_CLIENT_ID",
-        "format": "^\\S+$",
+        "format": "^[!-~]+$",
         "required": false,
         "secret": true,
         "description": "Cloudflare Access service token id for city-hall's edge, sent as CF-Access-Client-Id. Set with TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET or not at all."
       },
       {
         "key": "TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET",
-        "format": "^\\S+$",
+        "format": "^[!-~]+$",
         "required": false,
         "secret": true,
         "description": "Cloudflare Access service token secret for city-hall's edge, sent as CF-Access-Client-Secret. Set with TRACKER_CITY_HALL_ACCESS_CLIENT_ID or not at all."
       },
       {
         "key": "TRACKER_BGG_TOKEN",
-        "format": "^\\S+$",
+        "format": "^[!-~]+$",
         "required": false,
         "secret": true,
         "description": "BoardGameGeek's XML API Bearer token for the tracker's registered application (boardgamegeek.com/using_the_xml_api). Set = /want source: bgg watches a game's BGG marketplace listings through BGG's API; unset = /want source: bgg makes a watch whose listings are sent in through the task API instead, as for eBay. Never logged."
@@ -109,7 +109,7 @@
       },
       {
         "key": "TRACKER_USR_KEY",
-        "format": "^\\S+$",
+        "format": "^[!-~]+$",
         "required": false,
         "secret": true,
         "description": "The tracker's usr API key, holding usr:discord only (never tracker:admin or tracker:register), with a usr Discord service set to this app. Required with TRACKER_USR_URL; set without it refuses to load. Never logged."
@@ -130,7 +130,7 @@
       },
       {
         "key": "TRACKER_MAIL_KEY",
-        "format": "^\\S{32,}$",
+        "format": "^[!-~]{32,}$",
         "required": false,
         "secret": true,
         "description": "The bearer the Email Worker posts each message to /tracker/mail/inbound with, at least 32 characters; the same value goes in the Worker's CLERK_MAIL_KEY secret. Required with TRACKER_MAIL_DOMAIN; one without the other refuses to load. Never logged."

@@ -138,6 +138,25 @@ describe("UsrClient.allow", () => {
     expect((err as UsrError).status).toBeNull();
   });
 
+  it("gives up on a usr that never answers, after timeoutMs, as timed out", async () => {
+    // usr took the connection and says nothing: only the request's own signal ends the wait.
+    const { fetchImpl } = fakeFetch(
+      ({ init }) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init.signal;
+          if (!signal) return reject(new TypeError("no signal: this would wait for ever"));
+          signal.addEventListener("abort", () => reject(signal.reason));
+        }),
+    );
+    const usr = createUsrClient({ config: CONFIG, fetchImpl, timeoutMs: 20 });
+    const started = Date.now();
+    const err = await usr.allow({ discordId: PERSON, guildId: GUILD, invokerDiscordId: ADMIN, roles: ["member"] }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UsrError);
+    expect((err as UsrError).message).toBe("usr timed out");
+    expect((err as UsrError).status).toBeNull();
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
   it("never sends a request with an id that is not a Discord id", async () => {
     const { calls, fetchImpl } = fakeFetch(() => json({}));
     const usr = createUsrClient({ config: CONFIG, fetchImpl });
@@ -247,10 +266,21 @@ describe("UsrLinks", () => {
     const { links } = people();
     expect(links.link("u1", "s")).toBe("linked");
     links.markSignedUp("u1");
-    links.unlink("u1");
+    expect(links.unlink("u1", "s")).toBe(true);
     expect(links.subjectOf("u1")).toBeNull();
     expect(links.isSignedUp("u1")).toBe(false);
     expect(links.link("u2", "s")).toBe("linked");
+  });
+
+  it("never unlinks an account linked since usr was asked", () => {
+    const { links } = people();
+    links.link("u1", "s");
+    // An /allow linked them to "t" while /register's ask about "s" was out.
+    expect(links.link("u1", "t")).toBe("relinked");
+    links.markSignedUp("u1");
+    expect(links.unlink("u1", "s")).toBe(false);
+    expect(links.subjectOf("u1")).toBe("t");
+    expect(links.isSignedUp("u1")).toBe(true);
   });
 
   it("forgets that they signed up when relinked to another account", () => {

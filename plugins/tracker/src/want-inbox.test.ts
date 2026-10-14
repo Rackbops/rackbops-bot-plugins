@@ -3,6 +3,8 @@ import type { Fetch } from "@rackbops/docket-core";
 import type { Plugin } from "../../../packages/api/contract.js";
 import { MAX_LISTINGS_PER_POST } from "./inbox.js";
 import { DEFAULT_INBOX_HOURS, ebaySearchUrl, INBOX_OFF } from "./want.js";
+import { MAX_API_BYTES, MAX_LISTINGS_BYTES } from "./web/api.js";
+import { onWatchSite } from "./web/api-listings.js";
 import { CITY_HALL, dmsTo, fakeCityHall, query } from "./web/execute-harness.js";
 import { api, call, cleanup, CURLY, csrfOf, LARRY, makeToken, ORIGIN, people, signIn, slash, world } from "./web/harness.js";
 
@@ -167,6 +169,81 @@ describe("POST /tasks/<id>/listings", () => {
     expect((await post({ listings: many(1), extra: 1 })).status).toBe(400);
     expect((await api(w.plugin, "GET", "/tasks/t1/listings", { token })).status).toBe(405);
     expect(query(w.dbPath, "SELECT 1 FROM want_inbox")).toHaveLength(MAX_LISTINGS_PER_POST);
+  });
+
+  it(`takes a body up to ${MAX_LISTINGS_BYTES} bytes, past the other routes' ${MAX_API_BYTES}: ${MAX_LISTINGS_PER_POST} long listings fit (#175)`, async () => {
+    const w = await setup();
+    await slash(w.plugin, "want", LARRY, { strings: { name: "W", source: "ebay" } });
+    const token = await tokenFor(w);
+    // As a results page gives them: long titles, tracking on every address, seller and condition.
+    const long = (pad: number) =>
+      Array.from({ length: MAX_LISTINGS_PER_POST }, (_, i) => ({
+        title: `Wingspan Oceania Expansion ${i} `.padEnd(300, "x"),
+        url: `https://www.ebay.com/itm/${100000000 + i}?_trksid=${"p".repeat(pad)}`,
+        price: "$30.00",
+        currency: "USD",
+        condition: "Used -- like new, all cards sleeved, box has light shelf wear".padEnd(120, "."),
+        seller: "meeplebarn (1,204) 99.8% positive".padEnd(80, "."),
+      }));
+    const size = (pad: number) => new TextEncoder().encode(JSON.stringify({ listings: long(pad) })).byteLength;
+    expect(size(340)).toBeGreaterThan(MAX_API_BYTES);
+    expect(size(340)).toBeLessThan(MAX_LISTINGS_BYTES);
+    const fits = await api(w.plugin, "POST", "/tasks/t1/listings", { token, body: { listings: long(340) } });
+    expect(fits.status).toBe(200);
+    expect((await fits.json()).accepted).toBe(MAX_LISTINGS_PER_POST);
+    expect(size(1200)).toBeGreaterThan(MAX_LISTINGS_BYTES);
+    const over = await api(w.plugin, "POST", "/tasks/t1/listings", { token, body: { listings: long(1200) } });
+    expect(over.status).toBe(413);
+    expect((await over.json()).error.code).toBe("too_large");
+    expect(query(w.dbPath, "SELECT 1 FROM want_inbox")).toHaveLength(MAX_LISTINGS_PER_POST);
+  });
+
+  it("takes only addresses on the watch's own site: eBay's for an eBay watch, BoardGameGeek's for a BGG one (#229)", async () => {
+    const w = await setup();
+    await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan Oceania", source: "ebay" } });
+    await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "bgg", target: "Wingspan Oceania" } });
+    const token = await tokenFor(w);
+    const post = (id: string, listings: unknown[]) => api(w.plugin, "POST", `/tasks/${id}/listings`, { token, body: { listings } });
+    const EVIL = { title: "Wingspan Oceania", url: "https://evil.example/pay", price: 1 };
+    const BGG = { title: "Wingspan Oceania (like new)", url: "https://boardgamegeek.com/market/product/1234567", price: 28 };
+
+    const mixed = await post("t1", [OCEANIA, EVIL, { ...EVIL, url: "https://ebay.com.evil.example/itm/123456789" }]);
+    expect(mixed.status).toBe(200);
+    const mixedBody = await mixed.json();
+    expect(mixedBody).toMatchObject({ accepted: 1, rejected: 2 });
+    expect(mixedBody.message).toContain("2 were left out: each needs a title and an absolute http(s) address on eBay.");
+    // One left out is said in the singular (#230).
+    expect((await (await post("t1", [ASIA, "junk"])).json()).message).toContain("Took 1 listing from eBay for Wingspan Oceania. 1 was left out:");
+    // A real eBay country site and its short links are taken; a look-alike `ebay.<tld>` is not.
+    const country = await post("t1", [{ ...ASIA, url: "https://www.ebay.co.uk/itm/323456789" }, { ...ASIA, url: "https://ebay.us/m/Ab3dE5" }, { ...ASIA, url: "https://www.ebay.xyz/itm/423456789" }]);
+    expect(await country.json()).toMatchObject({ accepted: 2, rejected: 1 });
+    const none = await post("t1", [EVIL, BGG]);
+    expect(none.status).toBe(400);
+    expect((await none.json()).error.message).toBe("None of those listings could be used: each needs a `title` and an absolute http(s) `url` on eBay.");
+
+    const bgg = await post("t2", [BGG, { ...BGG, url: "https://www.boardgamegeek.com/market/product/7654321" }, OCEANIA, EVIL]);
+    expect(bgg.status).toBe(200);
+    expect(await bgg.json()).toMatchObject({ accepted: 2, rejected: 2 });
+    const stored = query<{ task_id: string; listing: string }>(w.dbPath, "SELECT task_id, listing FROM want_inbox ORDER BY seq").map((r) => [r.task_id, JSON.parse(r.listing).url]);
+    expect(stored).toEqual([
+      ["t1", "https://www.ebay.com/itm/123456789"],
+      ["t1", "https://www.ebay.com/itm/223456789"],
+      ["t1", "https://www.ebay.co.uk/itm/323456789"],
+      ["t1", "https://ebay.us/m/Ab3dE5"],
+      ["t2", "https://boardgamegeek.com/market/product/1234567"],
+      ["t2", "https://www.boardgamegeek.com/market/product/7654321"],
+    ]);
+  });
+
+  it("knows eBay's own domains and their subdomains, and BGG's, not look-alikes", () => {
+    for (const host of ["ebay.com", "www.ebay.com", "m.ebay.com", "ebay.us", "www.ebay.co.uk", "m.ebay.de", "www.ebay.com.au", "befr.ebay.be", "WWW.EBAY.COM."]) {
+      expect([host, onWatchSite("ebay", `https://${host}/itm/123456789`)]).toEqual([host, true]);
+    }
+    for (const host of ["ebay.xyz", "www.ebay.app", "ebay.com.zz", "notebay.com", "ebay.com.evil.example", "ebay-deals.com", "boardgamegeek.com"]) {
+      expect([host, onWatchSite("ebay", `https://${host}/itm/123456789`)]).toEqual([host, false]);
+    }
+    for (const host of ["boardgamegeek.com", "www.boardgamegeek.com"]) expect(onWatchSite("bgg", `https://${host}/market/product/1`)).toBe(true);
+    for (const host of ["fakeboardgamegeek.com", "boardgamegeek.com.evil.example", "www.ebay.com"]) expect(onWatchSite("bgg", `https://${host}/market/product/1`)).toBe(false);
   });
 
   it("is the owner's own live inbox watch only: another's is 404, a page watch or a reminder is 409 or 404", async () => {

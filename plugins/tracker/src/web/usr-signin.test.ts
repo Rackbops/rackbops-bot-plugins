@@ -2,8 +2,8 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { NOT_MEMBER } from "../access.js";
 import { JWKS_RETRY_MS, JWKS_TTL_MS, UsrVerifier } from "../usr-identity.js";
-import { USR_NO_COOKIE, USR_RECHECK_FAILED, USR_NOT_LINKED, USR_NOT_MEMBER } from "./app.js";
-import { call, csrfOf, cleanup, CURLY, type Jar, LARRY, openLink, ORIGIN, people, SESSION, signIn, slash, tokenOf, type WebLookup, world } from "./harness.js";
+import { USR_COOKIE_DROPPED, USR_NO_COOKIE, USR_RECHECK_FAILED, USR_NOT_LINKED, USR_NOT_MEMBER } from "./app.js";
+import { api, call, csrfOf, cleanup, CURLY, type Jar, LARRY, makeToken, openLink, ORIGIN, people, SESSION, signIn, slash, tokenOf, type WebLookup, world } from "./harness.js";
 
 /**
  * The web area's sign-in through usr's `nz_id` cookie (usr-identity.ts, app.ts `usrSignIn`): a fake
@@ -34,13 +34,14 @@ const identity = (o: Record<string, unknown> = {}) => ({ iss: "usr", sub: LARRY_
 /** A fake usr serving one JWKS; counts the fetches. */
 async function fakeUsr() {
   const k = await keyPair();
-  const state = { jwks: { keys: [{ ...k.jwk, kid: "k1" }] } as { keys: unknown[] }, fetches: 0, down: false };
+  const state = { jwks: { keys: [{ ...k.jwk, kid: "k1" }] } as { keys: unknown[] }, fetches: 0, down: false, status: 200, hold: null as Promise<void> | null };
   const usrFetch = (async (input: string | URL | Request) => {
     const url = new URL(String(input));
     if (url.pathname !== "/.well-known/jwks.json") throw new Error(`unexpected usr call ${url.pathname}`);
     state.fetches++;
+    if (state.hold) await state.hold;
     if (state.down) throw new TypeError("fetch failed");
-    return new Response(JSON.stringify(state.jwks), { headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify(state.jwks), { status: state.status, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
   return { ...k, state, usrFetch };
 }
@@ -50,6 +51,15 @@ async function usrWorld(opts: { guild?: boolean; webMembership?: WebLookup } = {
   const w = await world({ env: { TRACKER_USR_URL: USR, TRACKER_USR_KEY: "k" }, usrFetch: usr.usrFetch, ...opts });
   await people(w.plugin);
   return { ...w, usr };
+}
+
+function apiTokens(dbPath: string): number {
+  const db = new Database(dbPath);
+  try {
+    return (db.query("SELECT COUNT(*) AS n FROM api_tokens").get() as { n: number }).n;
+  } finally {
+    db.close();
+  }
 }
 
 function linkLarry(dbPath: string) {
@@ -111,6 +121,88 @@ describe("UsrVerifier", () => {
     expect(usr.state.fetches).toBe(3);
   });
 
+  it("counts a failed fetch as one, so a down usr is asked again only after 30 seconds", async () => {
+    const { usr, v, advance } = await verifier();
+    const token = await sign(usr.pair.privateKey, identity());
+    usr.state.down = true;
+    expect(await v.verify(token)).toBeNull();
+    expect(await v.verify(token)).toBeNull();
+    expect(usr.state.fetches).toBe(1);
+    usr.state.down = false;
+    advance(JWKS_RETRY_MS);
+    expect(await v.verify(token)).toEqual({ sub: LARRY_SUB, roles: ["tracker:member"] });
+    expect(usr.state.fetches).toBe(2);
+  });
+
+  it("fetches once for tokens checked at the same moment, and checks each against the keys it fetched", async () => {
+    const { usr, v } = await verifier();
+    const token = await sign(usr.pair.privateKey, identity());
+    expect(await Promise.all([v.verify(token), v.verify(token)])).toEqual([
+      { sub: LARRY_SUB, roles: ["tracker:member"] },
+      { sub: LARRY_SUB, roles: ["tracker:member"] },
+    ]);
+    expect(usr.state.fetches).toBe(1);
+  });
+
+  it("answers a token with a known key at once, while a fetch for an unknown key hangs", async () => {
+    const { usr, v, advance } = await verifier();
+    const token = await sign(usr.pair.privateKey, identity());
+    await v.verify(token);
+    let release = () => {};
+    usr.state.hold = new Promise<void>((r) => {
+      release = r;
+    });
+    advance(JWKS_RETRY_MS);
+    const next = await keyPair();
+    const unknown = v.verify(await sign(next.pair.privateKey, identity(), { alg: "ES256", kid: "k2" }));
+    while (usr.state.fetches < 2) await Bun.sleep(1);
+    // The refetch for k2 is still out; k1's token must not wait for it.
+    const known = await Promise.race([v.verify(token), Bun.sleep(200).then(() => "stalled" as const)]);
+    expect(known).toEqual({ sub: LARRY_SUB, roles: ["tracker:member"] });
+    release();
+    expect(await unknown).toBeNull();
+    expect(usr.state.fetches).toBe(2);
+  });
+
+  it("refuses a token with no sub, or an empty one", async () => {
+    const { usr, v } = await verifier();
+    const { sub: _sub, ...noSub } = identity();
+    expect(await v.verify(await sign(usr.pair.privateKey, noSub))).toBeNull();
+    expect(await v.verify(await sign(usr.pair.privateKey, identity({ sub: "" })))).toBeNull();
+  });
+
+  it("refuses a signature that is not 64 bytes", async () => {
+    // A pin, not coverage of the length check: WebCrypto already refuses such a signature by itself.
+    const { usr, v } = await verifier();
+    const [h, p, sig] = (await sign(usr.pair.privateKey, identity())).split(".") as [string, string, string];
+    const longer = Buffer.concat([Buffer.from(sig, "base64url"), Buffer.from([0])]).toString("base64url");
+    expect(await v.verify(`${h}.${p}.${longer}`)).toBeNull();
+  });
+
+  it("uses only P-256 EC keys from the JWKS, past others it cannot use", async () => {
+    const { usr, v } = await verifier();
+    const p384 = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-384" }, true, ["sign", "verify"])) as CryptoKeyPair;
+    const rsa = (await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"])) as CryptoKeyPair;
+    // A P-256 key listed as another key type: not one usr signs with, so never trusted.
+    const mislabelled = await keyPair();
+    usr.state.jwks.keys.unshift(
+      { ...(await crypto.subtle.exportKey("jwk", p384.publicKey)), kid: "k384" },
+      { ...(await crypto.subtle.exportKey("jwk", rsa.publicKey)), kid: "krsa" },
+      { ...mislabelled.jwk, kty: "OKP", kid: "k9" },
+    );
+    expect(await v.verify(await sign(usr.pair.privateKey, identity()))).toEqual({ sub: LARRY_SUB, roles: ["tracker:member"] });
+    expect(await v.verify(await sign(mislabelled.pair.privateKey, identity(), { alg: "ES256", kid: "k9" }))).toBeNull();
+  });
+
+  it("takes no keys from a JWKS over 64 KiB, a redirect or an error answer", async () => {
+    for (const odd of [{ pad: "x".repeat(65 * 1024) }, { status: 302 }, { status: 500 }]) {
+      const { usr, v } = await verifier();
+      if ("pad" in odd) usr.state.jwks = { ...usr.state.jwks, pad: odd.pad } as { keys: unknown[] };
+      else usr.state.status = odd.status;
+      expect(await v.verify(await sign(usr.pair.privateKey, identity()))).toBeNull();
+    }
+  });
+
   it("keeps the keys it has when usr cannot be reached", async () => {
     const { usr, v, advance } = await verifier();
     const token = await sign(usr.pair.privateKey, identity());
@@ -128,7 +220,7 @@ describe("web sign-in through usr", () => {
     const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
     const res = await call(w.plugin, "GET", "/settings", { jar });
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/tracker/settings");
+    expect(res.headers.get("location")).toBe("/tracker/settings?usr=in");
     expect(jar.has(SESSION)).toBe(true);
     const page = await call(w.plugin, "GET", "/settings", { jar });
     expect(page.status).toBe(200);
@@ -146,9 +238,14 @@ describe("web sign-in through usr", () => {
     expect(await back.text()).toContain(USR_NO_COOKIE.slice(0, 40));
   });
 
-  it("refuses usr accounts without the member role, or linked to no one registered here", async () => {
+  it("refuses usr accounts without the member role, once a fresh cookie from usr still lacks it, or linked to no one registered here", async () => {
     const w = await usrWorld();
-    const noRole = await call(w.plugin, "GET", "/", { jar: new Map([["nz_id", await sign(w.usr.pair.privateKey, identity({ roles: ["city-hall:member"] }))]]) });
+    const roleless = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity({ roles: ["city-hall:member"] }))]]);
+    // The cookie may predate an /allow: first to usr for a fresh one.
+    const away = await call(w.plugin, "GET", "/", { jar: roleless });
+    expect(away.status).toBe(303);
+    expect(away.headers.get("location")).toBe(`${USR}/api/auth/sso/refresh?return=${encodeURIComponent(`${ORIGIN}/tracker/?usr=1`)}`);
+    const noRole = await call(w.plugin, "GET", "/?usr=1", { jar: roleless });
     expect(noRole.status).toBe(403);
     expect(await noRole.text()).toContain(USR_NOT_MEMBER.slice(0, 40));
     const unlinked = await call(w.plugin, "GET", "/", { jar: new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]) });
@@ -163,7 +260,7 @@ describe("web sign-in through usr", () => {
     linkLarry(w.dbPath);
     const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
     const back = await call(w.plugin, "GET", "/settings?saved=1&usr=1", { jar });
-    expect(back.headers.get("location")).toBe("/tracker/settings?saved=1");
+    expect(back.headers.get("location")).toBe("/tracker/settings?saved=1&usr=in");
   });
 
   it("after Sign out, does not sign back in on its own; the sign-in page's button does", async () => {
@@ -178,7 +275,7 @@ describe("web sign-in through usr", () => {
     expect(again.headers.get("location")).toBe("/tracker/signin?out=1");
     expect(jar.has(SESSION)).toBe(false);
     const button = await call(w.plugin, "GET", "/?usr=go", { jar });
-    expect(button.headers.get("location")).toBe("/tracker/");
+    expect(button.headers.get("location")).toBe("/tracker/?usr=in");
     expect(jar.has(SESSION)).toBe(true);
     expect(jar.has("__Secure-tracker-out")).toBe(false);
   });
@@ -192,9 +289,55 @@ describe("web sign-in through usr", () => {
     jar.set("nz_id", await sign(w.usr.pair.privateKey, identity({ exp: NOW_S - 1 })));
     const away = await call(w.plugin, "GET", "/?usr=go", { jar });
     expect(away.headers.get("location")).toBe(`${USR}/api/auth/sso/refresh?return=${encodeURIComponent(`${ORIGIN}/tracker/?usr=1`)}`);
+    // The button's trip clears the signed-out mark, so usr's trip back needs no exception.
+    expect(jar.has("__Secure-tracker-out")).toBe(false);
     jar.set("nz_id", await sign(w.usr.pair.privateKey, identity()));
     const back = await call(w.plugin, "GET", "/?usr=1", { jar });
-    expect(back.headers.get("location")).toBe("/tracker/");
+    expect(back.headers.get("location")).toBe("/tracker/?usr=in");
+    expect(jar.has(SESSION)).toBe(true);
+  });
+
+  it("after Sign out, a GET marked ?usr=1 by hand (or a link from elsewhere) does not sign back in", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
+    await call(w.plugin, "GET", "/", { jar });
+    await call(w.plugin, "POST", "/logout", { jar, form: { csrf: await csrfOf(w.plugin, jar) }, origin: ORIGIN });
+    const typed = await call(w.plugin, "GET", "/settings?usr=1", { jar });
+    expect(typed.headers.get("location")).toBe("/tracker/signin?out=1");
+    expect(jar.has(SESSION)).toBe(false);
+    expect(jar.has("__Secure-tracker-out")).toBe(true);
+  });
+
+  it("a usr cookie minted before the role goes to usr once; the fresh one with the role signs in", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity({ roles: [] }))]]);
+    expect((await call(w.plugin, "GET", "/settings", { jar })).status).toBe(303);
+    expect(jar.has(SESSION)).toBe(false);
+    jar.set("nz_id", await sign(w.usr.pair.privateKey, identity()));
+    const back = await call(w.plugin, "GET", "/settings?usr=1", { jar });
+    expect(back.headers.get("location")).toBe("/tracker/settings?usr=in");
+    expect(jar.has(SESSION)).toBe(true);
+  });
+
+  it("says a second /allow links the account usr moved someone to at sign-up, and signs them in once it has", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    // Larry finished signing up on usr with an account he already had: usr's cookie names that one.
+    const moved = "6f1c2a9e-0000-4000-8000-000000000099";
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity({ sub: moved }))]]);
+    const before = await call(w.plugin, "GET", "/settings", { jar });
+    expect(before.status).toBe(403);
+    expect(await before.text()).toContain("a second /allow links it");
+    // What the second /allow keeps (usr-commands.test.ts): the account usr now has for him.
+    const db = new Database(w.dbPath);
+    try {
+      db.query("UPDATE users SET usr_subject = ? WHERE discord_id = ?").run(moved, LARRY);
+    } finally {
+      db.close();
+    }
+    expect((await call(w.plugin, "GET", "/settings", { jar })).headers.get("location")).toBe("/tracker/settings?usr=in");
     expect(jar.has(SESSION)).toBe(true);
   });
 
@@ -211,17 +354,125 @@ describe("web sign-in through usr", () => {
     expect(jar.has("__Secure-tracker-out")).toBe(false);
   });
 
-  it("signs out a person whose usr cookie no longer carries the member role", async () => {
+  it("signs out a person whose fresh usr cookie no longer carries the member role, and revokes their API tokens", async () => {
     const w = await usrWorld();
     linkLarry(w.dbPath);
     const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
     await call(w.plugin, "GET", "/", { jar });
     expect((await call(w.plugin, "GET", "/", { jar })).status).toBe(200);
+    await makeToken(w, jar);
+    expect(apiTokens(w.dbPath)).toBe(1);
     jar.set("nz_id", await sign(w.usr.pair.privateKey, identity({ roles: [] })));
-    const res = await call(w.plugin, "GET", "/", { jar });
+    // First to usr for a fresh cookie: nothing is revoked yet.
+    const away = await call(w.plugin, "GET", "/settings", { jar });
+    expect(away.status).toBe(303);
+    expect(away.headers.get("location")).toBe(`${USR}/api/auth/sso/refresh?return=${encodeURIComponent(`${ORIGIN}/tracker/settings?usr=1`)}`);
+    expect(jar.has(SESSION)).toBe(true);
+    expect(apiTokens(w.dbPath)).toBe(1);
+    // Back from usr, still without the role: signed out everywhere, and the API tokens are gone.
+    const res = await call(w.plugin, "GET", "/settings?usr=1", { jar });
     expect(res.status).toBe(403);
     expect(await res.text()).toContain(USR_NOT_MEMBER.slice(0, 40));
     expect(jar.has(SESSION)).toBe(false);
+    expect(apiTokens(w.dbPath)).toBe(0);
+  });
+
+  it("a role-less cookie that only predates the role does not sign the person out: usr's fresh one has it", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    // Signed in by a /web link while the browser still holds an nz_id minted before /allow.
+    const jar = await signIn(w.plugin, LARRY);
+    await makeToken(w, jar);
+    jar.set("nz_id", await sign(w.usr.pair.privateKey, identity({ roles: [] })));
+    expect((await call(w.plugin, "GET", "/", { jar })).status).toBe(303);
+    jar.set("nz_id", await sign(w.usr.pair.privateKey, identity()));
+    expect((await call(w.plugin, "GET", "/?usr=1", { jar })).headers.get("location")).toBe("/tracker/");
+    expect((await call(w.plugin, "GET", "/", { jar })).status).toBe(200);
+    expect(jar.has(SESSION)).toBe(true);
+    expect(apiTokens(w.dbPath)).toBe(1);
+  });
+
+  it("a role-less usr cookie for another account (a shared browser) leaves the session alone", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    const jar = await signIn(w.plugin, LARRY);
+    jar.set("nz_id", await sign(w.usr.pair.privateKey, identity({ sub: "6f1c2a9e-0000-4000-8000-000000000003", roles: [] })));
+    expect((await call(w.plugin, "GET", "/", { jar })).status).toBe(200);
+    // Even marked as back from usr: only the mark is dropped.
+    expect((await call(w.plugin, "GET", "/?usr=1", { jar })).headers.get("location")).toBe("/tracker/");
+    expect(jar.has(SESSION)).toBe(true);
+  });
+
+  it("a POST with the person's own role-less usr cookie never revokes: it goes to usr, and the GET back decides", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    // A tab open since before the role was granted (Link everyone, /allow): the cookie is stale.
+    const jar = await signIn(w.plugin, LARRY);
+    await makeToken(w, jar);
+    const csrf = await csrfOf(w.plugin, jar);
+    jar.set("nz_id", await sign(w.usr.pair.privateKey, identity({ roles: [] })));
+    const res = await call(w.plugin, "POST", "/settings", { jar, form: { csrf, hour: "7", zone: "Europe/London" }, origin: ORIGIN });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`${USR}/api/auth/sso/refresh?return=${encodeURIComponent(`${ORIGIN}/tracker/settings?usr=1`)}`);
+    // A POST-only route comes back to My tasks instead.
+    const out = await call(w.plugin, "POST", "/logout", { jar, form: { csrf }, origin: ORIGIN });
+    expect(out.headers.get("location")).toBe(`${USR}/api/auth/sso/refresh?return=${encodeURIComponent(`${ORIGIN}/tracker/?usr=1`)}`);
+    expect(jar.has(SESSION)).toBe(true);
+    expect(apiTokens(w.dbPath)).toBe(1);
+    // Nothing the form asked for was done.
+    expect(await (await call(w.plugin, "GET", "/settings", { jar: new Map([[SESSION, jar.get(SESSION) ?? ""]]) })).text()).toContain('value="America/New_York"');
+    // usr's fresh cookie has the role: still signed in, tokens kept.
+    jar.set("nz_id", await sign(w.usr.pair.privateKey, identity()));
+    const back = await call(w.plugin, "GET", "/settings?usr=1", { jar });
+    expect(back.headers.get("location")).toBe("/tracker/settings");
+    expect(jar.has(SESSION)).toBe(true);
+    expect(apiTokens(w.dbPath)).toBe(1);
+  });
+
+  it("a signed-in GET still marked by a trip to usr or a sign-in goes on to the same page without the mark", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
+    await call(w.plugin, "GET", "/settings?saved=1", { jar });
+    for (const mark of ["in", "1", "go"]) {
+      const res = await call(w.plugin, "GET", `/settings?saved=1&usr=${mark}`, { jar });
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe("/tracker/settings?saved=1");
+    }
+    expect((await call(w.plugin, "GET", "/settings?saved=1", { jar })).status).toBe(200);
+  });
+
+  it("a browser that does not keep the session cookie is told why after one sign-in, not signed in on every hop", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    const nzId = await sign(w.usr.pair.privateKey, identity());
+    const first = await call(w.plugin, "GET", "/settings", { jar: new Map([["nz_id", nzId]]) });
+    expect(first.headers.get("location")).toBe("/tracker/settings?usr=in");
+    // The redirect's Set-Cookie was refused: the next request carries usr's cookie only.
+    const next = await call(w.plugin, "GET", "/settings?usr=in", { jar: new Map([["nz_id", nzId]]) });
+    expect(next.status).toBe(403);
+    expect(await next.text()).toContain(USR_COOKIE_DROPPED.slice(0, 40));
+    const db = new Database(w.dbPath);
+    expect((db.query("SELECT COUNT(*) AS n FROM web_sessions").get() as { n: number }).n).toBe(1);
+    db.close();
+  });
+
+  it("ends the person's API tokens with their sessions, but only once they next use the web area (#228)", async () => {
+    const w = await usrWorld();
+    linkLarry(w.dbPath);
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity())]]);
+    await call(w.plugin, "GET", "/", { jar });
+    const token = await makeToken(w, jar);
+    jar.set("nz_id", await sign(w.usr.pair.privateKey, identity({ roles: [] })));
+    // The API never reads usr's cookie: the token still works until a web request carries it.
+    expect((await api(w.plugin, "GET", "/me", { token })).status).toBe(200);
+    // A web request first goes to usr for a fresh cookie; the token works on meanwhile.
+    expect((await call(w.plugin, "GET", "/", { jar })).status).toBe(303);
+    expect((await api(w.plugin, "GET", "/me", { token })).status).toBe(200);
+    expect((await call(w.plugin, "GET", "/?usr=1", { jar })).status).toBe(403);
+    const after = await api(w.plugin, "GET", "/me", { token });
+    expect(after.status).toBe(401);
+    expect((await after.json()).error.code).toBe("invalid_token");
   });
 
   it("checks server membership before opening the session", async () => {

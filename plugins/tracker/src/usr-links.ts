@@ -68,13 +68,17 @@ export class UsrLinks {
   }
 
   /**
-   * Forgets the person's link, when usr says it no longer knows them (its 403 to a sign-up link for
-   * someone linked here: a usr admin removed their Discord link). The next `/allow` links them anew.
+   * Forgets the person's link to `subject`, when usr says it no longer knows them (its 403 to a
+   * sign-up link for someone linked here: a usr admin removed their Discord link). The next `/allow`
+   * links them anew. Only while they are still linked to `subject`: usr is asked outside the queue,
+   * so an `/allow` meanwhile may have linked them to another account, which stays. `false` when
+   * nothing was forgotten.
    */
-  unlink(userId: string): void {
+  unlink(userId: string, subject: string): boolean {
     const seq = seqOf(userId);
-    if (seq === null) return;
-    this.db.query("UPDATE users SET usr_subject = NULL WHERE seq = ?").run(seq);
-    this.signedUp.delete(userId);
+    if (seq === null) return false;
+    const changed = this.db.query("UPDATE users SET usr_subject = NULL WHERE seq = ? AND usr_subject = ?").run(seq, subject).changes > 0;
+    if (changed) this.signedUp.delete(userId);
+    return changed;
   }
 }

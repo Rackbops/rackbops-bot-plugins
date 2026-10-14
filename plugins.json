@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-13T21:35:14.104Z",
+  "generatedAt": "2026-10-14T12:38:36.005Z",
   "plugins": [
     {
       "name": "mcp",
@@ -15,7 +15,7 @@
       "env": [
         {
           "key": "MCP_BRIDGE_TOKEN",
-          "format": "^\\S{43,}$",
+          "format": "^[!-~]{43,}$",
           "description": "Shared secret the Discord MCP service presents (>= 256 bits, base64url). Unset = the bridge answers 503.",
           "required": false,
           "secret": true
@@ -81,21 +81,21 @@
       "env": [
         {
           "key": "SETLISTFM_API_KEY",
-          "format": "^\\S+$",
+          "format": "^[!-~]+$",
           "description": "setlist.fm API key (free for non-commercial use, requested from your setlist.fm account settings); unset = /setlist reports the feature unconfigured.",
           "required": false,
           "secret": true
         },
         {
           "key": "SPOTIFY_CLIENT_ID",
-          "format": "^\\S+$",
+          "format": "^[!-~]+$",
           "description": "Spotify app client id from developer.spotify.com; unset = /spotify and /setlist report the feature unconfigured.",
           "required": false,
           "secret": true
         },
         {
           "key": "SPOTIFY_CLIENT_SECRET",
-          "format": "^\\S+$",
+          "format": "^[!-~]+$",
           "description": "Spotify app client secret.",
           "required": false,
           "secret": true
@@ -233,7 +233,7 @@
         },
         {
           "key": "TRACKER_CITY_HALL_KEY",
-          "format": "^\\S+$",
+          "format": "^[!-~]+$",
           "description": "The source bearer key the tracker submits and reads its Jobs with (city-hall's CITY_HALL_API_KEY, Lepid-Labs/city-hall#18). Never logged.",
           "required": false,
           "secret": true
@@ -247,21 +247,21 @@
         },
         {
           "key": "TRACKER_CITY_HALL_ACCESS_CLIENT_ID",
-          "format": "^\\S+$",
+          "format": "^[!-~]+$",
           "description": "Cloudflare Access service token id for city-hall's edge, sent as CF-Access-Client-Id. Set with TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET or not at all.",
           "required": false,
           "secret": true
         },
         {
           "key": "TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET",
-          "format": "^\\S+$",
+          "format": "^[!-~]+$",
           "description": "Cloudflare Access service token secret for city-hall's edge, sent as CF-Access-Client-Secret. Set with TRACKER_CITY_HALL_ACCESS_CLIENT_ID or not at all.",
           "required": false,
           "secret": true
         },
         {
           "key": "TRACKER_BGG_TOKEN",
-          "format": "^\\S+$",
+          "format": "^[!-~]+$",
           "description": "BoardGameGeek's XML API Bearer token for the tracker's registered application (boardgamegeek.com/using_the_xml_api). Set = /want source: bgg watches a game's BGG marketplace listings through BGG's API; unset = /want source: bgg makes a watch whose listings are sent in through the task API instead, as for eBay. Never logged.",
           "required": false,
           "secret": true
@@ -275,7 +275,7 @@
         },
         {
           "key": "TRACKER_USR_KEY",
-          "format": "^\\S+$",
+          "format": "^[!-~]+$",
           "description": "The tracker's usr API key, holding usr:discord only (never tracker:admin or tracker:register), with a usr Discord service set to this app. Required with TRACKER_USR_URL; set without it refuses to load. Never logged.",
           "required": false,
           "secret": true
@@ -296,7 +296,7 @@
         },
         {
           "key": "TRACKER_MAIL_KEY",
-          "format": "^\\S{32,}$",
+          "format": "^[!-~]{32,}$",
           "description": "The bearer the Email Worker posts each message to /tracker/mail/inbound with, at least 32 characters; the same value goes in the Worker's CLERK_MAIL_KEY secret. Required with TRACKER_MAIL_DOMAIN; one without the other refuses to load. Never logged.",
           "required": false,
           "secret": true
@@ -458,14 +458,14 @@
         },
         {
           "key": "BLIZZARD_CLIENT_ID",
-          "format": "^\\S+$",
+          "format": "^[!-~]+$",
           "description": "Blizzard API client id (needed for /status, /transmog, and the realm watch).",
           "required": false,
           "secret": true
         },
         {
           "key": "BLIZZARD_CLIENT_SECRET",
-          "format": "^\\S+$",
+          "format": "^[!-~]+$",
           "description": "Blizzard API client secret.",
           "required": false,
           "secret": true

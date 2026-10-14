@@ -4,11 +4,11 @@ import type { DeliveryHealth } from "./delivery-health.js";
 import { MAX_CONTENT, wrapBareUrls } from "./notifier.js";
 
 /**
- * The daily "today and overdue" digest (plan 5.5): one DM per person a day, at their preferred hour
- * in their own zone, listing what of theirs is due today and what is overdue. Notify lane only: it
+ * The daily "today and overdue" digest (plan 5.5): at most one DM per person a day, at their preferred
+ * hour in their own zone, listing what of theirs is due today and what is overdue. Notify lane only: it
  * runs on the `notify` tick after the due runs, reads the Store, and never calls a model.
  *
- * Exactly once per person per day, by research-triage's claim pattern (plan 3, `digest_last_sent_at`):
+ * At most once per person per local day, by research-triage's claim pattern (plan 3, `digest_last_sent_at`):
  * the day is claimed before the person's tasks are read or anything is sent -- docket's once-only `claimNotice`, keyed
  * `digest:<user>:<YYYY-MM-DD>` in the person's zone -- so a restart, a second tick, or a tick the host
  * abandoned can never send it twice. A crash between the claim and the send loses that day's digest
@@ -16,6 +16,21 @@ import { MAX_CONTENT, wrapBareUrls } from "./notifier.js";
  * when nothing is due, so the day is looked at once, at the hour, and a reminder made later that day
  * does not set off a digest of its own. A person whose delivery is paused (delivery-health.ts) is
  * passed by without a claim, so their digest goes out later that day if the pause lifts.
+ *
+ * Never two within 20 hours, whatever the zone (#211 notify-5, decided 2026-10-14): the claim's
+ * `at` is the instant the day's digest was due (the preferred hour in the zone of the time), and a
+ * day whose hour comes less than `DIGEST_GAP_MS` after the person's last claimed one is passed over
+ * whole. So a move east -- 9:00 in New York, then Tokyo, where it is already 9:00 the next day --
+ * sends nothing more until the hour of the following local day, and a later tick that day cannot
+ * slip one in once 20 hours have passed (each later digest would then come late). One local day is
+ * passed over this way in three cases: a move east into a date whose hour has come; moving the
+ * preferred hour more than 4 hours earlier (the next day's hour is then under 20 hours away); and a
+ * move west across the date line that brings back a date not yet claimed (Kiritimati to Pago Pago).
+ * The gap is measured between due hours, not sends, so an ordinary day (23 to 25 hours apart across
+ * a clock change) and a digest the bot sent late after an outage are unaffected. A last claim dated
+ * after `now` (a clock that ran ahead) counts as none, so it cannot hold digests back until real time
+ * catches up. The person's last claim is read first (`lastNotice`), so once their day is claimed a
+ * tick writes nothing for them; only an unclaimed day past the gap takes the write lock to claim it.
  *
  * What it lists: the person's own active reminders and renewals (`DIGEST_TYPES`), the two kinds of
  * task whose runs wait on an answer (done, or a renewal's keep / cancel / renewed). The others --
@@ -44,6 +59,9 @@ export const DIGEST_TYPES: ReadonlySet<string> = new Set(["reminder", "renewal"]
 
 /** The replies that answer a run: a reminder's done, a renewal's decision. A snooze moves it instead. */
 const ANSWERS: ReadonlySet<string> = new Set(["done", "decision"]);
+
+/** The least time between the due hours of two digests to one person (#211 notify-5). */
+export const DIGEST_GAP_MS = 20 * 3_600_000;
 
 /** The most lines shown per section; the rest is counted. */
 export const MAX_LINES = 10;
@@ -152,8 +170,13 @@ export function formatDigest(digest: Digest, user: User, now: Date): string | nu
   return text;
 }
 
+/** The read the digest makes before claiming: a person's last claimed digest (store.ts `lastNotice`). */
+export interface NoticeReader {
+  lastNotice(prefix: string): Promise<{ key: string; at: string } | null>;
+}
+
 export interface DigestDeps {
-  store: Store;
+  store: Store & NoticeReader;
   notifier: Notifier;
   log: PluginLog;
   health?: DeliveryHealth;
@@ -167,8 +190,9 @@ export interface DigestResult {
 }
 
 /**
- * One pass over everyone: each person whose preferred hour has come today, and whose day is not yet
- * claimed, gets their day claimed and, when anything is listed, their digest. Stops between people
+ * One pass over everyone: each person whose preferred hour has come today, whose day is not yet
+ * claimed and whose hour today is `DIGEST_GAP_MS` or more after their last claimed one, gets their day
+ * claimed and, when anything is listed, their digest. Stops between people
  * once `signal` aborts; whoever is left goes on the next tick.
  */
 export async function runDigests(d: DigestDeps, now: Date, signal?: AbortSignal): Promise<DigestResult> {
@@ -176,15 +200,25 @@ export async function runDigests(d: DigestDeps, now: Date, signal?: AbortSignal)
   for (const user of await d.store.listUsers()) {
     if (signal?.aborted) break;
     let day: ReturnType<typeof localDay>;
+    let due: Date;
     try {
       day = localDay(now, user.timeZone);
+      const w = wallClock(day.start, user.timeZone);
+      due = zonedInstant(w.year, w.month, w.day, user.preferredHour, 0, user.timeZone);
     } catch (err) {
       d.log.warn(`digest: ${user.id} has a time zone the clock cannot read (${err instanceof Error ? err.message : String(err)})`);
       continue;
     }
     if (day.hour < user.preferredHour) continue;
     if (d.health?.isPaused(user.id)) continue;
-    if (!(await d.store.claimNotice(digestKey(user.id, day.day), now.toISOString()))) continue;
+    // Read before writing: today claimed (its `at` is today's hour) or a digest due less than the
+    // gap ago passes the person by without the write lock. A claim dated in the future is ignored.
+    // The claim's `at` is never after `now` (an hour a fall-back repeats can resolve to its later pass).
+    const last = await d.store.lastNotice(digestKey(user.id, ""));
+    const lastAt = last ? Date.parse(last.at) : Number.NaN;
+    if (lastAt <= now.getTime() && due.getTime() - lastAt < DIGEST_GAP_MS) continue;
+    const at = new Date(Math.min(due.getTime(), now.getTime()));
+    if (!(await d.store.claimNotice(digestKey(user.id, day.day), at.toISOString()))) continue;
     result.claimed++;
     let text: string | null;
     try {

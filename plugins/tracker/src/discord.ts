@@ -27,6 +27,7 @@ import {
   type Interactionish,
   lookupMembership,
   NO_MENTIONS,
+  NO_PREVIEWS,
   type Queue,
   type RoleGate,
   serial,
@@ -105,12 +106,16 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
    * turn in the queue (a Discord lookup); a Step's `outside` runs after it (a DM), and its `finish`
    * takes one more turn. (Not `then`: an object with one would be awaited as a promise.) A Step's
    * `more` follow the answer, each an ephemeral message of its own, before any resume notice.
+   * `noPreviews` sends the answer and every follow-up with link previews off: an answer showing
+   * text other people wrote (a reply, a finding's source, a run's error) must not unfurl a bare
+   * link into a preview its site chooses (#286).
    */
   async function run<P>(
     interaction: ChatInputCommandInteraction,
     need: Need,
     act: (d: TrackerDeps, user: User, pre: P) => Promise<Step>,
     pre: () => Promise<P> = async () => undefined as P,
+    noPreviews = false,
   ) {
     await interaction.deferReply(EPHEMERAL);
     let content: string;
@@ -143,15 +148,16 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
       w.log.error(`/${interaction.commandName} failed`, err);
       content = FAILED;
     }
-    await interaction.editReply({ content, ...NO_MENTIONS });
-    for (const [i, text] of more.entries()) await followUp(interaction, text, `answer's message ${i + 2}`);
-    if (notice) await followUp(interaction, notice, "resume notice");
+    await interaction.editReply({ content, ...NO_MENTIONS, ...(noPreviews ? { flags: NO_PREVIEWS } : {}) });
+    for (const [i, text] of more.entries()) await followUp(interaction, text, `answer's message ${i + 2}`, noPreviews);
+    if (notice) await followUp(interaction, notice, "resume notice", noPreviews);
   }
 
   /** One ephemeral message after the answer has landed, mentioning no one, as the answer; one that fails (an expired interaction) is logged, not thrown. */
-  async function followUp(interaction: ChatInputCommandInteraction, content: string, what: string) {
+  async function followUp(interaction: ChatInputCommandInteraction, content: string, what: string, noPreviews: boolean) {
+    const flags = noPreviews ? EPHEMERAL.flags | NO_PREVIEWS : EPHEMERAL.flags;
     try {
-      await interaction.followUp({ content, ...EPHEMERAL, ...NO_MENTIONS });
+      await interaction.followUp({ content, flags, ...NO_MENTIONS });
     } catch (err) {
       w.log.warn(`could not send /${interaction.commandName}'s ${what} as a follow-up: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -524,6 +530,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             }
           },
           async () => (shareWith ? membershipOf(interaction, shareWith.id) : null),
+          sub === "history",
         );
       },
     },

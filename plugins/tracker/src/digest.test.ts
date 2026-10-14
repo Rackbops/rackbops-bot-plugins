@@ -248,6 +248,120 @@ describe("runDigests (plan 5.5)", () => {
     expect(s.db.query("SELECT key FROM notices").all()).toEqual([{ key: digestKey(s.owner.id, "2026-10-06") }]);
   });
 
+  it("sends no second digest within 20 hours after a move east; the next goes at the following local day's hour (#211 notify-5)", async () => {
+    const s = await setup();
+    await s.make("pay rent", { kind: "once", at: "2026-10-03T13:00:00.000Z" });
+    s.clock.set("2026-10-03T13:00:00.000Z");
+    await s.tick();
+    s.calls.length = 0;
+    // 9:00 Mon Oct 5 in New York.
+    s.clock.set(AT_HOUR);
+    expect(await s.digests()).toEqual({ claimed: 1, sent: 1, failed: 0 });
+    // That evening Maria moves to Tokyo, where 00:00Z is already 9:00 on Tue Oct 6: 11 hours on.
+    await setPreferences(s.store, s.owner.id, { timeZone: "Asia/Tokyo", preferredHour: 9 });
+    s.clock.set("2026-10-06T00:00:00.000Z");
+    expect(await s.digests()).toEqual({ claimed: 0, sent: 0, failed: 0 });
+    // 18:00 in Tokyo, 20 hours after the last: the day stays passed over, or every later one would come at 18:00.
+    s.clock.set("2026-10-06T09:00:00.000Z");
+    expect(await s.digests()).toEqual({ claimed: 0, sent: 0, failed: 0 });
+    expect(s.calls).toHaveLength(1);
+    // 9:00 Wed Oct 7 in Tokyo.
+    s.clock.set("2026-10-07T00:00:00.000Z");
+    expect(await s.digests()).toEqual({ claimed: 1, sent: 1, failed: 0 });
+    expect(s.calls[1]?.message.content).toStartWith("Your day, Wed Oct 7:");
+    expect(s.db.query("SELECT key, at FROM notices ORDER BY at").all()).toEqual([
+      { key: digestKey(s.owner.id, "2026-10-05"), at: AT_HOUR },
+      { key: digestKey(s.owner.id, "2026-10-07"), at: "2026-10-07T00:00:00.000Z" },
+    ]);
+  });
+
+  it("sends every day at the hour across both clock changes, and after a late one (#211 notify-5)", async () => {
+    const s = await setup();
+    await s.make("pay rent", { kind: "once", at: "2026-10-03T13:00:00.000Z" });
+    s.clock.set("2026-10-03T13:00:00.000Z");
+    await s.tick();
+    s.calls.length = 0;
+    // 9:00 in New York, on either side of the fall back (Sun Nov 1) and the spring forward (Sun Mar 14 2027):
+    // 25 and 23 hours apart.
+    const hours = [
+      "2026-10-31T13:00:00.000Z",
+      "2026-11-01T14:00:00.000Z",
+      "2026-11-02T14:00:00.000Z",
+      "2027-03-13T14:00:00.000Z",
+      "2027-03-14T13:00:00.000Z",
+      "2027-03-15T13:00:00.000Z",
+    ];
+    for (const at of hours) {
+      s.clock.set(at);
+      expect(await s.digests()).toEqual({ claimed: 1, sent: 1, failed: 0 });
+    }
+    // The bot was down at the hour on Tue Mar 16 and sent it at 23:00; Wednesday's still goes at 9:00,
+    // 10 hours after that send: the gap is between the hours the digests were due.
+    s.clock.set("2027-03-17T03:00:00.000Z");
+    expect((await s.digests()).sent).toBe(1);
+    s.clock.set("2027-03-17T13:00:00.000Z");
+    expect((await s.digests()).sent).toBe(1);
+    expect(s.calls).toHaveLength(hours.length + 2);
+  });
+
+  it("the gap is 20 hours: a due hour 19 hours after the last claim is passed over, one 21 hours after is sent (#211 notify-5)", async () => {
+    for (const [preferredHour, sent] of [[4, 0], [6, 1]] as const) {
+      const s = await setup();
+      s.clock.set(AT_HOUR);
+      await s.digests();
+      // 9:00 New York on Oct 5 was 13:00Z; the hour moves earlier for Tue Oct 6.
+      await setPreferences(s.store, s.owner.id, { timeZone: "America/New_York", preferredHour });
+      await s.make("call mom", { kind: "once", at: "2026-10-06T22:00:00.000Z" });
+      // 4:00 is 08:00Z (19 hours on), 6:00 is 10:00Z (21 hours on); 20:00Z is later the same day.
+      for (const at of [`2026-10-06T${String(preferredHour + 4).padStart(2, "0")}:00:00.000Z`, "2026-10-06T20:00:00.000Z"]) {
+        s.clock.set(at);
+        await s.digests();
+      }
+      expect(s.calls).toHaveLength(sent);
+    }
+  });
+
+  it("dates a claim no later than now when a fall-back repeats the hour, so the rest of that hour writes nothing (#211 notify-5)", async () => {
+    const s = await setup();
+    // London falls back on Sun 2026-10-25: 1:00 comes at 00:00Z (BST) and again at 01:00Z (GMT), and
+    // the zone resolves the due hour to the later pass.
+    await setPreferences(s.store, s.owner.id, { timeZone: "Europe/London", preferredHour: 1 });
+    const claims: string[] = [];
+    const claimNotice = s.store.claimNotice.bind(s.store);
+    s.store.claimNotice = (key, at) => (claims.push(key), claimNotice(key, at));
+    s.clock.set("2026-10-25T00:30:00.000Z");
+    expect((await s.digests()).claimed).toBe(1);
+    expect(s.db.query("SELECT at FROM notices").all()).toEqual([{ at: "2026-10-25T00:30:00.000Z" }]);
+    s.clock.set("2026-10-25T00:45:00.000Z");
+    expect(await s.digests()).toEqual({ claimed: 0, sent: 0, failed: 0 });
+    expect(claims).toEqual([digestKey(s.owner.id, "2026-10-25")]);
+  });
+
+  it("a last claim dated in the future (a clock that ran ahead) holds nothing back (#211 notify-5)", async () => {
+    const s = await setup();
+    await s.make("call mom", { kind: "once", at: "2026-10-05T22:00:00.000Z" });
+    await s.store.claimNotice(digestKey(s.owner.id, "2026-12-01"), "2026-12-01T14:00:00.000Z");
+    s.clock.set(AT_HOUR);
+    expect(await s.digests()).toEqual({ claimed: 1, sent: 1, failed: 0 });
+  });
+
+  it("writes no claim on later ticks once the day is claimed, nor on a day passed over (#211 notify-5)", async () => {
+    const s = await setup();
+    const claims: string[] = [];
+    const claimNotice = s.store.claimNotice.bind(s.store);
+    s.store.claimNotice = (key, at) => (claims.push(key), claimNotice(key, at));
+    s.clock.set(AT_HOUR);
+    expect((await s.digests()).claimed).toBe(1);
+    for (const at of ["2026-10-05T13:01:00.000Z", "2026-10-05T18:00:00.000Z", "2026-10-06T03:59:00.000Z"]) {
+      s.clock.set(at);
+      expect(await s.digests()).toEqual({ claimed: 0, sent: 0, failed: 0 });
+    }
+    await setPreferences(s.store, s.owner.id, { timeZone: "Asia/Tokyo", preferredHour: 9 });
+    s.clock.set("2026-10-06T00:00:00.000Z");
+    await s.digests();
+    expect(claims).toEqual([digestKey(s.owner.id, "2026-10-05")]);
+  });
+
   it("passes a paused person by without claiming, and sends once the pause lifts that day", async () => {
     const s = await setup();
     await s.make("call mom", { kind: "once", at: "2026-10-05T22:00:00.000Z" });
@@ -289,6 +403,57 @@ describe("runDigests (plan 5.5)", () => {
     clock.set("2026-10-05T13:01:00.000Z");
     expect(await runDigests({ store, notifier, log }, clock.now())).toEqual({ claimed: 0, sent: 0, failed: 0 });
     expect(calls).toHaveLength(1);
+  });
+
+  it("a digest to a closed DM counts toward the person's pause (#212)", async () => {
+    const db = openDatabase(":memory:");
+    const store = new SqliteStore(db);
+    const clock = fakeClock("2026-10-05T10:00:00.000Z");
+    const owner = await admit(store, OWNER, clock.now());
+    const task = await store.createTask({
+      ownerId: owner.id,
+      type: "reminder",
+      title: "call mom",
+      config: { text: "call mom" },
+      schedule: { kind: "once", at: "2026-10-05T22:00:00.000Z" },
+      lane: "notify",
+      capabilities: ["notify"],
+      at: clock.now().toISOString(),
+    });
+    await materialize(store, task, owner, clock.now());
+    const { dm } = fakeDm(() => new Error(HOST_CANNOT_MESSAGE));
+    const { log } = quietLog();
+    const health = new DeliveryHealth(db, store);
+    const notifier = createDmNotifier({ store, dm, clock, log, health });
+    clock.set(AT_HOUR);
+    expect(await runDigests({ store, notifier, log, health }, clock.now())).toEqual({ claimed: 1, sent: 0, failed: 1 });
+    expect(health.get(owner.id)?.failures).toBe(1);
+  });
+
+  it("a zone or hour changed after the day's digest went sends no second one that day (#212)", async () => {
+    const s = await setup();
+    await s.make("call mom", { kind: "once", at: "2026-10-05T22:00:00.000Z" });
+    s.clock.set(AT_HOUR);
+    expect((await s.digests()).sent).toBe(1);
+    // A later hour: the day is already claimed.
+    await setPreferences(s.store, s.owner.id, { preferredHour: 11 });
+    s.clock.set("2026-10-05T15:00:00.000Z");
+    expect(await s.digests()).toEqual({ claimed: 0, sent: 0, failed: 0 });
+    // A zone to the west, where it is still Mon Oct 5 and past the hour: the same day, still claimed.
+    await setPreferences(s.store, s.owner.id, { timeZone: "America/Los_Angeles", preferredHour: 7 });
+    expect(await s.digests()).toEqual({ claimed: 0, sent: 0, failed: 0 });
+    expect(s.calls).toHaveLength(1);
+  });
+
+  it("passes by a person whose stored zone the clock cannot read, logged, and goes on to the next (#212)", async () => {
+    const s = await setup();
+    const friend = await admit(s.store, FRIEND, s.clock.now());
+    await s.make("call mom", { kind: "once", at: "2026-10-05T22:00:00.000Z" }, friend);
+    s.db.query("UPDATE users SET time_zone = 'Not/AZone' WHERE discord_id = ?").run(OWNER);
+    s.clock.set(AT_HOUR);
+    expect(await s.digests()).toEqual({ claimed: 1, sent: 1, failed: 0 });
+    expect(s.calls.map((c) => c.userId)).toEqual([FRIEND]);
+    expect(s.warnings.some((w) => w.includes(`digest: ${s.owner.id} has a time zone the clock cannot read`))).toBe(true);
   });
 
   it("stops between people once the tick is aborted", async () => {

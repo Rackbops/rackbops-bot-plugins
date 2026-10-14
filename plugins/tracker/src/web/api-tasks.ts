@@ -8,7 +8,7 @@ import { RESEARCH_OFF } from "../research.js";
 import { sentResearch, waitingForPages } from "../research-sources.js";
 import { SCOUT_OFF } from "../scout.js";
 import { INBOX_OFF, JUDGE_OFF, type WatchConfig, watchSite } from "../want.js";
-import { actOn, editableTask, makeTask, READING, saveEdit, type TaskAction, type Writer, type Written } from "./editor.js";
+import { actOn, editableTask, makeTask, READING, saveEdit, SLOW_PAGE, type TaskAction, type Writer, type Written } from "./editor.js";
 import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_TYPES, type NewType } from "./editor-pages.js";
 import { editValues } from "./form-input.js";
 
@@ -58,13 +58,13 @@ export const NOT_EDITABLE = "A research request cannot be edited. Delete it and 
  * only while it is available.
  */
 export function typesAnswer(d: Pick<TrackerDeps, "research">): ApiAnswer {
-  const describe = (fields: readonly Field[], mode: "new" | "edit") =>
+  const describe = (type: NewType, fields: readonly Field[], mode: "new" | "edit") =>
     fields.map((f) => ({
       name: f.name,
       type: jsonKind(f),
       // An edit keeps whatever it is not sent: no field of an edit is required.
       required: mode === "new" && f.required === true,
-      description: f.help ? `${f.label}. ${f.help}` : f.label,
+      description: `${f.help ? `${f.label}. ${f.help}` : f.label}${clearsWithNull(type, mode, f.name) ? " Send null to clear it." : ""}`,
       ...(f.maxlength !== undefined ? { maxLength: f.maxlength } : {}),
       ...(f.min !== undefined ? { minimum: f.min } : {}),
       ...(f.max !== undefined ? { maximum: f.max } : {}),
@@ -76,11 +76,16 @@ export function typesAnswer(d: Pick<TrackerDeps, "research">): ApiAnswer {
       types: offeredTypes(d).map((type) => ({
         type,
         editable: type !== "research",
-        create: describe(fieldsFor(type, "new"), "new"),
-        edit: describe(fieldsFor(type, "edit"), "edit"),
+        create: describe(type, fieldsFor(type, "new", "api"), "new"),
+        edit: describe(type, fieldsFor(type, "edit", "api"), "edit"),
       })),
     },
   };
+}
+
+/** The one field `null` is a value of: a watch's top price in an edit, which it clears (`GET /types` says so). */
+function clearsWithNull(type: string, mode: "new" | "edit", name: string): boolean {
+  return mode === "edit" && (type === "wantlist" || type === "wantjudge") && name === "max";
 }
 
 /**
@@ -97,7 +102,7 @@ export function asFields(body: Record<string, unknown>, type: NewType, mode: "ne
     if (!f) return problem(400, "unknown_field", `\`${key.slice(0, 40)}\` is not a field of a ${type}${mode === "edit" ? " edit" : ""}. GET types lists them.`);
     const kind = jsonKind(f);
     // A watch's top price is the one number an edit can clear: `null` sends it empty, as the form does.
-    if (value === null && mode === "edit" && (type === "wantlist" || type === "wantjudge") && key === "max") {
+    if (value === null && clearsWithNull(type, mode, key)) {
       form.set(key, "");
       continue;
     }
@@ -118,6 +123,8 @@ export function refusal(error: string): ApiAnswer {
   if (error === NO_SUCH_TASK) return notFound();
   if (error === NO_LONGER_LISTED) return problem(401, "invalid_token", "The token's owner is no longer on this tracker's list.");
   if (error === READING || error === TASK_BUSY) return problem(409, "busy", error);
+  // The page did not answer before the host's deadline (editor.ts, #174): nothing made, worth a retry.
+  if (error === SLOW_PAGE) return problem(503, "slow_page", error, { "Retry-After": "10" });
   if (error === NOT_EDITABLE) return problem(409, "conflict", error);
   if (error === RESEARCH_OFF || error === SCOUT_OFF) return problem(503, "unavailable", error);
   if (error === FINISHED || /^That task is [a-z]+, not [a-z]+\.$/.test(error)) return problem(409, "conflict", error);

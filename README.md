@@ -83,8 +83,13 @@ later, inside `activate()`.
   characters: `.` and a bracket expression each match one byte, and a `{n}`/`{m,n}` bound on either
   counts bytes. The admin panel also pre-checks a change against it as a JS `RegExp`, which counts
   characters, but env-set is the authority. **Keep to the common subset: enumerate characters, never
-  multibyte ranges** (`[A-Za-z0-9]`, not `[[:alpha:]]` or unicode ranges), and expect a non-ASCII
-  value's length limit to be judged in bytes: `wow`'s `WOW_REALM` format (`{1,40}`) refuses a
+  multibyte ranges** (`[A-Za-z0-9]`, not `[[:alpha:]]` or unicode ranges), and no backslash
+  escapes but a special character's (`\.`): `\S`, `\d` and `\w` are undefined in POSIX (glibc
+  reads `\S` as non-space, a BSD regcomp as a plain `S`, #202), and inside a bracket expression a
+  backslash is a literal, so `[^ \t]` refuses `\` and `t`, not a tab. A token or secret is
+  `^[!-~]+$` (printable ASCII, no space); `scripts/env-formats.test.ts` pins the backslash rule
+  and checks each secret format against env-set's C-locale bash match. Expect a
+  non-ASCII value's length limit to be judged in bytes: `wow`'s `WOW_REALM` format (`{1,40}`) refuses a
   40-character slug containing `é` (41 bytes), though the panel's pre-check passes it. `required`
   mirrors env-set's REQUIRED set. A `secret` key is write-only (rackbops-discord-bot#240): env-set
   accepts it, validated against its `format`, but env-get never lists it, and env-schema reports its
