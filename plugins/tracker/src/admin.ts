@@ -1,6 +1,7 @@
 import { activeBlock, liftBlock, type User } from "@rackbops/docket-core";
 import { NOT_ADMIN } from "./access.js";
 import type { TrackerDeps } from "./actions.js";
+import { LEFT_DETAIL } from "./delivery-health.js";
 import type { Done } from "./manage.js";
 import type { Erased } from "./roster.js";
 
@@ -148,7 +149,7 @@ export async function forgetPerson(d: TrackerDeps, actor: User, targetId: string
     const e = d.roster.erase(target.id);
     for (const taskId of e.freed) {
       try {
-        await d.health.release(taskId, null, "resumed: a recipient left the tracker", now);
+        await d.health.release(taskId, null, LEFT_DETAIL, now);
       } catch (err) {
         // Before or after its status went back to active (a run may then be missing): the log says which.
         stuck.push(taskId);
