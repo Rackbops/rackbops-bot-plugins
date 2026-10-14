@@ -24,16 +24,35 @@ const entries: Array<EnvEntry & { plugin: string }> = readdirSync(pluginsDir)
     return env.map((e) => ({ ...e, plugin }));
   });
 
-// The characters an ERE gives a meaning to; `\` before any of them is a POSIX-defined literal.
-const ERE_SPECIAL = new Set([..."^.[]$()|*+?{}\\"]);
+// The characters an ERE gives a meaning to outside a bracket expression; `\` before any of them is a
+// POSIX-defined literal. `]` and `}` are not among them: POSIX leaves `\]` and `\}` undefined.
+const ERE_SPECIAL = new Set([..."^.[$()|*+?{\\"]);
 
+// Every backslash POSIX ERE does not define: one outside a bracket expression before an ordinary
+// character, and any inside one, where a backslash is a literal to POSIX but an escape to a JS RegExp.
 function nonPosixEscapes(format: string): string[] {
   const bad: string[] = [];
   for (let i = 0; i < format.length; i++) {
-    if (format[i] !== "\\") continue;
-    const next = format[i + 1] ?? "";
-    if (!ERE_SPECIAL.has(next)) bad.push(`\\${next}`);
-    i++;
+    const c = format[i];
+    if (c === "\\") {
+      const next = format[i + 1] ?? "";
+      if (!ERE_SPECIAL.has(next)) bad.push(`\\${next}`);
+      i++;
+    } else if (c === "[") {
+      // A leading `^`, then a leading `]`, are part of the list; `[:class:]`-style terms nest.
+      let j = i + 1;
+      if (format[j] === "^") j++;
+      if (format[j] === "]") j++;
+      for (; j < format.length && format[j] !== "]"; j++) {
+        if (format[j] === "[" && ":.=".includes(format[j + 1] ?? "")) {
+          const close = format.indexOf(`${format[j + 1]}]`, j + 2);
+          if (close !== -1) j = close + 1;
+        } else if (format[j] === "\\") {
+          bad.push(`[\\${format[j + 1] ?? ""}]`);
+        }
+      }
+      i = j;
+    }
   }
   return bad;
 }
@@ -54,6 +73,16 @@ describe("plugin env formats", () => {
   test("the scan found the plugins", () => {
     expect(entries.length).toBeGreaterThan(0);
     expect(entries.some((e) => e.secret)).toBe(true);
+  });
+
+  test("the escape scan refuses what POSIX leaves undefined and keeps what it defines", () => {
+    expect(nonPosixEscapes("^[!-~]+$")).toEqual([]);
+    expect(nonPosixEscapes("^[a-z]+(\\.[a-z]+)*$")).toEqual([]);
+    expect(nonPosixEscapes("^[]a-]+[[:digit:]]$")).toEqual([]);
+    expect(nonPosixEscapes("^[\\.]+$")).toEqual(["[\\.]"]);
+    expect(nonPosixEscapes("^[^ \\t]+$")).toEqual(["[\\t]"]);
+    expect(nonPosixEscapes("^\\S+$")).toEqual(["\\S"]);
+    expect(nonPosixEscapes("^a\\]b\\}$")).toEqual(["\\]", "\\}"]);
   });
 
   test("use no backslash escape outside POSIX ERE (spell the characters out)", () => {

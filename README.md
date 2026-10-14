@@ -87,7 +87,8 @@ later, inside `activate()`.
   escapes but a special character's (`\.`): `\S`, `\d` and `\w` are undefined in POSIX (glibc
   reads `\S` as non-space, a BSD regcomp as a plain `S`, #202), and inside a bracket expression a
   backslash is a literal, so `[^ \t]` refuses `\` and `t`, not a tab. A token or secret is
-  `^[!-~]+$` (printable ASCII, no space); `scripts/env-formats.test.ts` pins all this. Expect a
+  `^[!-~]+$` (printable ASCII, no space); `scripts/env-formats.test.ts` pins the backslash rule
+  and checks each secret format against env-set's C-locale bash match. Expect a
   non-ASCII value's length limit to be judged in bytes: `wow`'s `WOW_REALM` format (`{1,40}`) refuses a
   40-character slug containing `é` (41 bytes), though the panel's pre-check passes it. `required`
   mirrors env-set's REQUIRED set. A `secret` key is write-only (rackbops-discord-bot#240): env-set
