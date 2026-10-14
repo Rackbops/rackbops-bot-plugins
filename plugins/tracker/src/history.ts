@@ -15,6 +15,7 @@ import {
 } from "@rackbops/docket-core";
 import { clip, NO_SUCH_TASK, oneLine, type TrackerDeps } from "./actions.js";
 import { isRecipientPause, PERSON_REF, pauseNames } from "./delivery-health.js";
+import { errorNamesOther } from "./roster.js";
 
 /**
  * `/task history` (plan 1.3 "History", 5.10): a task's newest runs -- when each was due, how it went,
@@ -55,12 +56,21 @@ export interface ChangeView {
   detail: string | null;
 }
 
-export function runView(o: Occurrence, replies: readonly Reply[], people: ReadonlyMap<string, User>, viewer: User, now: Date): RunView {
+/** A failed run's error as a recipient other than the one it names sees it (#273). */
+export const OTHER_RECIPIENT_ERROR = "a recipient cannot be messaged";
+
+/**
+ * `seesEveryone`: the viewer owns the task or is an admin. Anyone else is not shown an error that
+ * names another recipient (a run from before 0.9.0 stored `recipient <id> cannot be messaged` and
+ * the like, roster.ts `errorForms`), only `OTHER_RECIPIENT_ERROR` (#273).
+ */
+export function runView(o: Occurrence, replies: readonly Reply[], people: ReadonlyMap<string, User>, viewer: User, now: Date, seesEveryone: boolean): RunView {
+  const error = o.status === "failed" && o.error ? (seesEveryone || !errorNamesOther(o.error, viewer.id) ? clip(o.error, 120) : OTHER_RECIPIENT_ERROR) : null;
   return {
     due: formatInstant(o.dueAt, viewer.timeZone, now),
     status: o.status,
     late: o.late,
-    error: o.status === "failed" && o.error ? clip(o.error, 120) : null,
+    error,
     answers: replies.filter((r) => r.occurrenceId === o.id).map((r) => `${people.get(r.userId)?.displayName ?? r.userId} ${replyText(r)}`),
   };
 }
@@ -92,8 +102,8 @@ function changeLine(v: ChangeView): string {
   return `- ${v.at} ${v.kind}${v.detail !== null ? `: ${v.detail}` : ""}`;
 }
 
-export function formatRun(o: Occurrence, replies: readonly Reply[], people: ReadonlyMap<string, User>, viewer: User, now: Date): string {
-  return runLine(runView(o, replies, people, viewer, now));
+export function formatRun(o: Occurrence, replies: readonly Reply[], people: ReadonlyMap<string, User>, viewer: User, now: Date, seesEveryone: boolean): string {
+  return runLine(runView(o, replies, people, viewer, now, seesEveryone));
 }
 
 export function formatChange(e: TaskEvent, viewer: User, now: Date, names: ReadonlyMap<string, string> = new Map()): string {
@@ -119,6 +129,54 @@ const HTTP_URL = /^https?:\/\/[^\s<>"]+$/i;
 export function findingView(f: StoredFinding, viewer: User, now: Date): FindingView {
   const source = f.source !== null && HTTP_URL.test(f.source) ? f.source : null;
   return { claim: f.text, source, at: formatInstant(f.at, viewer.timeZone, now), atIso: f.at };
+}
+
+/**
+ * What a delivery pause reads as to a viewer who is neither the task's owner nor an admin (#273):
+ * another recipient's (`isRecipientPause`) and the owner's own (`PAUSE_DETAIL`) alike, so the two
+ * cannot be told apart.
+ */
+export const NEUTRAL_PAUSE = "delivery paused";
+/** The `paused` details such a viewer reads as stored: a pause by hand names no one. */
+const OPEN_PAUSES: ReadonlySet<string> = new Set(["paused by the owner"]);
+/** The `resumed` details anyone may read; any other reads as `NEUTRAL_RESUME` (#273). */
+const NEUTRAL_RESUMES: ReadonlySet<string> = new Set(["delivery resumed", "resumed by the owner"]);
+const NEUTRAL_RESUME = "delivery resumed";
+
+/**
+ * A task's changes as a viewer who is neither its owner nor an admin sees them (#167, #273): nothing
+ * names or implies another recipient. A pause for another recipient (delivery-health.ts
+ * `isRecipientPause`) reads as `NEUTRAL_PAUSE`, as the owner's own delivery pause does (any pause
+ * but one by hand or the viewer's own), and the `resumed` row that ends it as `NEUTRAL_RESUME`, so
+ * the pair reads as the task's own; another recipient's is left out while the task already shows
+ * paused. Any other `resumed` row reads as `NEUTRAL_RESUME` unless its detail is one of
+ * `NEUTRAL_RESUMES` (forget-me's `LEFT_DETAIL` says a recipient left), and is left out with no
+ * pause shown above it (forget-me deletes the pause row that named the person it forgot). Stored
+ * rows are not rewritten.
+ */
+export function changesForRecipient(events: readonly TaskEvent[], viewerId: string): TaskEvent[] {
+  const shown: TaskEvent[] = [];
+  let paused = false;
+  // The pause shown is `NEUTRAL_PAUSE`: its resume reads `NEUTRAL_RESUME` whatever it says, so an
+  // owner going on without a recipient reads as an owner's own delivery resuming (manage.ts resumes
+  // that with `health.resume`, "delivery resumed").
+  let neutral = false;
+  for (const e of events) {
+    if (e.kind === "paused") {
+      const own = isRecipientPause(e) && pauseNames(e.detail, viewerId);
+      if (isRecipientPause(e) && !own && paused) continue;
+      paused = true;
+      neutral = !own && !OPEN_PAUSES.has(e.detail);
+      shown.push(neutral ? { ...e, detail: NEUTRAL_PAUSE } : e);
+    } else if (e.kind === "resumed") {
+      if (!paused) continue;
+      paused = false;
+      shown.push(!neutral && NEUTRAL_RESUMES.has(e.detail) ? e : { ...e, detail: NEUTRAL_RESUME });
+    } else {
+      shown.push(e);
+    }
+  }
+  return shown;
 }
 
 /** A task's history as the viewer may see it: the newest `HISTORY_RUNS` runs and `HISTORY_CHANGES` changes. */
@@ -152,10 +210,12 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
   const replies = (await visibleReplies(d.store, actor, task.id)) ?? [];
   // A pause for a recipient is shown only to them, the owner and admins (#167; delivery-health.ts
   // `isRecipientPause`): docket's `visibleHistory` hides a recipient's own rows from the others, but
-  // not this one. Filtered here, before the slice and the "(N earlier)" count, so Discord, the web
-  // and the API agree.
-  const seesEveryPause = user.admin || task.ownerId === user.id;
-  const changes = ((await visibleHistory(d.store, actor, task.id)) ?? []).filter((e) => seesEveryPause || !isRecipientPause(e) || pauseNames(e.detail, user.id));
+  // not this one. Anyone else reads it, and the resume after it, as the task's own (#273,
+  // `changesForRecipient`). Done here, before the slice and the "(N earlier)" count, so Discord, the
+  // web and the API agree.
+  const seesEveryone = user.admin || task.ownerId === user.id;
+  const visible = (await visibleHistory(d.store, actor, task.id)) ?? [];
+  const changes = seesEveryone ? visible : changesForRecipient(visible, user.id);
   const people = new Map<string, User>();
   for (const r of replies) {
     if (!people.has(r.userId)) {
@@ -178,7 +238,7 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
     task,
     cadence: task.schedule && owner ? describeSchedule(task.schedule, owner, user.timeZone, now) : "no schedule",
     next: next ? formatInstant(next.dueAt, user.timeZone, now) : null,
-    runs: runs.slice(-HISTORY_RUNS).map((o) => runView(o, replies, people, user, now)),
+    runs: runs.slice(-HISTORY_RUNS).map((o) => runView(o, replies, people, user, now, seesEveryone)),
     earlierRuns: Math.max(0, runs.length - HISTORY_RUNS),
     changes: changes.slice(-HISTORY_CHANGES).map((e) => changeView(e, user, now, names)),
     earlierChanges: Math.max(0, changes.length - HISTORY_CHANGES),

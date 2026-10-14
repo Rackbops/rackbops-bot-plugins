@@ -153,6 +153,18 @@ function errorForms(id: string): RegExp {
   return new RegExp(`(recipient |user |delivery to )${id}(?![0-9A-Za-z_])`, "g");
 }
 
+/**
+ * Any of `errorForms`' phrases, with the tracker id it names, or `redactError`'s `(forgotten)` in its
+ * place: a forgotten person is still another recipient to the rest.
+ */
+const ANY_ERROR_FORM = new RegExp(`(recipient |user |delivery to )(u[1-9][0-9]*(?![0-9A-Za-z_])|\\(${FORGOTTEN}\\))`, "g");
+
+/** Whether `text` names someone other than `id` in one of `errorForms`' phrases (#273). */
+export function errorNamesOther(text: string, id: string): boolean {
+  for (const [, , named] of text.matchAll(ANY_ERROR_FORM)) if (named !== id) return true;
+  return false;
+}
+
 export function errorNames(text: string | null, id: string): boolean {
   return text !== null && errorForms(id).test(text);
 }
