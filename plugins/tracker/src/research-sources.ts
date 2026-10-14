@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { DISPATCHER, hasFired, hasJobOut, type Store, type Task } from "@rackbops/docket-core";
-import { type GatheredPage, MAX_GATHERED_CHARS, MAX_GATHERED_PAGES, MIN_PAGE_CHARS, type ResearchConfig, usesSentSources } from "@rackbops/docket-types";
+import { DISPATCHER, FOLLOW_UP_PREFIX, hasFired, hasJobOut, type Occurrence, type Store, type Task } from "@rackbops/docket-core";
+import { type BlockedPage, type GatheredPage, MAX_GATHERED_CHARS, MAX_GATHERED_PAGES, MIN_PAGE_CHARS, type ResearchConfig, researchState, usesSentSources } from "@rackbops/docket-types";
 
 /**
  * Pages gathered for a research request by the person's own browser (docket-types 0.8.0's
@@ -36,35 +36,12 @@ export const MAX_SOURCES_PER_TASK = MAX_GATHERED_PAGES;
 export const MAX_SOURCES_CHARS = MAX_GATHERED_CHARS - MIN_PAGE_CHARS;
 
 /**
- * How long a browser request waits for `ready` before its run starts anyway, on whatever pages are
- * in by then (or a little before its deadline, when sooner: `sourcesExpiry`): with no page in, that
- * run makes no model call and tells the owner (docket's "No pages were gathered"), and the request
- * ends.
+ * How long a request waits for its pages, and when that wait ends if `ready` never comes, are
+ * docket-types' since 0.9.0 (`SOURCES_WAIT_DAYS`, `SOURCES_DEADLINE_MARGIN_MINUTES`,
+ * `sourcesExpiry`): the same 14 days, or 10 minutes before a sooner deadline, that the tracker's own
+ * copy here said in 0.28.0. A browser request's first run is queued then (research.ts), and docket
+ * queues the fuller pass's wait the same way (`awaitingPages`).
  */
-export const SOURCES_WAIT_DAYS = 14;
-export const SOURCES_WAIT_MS = SOURCES_WAIT_DAYS * 24 * 60 * 60 * 1000;
-
-/**
- * How long before its deadline a browser request's run starts when the deadline comes first:
- * docket's research run makes no call once it starts past the deadline, and an idle execute lane
- * picks a due run up within a minute or two, so a run queued at the deadline itself would always
- * miss it. The margin makes a miss unlikely, not impossible: a run held by the owner's budget, or
- * behind another owner's Job still out, can still start past the deadline. `/research` refuses a
- * browser request whose deadline leaves less than `MIN_GATHER_MINUTES` to gather before the run.
- */
-export const SOURCES_DEADLINE_MARGIN_MINUTES = 10;
-const SOURCES_DEADLINE_MARGIN_MS = SOURCES_DEADLINE_MARGIN_MINUTES * 60 * 1000;
-
-/**
- * When a browser request made at `now` runs if `ready` never comes: `SOURCES_WAIT_DAYS` out, or
- * `SOURCES_DEADLINE_MARGIN_MINUTES` before its deadline when that is sooner (never before `now`).
- * `byDeadline` says which.
- */
-export function sourcesExpiry(now: Date, deadline: Date | null): { at: Date; byDeadline: boolean } {
-  const wait = now.getTime() + SOURCES_WAIT_MS;
-  if (!deadline || deadline.getTime() - SOURCES_DEADLINE_MARGIN_MS >= wait) return { at: new Date(wait), byDeadline: false };
-  return { at: new Date(Math.max(now.getTime(), deadline.getTime() - SOURCES_DEADLINE_MARGIN_MS)), byDeadline: true };
-}
 
 /**
  * What `add` did: stored (new and replaced rows, how many pages left out because their text would
@@ -143,18 +120,18 @@ export function sentResearch(task: Task): boolean {
 }
 
 /**
- * Whether a browser request still waits for its pages: live, its run never moved (`sources/ready`
- * moves it, and docket's `reschedule` records that as the task's one `schedule_changed` -- no edit
- * changes a research request's schedule, and an hour or zone change moves only calendar and period
- * tasks), and no run of it ever started (none running, fired, finished, with a Job out at the
- * runner, or with any event of docket's dispatcher). The last is what freezes the pages once a run
- * has read them: the dispatcher writes its "started" event after marking a run `running` and before
- * the type's `prepare` reads the pages, and a run it puts back unsent (the runner unreachable, the
- * usage limit) goes back to `queued` with no Job out, but keeps that event. Pages taken after it
- * would change the next try's prompt under the same Job key, which the Executor refuses
- * (executor.ts). No column records it: the task's own history does.
+ * Whether a browser request still waits for its first pages (0.28.0): live, its run never moved
+ * (`sources/ready` moves it, and docket's `reschedule` records that as the task's one
+ * `schedule_changed` -- no edit changes a research request's schedule, and an hour or zone change
+ * moves only calendar and period tasks), and no run of it ever started (none running, fired,
+ * finished, with a Job out at the runner, or with any event of docket's dispatcher). The last is
+ * what freezes the pages once a run has read them: the dispatcher writes its "started" event after
+ * marking a run `running` and before the type's `prepare` reads the pages, and a run it puts back
+ * unsent (the runner unreachable, the usage limit) goes back to `queued` with no Job out, but keeps
+ * that event. Pages taken after it would change the next try's prompt under the same Job key, which
+ * the Executor refuses (executor.ts). No column records it: the task's own history does.
  */
-export async function waitingForPages(store: Store, task: Task): Promise<boolean> {
+async function waitingForFirstPages(store: Store, task: Task): Promise<boolean> {
   if (!sentResearch(task) || (task.status !== "active" && task.status !== "paused")) return false;
   if ((await store.listTaskEvents(task.id)).some((e) => e.kind === "schedule_changed")) return false;
   for (const o of await store.listOccurrences({ taskId: task.id })) {
@@ -162,4 +139,50 @@ export async function waitingForPages(store: Store, task: Task): Promise<boolean
     if ((await store.listEvents(o.id)).some((e) => e.agent === DISPATCHER)) return false;
   }
   return true;
+}
+
+/**
+ * The queued follow-up a research request waits for its fuller pass on (docket-types 0.9.0, phase
+ * `awaiting-pages`), or null when it does not wait so: live, in that phase, and its only queued or
+ * running run is that one `followup:` row, unfired, with no Job out and no event of docket's
+ * dispatcher (so no try of the second pass has started and read the pages). A try put back with its
+ * Job still pending goes back to `queued` with that Job out (docket-core's dispatcher), which is why
+ * the Job and the event are checked and not the status alone: `ready` deleting such a row would
+ * orphan its Job and run the second pass twice. Any other row pending beside it -- the review run
+ * that asked for it still finishing, or a run `ready` already queued -- means it does not wait.
+ */
+export async function awaitingFollowUp(store: Store, task: Task): Promise<Occurrence | null> {
+  if (task.type !== "research" || (task.status !== "active" && task.status !== "paused")) return null;
+  if (researchState(task.state).phase !== "awaiting-pages") return null;
+  const pending = (await store.listOccurrences({ taskId: task.id })).filter((o) => o.status === "queued" || o.status === "running");
+  const [o] = pending;
+  if (!o || pending.length !== 1) return null;
+  if (o.status !== "queued" || !o.dedupeKey.startsWith(FOLLOW_UP_PREFIX) || hasFired(o) || (await hasJobOut(store, o))) return null;
+  if ((await store.listEvents(o.id)).some((e) => e.agent === DISPATCHER)) return null;
+  return o;
+}
+
+/**
+ * Whether a research request waits for pages for a fuller pass (0.29.0, docket-types 0.9.0; docket
+ * sends only `sources: web` requests there, but nothing here assumes it): its first answer, which listed pages its run could not
+ * open, was reviewed and DMed, and it waits on one queued follow-up at its expiry (up to 14 days,
+ * `sourcesExpiry`), sending, running and charging nothing, until the owner's browser sends pages and
+ * `ready` (web/api-sources.ts).
+ */
+export async function awaitingPages(store: Store, task: Task): Promise<boolean> {
+  return (await awaitingFollowUp(store, task)) !== null;
+}
+
+/**
+ * Whether a research request takes pages now: a browser request still waiting for its first ones
+ * (0.28.0), or any request waiting for a fuller pass (`awaitingPages`, 0.29.0).
+ */
+export async function waitingForPages(store: Store, task: Task): Promise<boolean> {
+  return (await waitingForFirstPages(store, task)) || (await awaitingPages(store, task));
+}
+
+/** The pages the request's first answer said its run could not open (docket-types' state), for the browser that gathers them. */
+export function blockedPages(task: Task): BlockedPage[] {
+  if (task.type !== "research") return [];
+  return researchState(task.state).blocked ?? [];
 }

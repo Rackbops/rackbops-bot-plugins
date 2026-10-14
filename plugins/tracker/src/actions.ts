@@ -32,7 +32,7 @@ import { admit, PeopleError, setPreferences } from "./people.js";
 import { heldRuns, restoreHeldRun } from "./retime.js";
 import type { Roster } from "./roster.js";
 import type { WantInbox } from "./inbox.js";
-import { type ResearchSources, sentResearch, waitingForPages } from "./research-sources.js";
+import { awaitingPages, type ResearchSources, sentResearch, waitingForPages } from "./research-sources.js";
 import type { UsrVerifier } from "./usr-identity.js";
 import type { UsrLinks } from "./usr-links.js";
 import { type AllowResult, type RegisterLink, type UsrClient, UsrError } from "./usr.js";
@@ -510,12 +510,13 @@ export async function listTasks(d: TrackerDeps, user: User): Promise<string> {
 
 /**
  * What `/tasks` adds to a browser research request's line (0.28.0): that its pages come from the
- * owner's browser, how many are in, and while it waits for them, that it does.
+ * owner's browser, how many are in, and while it waits for them, that it does; and to a request
+ * waiting for pages for a fuller pass (0.29.0), how many are in and that it waits.
  */
 export async function pagesNote(d: Pick<TrackerDeps, "store" | "sources">, task: Task): Promise<string> {
-  if (!sentResearch(task)) return "";
   const n = d.sources?.count(task.id) ?? 0;
   const pages = `${n} ${n === 1 ? "page" : "pages"} in`;
+  if (!sentResearch(task)) return (await awaitingPages(d.store, task)) ? ` (${pages}; waiting for pages for a fuller pass)` : "";
   return (await waitingForPages(d.store, task)) ? ` (sources: browser, ${pages}; waiting for pages)` : ` (sources: browser, ${pages})`;
 }
 

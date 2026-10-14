@@ -1,9 +1,9 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
-import { gatheredPages } from "@rackbops/docket-types";
+import { gatheredPages, SOURCES_DEADLINE_MARGIN_MINUTES, sourcesExpiry } from "@rackbops/docket-types";
 import { admit } from "./people.js";
 import { BROWSER_AT, BROWSER_OFF } from "./research.js";
-import { MAX_SOURCES_CHARS, MAX_SOURCES_PER_TASK, ResearchSources, SOURCES_DEADLINE_MARGIN_MINUTES, sourcesExpiry } from "./research-sources.js";
+import { MAX_SOURCES_CHARS, MAX_SOURCES_PER_TASK, ResearchSources } from "./research-sources.js";
 import { Roster } from "./roster.js";
 import { migrate, MIGRATIONS, openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";

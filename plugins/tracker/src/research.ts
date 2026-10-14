@@ -1,8 +1,8 @@
 import { type Actor, createTask, formatInstant, parseWhen, type User } from "@rackbops/docket-core";
-import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, type ResearchConfig } from "@rackbops/docket-types";
+import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, type ResearchConfig, SOURCES_DEADLINE_MARGIN_MINUTES, SOURCES_WAIT_DAYS, sourcesExpiry } from "@rackbops/docket-types";
 import { clip, liveTaskCap, said, type TaskResult, type TrackerDeps } from "./actions.js";
 import { MAX_TITLE, MAX_WHEN } from "./limits.js";
-import { MAX_SOURCES_PER_TASK, SOURCES_DEADLINE_MARGIN_MINUTES, SOURCES_WAIT_DAYS, sourcesExpiry } from "./research-sources.js";
+import { awaitingPages, MAX_SOURCES_PER_TASK } from "./research-sources.js";
 
 /** The least time a browser request leaves its browser to gather pages before its run, when a deadline brings that run forward. */
 export const MIN_GATHER_MINUTES = 10;
@@ -22,7 +22,7 @@ export const MIN_GATHER_MINUTES = 10;
  * it to -- and sends in through the task API (research-sources.ts, web/api-sources.ts), since
  * BoardGameGeek refuses the runner and eBay is never opened from here. Its run is queued at the
  * latest it may wait, `SOURCES_WAIT_DAYS` from now or `SOURCES_DEADLINE_MARGIN_MINUTES` before the
- * deadline, whichever is sooner (`sourcesExpiry`: a run started past the deadline makes no call), and
+ * deadline, whichever is sooner (docket-types' `sourcesExpiry`: a run started past the deadline makes no call), and
  * `sources/ready` moves it to now once the pages are in; so `at` is refused with it. A request whose
  * `ready` never comes runs then on whatever pages are in; with none, docket makes no model call,
  * tells the owner no pages were gathered for it, and ends it.
@@ -30,7 +30,11 @@ export const MIN_GATHER_MINUTES = 10;
 
 export { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "@rackbops/docket-types";
 
-/** Research requests one person may have waiting or running at once: each is up to about 3 USD of model runs. */
+/**
+ * Research requests one person may have waiting or running at once: each is up to about 3 USD of
+ * model runs. A request waiting for pages for a fuller pass (`awaitingPages`, 0.29.0) does not
+ * count: its first answer is already delivered, and it runs nothing until its pages come.
+ */
 export const MAX_LIVE_RESEARCH = 5;
 
 export const RESEARCH_OFF = "Research is not available on this bot yet: it needs the model runner, which is not set up here.";
@@ -104,7 +108,9 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
   const capped = await liveTaskCap(d, user);
   if (capped) return { ok: false, error: capped };
   const live = [...(await d.store.listTasks({ ownerId: user.id, status: "active", type: "research" })), ...(await d.store.listTasks({ ownerId: user.id, status: "paused", type: "research" }))];
-  if (live.length >= MAX_LIVE_RESEARCH) {
+  let counted = 0;
+  for (const t of live) if (!(await awaitingPages(d.store, t))) counted++;
+  if (counted >= MAX_LIVE_RESEARCH) {
     return { ok: false, error: `You already have ${MAX_LIVE_RESEARCH} research requests waiting, the most one person may. Wait for one to be answered first.` };
   }
 

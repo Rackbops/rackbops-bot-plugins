@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.29.0] - 2026-10-14
+
+### Added
+
+- **A fuller pass on pages the research could not open** (docket-types 0.9.0). A research request
+  whose first answer listed pages its run could not open (BoardGameGeek refusing the runner, a
+  403, a CAPTCHA, a sign-in wall) still DMs you its reviewed answer, now with a "Couldn't open:"
+  list, and then waits for pages for up to 14 days (or until 10 minutes before its deadline), on
+  one queued follow-up that sends, runs and charges nothing. Ask Claude in Chrome to gather pages
+  for it: the task API's `POST /api/v1/tasks/<id>/sources` takes them as for a `sources: browser`
+  request, and `POST /api/v1/tasks/<id>/sources/ready` moves the request to now and deletes the
+  follow-up, in that order, under the task's lock; the next execute tick runs a second pass on the
+  pages, which DMs you an "Update to ..." of what it adds or corrects. A request whose `ready`
+  never comes ends at its expiry, the first answer standing. `ready` is a 409 on a paused request,
+  and once the follow-up has started, has fired or has its Job out at the runner (a try put back
+  pending is queued again, and deleting it would orphan its Job); both routes refuse the request
+  once the second pass has started.
+- The task API's JSON shows such a request's `waitingForPages`, `pages`, top-level `sources`
+  (`web`) and a new `blocked` list of `{site, url?, why}` -- the pages to gather -- for every
+  research request whose state lists any, and for a browser request (an empty list);
+  `settings.sources` stays `web`. `/tasks` and `/task history` add `(N pages in; waiting for
+  pages for a fuller pass)` to its line.
+
+### Changed
+
+- A request waiting for pages for a fuller pass does not count against the 5 research requests
+  one person may have waiting: its first answer is already delivered, and it runs nothing until
+  its pages come.
+- The fuller pass needs the web area, whose task API is the only way pages arrive: on a bot
+  without `TRACKER_WEB_URL` the research type gets no page store, so a first answer with blocked
+  pages is sent and the request ends, as before 0.29.0, instead of waiting for pages nobody could
+  send.
+- The 14-day wait, the 10-minute deadline margin and `sourcesExpiry` are docket-types' own now
+  (0.9.0), the tracker's copies gone; the tracker keeps its refusal of a browser request whose
+  deadline leaves less than 20 minutes.
+- docket-core and docket-types go to 0.9.0. No schema change.
+
 ## [0.28.0] - 2026-10-13
 
 ### Added

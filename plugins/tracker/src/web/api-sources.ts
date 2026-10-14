@@ -1,8 +1,8 @@
-import { reschedule, ScheduleError, type User } from "@rackbops/docket-core";
+import { type Occurrence, reschedule, ScheduleError, type Task, type User } from "@rackbops/docket-core";
 import { type GatheredPage, gatheredPages } from "@rackbops/docket-types";
 import { TASK_BUSY } from "../locks.js";
 import { ownLiveTask } from "../manage.js";
-import { MAX_SOURCES_CHARS, MAX_SOURCES_PER_POST, MAX_SOURCES_PER_TASK, sentResearch, waitingForPages } from "../research-sources.js";
+import { awaitingFollowUp, MAX_SOURCES_CHARS, MAX_SOURCES_PER_POST, MAX_SOURCES_PER_TASK, sentResearch, waitingForPages } from "../research-sources.js";
 import { type ApiAnswer, NOT_FOUND_MESSAGE, problem } from "./api-tasks.js";
 import type { Writer } from "./editor.js";
 
@@ -25,6 +25,16 @@ import type { Writer } from "./editor.js";
  *   run to now through docket-core's `reschedule`, as an edit moves one. That move is what ends the
  *   waiting (research-sources.ts's `waitingForPages`), so neither route takes the request after it,
  *   nor once a run of it has started.
+ *
+ * A fuller pass (0.29.0, docket-types 0.9.0): a research request whose first answer listed pages
+ * its run could not open waits in phase `awaiting-pages` on one queued follow-up at its expiry
+ * (`awaitingPages`; docket sends only `web` requests there), and both routes take it as they take a
+ * browser request waiting for its first pages. Its `ready` -- only while that follow-up is unfired
+ * with no Job out and no try of it started (a try put back with its Job still pending is `queued`
+ * again, and deleting it would orphan that Job and run the second pass twice), else a 409 -- moves
+ * the once task to now with `reschedule` and then deletes the follow-up, as docket's contract
+ * orders it: core's `reschedule` never cancels a follow-up, and one left in place would run the
+ * second pass again at the expiry, while a move that fails leaves the wait as it was.
  *
  * Only the token owner's own live research request on browser pages: anyone else's, an unknown id,
  * or a deleted or finished one answers the API's same 404; a web request, or one no longer waiting,
@@ -66,10 +76,11 @@ export async function sourcesAnswer(w: Writer, user: User, id: string, body: Rec
       async (): Promise<ApiAnswer> => {
         const task = await ownLiveTask(w.d, user, id);
         if (!task || task.type !== "research" || (task.status !== "active" && task.status !== "paused")) return problem(404, "not_found", NOT_FOUND_MESSAGE);
-        if (!sentResearch(task)) return problem(409, "conflict", "That research request searches the web itself: pages are sent in only to one made with `sources: browser`.");
+        const awaiting = (await awaitingFollowUp(w.d.store, task)) !== null;
+        if (!sentResearch(task) && !awaiting) return problem(409, "conflict", "That research request searches the web itself: pages are sent in only to one made with `sources: browser`, or one waiting for pages for a fuller pass.");
         const sources = w.d.sources;
         if (!sources) return problem(503, "unavailable", "This bot cannot take pages just now; try again later.");
-        if (!(await waitingForPages(w.d.store, task))) return problem(409, "conflict", "That research request has started: it takes no more pages.");
+        if (!awaiting && !(await waitingForPages(w.d.store, task))) return problem(409, "conflict", "That research request has started: it takes no more pages.");
         const added = sources.add(task.id, pages, w.d.clock.now());
         if (!added.ok) {
           return problem(409, "too_many", `A request holds at most ${MAX_SOURCES_PER_TASK} pages, and this one holds ${added.held}: send at most ${MAX_SOURCES_PER_TASK - added.held} new ones (a page sent again replaces itself).`);
@@ -104,14 +115,16 @@ export async function sourcesReadyAnswer(w: Writer, user: User, id: string): Pro
       async (): Promise<ApiAnswer> => {
         const task = await ownLiveTask(w.d, user, id);
         if (!task || task.type !== "research" || (task.status !== "active" && task.status !== "paused")) return problem(404, "not_found", NOT_FOUND_MESSAGE);
-        if (!sentResearch(task)) return problem(409, "conflict", "That research request searches the web itself: it does not wait for pages.");
-        if (!(await waitingForPages(w.d.store, task))) return problem(409, "conflict", "That research request is no longer waiting for pages.");
+        const followUp = await awaitingFollowUp(w.d.store, task);
+        if (!sentResearch(task) && !followUp) return problem(409, "conflict", "That research request searches the web itself: it does not wait for pages.");
+        if (!followUp && !(await waitingForPages(w.d.store, task))) return problem(409, "conflict", "That research request is no longer waiting for pages.");
         if (task.status === "paused") return problem(409, "conflict", "That research request is paused: resume it, then send ready.");
         const held = w.d.sources?.count(task.id) ?? 0;
         if (held === 0) return problem(409, "conflict", "Send pages first: the request holds none.");
         const owner = await w.d.store.getUser(task.ownerId);
         if (!owner) return problem(404, "not_found", NOT_FOUND_MESSAGE);
         const now = w.d.clock.now();
+        if (followUp) return fullerPass(w, user, task, owner, followUp, held, now);
         try {
           await reschedule(w.d.store, task, owner, { kind: "once", at: now.toISOString() }, user.id, now);
         } catch (err) {
@@ -127,4 +140,33 @@ export async function sourcesReadyAnswer(w: Writer, user: User, id: string): Pro
       () => problem(409, "busy", TASK_BUSY),
     ),
   );
+}
+
+/**
+ * `ready` for a request waiting for a fuller pass (0.29.0), under the task's lock, `followUp` being
+ * the row `awaitingFollowUp` just found (in phase `awaiting-pages`, queued, unfired, no Job out, no
+ * try started). First moves the once task to now, then deletes that follow-up, as docket's contract
+ * orders it: a move that throws or queues no run leaves the follow-up in place, so the request is
+ * never left with nothing queued and still ends at its expiry. A follow-up that is somehow no longer
+ * queued by then (none can be: the tick starts a run only of a task it holds) takes the new run back
+ * out, so the second pass never runs twice.
+ */
+async function fullerPass(w: Writer, user: User, task: Task, owner: User, followUp: Occurrence, held: number, now: Date): Promise<ApiAnswer> {
+  const store = w.d.store;
+  let next: Occurrence | null;
+  try {
+    next = (await reschedule(store, task, owner, { kind: "once", at: now.toISOString() }, user.id, now)).next;
+  } catch (err) {
+    if (err instanceof ScheduleError) return problem(409, "conflict", "That research request has started.");
+    throw err;
+  }
+  if (!next) return problem(409, "conflict", "That research request could not be started just now; try again later.");
+  if (!(await store.deleteOccurrence(followUp.id))) {
+    await store.deleteOccurrence(next.id);
+    return problem(409, "conflict", "That research request has started.");
+  }
+  return {
+    status: 200,
+    body: { pages: held, message: `Starting a fuller pass of ${task.title} on ${held === 1 ? "1 page" : `${held} pages`} within a minute or two. A second run checks what it adds before I DM you the update.` },
+  };
 }
