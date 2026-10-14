@@ -273,6 +273,7 @@ describe("parseMailConfig", () => {
     expect(() => parseMailConfig({ TRACKER_MAIL_DOMAIN: DOMAIN })).toThrow("go together");
     expect(() => parseMailConfig({ TRACKER_MAIL_KEY: KEY })).toThrow("go together");
     expect(() => parseMailConfig({ ...MAIL_ENV, TRACKER_MAIL_KEY: "short-secret" })).toThrow("at least 32");
+    for (const bad of [`${KEY}\u00e9`, `${KEY}\u00a0x`, `${KEY}\u0007`]) expect(() => parseMailConfig({ ...MAIL_ENV, TRACKER_MAIL_KEY: bad })).toThrow("printable ASCII");
     expect(() => parseMailConfig({ ...MAIL_ENV, TRACKER_MAIL_DOMAIN: "Alerts.Example.com" })).not.toThrow("Alerts");
     expect(() => parseMailConfig({ ...MAIL_ENV, TRACKER_MAIL_DOMAIN: "localhost" })).toThrow("TRACKER_MAIL_DOMAIN");
   });
