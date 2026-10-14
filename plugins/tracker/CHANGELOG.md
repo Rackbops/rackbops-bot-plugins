@@ -13,7 +13,8 @@
   request, and `POST /api/v1/tasks/<id>/sources/ready` moves the request to now and deletes the
   follow-up, in that order, under the task's lock; the next execute tick runs a second pass on the
   pages, which DMs you an "Update to ..." of what it adds or corrects. A request whose `ready`
-  never comes ends at its expiry, the first answer standing. `ready` is a 409 on a paused request,
+  never comes runs that second pass at its expiry on whatever pages are in, as a browser request
+  does; with none in it makes no model call and ends, the first answer standing. `ready` is a 409 on a paused request,
   and once the follow-up has started, has fired or has its Job out at the runner (a try put back
   pending is queued again, and deleting it would orphan its Job); both routes refuse the request
   once the second pass has started.
@@ -27,7 +28,7 @@
 
 - A request waiting for pages for a fuller pass does not count against the 5 research requests
   one person may have waiting: its first answer is already delivered, and it runs nothing until
-  its pages come.
+  `ready` or its expiry.
 - The fuller pass needs the web area, whose task API is the only way pages arrive: on a bot
   without `TRACKER_WEB_URL` the research type gets no page store, so a first answer with blocked
   pages is sent and the request ends, as before 0.29.0, instead of waiting for pages nobody could
@@ -39,7 +40,8 @@
   ends at its expiry, its first answer standing.
 - Since a request waiting for a fuller pass does not count against the cap of 5 and `ready` does
   not check the cap again, one person whose fuller passes are readied can briefly have more than 5
-  research requests in work at once; the daily ceiling still bounds what they spend.
+  research requests in work at once, and so can one whose waits reach their expiry with pages in;
+  the daily ceiling still bounds what they spend.
 - The 14-day wait, the 10-minute deadline margin and `sourcesExpiry` are docket-types' own now
   (0.9.0), the tracker's copies gone; the tracker keeps its refusal of a browser request whose
   deadline leaves less than 20 minutes.
@@ -83,6 +85,9 @@
 - Every secret setting's format is spelled `^[!-~]+$` (printable ASCII, no spaces) instead of
   `^\S+$`, which POSIX ERE leaves undefined: glibc read it as non-space, a BSD regcomp as a literal
   `S` (#202, #307). What a valid value is does not change.
+- A person's digest never comes twice within 20 hours: one whose due hour is less than 20 hours
+  after the last one claimed is passed over for that local day, so a move east sends nothing more
+  until the next day's hour (#211, #308). Ordinary days across a clock change are unaffected.
 
 ### Schema
 

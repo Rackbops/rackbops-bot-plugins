@@ -33,7 +33,7 @@ export { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "@rackbops/docket-types";
 /**
  * Research requests one person may have waiting or running at once: each is up to about 3 USD of
  * model runs. A request waiting for pages for a fuller pass (`awaitingPages`, 0.29.0) does not
- * count: its first answer is already delivered, and it runs nothing until its pages come.
+ * count: its first answer is already delivered, and it runs nothing until `ready` or its expiry.
  */
 export const MAX_LIVE_RESEARCH = 5;
 
