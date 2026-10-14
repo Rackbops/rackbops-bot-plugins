@@ -304,6 +304,31 @@ describe("runDigests (plan 5.5)", () => {
     expect(s.calls).toHaveLength(hours.length + 2);
   });
 
+  it("the gap is 20 hours: a due hour 19 hours after the last claim is passed over, one 21 hours after is sent (#211 notify-5)", async () => {
+    for (const [preferredHour, sent] of [[4, 0], [6, 1]] as const) {
+      const s = await setup();
+      s.clock.set(AT_HOUR);
+      await s.digests();
+      // 9:00 New York on Oct 5 was 13:00Z; the hour moves earlier for Tue Oct 6.
+      await setPreferences(s.store, s.owner.id, { timeZone: "America/New_York", preferredHour });
+      await s.make("call mom", { kind: "once", at: "2026-10-06T22:00:00.000Z" });
+      // 4:00 is 08:00Z (19 hours on), 6:00 is 10:00Z (21 hours on); 20:00Z is later the same day.
+      for (const at of [`2026-10-06T${String(preferredHour + 4).padStart(2, "0")}:00:00.000Z`, "2026-10-06T20:00:00.000Z"]) {
+        s.clock.set(at);
+        await s.digests();
+      }
+      expect(s.calls).toHaveLength(sent);
+    }
+  });
+
+  it("a last claim dated in the future (a clock that ran ahead) holds nothing back (#211 notify-5)", async () => {
+    const s = await setup();
+    await s.make("call mom", { kind: "once", at: "2026-10-05T22:00:00.000Z" });
+    await s.store.claimNotice(digestKey(s.owner.id, "2026-12-01"), "2026-12-01T14:00:00.000Z");
+    s.clock.set(AT_HOUR);
+    expect(await s.digests()).toEqual({ claimed: 1, sent: 1, failed: 0 });
+  });
+
   it("writes no claim on later ticks once the day is claimed, nor on a day passed over (#211 notify-5)", async () => {
     const s = await setup();
     const claims: string[] = [];

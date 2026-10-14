@@ -22,11 +22,15 @@ import { MAX_CONTENT, wrapBareUrls } from "./notifier.js";
  * day whose hour comes less than `DIGEST_GAP_MS` after the person's last claimed one is passed over
  * whole. So a move east -- 9:00 in New York, then Tokyo, where it is already 9:00 the next day --
  * sends nothing more until the hour of the following local day, and a later tick that day cannot
- * slip one in once 20 hours have passed (each later digest would then come late). The gap is
- * measured between due hours, not sends, so an ordinary day (23 to 25 hours apart across a clock
- * change) and a digest the bot sent late after an outage are unaffected. The person's last claim is
- * read first (`lastNotice`), so once their day is claimed a tick writes nothing for them; only an
- * unclaimed day past the gap takes the write lock to claim it.
+ * slip one in once 20 hours have passed (each later digest would then come late). One local day is
+ * passed over this way in three cases: a move east into a date whose hour has come; moving the
+ * preferred hour more than 4 hours earlier (the next day's hour is then under 20 hours away); and a
+ * move west across the date line that brings back a date not yet claimed (Kiritimati to Pago Pago).
+ * The gap is measured between due hours, not sends, so an ordinary day (23 to 25 hours apart across
+ * a clock change) and a digest the bot sent late after an outage are unaffected. A last claim dated
+ * after `now` (a clock that ran ahead) counts as none, so it cannot hold digests back until real time
+ * catches up. The person's last claim is read first (`lastNotice`), so once their day is claimed a
+ * tick writes nothing for them; only an unclaimed day past the gap takes the write lock to claim it.
  *
  * What it lists: the person's own active reminders and renewals (`DIGEST_TYPES`), the two kinds of
  * task whose runs wait on an answer (done, or a renewal's keep / cancel / renewed). The others --
@@ -208,10 +212,13 @@ export async function runDigests(d: DigestDeps, now: Date, signal?: AbortSignal)
     if (day.hour < user.preferredHour) continue;
     if (d.health?.isPaused(user.id)) continue;
     // Read before writing: today claimed (its `at` is today's hour) or a digest due less than the
-    // gap ago passes the person by without the write lock.
+    // gap ago passes the person by without the write lock. A claim dated in the future is ignored.
+    // The claim's `at` is never after `now` (an hour a fall-back repeats can resolve to its later pass).
     const last = await d.store.lastNotice(digestKey(user.id, ""));
-    if (last && due.getTime() - Date.parse(last.at) < DIGEST_GAP_MS) continue;
-    if (!(await d.store.claimNotice(digestKey(user.id, day.day), due.toISOString()))) continue;
+    const lastAt = last ? Date.parse(last.at) : Number.NaN;
+    if (lastAt <= now.getTime() && due.getTime() - lastAt < DIGEST_GAP_MS) continue;
+    const at = new Date(Math.min(due.getTime(), now.getTime()));
+    if (!(await d.store.claimNotice(digestKey(user.id, day.day), at.toISOString()))) continue;
     result.claimed++;
     let text: string | null;
     try {
