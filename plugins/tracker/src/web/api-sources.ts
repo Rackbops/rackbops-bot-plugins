@@ -2,7 +2,7 @@ import { type Occurrence, reschedule, ScheduleError, type Task, type User } from
 import { type GatheredPage, gatheredPages } from "@rackbops/docket-types";
 import { TASK_BUSY } from "../locks.js";
 import { ownLiveTask } from "../manage.js";
-import { awaitingFollowUp, MAX_SOURCES_CHARS, MAX_SOURCES_PER_POST, MAX_SOURCES_PER_TASK, sentResearch, waitingForPages } from "../research-sources.js";
+import { awaitingFollowUp, inFullerPass, MAX_SOURCES_CHARS, MAX_SOURCES_PER_POST, MAX_SOURCES_PER_TASK, sentResearch, waitingForPages } from "../research-sources.js";
 import { type ApiAnswer, NOT_FOUND_MESSAGE, problem } from "./api-tasks.js";
 import type { Writer } from "./editor.js";
 
@@ -57,6 +57,9 @@ function cleanPages(raw: readonly unknown[]): GatheredPage[] {
   return out;
 }
 
+/** A web request in the fuller pass that no longer waits: its pages went in, or a try of it started. */
+const FULLER_PASS_STARTED = "That research request's fuller pass has already started: it is no longer waiting for pages.";
+
 const plural = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
 
 /** The sources route's answer to a body `body` for task `id`. */
@@ -77,6 +80,7 @@ export async function sourcesAnswer(w: Writer, user: User, id: string, body: Rec
         const task = await ownLiveTask(w.d, user, id);
         if (!task || task.type !== "research" || (task.status !== "active" && task.status !== "paused")) return problem(404, "not_found", NOT_FOUND_MESSAGE);
         const awaiting = (await awaitingFollowUp(w.d.store, task)) !== null;
+        if (!sentResearch(task) && !awaiting && inFullerPass(task)) return problem(409, "conflict", FULLER_PASS_STARTED);
         if (!sentResearch(task) && !awaiting) return problem(409, "conflict", "That research request searches the web itself: pages are sent in only to one made with `sources: browser`, or one waiting for pages for a fuller pass.");
         const sources = w.d.sources;
         if (!sources) return problem(503, "unavailable", "This bot cannot take pages just now; try again later.");
@@ -116,6 +120,7 @@ export async function sourcesReadyAnswer(w: Writer, user: User, id: string): Pro
         const task = await ownLiveTask(w.d, user, id);
         if (!task || task.type !== "research" || (task.status !== "active" && task.status !== "paused")) return problem(404, "not_found", NOT_FOUND_MESSAGE);
         const followUp = await awaitingFollowUp(w.d.store, task);
+        if (!sentResearch(task) && !followUp && inFullerPass(task)) return problem(409, "conflict", FULLER_PASS_STARTED);
         if (!sentResearch(task) && !followUp) return problem(409, "conflict", "That research request searches the web itself: it does not wait for pages.");
         if (!followUp && !(await waitingForPages(w.d.store, task))) return problem(409, "conflict", "That research request is no longer waiting for pages.");
         if (task.status === "paused") return problem(409, "conflict", "That research request is paused: resume it, then send ready.");

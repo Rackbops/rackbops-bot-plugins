@@ -186,10 +186,73 @@ describe("a web request waiting for pages for a fuller pass", () => {
     expect(w.city.jobs.size).toBe(jobs + 1);
     const refused = await r.go();
     expect(refused.status).toBe(409);
-    expect((await r.send([page(2)])).status).toBe(409);
+    expect((await body(refused)).error.message).toContain("fuller pass has already started");
+    const more = await r.send([page(2)]);
+    expect(more.status).toBe(409);
+    const said = (await body(more)).error.message;
+    expect(said).toContain("no longer waiting for pages");
+    expect(said).not.toContain("searches the web itself");
     expect(query(w.dbPath, "SELECT dedupe_key FROM occurrences WHERE status IN ('queued', 'running') AND dedupe_key NOT LIKE 'followup:%'")).toEqual([]);
     expect(query<{ n: number }>(w.dbPath, "SELECT COUNT(*) AS n FROM occurrences WHERE dedupe_key LIKE 'followup:%' AND status IN ('queued', 'running')")[0]?.n).toBe(1);
     expect(w.city.latest()?.spec.prompt).not.toContain("https://boardgamegeek.com/p2");
+  });
+
+  it("a second-pass try that fails retryably is its retry, not a wait: no pages, no ready, waitingForPages false", async () => {
+    const w = await setup();
+    await awaiting(w);
+    const r = await ready(w);
+    expect((await r.send([page(1)])).status).toBe(200);
+    expect((await r.go()).status).toBe(200);
+    await w.round();
+    const pass2 = w.city.latest();
+    expect(pass2?.spec.prompt).toContain("Page 1 says");
+    if (pass2) Object.assign(pass2, { status: "done", result: { kind: "auth_failed", detail: "signed out" } });
+    await w.round();
+    // docket-types keeps the phase, counts the failure, and queues a fresh follow-up after the auth backoff.
+    const state = JSON.parse(query<{ state: string }>(w.dbPath, "SELECT state FROM tasks")[0]?.state ?? "{}");
+    expect(state).toMatchObject({ phase: "awaiting-pages", failures: 1 });
+    expect(followUps(w)).toHaveLength(1);
+    const [retry] = followUps(w);
+    const sent = await r.send([page(2)]);
+    expect(sent.status).toBe(409);
+    expect((await body(sent)).error.message).toContain("fuller pass has already started");
+    expect((await r.go()).status).toBe(409);
+    expect(followUps(w)).toEqual([retry]);
+    expect((await body(await api(w.plugin, "GET", "/tasks/t1", { token: r.token }))).task.waitingForPages).toBe(false);
+  });
+
+  it("ready that cannot delete the follow-up, or queues no run, is a 409 that leaves the follow-up and no new run", async () => {
+    const original = { del: SqliteStore.prototype.deleteOccurrence, create: SqliteStore.prototype.createOccurrence };
+    try {
+      const w = await setup();
+      await awaiting(w);
+      const r = await ready(w);
+      expect((await r.send([page(1)])).status).toBe(200);
+      const followId = `o${query<{ seq: number }>(w.dbPath, "SELECT seq FROM occurrences WHERE dedupe_key LIKE 'followup:%' AND status = 'queued'")[0]?.seq}`;
+      SqliteStore.prototype.deleteOccurrence = async function (this: SqliteStore, id: string) {
+        return id === followId ? false : original.del.call(this, id);
+      };
+      const lost = await r.go();
+      expect(lost.status).toBe(409);
+      expect((await body(lost)).error.message).toContain("has started");
+      expect(followUps(w)).toHaveLength(1);
+      expect(query(w.dbPath, "SELECT seq FROM occurrences WHERE status IN ('queued', 'running') AND dedupe_key NOT LIKE 'followup:%'")).toEqual([]);
+      SqliteStore.prototype.deleteOccurrence = original.del;
+
+      SqliteStore.prototype.createOccurrence = async () => null;
+      const none = await r.go();
+      expect(none.status).toBe(409);
+      expect((await body(none)).error.message).toContain("could not be started");
+      expect(followUps(w)).toHaveLength(1);
+      expect(query(w.dbPath, "SELECT seq FROM occurrences WHERE status IN ('queued', 'running') AND dedupe_key NOT LIKE 'followup:%'")).toEqual([]);
+      SqliteStore.prototype.createOccurrence = original.create;
+      // Still waiting: a later ready goes through.
+      expect((await r.go()).status).toBe(200);
+      expect(followUps(w)).toEqual([]);
+    } finally {
+      SqliteStore.prototype.deleteOccurrence = original.del;
+      SqliteStore.prototype.createOccurrence = original.create;
+    }
   });
 
   it("ready on a paused one is a 409; it still takes pages", async () => {

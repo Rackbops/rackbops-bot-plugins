@@ -32,6 +32,14 @@
   without `TRACKER_WEB_URL` the research type gets no page store, so a first answer with blocked
   pages is sent and the request ends, as before 0.29.0, instead of waiting for pages nobody could
   send.
+- Only a bot with `TRACKER_WEB_URL` set gives the research type its page store (`readSources`).
+  A bot restarted without the web area while a `sources: browser` request is still in flight loses
+  that request's stored pages: its run reads none and the request ends with a DM saying so, as no
+  new pages could reach it there anyway. A request already waiting for a fuller pass on such a bot
+  ends at its expiry, its first answer standing.
+- Since a request waiting for a fuller pass does not count against the cap of 5 and `ready` does
+  not check the cap again, one person whose fuller passes are readied can briefly have more than 5
+  research requests in work at once; the daily ceiling still bounds what they spend.
 - The 14-day wait, the 10-minute deadline margin and `sourcesExpiry` are docket-types' own now
   (0.9.0), the tracker's copies gone; the tracker keeps its refusal of a browser request whose
   deadline leaves less than 20 minutes.
@@ -72,6 +80,9 @@
 ### Changed
 
 - docket-core and docket-types go to 0.8.0.
+- Every secret setting's format is spelled `^[!-~]+$` (printable ASCII, no spaces) instead of
+  `^\S+$`, which POSIX ERE leaves undefined: glibc read it as non-space, a BSD regcomp as a literal
+  `S` (#202, #307). What a valid value is does not change.
 
 ### Schema
 

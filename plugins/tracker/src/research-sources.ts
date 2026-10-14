@@ -145,7 +145,9 @@ async function waitingForFirstPages(store: Store, task: Task): Promise<boolean> 
  * The queued follow-up a research request waits for its fuller pass on (docket-types 0.9.0, phase
  * `awaiting-pages`), or null when it does not wait so: live, in that phase, and its only queued or
  * running run is that one `followup:` row, unfired, with no Job out and no event of docket's
- * dispatcher (so no try of the second pass has started and read the pages). A try put back with its
+ * dispatcher (so no try of the second pass has started and read the pages), and no try of it has
+ * failed (docket-types counts a retryable failure in `failures` and queues a fresh `followup:` retry
+ * row, in the same phase; that row is the retry, with the auth backoff, not a wait). A try put back with its
  * Job still pending goes back to `queued` with that Job out (docket-core's dispatcher), which is why
  * the Job and the event are checked and not the status alone: `ready` deleting such a row would
  * orphan its Job and run the second pass twice. Any other row pending beside it -- the review run
@@ -153,7 +155,10 @@ async function waitingForFirstPages(store: Store, task: Task): Promise<boolean> 
  */
 export async function awaitingFollowUp(store: Store, task: Task): Promise<Occurrence | null> {
   if (task.type !== "research" || (task.status !== "active" && task.status !== "paused")) return null;
-  if (researchState(task.state).phase !== "awaiting-pages") return null;
+  // `failures` 0: docket enters the wait with it reset, and a second-pass try that fails retryably
+  // keeps the phase but counts it and queues a fresh follow-up, so a retry row never reads as a wait.
+  const state = researchState(task.state);
+  if (state.phase !== "awaiting-pages" || state.failures !== 0) return null;
   const pending = (await store.listOccurrences({ taskId: task.id })).filter((o) => o.status === "queued" || o.status === "running");
   const [o] = pending;
   if (!o || pending.length !== 1) return null;
@@ -179,6 +184,17 @@ export async function awaitingPages(store: Store, task: Task): Promise<boolean> 
  */
 export async function waitingForPages(store: Store, task: Task): Promise<boolean> {
   return (await waitingForFirstPages(store, task)) || (await awaitingPages(store, task));
+}
+
+/**
+ * Whether a research request is, or was, in the fuller pass (0.29.0): its first answer listed pages
+ * its run could not open, it waits or waited for pages, or its second pass answered. What the sources
+ * routes say to a web request no longer waiting, rather than that it never takes pages.
+ */
+export function inFullerPass(task: Task): boolean {
+  if (task.type !== "research") return false;
+  const s = researchState(task.state);
+  return s.phase === "awaiting-pages" || s.pass === 2 || (s.blocked?.length ?? 0) > 0;
 }
 
 /** The pages the request's first answer said its run could not open (docket-types' state), for the browser that gathers them. */
