@@ -273,6 +273,7 @@ describe("parseMailConfig", () => {
     expect(() => parseMailConfig({ TRACKER_MAIL_DOMAIN: DOMAIN })).toThrow("go together");
     expect(() => parseMailConfig({ TRACKER_MAIL_KEY: KEY })).toThrow("go together");
     expect(() => parseMailConfig({ ...MAIL_ENV, TRACKER_MAIL_KEY: "short-secret" })).toThrow("at least 32");
+    for (const bad of [`${KEY}\u00e9`, `${KEY}\u00a0x`, `${KEY}\u0007`]) expect(() => parseMailConfig({ ...MAIL_ENV, TRACKER_MAIL_KEY: bad })).toThrow("printable ASCII");
     expect(() => parseMailConfig({ ...MAIL_ENV, TRACKER_MAIL_DOMAIN: "Alerts.Example.com" })).not.toThrow("Alerts");
     expect(() => parseMailConfig({ ...MAIL_ENV, TRACKER_MAIL_DOMAIN: "localhost" })).toThrow("TRACKER_MAIL_DOMAIN");
   });
@@ -290,8 +291,9 @@ describe("migration 10", () => {
     const schema = () => db.query("SELECT type, name, sql FROM sqlite_master WHERE name != 'sqlite_sequence' ORDER BY name").all() as { name: string }[];
     const before = schema();
     expect(migrate(db)).toBe(9);
-    expect(MIGRATIONS).toHaveLength(10);
-    expect(schema().filter((s) => !s.name.includes("mail_addresses"))).toEqual(before);
+    expect(MIGRATIONS).toHaveLength(11);
+    // Migration 11's research_sources has its own test (research-sources.test.ts).
+    expect(schema().filter((s) => !s.name.includes("mail_addresses") && !s.name.includes("research_sources"))).toEqual(before);
     for (const id of ["1", "2"]) db.exec(`INSERT INTO users (discord_id, display_name, time_zone, preferred_hour, admin, created_at) VALUES ('${id}', 'x', 'UTC', 9, 0, 'now')`);
     const mail = new MailAddresses(db, DOMAIN);
     const at = new Date("2026-10-13T12:00:00.000Z");

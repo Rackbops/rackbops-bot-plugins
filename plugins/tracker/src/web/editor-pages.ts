@@ -75,12 +75,21 @@ const priceSettings = (mode: Mode, surface: Surface): readonly Field[] => [
   { name: "baseline", label: "Measure the drop from", kind: "select", options: BASELINE_OPTIONS },
 ];
 
+const RESEARCH_SOURCE_OPTIONS = [["web", "the web: the research searches"], ["browser", "my browser: pages it sends in"]] as const;
+
 /** `/research`'s options, as research.ts reads them: `at` and `deadline` in `parseWhen`'s words. */
 const RESEARCH_FIELDS: readonly Field[] = [
   { name: "question", label: "What to look into", kind: "textarea", required: true, maxlength: MAX_QUESTION_CHARS },
   { name: "context", label: "Context", kind: "textarea", maxlength: MAX_CONTEXT_CHARS, help: "Anything that narrows it down. Only you see it here; it goes to the model with the question." },
   { name: "deadline", label: "Deadline", kind: "text", maxlength: MAX_WHEN, help: 'For example "fri 17:00". Past it nothing more is run.' },
-  { name: "at", label: "Start", kind: "text", maxlength: MAX_WHEN, help: "Leave it empty to start now." },
+  { name: "at", label: "Start", kind: "text", maxlength: MAX_WHEN, help: "Leave it empty to start now. Not with pages from your browser, which start when they are in." },
+  {
+    name: "sources",
+    label: "Where the pages come from",
+    kind: "select",
+    options: RESEARCH_SOURCE_OPTIONS,
+    help: "Your browser: the research waits for the pages your own browser gathers, such as Claude in Chrome, sent in through the task API (for BoardGameGeek or eBay, which the research cannot open).",
+  },
 ];
 
 const LENS_OPTIONS = [

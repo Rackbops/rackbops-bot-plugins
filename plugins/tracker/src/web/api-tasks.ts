@@ -5,6 +5,7 @@ import { loadHistory } from "../history.js";
 import { TASK_BUSY } from "../locks.js";
 import { FINISHED, ownLiveTask } from "../manage.js";
 import { RESEARCH_OFF } from "../research.js";
+import { sentResearch, waitingForPages } from "../research-sources.js";
 import { SCOUT_OFF } from "../scout.js";
 import { INBOX_OFF, JUDGE_OFF, type WatchConfig, watchSite } from "../want.js";
 import { actOn, editableTask, makeTask, READING, saveEdit, SLOW_PAGE, type TaskAction, type Writer, type Written } from "./editor.js";
@@ -155,6 +156,7 @@ export async function taskJson(d: TrackerDeps, user: User, task: Task) {
     settings.question = c.question;
     if (c.context !== undefined) settings.context = c.context;
     if (c.deadline !== undefined) settings.deadline = c.deadline;
+    settings.sources = sentResearch(task) ? "browser" : "web";
   }
   if (type) {
     for (const f of fieldsFor(type, "edit")) {
@@ -180,6 +182,10 @@ export async function taskJson(d: TrackerDeps, user: User, task: Task) {
     ...(task.type === "price" ? { url: String((task.config as PriceConfig).url) } : {}),
     // A watch's source and target: read-only too, since another place to look is another watch.
     ...(task.type === "wantlist" || task.type === "wantjudge" ? watchJson(task.config as WatchConfig) : {}),
+    // A browser research request (0.28.0): its pages come from the owner's browser (`browser`, the
+    // same word as `settings.sources` and the create field; docket's config calls it `sent`), how many
+    // are in, and whether it still waits for them (`POST /tasks/<id>/sources`, then `/sources/ready`).
+    ...(sentResearch(task) ? { sources: "browser", pages: d.sources?.count(task.id) ?? 0, waitingForPages: await waitingForPages(d.store, task) } : {}),
   };
 }
 

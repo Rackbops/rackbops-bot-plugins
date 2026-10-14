@@ -241,7 +241,7 @@ describe("SqliteStore beyond the contract", () => {
       const again = o.keep(new Database(path));
       const version = (again.query("PRAGMA user_version").get() as { user_version: number }).user_version;
       expect(version).toBe(MIGRATIONS.length);
-      expect(MIGRATIONS).toHaveLength(10);
+      expect(MIGRATIONS).toHaveLength(11);
       const known060 = 3;
       expect(() => {
         if (version > known060) throw new Error(`tracker database is at schema ${version}, newer than this plugin knows (${known060})`);

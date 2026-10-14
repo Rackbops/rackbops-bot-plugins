@@ -13,7 +13,7 @@ import {
   type TaskEvent,
   type User,
 } from "@rackbops/docket-core";
-import { clip, NO_SUCH_TASK, oneLine, type TrackerDeps } from "./actions.js";
+import { clip, NO_SUCH_TASK, oneLine, pagesNote, type TrackerDeps } from "./actions.js";
 import { isRecipientPause, PERSON_REF, pauseNames } from "./delivery-health.js";
 import { errorNamesOther } from "./roster.js";
 
@@ -250,7 +250,7 @@ export async function taskHistory(d: TrackerDeps, user: User, taskId: string): P
   const h = await loadHistory(d, user, taskId);
   if (!h) return NO_SUCH_TASK;
   const { task } = h;
-  const lines = [`\`${task.id}\` ${task.title} -- ${task.type}, ${task.status}, ${h.cadence}`];
+  const lines = [`\`${task.id}\` ${task.title} -- ${task.type}, ${task.status}, ${h.cadence}${await pagesNote(d, task)}`];
   lines.push(h.next ? `Next: ${h.next}` : "Next: nothing scheduled");
   lines.push(h.runs.length === 0 ? "Runs: none yet" : "Runs:");
   if (h.earlierRuns > 0) lines.push(`- (${h.earlierRuns} earlier)`);

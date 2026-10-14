@@ -91,6 +91,7 @@ export const ERASED_TABLES = [
   "series",
   "findings",
   "want_inbox",
+  "research_sources",
   "executor_jobs",
   "task_recipients",
   "delivery_pauses",
@@ -387,6 +388,8 @@ export class Roster {
       rows.findings = (rows.findings ?? 0) + deleteFindingsOf(this.db, userId);
       // The listings sent in for their want-list watches (inbox.ts, schema migration 8).
       del("want_inbox", `task_id IN (${THEIR_TASKS})`, userId);
+      // The pages their browser sent in for their research requests (research-sources.ts, schema migration 11).
+      del("research_sources", `task_id IN (${THEIR_TASKS})`, userId);
       del("executor_jobs", `occurrence_id IN (${THEIR_RUNS})`, userId);
       del("task_recipients", `task_id IN (${THEIR_TASKS}) OR user_id = ?`, userId, userId);
       del("delivery_pauses", `task_id IN (${THEIR_TASKS}) OR user_id = ?`, userId, userId);

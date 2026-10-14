@@ -13,6 +13,7 @@ import {
   typesAnswer,
 } from "./api-tasks.js";
 import { listingsAnswer } from "./api-listings.js";
+import { sourcesAnswer, sourcesReadyAnswer } from "./api-sources.js";
 import type { Writer } from "./editor.js";
 import { readBody } from "./html.js";
 
@@ -37,17 +38,28 @@ import { readBody } from "./html.js";
  *   `FAILED_PER_SECOND`): past it they get 429 instead of 401, and a valid token is unaffected.
  * - A body is JSON (`Content-Type: application/json`), an object, at most `MAX_API_BYTES`, read no
  *   further than that (`MAX_LISTINGS_BYTES` for the listings route, whose 40 listings with their
- *   addresses need more). Errors are `{"error": {"code", "message"}}`.
+ *   addresses need more, and `MAX_SOURCES_BYTES` for the sources route). Errors are `{"error": {"code", "message"}}`.
  * - `POST /tasks/<id>/listings` (0.19.0, api-listings.ts) sends listings in to the owner's inbox
  *   watch -- an eBay watch, or a BGG one on a bot without BGG access -- since such a watch never opens
  *   either site itself; `GET /tasks` shows such a watch's `site`, its words to `search` for and its
  *   top price, for the browser helper that finds them.
+ * - `POST /tasks/<id>/sources` and `POST /tasks/<id>/sources/ready` (0.28.0, api-sources.ts) send
+ *   the pages the owner's browser gathered in to their research request made with `sources:
+ *   browser`, then start its run on them (body up to `MAX_SOURCES_BYTES`: ten pages of text);
+ *   `GET /tasks` shows such a request's `sources: "browser"`, its `pages` and `waitingForPages`.
  */
 
 export const API_PREFIX = "/api/v1";
 export const MAX_API_BYTES = 16 * 1024;
 /** The listings route's body: up to 40 listings, each with its address (docket keeps up to 400 characters of one) and text. */
 export const MAX_LISTINGS_BYTES = 64 * 1024;
+/**
+ * The sources route's body: ten pages, each kept to docket's 12,000 characters of text
+ * (`MAX_PAGE_CHARS`; a UTF-8 character is up to 4 bytes, and JSON escaping can double a quote or a
+ * line break), with room for addresses, titles and a browser's own whitespace. A page sent longer is
+ * cut by docket anyway, so a browser should trim before it sends.
+ */
+export const MAX_SOURCES_BYTES = 1024 * 1024;
 export const RATE_BURST = 60;
 export const RATE_PER_SECOND = 1;
 /** One bucket shared by every request whose token fails to look up (unknown, revoked, expired, malformed). */
@@ -135,10 +147,12 @@ type Route =
   | { kind: "me" | "types" | "tasks" }
   | { kind: "task"; id: string }
   | { kind: "act"; id: string; action: "pause" | "resume" }
-  | { kind: "listings"; id: string };
+  | { kind: "listings"; id: string }
+  | { kind: "sources" | "ready"; id: string };
 
 const ACT = /^\/tasks\/([^/]+)\/(pause|resume)$/;
 const LISTINGS = /^\/tasks\/([^/]+)\/listings$/;
+const SOURCES = /^\/tasks\/([^/]+)\/sources(\/ready)?$/;
 const ONE = /^\/tasks\/([^/]+)$/;
 
 function segment(raw: string | undefined): string {
@@ -157,6 +171,8 @@ function route(rest: string): Route | null {
   if (act) return { kind: "act", id: segment(act[1]), action: act[2] as "pause" | "resume" };
   const listings = LISTINGS.exec(rest);
   if (listings) return { kind: "listings", id: segment(listings[1]) };
+  const sources = SOURCES.exec(rest);
+  if (sources) return { kind: sources[2] ? "ready" : "sources", id: segment(sources[1]) };
   const one = ONE.exec(rest);
   return one ? { kind: "task", id: segment(one[1]) } : null;
 }
@@ -164,7 +180,7 @@ function route(rest: string): Route | null {
 function allowedMethods(r: Route): string {
   if (r.kind === "tasks") return "GET, POST";
   if (r.kind === "task") return "GET, PATCH, DELETE";
-  if (r.kind === "act" || r.kind === "listings") return "POST";
+  if (r.kind === "act" || r.kind === "listings" || r.kind === "sources" || r.kind === "ready") return "POST";
   return "GET";
 }
 
@@ -239,7 +255,7 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
   const base = `${w.base}${API_PREFIX}`;
 
   if (method === "POST" || method === "PATCH") {
-    const read = await readJson(request, r.kind === "listings" ? MAX_LISTINGS_BYTES : MAX_API_BYTES);
+    const read = await readJson(request, r.kind === "listings" ? MAX_LISTINGS_BYTES : r.kind === "sources" ? MAX_SOURCES_BYTES : MAX_API_BYTES);
     if (!read.ok) return json(read.answer);
     const { body } = read;
     if (r.kind === "tasks") return json(await createAnswer(writer, user, body, base));
@@ -249,6 +265,11 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
       return json(await actAnswer(writer, user, r.id, r.action));
     }
     if (r.kind === "listings") return json(await listingsAnswer(writer, user, r.id, body));
+    if (r.kind === "sources") return json(await sourcesAnswer(writer, user, r.id, body));
+    if (r.kind === "ready") {
+      if (Object.keys(body).length > 0) return json(problem(400, "unknown_field", "`ready` takes no fields: send {}."));
+      return json(await sourcesReadyAnswer(writer, user, r.id));
+    }
   }
   if (method === "DELETE" && r.kind === "task") return json(await actAnswer(writer, user, r.id, "delete"));
   if (r.kind === "types") return json(typesAnswer(w.d));

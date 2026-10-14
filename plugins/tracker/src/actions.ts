@@ -32,6 +32,7 @@ import { admit, PeopleError, setPreferences } from "./people.js";
 import { heldRuns, restoreHeldRun } from "./retime.js";
 import type { Roster } from "./roster.js";
 import type { WantInbox } from "./inbox.js";
+import { type ResearchSources, sentResearch, waitingForPages } from "./research-sources.js";
 import type { UsrVerifier } from "./usr-identity.js";
 import type { UsrLinks } from "./usr-links.js";
 import { type AllowResult, type RegisterLink, type UsrClient, UsrError } from "./usr.js";
@@ -86,6 +87,8 @@ export interface TrackerDeps {
   bgg?: boolean;
   /** The want-list inboxes: the listings sent in for a watch (inbox.ts); the task API's listings route writes them. */
   inbox?: WantInbox;
+  /** The pages gathered for browser research requests (research-sources.ts); the task API's sources route writes them. */
+  sources?: ResearchSources;
   /** People's alert addresses (mail.ts), while the alert-email route is on (`TRACKER_MAIL_*`). */
   mail?: MailAddresses | null;
   /** The link to our usr (usr.ts), when `TRACKER_USR_URL` is set: `/allow` links people, `/register` hands out usr's sign-up link. */
@@ -491,13 +494,29 @@ export async function listTasks(d: TrackerDeps, user: User): Promise<string> {
   const { entries, paused } = await loadTaskList(d, user);
   const now = d.clock.now();
   // One entry at a time, not docket's whole list split on "\n": a title may hold a newline (a web form's).
-  const active = entries.map((entry) => formatTaskList([entry], user, now));
-  const pausedLines = paused.map(({ task, held }) =>
-    held.length === 0
-      ? `Paused: \`${task.id}\` ${task.title}`
-      : `Paused: \`${task.id}\` ${task.title} -- I could not DM ${heldNames(held)}; \`/task resume ${task.id}\` goes on without them.`,
-  );
+  const active: string[] = [];
+  for (const entry of entries) active.push(`${formatTaskList([entry], user, now)}${await pagesNote(d, entry.task)}`);
+  const pausedLines: string[] = [];
+  for (const { task, held } of paused) {
+    const note = await pagesNote(d, task);
+    pausedLines.push(
+      held.length === 0
+        ? `Paused: \`${task.id}\` ${task.title}${note}`
+        : `Paused: \`${task.id}\` ${task.title}${note} -- I could not DM ${heldNames(held)}; \`/task resume ${task.id}\` goes on without them.`,
+    );
+  }
   return fitTaskList(active, pausedLines, d.webEditor);
+}
+
+/**
+ * What `/tasks` adds to a browser research request's line (0.28.0): that its pages come from the
+ * owner's browser, how many are in, and while it waits for them, that it does.
+ */
+export async function pagesNote(d: Pick<TrackerDeps, "store" | "sources">, task: Task): Promise<string> {
+  if (!sentResearch(task)) return "";
+  const n = d.sources?.count(task.id) ?? 0;
+  const pages = `${n} ${n === 1 ? "page" : "pages"} in`;
+  return (await waitingForPages(d.store, task)) ? ` (sources: browser, ${pages}; waiting for pages)` : ` (sources: browser, ${pages})`;
 }
 
 /** The most people one paused line of `/tasks` names: a task's recipients are not capped, and each name is up to 100 characters. */

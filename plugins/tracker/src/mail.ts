@@ -53,7 +53,8 @@ export function parseMailConfig(env: Readonly<Record<string, string | undefined>
   if (domain === "" && key === "") return null;
   if (domain === "" || key === "") throw new Error(`${MAIL_DOMAIN_KEY} and ${MAIL_KEY_KEY} go together: set both for the alert-email route, or neither`);
   if (!new RegExp(MAIL_DOMAIN_FORMAT).test(domain)) throw new Error(`${MAIL_DOMAIN_KEY} is not a lower-case domain such as alerts.example.com`);
-  if (key.length < MIN_MAIL_KEY || /\s/.test(key)) throw new Error(`${MAIL_KEY_KEY} must be at least ${MIN_MAIL_KEY} characters with no spaces`);
+  // The manifest's format, `^[!-~]{32,}$` (#202): printable ASCII, no spaces.
+  if (key.length < MIN_MAIL_KEY || !/^[!-~]+$/.test(key)) throw new Error(`${MAIL_KEY_KEY} must be at least ${MIN_MAIL_KEY} printable ASCII characters with no spaces`);
   return { domain, key };
 }
 

@@ -10,7 +10,7 @@ import { Database } from "bun:sqlite";
  * Every table whose rows have a public id has an `seq INTEGER PRIMARY KEY AUTOINCREMENT`: the public
  * id is a one-letter prefix plus that number (`u1`, `t12`, the same shape as docket's MemoryStore),
  * which carries no dot, so it fits a reply reference, and AUTOINCREMENT never reuses a number after
- * a delete. `task_recipients`, `deliveries` and `want_inbox` have a `seq` too, for order only; the
+ * a delete. `task_recipients`, `deliveries`, `want_inbox` and `research_sources` have a `seq` too, for order only; the
  * rest are keyed by what they describe (a person, a task and person, a token's hash, a Job, notice
  * or `tracker_meta` key). Instants are ISO-8601 UTC strings, compared as text, exactly as
  * MemoryStore compares them. JSON columns hold `JSON.stringify` output.
@@ -396,6 +396,27 @@ export const MIGRATIONS: readonly string[] = [
     local TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL
   );
+  `,
+  // 11 (0.28.0; research on pages the person's own browser gathered, docket-types 0.8.0's
+  // `sources: "sent"`, rackbops-bot-plugins#125): purely additive, one new table and its index; no
+  // existing table or row is touched.
+  // - `research_sources`: each page sent in for a research request (research-sources.ts), oldest first
+  //   by `seq`, already cleaned and capped by docket-types' `gatheredPages`. One row per page address
+  //   per task (`UNIQUE (task_id, url)`): the same page sent again replaces its row. At most
+  //   `MAX_GATHERED_PAGES` (10) per task, the most one request reads. `task_id` is the request, for
+  //   forget-me (roster.ts); a request that has ended loses its rows (`purgeEnded`). A database at 11
+  //   is refused by 0.27.0 and older.
+  `
+  CREATE TABLE research_sources (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    text TEXT NOT NULL,
+    at TEXT NOT NULL,
+    UNIQUE (task_id, url)
+  );
+  CREATE INDEX research_sources_task ON research_sources (task_id, seq);
   `,
 ];
 

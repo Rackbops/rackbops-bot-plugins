@@ -1,0 +1,384 @@
+import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, it } from "bun:test";
+import { gatheredPages } from "@rackbops/docket-types";
+import { admit } from "./people.js";
+import { BROWSER_AT, BROWSER_OFF } from "./research.js";
+import { MAX_SOURCES_CHARS, MAX_SOURCES_PER_TASK, ResearchSources, SOURCES_DEADLINE_MARGIN_MINUTES, sourcesExpiry } from "./research-sources.js";
+import { Roster } from "./roster.js";
+import { migrate, MIGRATIONS, openDatabase } from "./schema.js";
+import { SqliteStore } from "./store.js";
+import { ANSWER, CITY_HALL, dmsTo, fakeCityHall, query, setup, success } from "./web/execute-harness.js";
+import { api, cleanup, CURLY, LARRY, makeToken, people, signIn, slash, START, world } from "./web/harness.js";
+
+/**
+ * Research on pages the person's own browser gathered (tracker 0.28.0, docket-types 0.8.0's
+ * `sources: "sent"`, rackbops-bot-plugins#125): `/research sources: browser`, the `research_sources`
+ * table (schema migration 11), the task API's `sources` and `sources/ready` routes, the execute lane
+ * reading the pages into the run's prompt, the request that never gets its pages, and the pages
+ * going when the request ends or its owner is forgotten.
+ */
+
+afterEach(cleanup);
+
+const AT = new Date(START);
+const page = (n: number, text = `Page ${n} says the game has ${n} players.`) => ({ url: `https://example.com/p${n}`, title: `Page ${n}`, text });
+
+// biome-ignore lint/suspicious/noExplicitAny: a test reads the API's JSON loosely.
+async function body(res: Response): Promise<Record<string, any>> {
+  return (await res.json()) as Record<string, unknown>;
+}
+
+describe("migration 11", () => {
+  it("adds research_sources and its index and nothing else", () => {
+    const db = new Database(":memory:");
+    for (let v = 0; v < 10; v++) {
+      db.transaction(() => {
+        db.exec(MIGRATIONS[v] as string);
+        db.exec(`PRAGMA user_version = ${v + 1}`);
+      })();
+    }
+    const schema = () => db.query("SELECT type, name, sql FROM sqlite_master WHERE name != 'sqlite_sequence' ORDER BY name").all() as { name: string }[];
+    const before = schema();
+    expect(migrate(db)).toBe(10);
+    expect(MIGRATIONS).toHaveLength(11);
+    expect(schema().filter((s) => !s.name.includes("research_sources"))).toEqual(before);
+    expect(schema().filter((s) => s.name.includes("research_sources")).map((s) => s.name)).toEqual(["research_sources", "research_sources_task", "sqlite_autoindex_research_sources_1"]);
+  });
+});
+
+describe("ResearchSources", () => {
+  it("stores cleaned pages oldest first, replaces a page sent again in its place, and refuses an 11th", () => {
+    const db = openDatabase(":memory:");
+    const sources = new ResearchSources(db);
+    expect(sources.add("t1", gatheredPages([page(1), page(2)]), AT)).toMatchObject({ ok: true, added: 2, replaced: 0, overBudget: 0, held: 2 });
+    expect(sources.add("t1", gatheredPages([page(1, "Page 1, read again.")]), AT)).toMatchObject({ ok: true, added: 0, replaced: 1, overBudget: 0, held: 2 });
+    expect(sources.read("t1")).toEqual([
+      { url: "https://example.com/p1", title: "Page 1", text: "Page 1, read again." },
+      { url: "https://example.com/p2", title: "Page 2", text: "Page 2 says the game has 2 players." },
+    ]);
+    const more = gatheredPages([3, 4, 5, 6, 7, 8, 9, 10, 11].map((n) => page(n)));
+    expect(sources.add("t1", more, AT)).toEqual({ ok: false, held: 2 });
+    expect(sources.count("t1")).toBe(2);
+    expect(sources.add("t1", more.slice(0, MAX_SOURCES_PER_TASK - 2), AT)).toMatchObject({ ok: true, held: MAX_SOURCES_PER_TASK });
+    expect(sources.read("t2")).toEqual([]);
+  });
+
+  it("keeps the request's page text within MAX_SOURCES_CHARS, leaving a page past it out whole, a replaced page's text not counted", () => {
+    const db = openDatabase(":memory:");
+    const sources = new ResearchSources(db);
+    const long = (n: number, chars = 12_000) => page(n, "x".repeat(chars));
+    // Eight full pages are 96,000; a ninth of 12,000 would pass 99,800, a tenth of 3,000 fits.
+    const first = sources.add("t1", gatheredPages([1, 2, 3, 4, 5, 6, 7, 8].map((n) => long(n))), AT);
+    expect(first).toEqual({ ok: true, added: 8, replaced: 0, overBudget: 0, held: 8, chars: 96_000 });
+    expect(sources.add("t1", [long(9), long(10, 3_000)], AT)).toEqual({ ok: true, added: 1, replaced: 0, overBudget: 1, held: 9, chars: 99_000 });
+    expect(sources.read("t1").map((p) => p.url)).not.toContain("https://example.com/p9");
+    // A page sent again counts its new text, not its old with it: page 1 cut to 1,000 makes room for page 9 at 11,800.
+    expect(sources.add("t1", [long(1, 1_000), long(9, 11_800)], AT)).toEqual({ ok: true, added: 1, replaced: 1, overBudget: 0, held: 10, chars: MAX_SOURCES_CHARS });
+    // So docket's read keeps every page stored, whole.
+    expect(gatheredPages(sources.read("t1"))).toEqual(sources.read("t1"));
+  });
+
+  it("sourcesExpiry: 14 days out, or 10 minutes before a sooner deadline, never before now", () => {
+    expect(sourcesExpiry(AT, null)).toEqual({ at: new Date("2026-10-15T12:00:00.000Z"), byDeadline: false });
+    expect(sourcesExpiry(AT, new Date("2026-11-01T12:00:00.000Z"))).toEqual({ at: new Date("2026-10-15T12:00:00.000Z"), byDeadline: false });
+    expect(sourcesExpiry(AT, new Date("2026-10-02T12:00:00.000Z"))).toEqual({ at: new Date("2026-10-02T11:50:00.000Z"), byDeadline: true });
+    expect(sourcesExpiry(AT, new Date("2026-10-01T12:05:00.000Z"))).toEqual({ at: AT, byDeadline: true });
+  });
+
+  it("purgeEnded drops the pages of requests no longer active or paused; forget-me drops their owner's", async () => {
+    const db = openDatabase(":memory:");
+    const store = new SqliteStore(db);
+    const larry = await admit(store, "111111111111111111", AT);
+    const curly = await admit(store, "222222222222222222", AT);
+    const make = (ownerId: string) =>
+      store.createTask({ ownerId, type: "research", title: "Q", config: { question: "Q?", sources: "sent" }, schedule: null, lane: "execute", capabilities: ["notify"], at: START });
+    const live = await make(larry.id);
+    const ended = await make(larry.id);
+    const theirs = await make(curly.id);
+    await store.updateTask(ended.id, { status: "done", at: START });
+    const sources = new ResearchSources(db);
+    for (const t of [live, ended, theirs]) sources.add(t.id, gatheredPages([page(1)]), AT);
+    expect(sources.purgeEnded()).toBe(1);
+    expect([sources.count(live.id), sources.count(ended.id), sources.count(theirs.id)]).toEqual([1, 0, 1]);
+    const erased = new Roster(db).erase(larry.id);
+    expect(erased.rows.research_sources).toBe(1);
+    expect([sources.count(live.id), sources.count(theirs.id)]).toEqual([0, 1]);
+  });
+});
+
+describe("/research sources: browser", () => {
+  it("waits for pages: config sources sent, its run at 14 days out, `at` refused, the web reply unchanged", async () => {
+    const w = await setup();
+    const web = await slash(w.plugin, "research", LARRY, { strings: { question: "What is X?" } });
+    expect(web).toBe(
+      "Research `t1` queued: What is X?\nStarts within a minute or two. A second run checks the answer against its sources before I DM it to you, so it can take a while; " +
+        "an answer that does not pass the check is not sent. Requests share a daily budget.",
+    );
+    const made = await slash(w.plugin, "research", LARRY, { strings: { question: "How many players does Y take?", sources: "browser" } });
+    expect(made).toContain("Research `t2` is waiting for pages");
+    expect(made).toContain("Claude in Chrome");
+    expect(made).toContain("your own browser");
+    expect(made).toContain("POST /api/v1/tasks/t2/sources");
+    expect(made).toContain("nothing is run");
+    const rows = query<{ config: string; schedule: string }>(w.dbPath, "SELECT config, schedule FROM tasks ORDER BY seq");
+    expect(JSON.parse(rows[0]?.config ?? "")).toEqual({ question: "What is X?" });
+    expect(JSON.parse(rows[1]?.config ?? "")).toEqual({ question: "How many players does Y take?", sources: "sent" });
+    expect(JSON.parse(rows[1]?.schedule ?? "")).toEqual({ kind: "once", at: "2026-10-15T12:00:00.000Z" });
+
+    // A deadline sooner than that is when it runs.
+    await slash(w.plugin, "research", LARRY, { strings: { question: "What about Z?", sources: "browser", deadline: "tomorrow 17:00" } });
+    const [third] = query<{ config: string; schedule: string }>(w.dbPath, "SELECT config, schedule FROM tasks WHERE seq = 3");
+    const deadline = Date.parse(JSON.parse(third?.config ?? "").deadline);
+    expect(Date.parse(JSON.parse(third?.schedule ?? "").at)).toBe(deadline - SOURCES_DEADLINE_MARGIN_MINUTES * 60_000);
+
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What about W?", sources: "browser", at: "tomorrow 9am" } })).toBe(BROWSER_AT);
+    expect(query(w.dbPath, "SELECT seq FROM tasks")).toHaveLength(3);
+
+    // /tasks says it waits, and how many pages are in.
+    expect(await slash(w.plugin, "tasks", LARRY)).toContain("(sources: browser, 0 pages in; waiting for pages)");
+  });
+
+  it("is refused without the web area, whose task API the pages arrive through", async () => {
+    const off = await world({ webUrl: null, env: CITY_HALL });
+    await people(off.plugin);
+    expect(await slash(off.plugin, "research", LARRY, { strings: { question: "What is X?", sources: "browser" } })).toBe(BROWSER_OFF);
+  });
+
+  it("refuses a deadline too soon to gather pages before its run", async () => {
+    const w = await setup();
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "How many players does Y take?", sources: "browser", deadline: "in 15 minutes" } })).toContain("at least 20 minutes away");
+    expect(query(w.dbPath, "SELECT status FROM tasks")).toEqual([]);
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "How many players does Y take?", sources: "browser", deadline: "in 25 minutes" } })).toContain("is waiting for pages");
+  });
+
+  it("a request whose pages never come ends at its expiry with no model call", async () => {
+    const w = await setup();
+    await slash(w.plugin, "research", LARRY, { strings: { question: "How many players does Y take?", sources: "browser" } });
+    await w.round();
+    expect(w.city.jobs.size).toBe(0);
+    w.clock.set("2026-10-15T12:01:00.000Z");
+    await w.round();
+    expect(w.city.jobs.size).toBe(0);
+    expect(dmsTo(w.sent, LARRY).some((c) => c.includes("No pages were gathered, so nothing was run"))).toBe(true);
+    expect(query(w.dbPath, "SELECT status FROM tasks")).toEqual([{ status: "done" }]);
+  });
+});
+
+describe("a browser request's run at its expiry", () => {
+  const larryToken = async (w: Awaited<ReturnType<typeof setup>>) => makeToken({ plugin: w.plugin, sent: w.sent }, await signIn(w.plugin, LARRY));
+
+  it("capped by its deadline, runs before it on the pages in, with no ready", async () => {
+    const w = await setup();
+    const made = await slash(w.plugin, "research", LARRY, { strings: { question: "How many players does Y take?", sources: "browser", deadline: "tomorrow 17:00" } });
+    expect(made).toContain("the research starts when your browser sends ready");
+    expect(made).toContain(`up to ${SOURCES_DEADLINE_MARGIN_MINUTES} minutes before your deadline`);
+    expect(made).toContain("on whatever pages are in by then; with none, nothing is run");
+    const token = await larryToken(w);
+    expect((await api(w.plugin, "POST", "/tasks/t1/sources", { token, body: { pages: [page(1, "BGG says Y takes 2 to 4 players.")] } })).status).toBe(200);
+    const [row] = query<{ schedule: string }>(w.dbPath, "SELECT schedule FROM tasks");
+    w.clock.set(JSON.parse(row?.schedule ?? "").at);
+    await w.round();
+    // Not missed: the run started before the deadline and carries the page.
+    expect(w.city.jobs.size).toBe(1);
+    expect(w.city.latest()?.spec.prompt).toContain("BGG says Y takes 2 to 4 players.");
+    expect(dmsTo(w.sent, LARRY).some((c) => c.includes("passed before the research could start"))).toBe(false);
+    // Its Job is out: no more pages, no ready.
+    expect((await api(w.plugin, "POST", "/tasks/t1/sources", { token, body: { pages: [page(2)] } })).status).toBe(409);
+    expect((await api(w.plugin, "POST", "/tasks/t1/sources/ready", { token, body: {} })).status).toBe(409);
+  });
+
+  it("a run put back unsent (the runner unreachable) keeps its pages frozen, and its next try is the same Job", async () => {
+    const w = await setup();
+    await slash(w.plugin, "research", LARRY, { strings: { question: "How many players does Y take?", sources: "browser" } });
+    const token = await larryToken(w);
+    await api(w.plugin, "POST", "/tasks/t1/sources", { token, body: { pages: [page(1)] } });
+    w.city.accept("another-key");
+    w.clock.set("2026-10-15T12:00:00.000Z");
+    await w.round();
+    expect(w.city.jobs.size).toBe(0);
+    expect(query(w.dbPath, "SELECT status FROM occurrences")).toEqual([{ status: "queued" }]);
+    const refused = await api(w.plugin, "POST", "/tasks/t1/sources", { token, body: { pages: [page(2)] } });
+    expect(refused.status).toBe(409);
+    expect((await body(refused)).error.message).toContain("has started");
+    expect((await api(w.plugin, "POST", "/tasks/t1/sources/ready", { token, body: {} })).status).toBe(409);
+    expect((await body(await api(w.plugin, "GET", "/tasks/t1", { token }))).task.waitingForPages).toBe(false);
+    w.city.accept(CITY_HALL.TRACKER_CITY_HALL_KEY);
+    await w.round();
+    expect(w.city.jobs.size).toBe(1);
+    expect(w.city.latest()?.spec.prompt).not.toContain("https://example.com/p2");
+  });
+
+  it("while the execute tick holds the task, both routes answer busy at once", async () => {
+    const city = fakeCityHall();
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    let reached: () => void = () => {};
+    const held = new Promise<void>((resolve) => (reached = resolve));
+    const work: Promise<void>[] = [];
+    const w = await world({
+      env: CITY_HALL,
+      cityHallFetch: (async (input: string | URL | Request, init?: RequestInit) => {
+        reached();
+        await gate;
+        return city.fetchImpl(input, init);
+      }) as typeof fetch,
+      executeStarted: (p) => void work.push(p),
+    });
+    await people(w.plugin);
+    await slash(w.plugin, "research", LARRY, { strings: { question: "How many players does Y take?", sources: "browser" } });
+    const token = await makeToken({ plugin: w.plugin, sent: w.sent }, await signIn(w.plugin, LARRY));
+    await api(w.plugin, "POST", "/tasks/t1/sources", { token, body: { pages: [page(1)] } });
+    w.clock.set("2026-10-15T12:00:00.000Z");
+    for (const t of w.plugin.ticks ?? []) await t.run(new AbortController().signal);
+    await held;
+    for (const path of ["/tasks/t1/sources", "/tasks/t1/sources/ready"]) {
+      const res = await api(w.plugin, "POST", path, { token, body: path.endsWith("ready") ? {} : { pages: [page(2)] } });
+      expect(res.status).toBe(409);
+      expect((await body(res)).error.code).toBe("busy");
+    }
+    open();
+    await Promise.all(work.splice(0));
+    expect(city.latest()?.spec.prompt).not.toContain("https://example.com/p2");
+  });
+});
+
+describe("the task API's sources routes", () => {
+  async function ready() {
+    const w = await setup();
+    await slash(w.plugin, "research", LARRY, { strings: { question: "How many players does Y take?", sources: "browser" } });
+    await slash(w.plugin, "research", LARRY, { strings: { question: "What is X?" } });
+    const larry = await signIn(w.plugin, LARRY);
+    const token = await makeToken({ plugin: w.plugin, sent: w.sent }, larry);
+    const curlyToken = await makeToken({ plugin: w.plugin, sent: w.sent }, await signIn(w.plugin, CURLY), "curly-agent");
+    return { ...w, token, curlyToken };
+  }
+
+  it("takes cleaned pages, dedupes and replaces by address, caps them, and refuses others' and web requests", async () => {
+    const w = await ready();
+    const send = (pages: unknown, token = w.token, id = "t1") => api(w.plugin, "POST", `/tasks/${id}/sources`, { token, body: { pages } });
+
+    const first = await send([page(1), page(1), { url: "javascript:alert(1)", text: "x" }]);
+    expect(first.status).toBe(200);
+    expect(await body(first)).toMatchObject({ accepted: 1, rejected: 2, pages: 1 });
+    const again = await body(await send([page(1, "Page 1, read again: 4 players.")]));
+    expect(again).toMatchObject({ accepted: 1, rejected: 0, pages: 1 });
+    expect(again.message).toContain("1 replaced");
+    expect(query(w.dbPath, "SELECT task_id, url, text FROM research_sources")).toEqual([{ task_id: "t1", url: "https://example.com/p1", text: "Page 1, read again: 4 players." }]);
+
+    // Eleven in one request, or more than ten in all.
+    expect(await body(await send([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((n) => page(n))))).toMatchObject({ error: { code: "too_many" } });
+    const over = await send([2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((n) => page(n)));
+    expect(over.status).toBe(409);
+    expect((await body(over)).error.message).toContain("this one holds 1");
+
+    // Someone else's, unknown: the same 404. A web request: 409. Junk: 400.
+    expect((await send([page(2)], w.curlyToken)).status).toBe(404);
+    expect((await send([page(2)], w.token, "t99")).status).toBe(404);
+    expect((await send([page(2)], w.token, "t2")).status).toBe(409);
+    expect((await send("nope")).status).toBe(400);
+    expect((await api(w.plugin, "POST", "/tasks/t1/sources", { token: w.token, body: { pages: [page(2)], more: 1 } })).status).toBe(400);
+    expect((await api(w.plugin, "GET", "/tasks/t1/sources", { token: w.token })).status).toBe(405);
+
+    // Its JSON says where its pages come from, how many are in, and that it waits.
+    const read = await body(await api(w.plugin, "GET", "/tasks/t1", { token: w.token }));
+    expect(read.task).toMatchObject({ sources: "browser", pages: 1, waitingForPages: true });
+    expect(read.task.settings.sources).toBe("browser");
+    const web = await body(await api(w.plugin, "GET", "/tasks/t2", { token: w.token }));
+    expect(web.task.sources).toBeUndefined();
+    expect(web.task.settings.sources).toBe("web");
+  });
+
+  it("ready needs a page, then moves the run to now; the run's prompt carries the pages, and they go once it ends", async () => {
+    const w = await ready();
+    const readyOf = (id = "t1", token = w.token) => api(w.plugin, "POST", `/tasks/${id}/sources/ready`, { token, body: {} });
+    const none = await readyOf();
+    expect(none.status).toBe(409);
+    expect((await body(none)).error.message).toContain("Send pages first");
+    expect((await readyOf("t2")).status).toBe(409);
+    expect((await readyOf("t1", w.curlyToken)).status).toBe(404);
+    expect((await api(w.plugin, "POST", "/tasks/t1/sources/ready", { token: w.token, body: { now: true } })).status).toBe(400);
+
+    await api(w.plugin, "POST", "/tasks/t1/sources", { token: w.token, body: { pages: [page(1, "BGG says Y takes 2 to 4 players."), page(2)] } });
+    const go = await readyOf();
+    expect(go.status).toBe(200);
+    expect((await body(go)).pages).toBe(2);
+    expect(JSON.parse(query<{ schedule: string }>(w.dbPath, "SELECT schedule FROM tasks WHERE seq = 1")[0]?.schedule ?? "")).toEqual({ kind: "once", at: START });
+    // No longer waiting: no more pages, no second ready.
+    expect((await api(w.plugin, "POST", "/tasks/t1/sources", { token: w.token, body: { pages: [page(3)] } })).status).toBe(409);
+    expect((await readyOf()).status).toBe(409);
+    expect((await body(await api(w.plugin, "GET", "/tasks/t1", { token: w.token }))).task.waitingForPages).toBe(false);
+
+    // The web request t2 goes, so the lane has only t1 to run.
+    expect((await api(w.plugin, "DELETE", "/tasks/t2", { token: w.token })).status).toBe(200);
+    await w.round();
+    const job = [...w.city.jobs.values()].find((j) => j.spec.prompt.includes("How many players does Y take?"));
+    expect(job?.spec.prompt).toContain("BGG says Y takes 2 to 4 players.");
+    expect(job?.spec.prompt).toContain("https://example.com/p2");
+    if (job) Object.assign(job, { status: "done", result: success(ANSWER, 0.4) });
+    await w.round();
+    await w.round();
+    const review = [...w.city.jobs.values()].find((j) => j !== job && j.spec.prompt.includes("How many players does Y take?"));
+    expect(review?.spec.prompt).toContain("BGG says Y takes 2 to 4 players.");
+    if (review) Object.assign(review, { status: "done", result: success({ verdict: "approve", problems: [], answer: ANSWER }, 0.2) });
+    await w.round();
+    await w.round();
+    expect(dmsTo(w.sent, LARRY).some((c) => c.startsWith("Research: How many players does Y take?"))).toBe(true);
+    expect(query(w.dbPath, "SELECT status FROM tasks WHERE seq = 1")).toEqual([{ status: "done" }]);
+    // Ended: its pages are gone at the execute tick's housekeeping.
+    expect(query(w.dbPath, "SELECT * FROM research_sources")).toEqual([]);
+  });
+  it("cleans each page of one large POST on its own: whole pages kept, the rest over budget, none cut", async () => {
+    const w = await ready();
+    const pages = Array.from({ length: 10 }, (_, i) => page(i + 1, "x".repeat(12_000)));
+    const said = await body(await api(w.plugin, "POST", "/tasks/t1/sources", { token: w.token, body: { pages } }));
+    expect(said).toMatchObject({ accepted: 8, rejected: 0, overBudget: 2, pages: 8 });
+    expect(query<{ n: number }>(w.dbPath, "SELECT length(text) AS n FROM research_sources")).toEqual(Array.from({ length: 8 }, () => ({ n: 12_000 })));
+  });
+  it("counts pages past the text budget apart from unusable ones, and refuses when none fit", async () => {
+    const w = await ready();
+    const send = (pages: unknown) => api(w.plugin, "POST", "/tasks/t1/sources", { token: w.token, body: { pages } });
+    const long = (n: number, chars = 12_000) => page(n, "x".repeat(chars));
+    const full = await body(await send([1, 2, 3, 4, 5, 6, 7, 8].map((n) => long(n))));
+    expect(full).toMatchObject({ accepted: 8, rejected: 0, overBudget: 0, pages: 8 });
+    const mixed = await body(await send([long(9), { url: "ftp://example.com/x", text: "x" }]));
+    expect(mixed).toMatchObject({ error: { code: "too_much_text" } });
+    expect(mixed.error.message).toContain("this one holds 96,000");
+    const some = await send([long(9), long(10, 3_000), { url: "ftp://example.com/x", text: "x" }]);
+    expect(some.status).toBe(200);
+    const said = await body(some);
+    expect(said).toMatchObject({ accepted: 1, rejected: 1, overBudget: 1, pages: 9 });
+    expect(said.message).toContain("1 was left out: each needs an absolute http(s) address");
+    expect(said.message).toContain("1 did not fit: a request holds at most 99,800 characters of page text in all, and this one holds 99,000");
+  });
+
+  it("ready on a paused request is a 409; a deleted or finished one is the same 404 on both routes", async () => {
+    const w = await ready();
+    await api(w.plugin, "POST", "/tasks/t1/sources", { token: w.token, body: { pages: [page(1)] } });
+    expect((await api(w.plugin, "POST", "/tasks/t1/pause", { token: w.token, body: {} })).status).toBe(200);
+    const paused = await api(w.plugin, "POST", "/tasks/t1/sources/ready", { token: w.token, body: {} });
+    expect(paused.status).toBe(409);
+    expect((await body(paused)).error.message).toContain("paused");
+    // A paused request still takes pages; /tasks shows them on its paused line.
+    expect((await api(w.plugin, "POST", "/tasks/t1/sources", { token: w.token, body: { pages: [page(2)] } })).status).toBe(200);
+    expect(await slash(w.plugin, "tasks", LARRY)).toContain("(sources: browser, 2 pages in; waiting for pages)");
+    expect((await api(w.plugin, "DELETE", "/tasks/t1", { token: w.token })).status).toBe(200);
+    for (const path of ["/tasks/t1/sources", "/tasks/t1/sources/ready"]) {
+      const res = await api(w.plugin, "POST", path, { token: w.token, body: path.endsWith("ready") ? {} : { pages: [page(3)] } });
+      expect(res.status).toBe(404);
+    }
+  });
+
+  it("takes a body of 1 MiB and refuses one byte more", async () => {
+    const w = await ready();
+    const sized = (bytes: number) => {
+      const head = `{"pages":[{"url":"https://example.com/p1","title":"P","text":"`;
+      const tail = `"}]}`;
+      return head + "x".repeat(bytes - head.length - tail.length) + tail;
+    };
+    const at = await api(w.plugin, "POST", "/tasks/t1/sources", { token: w.token, raw: sized(1024 * 1024), headers: { "content-type": "application/json" } });
+    expect(at.status).toBe(200);
+    const over = await api(w.plugin, "POST", "/tasks/t1/sources", { token: w.token, raw: sized(1024 * 1024 + 1), headers: { "content-type": "application/json" } });
+    expect(over.status).toBe(413);
+    expect((await body(over)).error.code).toBe("too_large");
+  });
+});
