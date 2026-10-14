@@ -42,14 +42,14 @@
       },
       {
         "key": "BLIZZARD_CLIENT_ID",
-        "format": "^\\S+$",
+        "format": "^[!-~]+$",
         "required": false,
         "secret": true,
         "description": "Blizzard API client id (needed for /status, /transmog, and the realm watch)."
       },
       {
         "key": "BLIZZARD_CLIENT_SECRET",
-        "format": "^\\S+$",
+        "format": "^[!-~]+$",
         "required": false,
         "secret": true,
         "description": "Blizzard API client secret."
