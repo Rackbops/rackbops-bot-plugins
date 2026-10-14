@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.2] - 2026-10-14
+
+### Fixed
+
+- The `format` of `MCP_BRIDGE_TOKEN` is now spelled as plain printable ASCII (`[!-~]`) instead of `\S`, which is not POSIX ERE: on a host whose `regcomp` reads `\S` as a literal `S`, `bot-ops.sh env-set` would refuse every real value. Values already set are unaffected (Rackbops/rackbops-bot-plugins#202, #307).
+
 ## [0.3.1] - 2026-10-08
 
 ### Fixed

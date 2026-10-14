@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-14T12:38:36.005Z",
+  "generatedAt": "2026-10-14T13:19:37.762Z",
   "plugins": [
     {
       "name": "mcp",
       "package": "@rackbops/plugin-mcp",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "description": "Bridge plugin for the Discord delivery MCP (Rackbops/discord-mcp): the service side of docs/bridge-protocol.md, plus /agent registration and pairing",
       "hostApiVersion": 1,
       "intents": [],
@@ -40,6 +40,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "0.3.2",
+          "publishedAt": "2026-10-14T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/mcp-v0.3.2",
+          "notes": "### Fixed\n\n- The `format` of `MCP_BRIDGE_TOKEN` is now spelled as plain printable ASCII (`[!-~]`) instead of `\\S`, which is not POSIX ERE: on a host whose `regcomp` reads `\\S` as a literal `S`, `bot-ops.sh env-set` would refuse every real value. Values already set are unaffected (Rackbops/rackbops-bot-plugins#202, #307)."
+        },
         {
           "version": "0.3.1",
           "publishedAt": "2026-10-08T00:00:00.000Z",
@@ -424,7 +430,7 @@
     {
       "name": "wow",
       "package": "@rackbops/plugin-wow",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "World of Warcraft features: Darkmoon Faire schedule, resets, realm up/down watch, and /transmog import strings (/dmf, /reset, /status, /transmog)",
       "hostApiVersion": 1,
       "intents": [],
@@ -471,9 +477,15 @@
           "secret": true
         }
       ],
-      "adminUrl": "https://cdn.jsdelivr.net/npm/@rackbops/plugin-wow@1.0.1/dist/admin.js",
+      "adminUrl": "https://cdn.jsdelivr.net/npm/@rackbops/plugin-wow@1.0.2/dist/admin.js",
       "adminApiVersion": 1,
       "releases": [
+        {
+          "version": "1.0.2",
+          "publishedAt": "2026-10-14T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/wow-v1.0.2",
+          "notes": "### Fixed\n\n- The `format` of `BLIZZARD_CLIENT_ID` and `BLIZZARD_CLIENT_SECRET` is now spelled as plain printable ASCII (`[!-~]`) instead of `\\S`, which is not POSIX ERE: on a host whose `regcomp` reads `\\S` as a literal `S`, `bot-ops.sh env-set` would refuse every real value. Values already set are unaffected (Rackbops/rackbops-bot-plugins#202, #307)."
+        },
         {
           "version": "1.0.1",
           "publishedAt": "2026-09-09T00:00:00.000Z",
