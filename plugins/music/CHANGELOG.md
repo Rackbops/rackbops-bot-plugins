@@ -2,6 +2,13 @@
 
 ## [1.7.0] - 2026-10-14
 
+### Upgrade notes
+
+- Check `SPOTIFY_REDIRECT_URI` before upgrading: it must now be written exactly as the bot sends it to
+  Spotify (lower-case host, no `:443`, no credentials or `#fragment`), or the music plugin does not
+  load. `MUSIC_CALLBACK_PORT` must be plain digits. A `music.json` or `parties.json` that is not a JSON
+  object is reset to fresh state. `/party add` now requires being in the party. Details below.
+
 ### Fixed
 
 - The `format` of `SETLISTFM_API_KEY`, `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` is now spelled as
