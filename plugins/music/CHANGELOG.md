@@ -1,9 +1,20 @@
 # Changelog
 
-## [Unreleased]
+## [1.7.0] - 2026-10-14
+
+### Upgrade notes
+
+- Check `SPOTIFY_REDIRECT_URI` before upgrading: it must now be written exactly as the bot sends it to
+  Spotify (lower-case host, no `:443`, no credentials or `#fragment`), or the music plugin does not
+  load. `MUSIC_CALLBACK_PORT` must be plain digits. A `music.json` or `parties.json` that is not a JSON
+  object is reset to fresh state. `/party add` now requires being in the party. Details below.
 
 ### Fixed
 
+- The `format` of `SETLISTFM_API_KEY`, `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` is now spelled as
+  plain printable ASCII (`[!-~]`) instead of `\S`, which is not POSIX ERE: on a host whose `regcomp`
+  reads `\S` as a literal `S`, `bot-ops.sh env-set` would refuse every real value. Values already set
+  are unaffected (#202, #307).
 - Titles and artist names in any script now match as themselves: a Japanese, Cyrillic or other
   non-Latin title used to compare equal to every other, so the first track on the page could be
   added as a confident match and a non-Latin performer matched any non-Latin act. Combining marks
