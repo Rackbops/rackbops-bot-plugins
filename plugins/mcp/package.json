@@ -20,7 +20,7 @@
     "env": [
       {
         "key": "MCP_BRIDGE_TOKEN",
-        "format": "^\\S{43,}$",
+        "format": "^[!-~]{43,}$",
         "required": false,
         "secret": true,
         "description": "Shared secret the Discord MCP service presents (>= 256 bits, base64url). Unset = the bridge answers 503."
