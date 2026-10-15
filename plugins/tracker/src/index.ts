@@ -193,9 +193,11 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   // as none the same way: a run that finds none makes no model call and tells the owner.
   let sources: ResearchSources | null = null;
   const readSources: ReadSources = async (taskId) => sources?.read(taskId) ?? [];
+  // Only with the web area, whose task API is the one way pages arrive: without it, docket-types
+  // 0.9.0 would DM a first answer asking for pages nobody could send and wait 14 days for them.
   const types = options.types ?? {
     ...TRACKER_TYPES,
-    research: researchType({ readSources }) as TaskType<unknown>,
+    research: researchType(webOrigin ? { readSources } : {}) as TaskType<unknown>,
     ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}) }),
   };
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
