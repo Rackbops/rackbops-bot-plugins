@@ -4,10 +4,11 @@ import { type BlockedPage, type GatheredPage, MAX_GATHERED_CHARS, MAX_GATHERED_P
 
 /**
  * Pages gathered for a research request by the person's own browser (docket-types 0.8.0's
- * `sources: "sent"`; tracker 0.28.0, rackbops-bot-plugins#125): the host's half. BoardGameGeek
- * refuses the runner's reads and declined API access, and eBay is never opened by the tracker
- * (Rod, 2026-10-05), so a request made with `/research sources: browser` waits for pages instead
- * of searching for them: the owner's browser -- Claude in Chrome, when they ask it to -- reads the
+ * `sources: "sent"`; tracker 0.28.0, rackbops-bot-plugins#125): the host's half. A web run tries
+ * BoardGameGeek and lists a page that refuses it in `blocked` (docket-types 0.10.0), and eBay is
+ * never opened by the tracker (Rod, 2026-10-05; eBay's User Agreement, section 3), so a request
+ * made with `/research sources: browser` waits for pages instead of searching for them, and
+ * answers only from them: the owner's browser -- Claude in Chrome, when they ask it to -- reads the
  * pages and posts them to the task API's `POST /tasks/<id>/sources` (web/api-sources.ts), then
  * `POST /tasks/<id>/sources/ready` moves the queued run to now. Each run of the request (the
  * research run and its reviewer) reads them here through docket's `ReadSources`, by task id.

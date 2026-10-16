@@ -88,7 +88,7 @@ const RESEARCH_FIELDS: readonly Field[] = [
     label: "Where the pages come from",
     kind: "select",
     options: RESEARCH_SOURCE_OPTIONS,
-    help: "Your browser: the research waits for the pages your own browser gathers, such as Claude in Chrome, sent in through the task API (for BoardGameGeek or eBay, which the research cannot open).",
+    help: "Your browser: the research waits for the pages your own browser gathers, such as Claude in Chrome, sent in through the task API (for a BoardGameGeek page that refuses the research, or eBay, which the research never opens).",
   },
 ];
 

@@ -19,8 +19,9 @@ export const MIN_GATHER_MINUTES = 10;
  *
  * `sources: browser` (0.28.0, docket-types 0.8.0's `sources: "sent"`, rackbops-bot-plugins#125):
  * the request answers from pages the owner's own browser gathers -- Claude in Chrome, when they ask
- * it to -- and sends in through the task API (research-sources.ts, web/api-sources.ts), since
- * BoardGameGeek refuses the runner and eBay is never opened from here. Its run is queued at the
+ * it to -- and sends in through the task API (research-sources.ts, web/api-sources.ts), for pages
+ * a web run cannot or may not read: a web run tries BoardGameGeek (docket-types 0.10.0) and lists a
+ * page that refuses it in `blocked`, for the fuller pass, and eBay is never opened. Its run is queued at the
  * latest it may wait, `SOURCES_WAIT_DAYS` from now or `SOURCES_DEADLINE_MARGIN_MINUTES` before the
  * deadline, whichever is sooner (docket-types' `sourcesExpiry`: a run started past the deadline makes no call), and
  * `sources/ready` moves it to now once the pages are in; so `at` is refused with it. A request whose
