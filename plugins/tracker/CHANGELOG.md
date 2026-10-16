@@ -9,18 +9,13 @@
   each one.
 - The run names each part's best source -- BoardGameGeek for a board game, say -- and tries it.
   BoardGameGeek is tried like any other site, with an honest read.
-- A best source that refuses the run (a 403, a CAPTCHA, a sign-in wall) is listed on the answer's
-  "Couldn't open:" list, with its address and why, rather than as a "didn't check" line in the
-  answer; that list is what starts the fuller pass (0.29.0), so Claude in Chrome can gather it
-  for you.
+- With the web area on, a best source that refuses the run (a 403, a CAPTCHA, a sign-in wall) is
+  listed on the answer's "Couldn't open:" list, with its address and why, rather than as a
+  "didn't check" line in the answer; that list is what starts the fuller pass (0.29.0), so
+  Claude in Chrome can gather it for you. Without the web area, no fuller pass can follow, so the
+  answer names it as a gap.
 - eBay is never opened by any research run (eBay's User Agreement, section 3). A `sources:
   browser` request still answers only from the pages you send in.
-
-### Fixed
-
-- Noted late, shipped in 0.29.0: the secret settings' `format`s are spelled as printable ASCII
-  (`^[!-~]+$`, `^[!-~]{32,}$` for `TRACKER_MAIL_KEY`) instead of `\S`, which a BSD regcomp reads
-  as a literal `S`; a value with a space, a tab or a non-ASCII character is refused (#307).
 
 ### Schema
 

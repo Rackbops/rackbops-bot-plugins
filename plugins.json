@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-16T01:12:02.117Z",
+  "generatedAt": "2026-10-16T01:15:02.235Z",
   "plugins": [
     {
       "name": "mcp",
@@ -319,7 +319,7 @@
           "version": "0.30.0",
           "publishedAt": "2026-10-16T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.30.0",
-          "notes": "### Changed\n\n- **Research on docket 0.10.0: every part of the question, from its best source.** A research\n  answer now covers every part of your question: the run splits it into its parts and answers\n  each one.\n- The run names each part's best source -- BoardGameGeek for a board game, say -- and tries it.\n  BoardGameGeek is tried like any other site, with an honest read.\n- A best source that refuses the run (a 403, a CAPTCHA, a sign-in wall) is listed on the answer's\n  \"Couldn't open:\" list, with its address and why, rather than as a \"didn't check\" line in the\n  answer; that list is what starts the fuller pass (0.29.0), so Claude in Chrome can gather it\n  for you.\n- eBay is never opened by any research run (eBay's User Agreement, section 3). A `sources:\n  browser` request still answers only from the pages you send in.\n\n### Fixed\n\n- Noted late, shipped in 0.29.0: the secret settings' `format`s are spelled as printable ASCII\n  (`^[!-~]+$`, `^[!-~]{32,}$` for `TRACKER_MAIL_KEY`) instead of `\\S`, which a BSD regcomp reads\n  as a literal `S`; a value with a space, a tab or a non-ASCII character is refused (#307).\n\n### Schema\n\n- No change."
+          "notes": "### Changed\n\n- **Research on docket 0.10.0: every part of the question, from its best source.** A research\n  answer now covers every part of your question: the run splits it into its parts and answers\n  each one.\n- The run names each part's best source -- BoardGameGeek for a board game, say -- and tries it.\n  BoardGameGeek is tried like any other site, with an honest read.\n- With the web area on, a best source that refuses the run (a 403, a CAPTCHA, a sign-in wall) is\n  listed on the answer's \"Couldn't open:\" list, with its address and why, rather than as a\n  \"didn't check\" line in the answer; that list is what starts the fuller pass (0.29.0), so\n  Claude in Chrome can gather it for you. Without the web area, no fuller pass can follow, so the\n  answer names it as a gap.\n- eBay is never opened by any research run (eBay's User Agreement, section 3). A `sources:\n  browser` request still answers only from the pages you send in.\n\n### Schema\n\n- No change."
         },
         {
           "version": "0.29.0",
