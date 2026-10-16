@@ -8,8 +8,9 @@ import type { Writer } from "./editor.js";
 
 /**
  * The task API's sources routes (tracker 0.28.0, rackbops-bot-plugins#125): how pages reach a
- * research request made with `sources: browser` (research.ts, research-sources.ts). The research
- * never opens BoardGameGeek or eBay; the owner's own browser does -- Claude in Chrome, when they ask
+ * research request made with `sources: browser` (research.ts, research-sources.ts), or one waiting
+ * for a fuller pass. A web run tries BoardGameGeek and hands a page that refuses it to this pass,
+ * and never opens eBay; the owner's own browser opens them -- Claude in Chrome, when they ask
  * it to -- and posts each page's address, title and main text here. Then `ready` moves the queued
  * run to now, and the execute lane's next tick submits it with the pages quoted into its prompt.
  *
