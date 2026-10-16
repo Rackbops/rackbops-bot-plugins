@@ -16,6 +16,12 @@
 - eBay is never opened by any research run (eBay's User Agreement, section 3). A `sources:
   browser` request still answers only from the pages you send in.
 
+### Fixed
+
+- Noted late, shipped in 0.29.0: the secret settings' `format`s are spelled as printable ASCII
+  (`^[!-~]+$`, `^[!-~]{32,}$` for `TRACKER_MAIL_KEY`) instead of `\S`, which a BSD regcomp reads
+  as a literal `S`; a value with a space, a tab or a non-ASCII character is refused (#307).
+
 ### Schema
 
 - No change.
