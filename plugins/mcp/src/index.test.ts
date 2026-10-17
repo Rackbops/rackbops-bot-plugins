@@ -279,6 +279,31 @@ describe("the redrive tick", () => {
     expect((await externalStore.get(REQUEST_ID))!.state).toBe("delivered"); // mutation: dropping the flush leaves it unknown
   });
 
+  test("an aborted signal stops the tick before it re-drives an unknown entry", async () => {
+    let postCalls = 0;
+    const host = makeFakeHost({
+      name: "mcp",
+      dataDir: dir,
+      env: { MCP_BRIDGE_TOKEN: TOKEN },
+      post: async () => {
+        postCalls += 1;
+        return { guildId: GUILD, channelId: "222222222222222222", messageId: "333333333333333333" };
+      },
+    });
+    externalStore = createDeliveryStore(dir, host.storage);
+    await externalStore.set(REQUEST_ID, { state: "unknown", kind: "post", target: TARGET, body: BODY, createdAt: new Date().toISOString() });
+
+    const plugin = createPlugin(host);
+    const controller = new AbortController();
+    controller.abort();
+    await plugin.ticks![0]!.run(controller.signal);
+    expect(postCalls).toBe(0); // mutation: dropping the signal check re-drives the entry anyway
+    expect((await externalStore.get(REQUEST_ID))!.state).toBe("unknown");
+
+    await plugin.ticks![0]!.run();
+    expect(postCalls).toBe(1);
+  });
+
   test("skips entries that are not unknown, and prunes nothing that's still fresh", async () => {
     const host = makeFakeHost({ name: "mcp", dataDir: dir, env: { MCP_BRIDGE_TOKEN: TOKEN } });
     externalStore = createDeliveryStore(dir, host.storage);

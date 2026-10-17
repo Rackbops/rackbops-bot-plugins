@@ -256,6 +256,19 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     drainLock.finish(REQUEST_ID);
   });
 
+  test("a retry of an unknown record with the lock free resets it to pending and delivers once", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "mcp", ...delivery });
+    await store.set(REQUEST_ID, { state: "unknown", kind: "post", target: { guildId: GUILD, destination: "alerts" }, body: { content: "hi" }, createdAt: new Date(NOW).toISOString() });
+    const res = await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), deps(host, TOKEN));
+    const body = (await res.json()) as { state: { state: string }; existing: boolean };
+    expect(body.existing).toBe(true);
+    expect(body.state.state).toBe("pending"); // mutation: treating unknown like pending/delivered answers `unknown` and never delivers
+    await drainLock.settled(REQUEST_ID);
+    expect(delivery.calls.post).toHaveLength(1);
+    expect((await store.get(REQUEST_ID))!.state).toBe("delivered");
+  });
+
   test("a retry keeps the original createdAt across the failed -> pending reset", async () => {
     const host = makeFakeHost({
       name: "mcp",
@@ -395,6 +408,20 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
 });
 
 describe("handleMcpHttp: validation and limits", () => {
+  test("the body cap counts bytes, not characters: 40 000 two-byte characters are 413", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const multibyte = { request_id: REQUEST_ID, kind: "post", target: { guild_id: GUILD, destination: "alerts" }, body: { content: "\u00e9".repeat(40_000) } };
+    expect(JSON.stringify(multibyte).length).toBeLessThan(64 * 1024); // fewer characters than the cap, more bytes
+    const res = await handleMcpHttp(post("/deliveries", multibyte), INFO("/deliveries"), deps(host, TOKEN));
+    expect(res.status).toBe(413); // mutation: text.length instead of the encoded length lets it through
+  });
+
+  test("the same byte cap applies to /pair/redeem", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const res = await handleMcpHttp(post("/pair/redeem", { code: "\u00e9".repeat(40_000) }), INFO("/pair/redeem"), deps(host, TOKEN));
+    expect(res.status).toBe(413);
+  });
+
   test("an oversized body is 413, before it is even parsed", async () => {
     const host = makeFakeHost({ name: "mcp" });
     const huge = { request_id: REQUEST_ID, kind: "post", target: { guild_id: GUILD, destination: "alerts" }, body: { content: "x".repeat(70_000) } };

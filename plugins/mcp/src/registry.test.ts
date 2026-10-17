@@ -1,12 +1,14 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomInt } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { makeRealStorage } from "../../../packages/testkit/index.js";
 import {
   CODE_ALPHABET,
   CODE_LENGTH,
   createRegistryStore,
+  defaultDraw,
   freshRegistry,
   generateCode,
   generateGeneration,
@@ -65,6 +67,22 @@ describe("generateCode", () => {
   });
 });
 
+describe("generateCode: unbiased draws", () => {
+  test("draws each character with one call per character over the 30-symbol alphabet", () => {
+    const seen: number[] = [];
+    const code = generateCode((max) => {
+      seen.push(max);
+      return seen.length - 1; // 0, 1, 2, ...: distinct indices, so a wrong index mapping shows in the code
+    });
+    expect(seen).toEqual(Array.from({ length: CODE_LENGTH }, () => CODE_ALPHABET.length));
+    expect(code).toBe(Array.from({ length: CODE_LENGTH }, (_, i) => CODE_ALPHABET[i]).join(""));
+  });
+
+  test("the production draw is node:crypto's randomInt (rejection-sampled), not Math.random or a modulo of random bytes", () => {
+    expect(defaultDraw).toBe(randomInt);
+  });
+});
+
 describe("hashCode", () => {
   test("deterministic, and never equal to the code itself", () => {
     const code = "ABCDEFGHJKMNPQRSTVWXYZ23456";
@@ -104,6 +122,24 @@ describe("registerUser", () => {
       const { outcome } = registerUser(registry, id, NAME, NOW);
       expect(outcome.changed).toBe(true); // never silently "already registered" via an inherited key
     }
+  });
+});
+
+describe("an inherited-property-shaped user id on the other lookups", () => {
+  const ids = ["constructor", "__proto__", "toString", "hasOwnProperty"];
+
+  test("unregisterUser reports nothing to remove and returns the registry untouched", () => {
+    const registry = registerUser(freshRegistry(), USER, NAME, NOW).registry;
+    for (const id of ids) {
+      const result = unregisterUser(registry, id);
+      expect(result.changed).toBe(false); // mutation: dropping Object.hasOwn makes `constructor` look registered
+      expect(result.registry).toBe(registry);
+    }
+  });
+
+  test("issueCode refuses", () => {
+    const registry = registerUser(freshRegistry(), USER, NAME, NOW).registry;
+    for (const id of ids) expect(issueCode(registry, id, NAME, NOW).outcome).toEqual({ ok: false });
   });
 });
 
@@ -304,6 +340,14 @@ describe("createRegistryStore: concurrency, over real storage", () => {
         { userId: OTHER_USER, displayName: "Bee", registeredAt: now().toISOString() },
       ]),
     );
+  });
+
+  test("pair refreshes the displayName captured at register (decision 2: register AND pair time)", async () => {
+    const now = () => new Date();
+    await store.register(USER, "Old Name", now);
+    const paired = await store.pair(USER, "New Name", now);
+    expect(paired.ok).toBe(true); // mutation: keeping the registered name leaves "Old Name"
+    expect((await store.listRecipients()).map((r) => r.displayName)).toEqual(["New Name"]);
   });
 
   test("listRecipients: an unregistered user disappears", async () => {
