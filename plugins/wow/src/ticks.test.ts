@@ -93,6 +93,37 @@ describe("checkRealm", () => {
     expect(wowState().realmStatus).toBe("UP");
   });
 
+  // A Blizzard error must never masquerade as a DOWN (ticks.ts: "A Blizzard error is swallowed").
+  test.each([
+    ["the request rejects", async (_u: string) => { throw new Error("network down"); }],
+    ["Blizzard answers 500", async (_u: string) => new Response("oops", { status: 500 })],
+    ["the search finds no realm", async (_u: string) => new Response(JSON.stringify({ results: [] }), { status: 200 })],
+  ])("%s: nothing is announced and the stored status is untouched", async (_name, realmResponse) => {
+    const announced: string[] = [];
+    const errors: unknown[] = [];
+    const host = makeFakeHost({
+      name: "wow",
+      dataDir: dir,
+      announce: async (m) => void announced.push(m),
+      log: { info() {}, warn() {}, error: (...a: unknown[]) => void errors.push(a) },
+    });
+    mockRealm("UP");
+    await checkRealm(host); // seed UP
+    const seeded = { ...wowState() };
+    _resetRealmPollThrottle();
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("oauth.battle.net/token")) {
+        return new Response(JSON.stringify({ access_token: "t", expires_in: 3600 }), { status: 200 });
+      }
+      return realmResponse(url);
+    }) as typeof fetch;
+    await checkRealm(host); // mutation: dropping checkRealm's try/catch lets the error escape; treating it as DOWN announces
+    expect(announced).toEqual([]);
+    expect(wowState()).toEqual(seeded);
+    expect(errors).toHaveLength(1);
+  });
+
   test("the poll throttle skips a second call within the gap before any fetch", async () => {
     const host = makeFakeHost({ name: "wow", dataDir: dir });
     mockRealm("UP");
