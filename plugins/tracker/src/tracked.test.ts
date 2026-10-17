@@ -226,18 +226,15 @@ describe("/renewal", () => {
   it("takes an amount up to 1,000,000 and refuses more, or one that is not a number (#209)", async () => {
     const w = world();
     await withLarry(w);
-    const tooLarge = "That amount is too large: the most is 1,000,000.";
-    for (const amount of [1_000_000.01, 1e21]) {
-      expect(await slash(w.plugin, "renewal", LARRY, renewalOptions("2026-12-01", { numbers: { amount } }))).toBe(tooLarge);
-    }
-    for (const amount of [Number.POSITIVE_INFINITY, Number.NaN]) {
-      expect(await slash(w.plugin, "renewal", LARRY, renewalOptions("2026-12-01", { numbers: { amount } }))).toBe("The amount has to be zero or more.");
+    const refused = "The amount has to be a number from 0 to 1,000,000.";
+    for (const amount of [1_000_000.01, 1e21, Number.POSITIVE_INFINITY, Number.NaN]) {
+      expect(await slash(w.plugin, "renewal", LARRY, renewalOptions("2026-12-01", { numbers: { amount } }))).toBe(refused);
     }
     expect(await slash(w.plugin, "renewal", LARRY, renewalOptions("2026-12-01", { numbers: { amount: 1_000_000 } }))).toContain("Renewal `t1` set: Netflix, ");
     // `/task decide` sets the amount too, by the same rule; refused before any run is looked for.
     for (const amount of [1e21, Number.POSITIVE_INFINITY]) {
       const decided = await slash(w.plugin, "task", LARRY, { sub: "decide", strings: { task: "t1", choice: "renewed" }, numbers: { amount } });
-      expect(decided).toBe(amount === 1e21 ? tooLarge : "The amount has to be zero or more.");
+      expect(decided).toBe(refused);
     }
   });
 });

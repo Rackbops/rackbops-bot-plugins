@@ -234,11 +234,11 @@ describe("renewals", () => {
     const w = await setup();
     for (const [change, reason] of [
       [{ name: "" }, "Say what renews"],
-      [{ amount: "abc" }, "The amount has to be zero or more."],
-      [{ amount: "" }, "The amount has to be zero or more."],
-      [{ amount: "-5" }, "The amount has to be zero or more."],
-      [{ amount: "1e3" }, "The amount has to be zero or more."],
-      [{ amount: "1000000.01" }, "That amount is too large: the most is 1,000,000."],
+      [{ amount: "abc" }, "The amount has to be a number from 0 to 1,000,000."],
+      [{ amount: "" }, "The amount has to be a number from 0 to 1,000,000."],
+      [{ amount: "-5" }, "The amount has to be a number from 0 to 1,000,000."],
+      [{ amount: "1e3" }, "The amount has to be a number from 0 to 1,000,000."],
+      [{ amount: "1000000.01" }, "The amount has to be a number from 0 to 1,000,000."],
       [{ currency: "US" }, "three-letter code"],
       [{ renews: "2026-09-30" }, "That date has passed"],
       [{ renews: "12/01/2026" }, "YYYY-MM-DD"],

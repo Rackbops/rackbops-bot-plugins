@@ -507,7 +507,7 @@ describe("tasks", () => {
       [{ type: "reminder", text: "x" }, 'Say when: for example "in 20 minutes", "tomorrow 9am" or "friday at 17:30".'],
       [{ type: "renewal", name: "Domain", amount: 5, currency: "US", renews: "2026-12-01" }, "The currency is a three-letter code, such as USD or EUR."],
       [{ type: "renewal", name: "Domain", amount: 5, currency: "USD", renews: "2026-12-01", every: 1.5 }, "`every` is a whole number from 1 to 100."],
-      [{ type: "renewal", name: "Domain", amount: 1_000_000.01, currency: "USD", renews: "2026-12-01" }, "That amount is too large: the most is 1,000,000."],
+      [{ type: "renewal", name: "Domain", amount: 1_000_000.01, currency: "USD", renews: "2026-12-01" }, "The amount has to be a number from 0 to 1,000,000."],
       [{ type: "price", url: SHOP, hours: 500 }, "`hours` is a whole number from 1 to 168."],
     ];
     for (const [input, reason] of cases) {
@@ -661,7 +661,7 @@ describe("tasks", () => {
     // An edit's amount meets the same cap as a new one's (#209).
     const huge = await api(w.plugin, "PATCH", "/tasks/t3", { token: w.token, body: { amount: 1_000_000.01 } });
     expect(huge.status).toBe(400);
-    expect((await body(huge)).error.message).toBe("That amount is too large: the most is 1,000,000.");
+    expect((await body(huge)).error.message).toBe("The amount has to be a number from 0 to 1,000,000.");
     const most = await api(w.plugin, "PATCH", "/tasks/t3", { token: w.token, body: { amount: 1_000_000 } });
     expect((await body(most)).task.settings).toMatchObject({ amount: 1_000_000 });
     // A price's page is not a field of its edit.

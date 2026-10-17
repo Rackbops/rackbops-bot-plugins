@@ -53,8 +53,11 @@ export interface RenewalInput {
  * API: a finite number from 0 to `MAX_AMOUNT`. Null when it is fine.
  */
 export function amountProblem(amount: number): string | null {
-  if (!Number.isFinite(amount) || amount < 0) return "The amount has to be zero or more.";
-  if (amount > MAX_AMOUNT) return `That amount is too large: the most is ${MAX_AMOUNT.toLocaleString("en-US")}.`;
+  // One message for every refusal, a form's unreadable amount (NaN) included, so a large number
+  // is never told it is below zero.
+  if (!Number.isFinite(amount) || amount < 0 || amount > MAX_AMOUNT) {
+    return `The amount has to be a number from 0 to ${MAX_AMOUNT.toLocaleString("en-US")}.`;
+  }
   return null;
 }
 
