@@ -50,6 +50,33 @@ describe("SqliteStore beyond the contract", () => {
     expect(b?.id).toBe("o2");
   });
 
+  it("a task that ends (done, or archived) loses its open invitations with an event; accepted and declined stay; ending twice does it once (#205)", async () => {
+    const at = "2026-03-02T12:00:00.000Z";
+    for (const end of ["done", "archived"] as const) {
+      const store = new SqliteStore(openDatabase(":memory:"));
+      const owner = await store.createUser({ discordId: "111111111111111111", at });
+      const mk = (n: number) => store.createUser({ discordId: `${n}`.repeat(18), at });
+      const [invited, accepted, declined] = [await mk(2), await mk(3), await mk(4)];
+      const t = await store.createTask({ ownerId: owner.id, type: "reminder", title: "t", config: { text: "t" }, schedule: null, lane: "notify", capabilities: ["notify"], at });
+      await store.setRecipient(t.id, invited.id, "invited", at);
+      await store.setRecipient(t.id, accepted.id, "accepted", at);
+      await store.setRecipient(t.id, declined.id, "declined", at);
+
+      await store.updateTask(t.id, { status: "paused", at });
+      expect((await store.listRecipients(t.id)).map((r) => r.state)).toEqual(["invited", "accepted", "declined"]);
+
+      await store.updateTask(t.id, { status: end, at });
+      expect((await store.listRecipients(t.id)).map((r) => [r.userId, r.state])).toEqual([[accepted.id, "accepted"], [declined.id, "declined"]]);
+      const why = end === "done" ? "finished" : "deleted";
+      const removed = (await store.listTaskEvents(t.id)).filter((e) => e.kind === "recipient_removed");
+      expect(removed.map((e) => [e.actorId, e.detail])).toEqual([[null, `${invited.id}: the task was ${why}, so the invitation is withdrawn`]]);
+
+      // A delete of a task that already finished has nothing left to withdraw, and records nothing more.
+      await store.updateTask(t.id, { status: "archived", at });
+      expect((await store.listTaskEvents(t.id)).filter((e) => e.kind === "recipient_removed")).toHaveLength(1);
+    }
+  });
+
   it("an id of another kind, or not an id at all, finds nothing", async () => {
     const store = new SqliteStore(openDatabase(":memory:"));
     const u = await store.createUser({ discordId: "d1", at: "2026-03-02T12:00:00.000Z" });
