@@ -2,10 +2,10 @@
 // the extracted helpers work and keep their shape, so they don't bit-rot: makeFakeInteraction has no
 // production consumer yet (no plugin ships an interactions() handler), and makeFakeHost's name/dataDir
 // contract is the one thing that changed when the three per-plugin copies were unified.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { makeFakeDelivery, makeFakeHost, makeFakeInteraction, makeRealStorage } from "./index.js";
 
 describe("makeFakeHost", () => {
@@ -39,23 +39,39 @@ describe("makeFakeDelivery (#736)", () => {
     expect(typeof host.destinations).toBe("function");
   });
 
-  test("post records its call and returns the same fixed HostDelivery every time", async () => {
+  test("post records its call and echoes the guildId with fixed channel and message ids", async () => {
     const delivery = makeFakeDelivery();
     const host = makeFakeHost({ name: "wow", ...delivery });
     const first = await host.post!("100000000000000000", "alerts", { content: "hi" });
     const second = await host.post!("999999999999999999", "news", { content: "bye" });
-    expect(first).toEqual(second);
+    expect(first.guildId).toBe("100000000000000000");
+    expect(second.guildId).toBe("999999999999999999");
+    expect(second.channelId).toBe(first.channelId);
+    expect(second.messageId).toBe(first.messageId);
     expect(delivery.calls.post).toEqual([
       { guildId: "100000000000000000", destination: "alerts", message: { content: "hi" } },
       { guildId: "999999999999999999", destination: "news", message: { content: "bye" } },
     ]);
   });
 
-  test("dm records its call and returns a fixed HostDelivery with a null guildId", async () => {
+  test("post and dm return a fresh object each call, so mutating one never leaks into the next", async () => {
+    const delivery = makeFakeDelivery();
+    const a = await delivery.post("1", "alerts", { content: "a" });
+    a.messageId = "mutated";
+    const b = await delivery.post("1", "alerts", { content: "b" });
+    expect(b.messageId).not.toBe("mutated");
+    const c = await delivery.dm("1", { content: "c" });
+    c.messageId = "mutated";
+    expect((await delivery.dm("1", { content: "d" })).messageId).not.toBe("mutated");
+  });
+
+  test("dm records its call and returns a HostDelivery with a null guildId and fixed channel and message ids", async () => {
     const delivery = makeFakeDelivery();
     const host = makeFakeHost({ name: "wow", ...delivery });
     const result = await host.dm!("42", { content: "hi" });
     expect(result.guildId).toBeNull();
+    expect(result.channelId).toBe("200000000000000002");
+    expect(result.messageId).toBe("300000000000000002");
     expect(delivery.calls.dm).toEqual([{ userId: "42", message: { content: "hi" } }]);
   });
 
@@ -109,6 +125,56 @@ describe("makeRealStorage", () => {
   test("readJsonOrFresh returns fresh for a missing file", async () => {
     const storage = makeRealStorage();
     expect(await storage.readJsonOrFresh(join(dir, "absent.json"), () => ({ n: 0 }), "test")).toEqual({ n: 0 });
+  });
+
+  test("readJsonOrFresh returns fresh for a corrupt file and leaves a .corrupt-* sibling", async () => {
+    const storage = makeRealStorage();
+    const path = join(dir, "corrupt.json");
+    writeFileSync(path, "{ not json");
+    const quiet = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await storage.readJsonOrFresh(path, () => ({ n: 0 }), "test")).toEqual({ n: 0 });
+    } finally {
+      quiet.mockRestore();
+    }
+    const siblings = readdirSync(dir).filter((f) => f.startsWith("corrupt.json.corrupt-"));
+    expect(siblings).toHaveLength(1);
+    expect(readFileSync(join(dir, siblings[0]!), "utf8")).toBe("{ not json");
+  });
+
+  test("createJsonWriter keeps the last save in call order", async () => {
+    const storage = makeRealStorage();
+    const path = join(dir, "writer.json");
+    const writer = storage.createJsonWriter<{ n: number }>(path);
+    await Promise.all(Array.from({ length: 10 }, (_, n) => writer.save({ n })));
+    expect(await storage.readJsonOrFresh(path, () => ({ n: -1 }), "test")).toEqual({ n: 9 });
+  });
+
+  test("createJsonWriter still saves after a failed save", async () => {
+    const storage = makeRealStorage();
+    // A regular file sits where the parent directory should be, so mkdirSync throws before any rename
+    // (no Windows retry loop, no leftover tmp file).
+    const parent = join(dir, "writer-fail-parent");
+    writeFileSync(parent, "not a directory");
+    const path = join(parent, "w.json");
+    const writer = storage.createJsonWriter<{ n: number }>(path);
+    await expect(writer.save({ n: 1 })).rejects.toBeDefined();
+    rmSync(parent);
+    await writer.save({ n: 2 });
+    expect(await storage.readJsonOrFresh(path, () => ({ n: -1 }), "test")).toEqual({ n: 2 });
+  });
+
+  test("createKeyedJsonMutator runs the next update after one mutate throws", async () => {
+    const storage = makeRealStorage();
+    const path = join(dir, "mutate-throws.json");
+    const mutator = storage.createKeyedJsonMutator<{ n: number }>();
+    const failed = mutator.update(path, () => ({ n: 0 }), () => {
+      throw new Error("boom");
+    }, "test");
+    const after = mutator.update(path, () => ({ n: 0 }), (cur) => ({ n: cur.n + 1 }), "test");
+    await expect(failed).rejects.toThrow("boom");
+    await after;
+    expect(await storage.readJsonOrFresh(path, () => ({ n: -1 }), "test")).toEqual({ n: 1 });
   });
 
   test("createKeyedJsonMutator serializes concurrent updates on one path", async () => {

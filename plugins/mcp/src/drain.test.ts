@@ -82,8 +82,9 @@ describe("attemptDelivery: kind post, with host.post", () => {
     const result = await attemptDelivery(deps(host), REQUEST_ID, { kind: "post", target: TARGET, body: { content: "hi" }, createdAt: NOW().toISOString() });
     expect(result.state).toBe("delivered");
     if (result.state !== "delivered") throw new Error("unreachable");
-    expect(result.delivery).toEqual({ guildId: "100000000000000001", channelId: "200000000000000001", messageId: "300000000000000001" });
-    expect(result.url).toBe("https://discord.com/channels/100000000000000001/200000000000000001/300000000000000001");
+    // makeFakeDelivery().post echoes the guildId it was given (TARGET's), with fixed channel and message ids.
+    expect(result.delivery).toEqual({ guildId: "111111111111111111", channelId: "200000000000000001", messageId: "300000000000000001" });
+    expect(result.url).toBe("https://discord.com/channels/111111111111111111/200000000000000001/300000000000000001");
   });
 
   test("a rejection is UPSTREAM_UNAVAILABLE, logged without the content", async () => {

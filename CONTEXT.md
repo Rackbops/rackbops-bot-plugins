@@ -65,7 +65,7 @@ pin only needs to change in one place.
   `renameWithRetry` (a retry for Windows file locks) of the host's storage primitives, so the concurrency tests are meaningful), `makeFakeHost({ name })`
   (name required; `dataDir` defaults to `/tmp/<name>-fake-datadir`; on its own it still has none of
   `post`/`dm`/`edit`/`destinations` -- the pre-#736 degraded path), `makeFakeDelivery()` (#736: those
-  four as recorders -- `post`/`dm` return a fixed `HostDelivery`, `edit` resolves nothing, `destinations`
+  four as recorders -- `post`/`dm` return a fresh `HostDelivery` per call with fixed channel and message ids (`post` echoes the caller's `guildId`), `edit` resolves nothing, `destinations`
   answers `[]` -- spread into `makeFakeHost`'s overrides; its own `calls` property isn't part of
   `HostApi`'s type, so read it straight off the object `makeFakeDelivery()` itself returned, not off
   the host -- the spread DOES copy it onto the host value too, it is just invisible to typed access

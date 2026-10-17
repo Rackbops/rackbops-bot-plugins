@@ -198,7 +198,7 @@ await host.post!(guildId, "alerts", { content: "hi" });
 expect(delivery.calls.post).toEqual([{ guildId, destination: "alerts", message: { content: "hi" } }]);
 ```
 
-`post`/`dm` always answer the same fixed `HostDelivery`; `edit` resolves with nothing;
+`post`/`dm` answer a fresh `HostDelivery` each call with fixed channel and message ids (`post` echoes the `guildId` it was given, as the real host does when the mapped channel is in that guild); `edit` resolves with nothing;
 `destinations` answers `[]` unless the test overrides it on the object `makeFakeDelivery()`
 returned, or on `makeFakeHost`'s own overrides. See
 [`packages/api/contract.d.ts`](packages/api/contract.d.ts) for the full types (`HostApi`,

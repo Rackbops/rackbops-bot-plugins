@@ -355,7 +355,7 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
       body: { content: "v2" },
       created_at: new Date(NOW).toISOString(),
       message_ref: REQUEST_ID,
-      url: "https://discord.com/channels/100000000000000001/200000000000000001/300000000000000001",
+      url: "https://discord.com/channels/111111111111111111/200000000000000001/300000000000000001",
       applied: true,
     });
     expect(delivery.calls.edit).toHaveLength(1);
