@@ -35,22 +35,30 @@ export async function saveWowState(): Promise<void> {
 }
 
 /**
- * Prepare the dedup store on first activation. If `wow.json` doesn't exist yet, seed it ONCE from the
- * bot's `state.json` (the three legacy keys the bot used to write) so an existing instance keeps its
- * "already announced" history across the extraction and never re-announces. Read `state.json` RAW
- * (`Bun.file().json()` in a try/catch), NOT `host.storage.readJsonOrFresh` — that moves a corrupt file
- * aside for inspection, and `state.json` is the bot's file, not ours. An absent or corrupt `state.json`
- * seeds empty (a fresh install: `realmStatus` undefined, or stored for another realm/region ⇒ the first realm reading is silent). Idempotent:
- * once `wow.json` exists it's loaded as-is and the seed never runs again.
+ * Prepare the dedup store on activation. If `wow.json` is absent, or is unreadable and gets moved aside
+ * (`readJsonOrFresh` quarantines a corrupt file and starts fresh), seed it from the bot's `state.json`
+ * (the three legacy keys the bot used to write) so an existing instance keeps its "already announced"
+ * history and never re-announces: on the first activation after the extraction, and again after a lost or
+ * corrupt `wow.json` (Epic #268 decision 3, #200 wow-6). A `wow.json` that loads is used as-is -- there is
+ * no merge on every boot, since the plugin's own file is the newer record once it exists.
+ * Read `state.json` RAW (`Bun.file().json()` in a try/catch), NOT `host.storage.readJsonOrFresh` -- that
+ * moves a corrupt file aside for inspection, and `state.json` is the bot's file, not ours. An absent or
+ * corrupt `state.json` seeds empty (a fresh install: `realmStatus` undefined, or stored for another
+ * realm/region => the first realm reading is silent).
  */
 export async function initWowStore(host: HostApi): Promise<void> {
   const wowPath = `${host.dataDir}/wow.json`;
-  if (await Bun.file(wowPath).exists()) {
-    current = await host.storage.readJsonOrFresh<WowState>(wowPath, () => ({}), "wow");
-  } else {
-    current = await seedFromBotState(`${host.dataDir}/state.json`);
-    await host.storage.writeJsonAtomic(wowPath, current);
-  }
+  const seed = await seedFromBotState(`${host.dataDir}/state.json`);
+  let seeded = false;
+  current = await host.storage.readJsonOrFresh<WowState>(
+    wowPath,
+    () => {
+      seeded = true;
+      return seed;
+    },
+    "wow",
+  );
+  if (seeded) await host.storage.writeJsonAtomic(wowPath, current);
   writer = host.storage.createJsonWriter<WowState>(wowPath);
 }
 
