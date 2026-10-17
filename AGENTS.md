@@ -68,6 +68,10 @@ also its own recipe (`just --list`).
 - **Unit tests** -- `bun test`.
 - **Index freshness** -- `bun run generate-index -- --check`; must be re-run (without `--check`)
   and the result committed whenever a plugin's `package.json`/`CHANGELOG.md` changes.
+- **Published check** -- `bun run check-published`; fails when a `plugins.json` version is not on npm
+  yet. It is **not** part of `just check` and not a PR check: it runs on a schedule
+  (`published-check.yml`), and a bump PR is meant to fail it until its `<name>-v<semver>` tag is
+  pushed -- tag right after merging a bump. Exit 2 means the registry was unreachable, not missing.
 - **Contract drift** -- `bun run check-contract`; needs network access to
   `rackbops-discord-bot`'s live `main` and fails if that repo is unreachable, not just on a real
   mismatch -- distinguish the two before treating a failure as drift.

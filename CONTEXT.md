@@ -43,6 +43,11 @@ pin only needs to change in one place.
   `raw.githubusercontent.com/Rackbops/rackbops-discord-bot/main/src/plugins/contract.ts` live --
   a CI failure here can mean either real drift or a transient network/GitHub outage; check which
   before assuming the contract actually changed.
+- **`plugins.json` runs ahead of npm between a bump's merge and its tag** (#135). The index is
+  committed in the bump PR; npm has the version only after `<name>-v<semver>` is pushed and
+  `publish.yml` finishes. `scripts/check-published.ts` (scheduled by `published-check.yml`, every six
+  hours, never a PR check) fails on a missing version (exit 1) and says so separately when the
+  registry is unreachable (exit 2).
 - **`scripts/generate-index.ts` extracts every `plugins/<name>` into `plugins.json`.** It builds
   each `PluginIndexEntry` from `package.json`'s `botPlugin` block + `CHANGELOG.md` (Keep-a-Changelog
   `## [x.y.z] - YYYY-MM-DD`, newest first, capped at 10), and **fails** on a bad plugin name, a
