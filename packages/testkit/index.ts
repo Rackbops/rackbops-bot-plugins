@@ -144,8 +144,10 @@ export function makeFakeHost(overrides: Partial<HostApi> & { name: string }): Ho
   };
 }
 
-/** Fixed return values `makeFakeDelivery`'s recorders answer with -- deliberately the same every
- *  call, so a test asserting on a delivery result has one well-known value to check against. */
+/** Templates for the `HostDelivery` values `makeFakeDelivery`'s recorders answer with -- the channel and
+ *  message ids are the same every call, so a test asserting on a delivery result has one well-known
+ *  value to check against. Every call returns a FRESH copy (a test that mutates one can't corrupt the
+ *  next), and `post` echoes the caller's `guildId` (the real host does when the mapped channel is in that guild). */
 const FAKE_POST_DELIVERY: HostDelivery = { guildId: "100000000000000001", channelId: "200000000000000001", messageId: "300000000000000001" };
 const FAKE_DM_DELIVERY: HostDelivery = { guildId: null, channelId: "200000000000000002", messageId: "300000000000000002" };
 
@@ -161,8 +163,8 @@ const FAKE_DM_DELIVERY: HostDelivery = { guildId: null, channelId: "200000000000
  * value too (a plain object spread copies every own key) -- but `makeFakeHost`'s `HostApi` return
  * type has no `calls` field, so typed code can never read it back off the host either way. Read
  * `delivery.calls` directly, from the object `makeFakeDelivery()` itself returned, as the example
- * below does. Each answers with a fixed value: `post`/`dm` return the same `HostDelivery` every call (`FAKE_POST_DELIVERY` /
- * `FAKE_DM_DELIVERY`), `edit` resolves with nothing (as the real one does), and `destinations`
+ * below does. Each answers predictably: `post`/`dm` return a fresh `HostDelivery` every call with fixed channel and message
+ * ids (`post` echoes the `guildId` it was given, as the real host does when the mapped channel is in that guild; `dm` has `guildId: null`), `edit` resolves with nothing (as the real one does), and `destinations`
  * answers `[]` every call -- a test that needs a specific list overrides `destinations` itself on
  * the object this returns, or on `makeFakeHost`'s overrides directly.
  *
@@ -195,11 +197,11 @@ export function makeFakeDelivery(): {
     calls,
     async post(guildId, destination, message) {
       calls.post.push({ guildId, destination, message });
-      return FAKE_POST_DELIVERY;
+      return { ...FAKE_POST_DELIVERY, guildId };
     },
     async dm(userId, message) {
       calls.dm.push({ userId, message });
-      return FAKE_DM_DELIVERY;
+      return { ...FAKE_DM_DELIVERY };
     },
     async edit(delivery, message) {
       calls.edit.push({ delivery, message });
