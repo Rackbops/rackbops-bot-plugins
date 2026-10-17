@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { blizzardGet, _resetBlizzardToken } from "./blizzard.js";
+import { blizzardGet, blizzardToken, _resetBlizzardToken } from "./blizzard.js";
+import { ECHO_LIMIT } from "./clip.js";
 
 // #18: blizzardGet is now the one place all four Blizzard fetch sites get their auth header from —
 // this pins that it actually attaches one, so dropping it fails here rather than only showing up
@@ -51,5 +52,14 @@ describe("blizzardGet", () => {
     }) as typeof fetch;
     await blizzardGet("https://us.api.blizzard.com/x");
     expect(seen).toBeInstanceOf(AbortSignal);
+  });
+
+  test("an OAuth failure carries the status but only a clipped slice of the response body (#200 wow-7)", async () => {
+    globalThis.fetch = (async (_input: string | URL | Request, _init?: RequestInit) => new Response("<html>".padEnd(5000, "x"), { status: 503 })) as typeof fetch;
+    const err = await blizzardToken().catch((e: Error) => e);
+    expect(err).toBeInstanceOf(Error);
+    const msg = (err as Error).message;
+    expect(msg).toContain("Blizzard OAuth failed: 503 <html>");
+    expect(msg.length).toBeLessThan("Blizzard OAuth failed: 503 ".length + ECHO_LIMIT + 1); // mutation: dropping clip() passes 5000 chars on
   });
 });

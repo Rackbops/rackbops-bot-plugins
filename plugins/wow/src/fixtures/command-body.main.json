@@ -23,13 +23,15 @@
         "type": 3,
         "name": "character",
         "description": "Character name",
-        "required": true
+        "required": true,
+        "max_length": 24
       },
       {
         "type": 3,
         "name": "realm",
         "description": "Realm, e.g. \"Argent Dawn\"",
-        "required": true
+        "required": true,
+        "max_length": 40
       }
     ],
     "name": "transmog",

@@ -423,3 +423,16 @@ describe("fetchTransmog — rejects an unrecognised realm before any fetch (bot#
     expect(fetchCalls).toBe(0);
   });
 });
+
+// #200 wow-7: option values and upstream text are echoed into replies, which Discord rejects over 2000 characters.
+describe("echoed values are clipped", () => {
+  test("an unrecognised realm name is clipped in its hint", () => {
+    const r = slugOrReason("-".repeat(5000));
+    expect("reason" in r && r.reason.length).toBeLessThan(400);
+  });
+
+  test("the character and realm in the reply heading are clipped", () => {
+    const out = formatTransmogReply("c".repeat(5000), "r".repeat(5000), buildCustomSet({ equipped_items: [mog("HEAD", 101, "Helm of Testing")] }));
+    expect(out.split("\n")[0]!.length).toBeLessThan(420);
+  });
+});
