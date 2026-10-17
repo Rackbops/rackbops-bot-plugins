@@ -1,8 +1,7 @@
 # rackbops-bot-plugins -- verified-facts ledger
 
 The running record of what has actually been confirmed about this repo's toolchain and its one
-external dependency (the host<->plugin contract vendored from `rackbops-discord-bot`). See **The
-CONTEXT.md Ledger** discipline in `AGENTS.md`. A fact is paid for once, written down in the same
+external dependency (the host<->plugin contract vendored from `rackbops-discord-bot`). A fact is paid for once, written down in the same
 change that used it, and read from here before going back to the source.
 
 ---
@@ -11,9 +10,9 @@ change that used it, and read from here before going back to the source.
 
 - **`rackbops-discord-bot`'s `src/plugins/contract.ts` @ `main`** -- the host<->plugin contract.
   This repo vendors it verbatim into `packages/api/contract.d.ts`; `scripts/check-contract.ts`
-  re-fetches the upstream file on every CI run and fails on any diff. Last verified identical:
-  2026-09-09 (re-vendored for `rackbops-discord-bot#184`'s optional `Plugin.dispose?()`, a
-  compatible addition -- `check-contract` confirmed the match against upstream `main` @ `2dd4d10`).
+  re-fetches the upstream file on every CI run and fails on any diff. Identity is
+  re-checked on every CI run, so no verification date is kept here; last re-vendored in #293 (for
+  `rackbops-discord-bot#534`/`#539`/`#540`).
 - **`rackbops-discord-bot`'s `README.md:82`** -- "the daemon fetches the build context itself,
   with no credentials" -- the reason this repo is public (verified 2026-09-04).
 
@@ -55,14 +54,15 @@ pin only needs to change in one place.
 - **`packages/api/admin.ts` is the admin-UI contract -- a SEPARATE module from `contract.d.ts`.** It
   is browser/DOM-typed (`/// <reference lib="dom" />`) and carries `AdminApi`, `MountAdmin`, and a
   **runtime** `ADMIN_API_VERSION` const -- so, unlike the type-only `contract.d.ts`, it can be
-  runtime-imported. Kept separate precisely so `contract.d.ts` stays single-const + DOM-free (read at
+  runtime-imported (though nothing does yet: both admin bundles hard-code `adminApiVersion = 1`, so a
+  bump here gives no compile error, only a tab the panel safe-fails on a mismatch). Kept separate precisely so `contract.d.ts` stays single-const + DOM-free (read at
   boot before the Client exists). A plugin opts into an admin tab by declaring
   `botPlugin.adminApiVersion`; `generate-index` then emits that version plus a **derived** `adminUrl`
   (`https://cdn.jsdelivr.net/npm/<pkg>@<version>/dist/admin.js`), and `build-plugins` bundles
   `src/admin/index.ts` -> `dist/admin.js` (`--target browser`, no discord.js). Design + panel side:
   the epic [rackbops-discord-bot#123](https://github.com/Rackbops/rackbops-discord-bot/issues/123).
-- **`packages/testkit/index.ts` is the shared test-only module** -- `makeRealStorage` (a faithful copy
-  of the host's storage primitives, so the concurrency tests are meaningful), `makeFakeHost({ name })`
+- **`packages/testkit/index.ts` is the shared test-only module** -- `makeRealStorage` (a copy plus a
+  `renameWithRetry` (a retry for Windows file locks) of the host's storage primitives, so the concurrency tests are meaningful), `makeFakeHost({ name })`
   (name required; `dataDir` defaults to `/tmp/<name>-fake-datadir`; on its own it still has none of
   `post`/`dm`/`edit`/`destinations` -- the pre-#736 degraded path), `makeFakeDelivery()` (#736: those
   four as recorders -- `post`/`dm` return a fixed `HostDelivery`, `edit` resolves nothing, `destinations`
@@ -74,6 +74,10 @@ pin only needs to change in one place.
   (`../../../packages/testkit/index.js` from a plugin's `src/`); it is never published and never
   bundled -- `build-plugins` bundles `src/index.ts` only, and `files: ["dist"]` keeps `src/` out of
   the tarball -- so it touches no shipped artifact and no plugin version.
+- **`packages/net/clientIp.ts` is bundled by `music` and `warbandeer`, the plugins that resolve client IPs themselves, and
+  `rackbops-discord-bot` keeps its own copy** ("Copied from rackbops-bot-plugins#70", its `src/net/clientIp.ts`).
+  The copies are logic-identical today but nothing pins them, so a security fix in one must be made in the
+  other by hand.
 - **Relative imports need a `.js` extension** (`tsconfig.json`'s `moduleResolution: NodeNext`).
   Import the vendored contract as `../packages/api/contract.js` (type-only) -- it resolves to
   `contract.d.ts`, and Bun resolves the `.js` specifier to the `.ts`/`.d.ts` source at runtime.

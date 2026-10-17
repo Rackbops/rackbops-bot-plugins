@@ -44,18 +44,20 @@ export async function checkWeeklyReset(host: HostApi, now: Date = new Date()): P
 // Continuously watch the realm and announce every UP↔DOWN transition, so an outage at any hour is
 // reported — not only weekly-reset maintenance. A Blizzard error is swallowed: it must never
 // masquerade as a DOWN, nor block the rest of the tick.
-export async function checkRealm(host: HostApi): Promise<void> {
+export async function checkRealm(host: HostApi, signal?: AbortSignal): Promise<void> {
   if (!realmWatchConfigured()) return;
   if (Date.now() - lastRealmPollAt < REALM_POLL_GAP_MS) return;
   lastRealmPollAt = Date.now();
   const state = wowState();
   let status: RealmStatus;
   try {
-    status = await realmStatus();
+    status = await realmStatus(signal);
   } catch (err) {
     host.log.error("realm poll failed", err);
     return;
   }
+  // The host abandoned this run (shutdown): announce and persist nothing, the next poll redoes it.
+  if (signal?.aborted) return;
   const transition = decideRealmTransition(state.realmStatus, status);
   if (transition === "down") {
     await host.announce(`🔴 **${config.realmSlug}** is down — servers are offline.`);
@@ -74,7 +76,7 @@ export function wowTicks(host: HostApi): TickCheck[] {
   return [
     { name: "dmf", run: () => checkDmf(host) },
     { name: "weeklyReset", run: () => checkWeeklyReset(host) },
-    { name: "realm", run: () => checkRealm(host) },
+    { name: "realm", run: (signal) => checkRealm(host, signal) },
   ];
 }
 

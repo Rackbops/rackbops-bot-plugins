@@ -1,6 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
+import { makeRealStorage } from "../../../packages/testkit/index.js";
+import { initCharacters, charactersDir, loadCharacterSnapshotsFrom, saveCharacterSnapshotTo } from "./characters.js";
 import type { LinkedAccount } from "./links.js";
-import { linkAvailability, linkReply, unlinkReply } from "./link-command.js";
+import { hashToken, links, loadLinks } from "./links.js";
+import { handleLinkCommand, handleUnlinkCommand, linkAvailability, linkReply, unlinkReply } from "./link-command.js";
+import { createRateLimiter, setConnectorConfigured, startWarbandeerServer, type WarbandeerDeps } from "./server.js";
 
 describe("linkReply", () => {
   test("names the code and the 10-minute window", () => {
@@ -68,5 +76,89 @@ describe("unlinkReply", () => {
     const result = unlinkReply([account("Main")], "Nope");
     expect(result.remove).toBeUndefined();
     expect(result.message).toContain("Nope");
+  });
+});
+
+// Drives the real handlers (#157) against a temp dir: the pure helpers above can't catch a dropped
+// Ephemeral flag, a reordered deferReply, or a missing snapshot deletion.
+describe("handleLinkCommand / handleUnlinkCommand", () => {
+  const USER = "123456789012345678";
+  let dir: string;
+  let server: { stop: () => void } | undefined;
+
+  function fakeInteraction(opts: { accountLabel?: string } = {}) {
+    const calls: string[] = [];
+    const defer: unknown[] = [];
+    const replies: { content: string; flags?: unknown }[] = [];
+    const interaction = {
+      user: { id: USER },
+      options: { getString: () => opts.accountLabel ?? null },
+      reply: async (r: { content: string; flags?: unknown }) => void (calls.push("reply"), replies.push(r)),
+      deferReply: async (r: unknown) => void (calls.push("defer"), defer.push(r)),
+      editReply: async (r: { content: string }) => void (calls.push("edit"), replies.push(r)),
+    } as unknown as ChatInputCommandInteraction;
+    return { interaction, calls, defer, replies };
+  }
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "warbandeer-link-"));
+    const storage = makeRealStorage();
+    initCharacters(dir, storage);
+    await loadLinks(dir, storage);
+    links.pending = [];
+    links.accounts = {};
+    setConnectorConfigured(true);
+    const deps: WarbandeerDeps = {
+      maxBodyBytes: 1024,
+      rateLimiter: createRateLimiter({ windowMs: 60_000, max: 1000 }),
+      authFailureLimiter: createRateLimiter({ windowMs: 60_000, max: 1000 }),
+      redeemCode: async () => ({ ok: true, token: "t" }),
+      authenticate: () => undefined,
+      storeCharacters: async () => ({ ok: true }),
+    };
+    server = startWarbandeerServer(0, deps); // flips warbandeerServerRunning() to true
+  });
+
+  afterEach(() => {
+    server?.stop();
+    setConnectorConfigured(false);
+    links.pending = [];
+    links.accounts = {};
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("/link defers ephemerally, then puts the code only in the edited reply", async () => {
+    const { interaction, calls, defer, replies } = fakeInteraction();
+    await handleLinkCommand(interaction);
+    expect(defer).toEqual([{ flags: MessageFlags.Ephemeral }]);
+    expect(calls).toEqual(["defer", "edit"]);
+    expect(links.pending).toHaveLength(1);
+    expect(replies).toHaveLength(1);
+    const code = /\*\*([A-Z0-9]+)\*\*/.exec(replies[0]!.content)?.[1];
+    expect(code).toBeDefined();
+    expect(hashToken(code!)).toBe(links.pending[0]!.codeHash);
+  });
+
+  test("/link when the connector is not running refuses ephemerally without minting a code", async () => {
+    server?.stop();
+    server = undefined;
+    const { interaction, replies } = fakeInteraction();
+    await handleLinkCommand(interaction);
+    expect(replies[0]!.flags).toBe(MessageFlags.Ephemeral);
+    expect(links.pending).toHaveLength(0);
+  });
+
+  test("/unlink removes the account and deletes its Character Snapshot from disk", async () => {
+    links.accounts = { [USER]: [{ accountLabel: "Main", tokenHash: "h", linkedAt: 0, updatedAt: 0 }] };
+    await saveCharacterSnapshotTo(charactersDir(), USER, { accountLabel: "Main", characters: [] } as never);
+    expect((await loadCharacterSnapshotsFrom(charactersDir(), USER)).snapshots).toHaveLength(1);
+
+    const { interaction, defer, replies } = fakeInteraction();
+    await handleUnlinkCommand(interaction);
+
+    expect(defer).toEqual([{ flags: MessageFlags.Ephemeral }]);
+    expect(links.accounts[USER] ?? []).toHaveLength(0);
+    expect((await loadCharacterSnapshotsFrom(charactersDir(), USER)).snapshots).toHaveLength(0);
+    expect(replies[0]!.content).toContain("Unlinked");
   });
 });

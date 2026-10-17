@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 // Warbandeer's admin-panel tab (admin-UI contract, rackbops-discord-bot#123, child 3). v1 scope: the
-// ingest-port field + a "is the connector running?" status readout. NO linked-account data (privacy).
+// ingest-port field + a "is a port configured?" status readout (not a running check). NO linked-account data (privacy).
 // The pure/impure helpers (validatePort, statusLine, savePort) are exported + unit-tested; mountAdmin
 // is a thin DOM shell over them, verified in-browser (the panel runs it same-origin via the contract).
 import type { AdminApi } from "../../../../packages/api/admin.js"; // path from src/admin/index.ts

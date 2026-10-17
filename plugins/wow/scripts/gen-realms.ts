@@ -4,7 +4,7 @@
 // ops/tools/gen-realms.ts when the realm chooser moved into this plugin (Rackbops/rackbops-discord-bot#107).
 //
 // A manual dev tool, NOT published (package.json `files` is ["dist"] only) and NOT a runtime dependency:
-// it dynamic-imports the roshne/battlenet-api-research client by path at run time, the only coupling.
+// it dynamic-imports the Rackbops/battlenet-api-research client by path at run time, the only coupling.
 //
 // Run (Bun, which resolves the client's TS + ".js"-specifier ESM imports natively):
 //   bun run plugins/wow/scripts/gen-realms.ts
@@ -25,7 +25,7 @@ const SECRETS = process.env.BNET_SECRETS ?? "R:/repos/secrets/BattleNetAPI-secre
 const CLIENT_DIR = process.env.BNET_CLIENT_DIR ?? "R:/repos/battlenet-api-research/client";
 const OUT = new URL("../src/admin/realms.json", import.meta.url);
 
-// Only "us"/"eu" — the two values bot-ops.sh's WOW_REGION regex accepts, and the two the panel
+// Only "us"/"eu" — the two values the WOW_REGION format in package.json's botPlugin.env accepts, and the two the panel
 // filters by. (kr/tw exist in the API but the bot doesn't offer them.)
 const REGIONS = ["us", "eu"] as const;
 

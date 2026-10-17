@@ -10,9 +10,9 @@ shipping, commit mechanics, search-tool routing, and shell choice. Claude Code l
 `~/.claude/CLAUDE.md`; Codex from `~/.codex/AGENTS.md`. They are **not restated here**; this file
 covers only what is specific to this repo.
 
-**Commit convention (intended -- no history yet to confirm scopes against):** Conventional
-Commits `type(scope): subject`, matching every other Rackbops repo. Revisit this line once real
-commits accumulate; match `git log`, not this guess, if they disagree.
+**Commit convention (as the log shows):** Conventional Commits `type(scope): subject`, the
+subject usually ending `(#N)`, matching every other Rackbops repo. Scope names the plugin or
+subsystem touched (`tracker`, ...); match `git log` if this ever disagrees.
 
 ---
 

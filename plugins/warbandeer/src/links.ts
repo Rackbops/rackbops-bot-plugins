@@ -83,10 +83,9 @@ export function verifyToken(token: string, hash: string): boolean {
  *
  * Regenerates on the astronomically unlikely chance the new code collides with a DIFFERENT
  * user's still-pending code: `redeemLinkCode` matches by hash alone, so a collision would hand
- * the redeemer the wrong user's identity and silently destroy that user's code. Now a ~64-bit code
- * space (#69, up from the original 32-bit one) rather than the ~64-bit space itself being why this
- * stays cheap enough to close outright rather than accept — it was already the rule at 32 bits, and
- * remains one now. Comparing candidate hashes here is a plain `===`, not `hashesMatch`'s
+ * the redeemer the wrong user's identity and silently destroy that user's code. The code space is
+ * ~64 bits now (#69, up from the original 32-bit one); closing the collision outright rather than
+ * accepting it stays cheap, and was already the rule at 32 bits. Comparing candidate hashes here is a plain `===`, not `hashesMatch`'s
  * constant-time compare: this is OUR OWN freshly-generated candidate against other stored hashes,
  * not an attacker-supplied value being timed against a secret, so there's nothing to leak.
  * `generateCode` defaults to `generateLinkCode` and exists as a parameter purely so `links.test.ts`

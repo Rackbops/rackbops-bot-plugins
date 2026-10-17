@@ -1,8 +1,9 @@
 // One file per request_id under dataDir/mcp/deliveries/ (Tooling#742 decisions 5-6). Reserve is the
 // one operation that must be atomic per path (two concurrent POSTs of the same request_id must
 // produce exactly one "pending" and one drain) -- it goes through host.storage's keyed mutator, which
-// serializes read-modify-write per path; everything else (set/get/list/prune) is a plain read or
-// write, since nothing else needs a check-and-set. Listing and pruning use node:fs directly --
+// serializes read-modify-write per path; set/get/list/prune are plain reads/writes. `recordEditSeq` also uses the keyed mutator (its
+// read-modify-write must not interleave with another edit's), while `markPendingUnknown` is a plain
+// get+set pass that is not atomic (it runs once, at startup, before any drain). Listing and pruning use node:fs directly --
 // HostStorage has no directory-listing or delete primitive, and a plugin is free to use node:fs
 // itself (a declared-dependency boundary, not a sandbox).
 import { readdir, unlink } from "node:fs/promises";

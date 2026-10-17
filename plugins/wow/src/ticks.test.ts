@@ -81,6 +81,18 @@ describe("checkRealm", () => {
     ]);
   });
 
+  test("a run the host has aborted announces and persists nothing", async () => {
+    const announced: string[] = [];
+    const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async (m) => void announced.push(m) });
+    mockRealm("UP");
+    await checkRealm(host); // seed UP
+    _resetRealmPollThrottle();
+    mockRealm("DOWN");
+    await checkRealm(host, AbortSignal.abort());
+    expect(announced).toEqual([]);
+    expect(wowState().realmStatus).toBe("UP");
+  });
+
   test("the poll throttle skips a second call within the gap before any fetch", async () => {
     const host = makeFakeHost({ name: "wow", dataDir: dir });
     mockRealm("UP");

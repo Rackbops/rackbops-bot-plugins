@@ -29,7 +29,7 @@
 ### Added
 
 - An admin-panel tab, via the plugin admin-UI contract
-  (`rackbops-discord-bot#123`): shows whether the ingest connector is running and
+  (`rackbops-discord-bot#123`): shows whether the ingest connector is configured (a port is set) and
   lets an admin set (or clear) `WARBANDEER_INGEST_PORT` — saved through the panel's
   guarded env-set, which recreates the bot to apply it. No character/link data is
   shown.

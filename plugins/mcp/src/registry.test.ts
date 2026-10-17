@@ -344,3 +344,52 @@ describe("createRegistryStore: pruning uses the caller's own injected clock, not
     expect(redeemed.ok).toBe(true);
   });
 });
+
+describe("createRegistryStore: code expiry and the five-code cap, through the store", () => {
+  let dir: string;
+  let store: RegistryStore;
+  const t0 = new Date("2026-09-25T00:00:00.000Z").getTime();
+  const at = (ms: number) => () => new Date(t0 + ms);
+  const TEN_MIN = 10 * 60 * 1000;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mcp-registry-"));
+    store = createRegistryStore(dir, makeRealStorage());
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function pairedCode(now: () => Date): Promise<string> {
+    await store.register(USER, NAME, now);
+    const paired = await store.pair(USER, NAME, now);
+    if (!paired.ok) throw new Error("unreachable");
+    return paired.code;
+  }
+
+  test("a code redeems just inside the 10 minutes and is refused at 10 minutes (mutation: dropping the prune in mutate leaves it redeemable)", async () => {
+    const live = await pairedCode(at(0));
+    expect((await store.redeem(live, at(TEN_MIN - 1))).ok).toBe(true);
+
+    const expired = (await store.pair(USER, NAME, at(0))) as { ok: true; code: string };
+    expect((await store.redeem(expired.code, at(TEN_MIN))).ok).toBe(false);
+  });
+
+  test("a code is refused 11 minutes later, however long it sat on disk", async () => {
+    const code = await pairedCode(at(0));
+    expect((await store.redeem(code, at(TEN_MIN + 60_000))).ok).toBe(false);
+  });
+
+  test("a sixth pair keeps only the newest five codes live", async () => {
+    await store.register(USER, NAME, at(0));
+    const codes: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const paired = await store.pair(USER, NAME, at(i));
+      if (!paired.ok) throw new Error("unreachable");
+      codes.push(paired.code);
+    }
+    expect((await store.redeem(codes[0]!, at(10))).ok).toBe(false); // dropped by the cap
+    for (const code of codes.slice(1)) expect((await store.redeem(code, at(10))).ok).toBe(true);
+  });
+});

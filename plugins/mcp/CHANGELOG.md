@@ -19,12 +19,13 @@
 - DM delivery, edit delivery and a recipient list (`Rackbops/Tooling#746`, S3d of Epic #734):
   `kind: "dm"` now goes through `host.dm` to a registered user, and `kind: "edit"` goes through
   `host.edit` against the stored delivery of the send `message_ref` names -- edits are applied in
-  `seq` order, serialized per message, and a lower `seq` arriving after a higher one is a no-op
-  (`applied: false`) rather than reapplying stale content. `GET /recipients` lists registered users
+  arrival order, serialized per message, and a lower `seq` arriving after a higher one has been
+  applied is a no-op (`applied: false`) rather than reapplying stale content. `GET /recipients` lists registered users
   (id, display name), capped at 100, ordered by registration time. `GET /capabilities` now reports
   `dm`/`edit` as `true` exactly when the host provides `host.dm`/`host.edit`, rather than always
-  `false`. A closed-DM recipient, or one who has since unregistered, fails
-  `failed{RECIPIENT_UNREACHABLE}` with no Discord call; an unknown or non-deliverable `message_ref`
+  `false`. A recipient who is not registered (never was, or has since unregistered) fails
+  `failed{RECIPIENT_UNREACHABLE}` with no Discord call, and a registered recipient whose DMs are closed
+  fails the same way after Discord rejects the send; an unknown or non-deliverable `message_ref`
   fails `failed{NOT_FOUND}`. Every #742/#743 record without a `dm`/`edit`-shaped target (from before
   this version) is refused the same way, never delivered.
 
@@ -39,8 +40,8 @@
   128 bits, at most 5 live per user) that a connector redeems for the Discord user id and current
   generation;
   `unregister` deletes the registration -- and with it every outstanding code -- in one write.
-  Every register/pair/unregister/redeem is serialized against every other through the same keyed
-  JSON mutator the delivery store uses, on one `registry.json` file.
+  Every register/pair/unregister/redeem is serialized against every other (in-process) through one
+  keyed JSON mutator owned by the registry store, on one `registry.json` file.
 
 ## [0.1.0] - 2026-09-25
 
