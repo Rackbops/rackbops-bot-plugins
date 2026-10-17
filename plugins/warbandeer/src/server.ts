@@ -283,11 +283,13 @@ export function createProductionDeps(overrides?: {
 
 /**
  * Started from `createPlugin`'s `activate()` only when `WARBANDEER_INGEST_PORT` is set — absent
- * config means this is never called at all (ADR-0001's "fail closed when unconfigured"). Binds to
- * every interface inside the container (`Bun.serve` defaults to `0.0.0.0` — deliberate: `cloudflared`
- * reaches this bot as a separate container over the compose network, at `http://bot:<port>`, which a
- * loopback-only bind would refuse), but `docker-compose.yml` publishes no host port for it — the
- * only route in from outside the compose network is the opt-in `cloudflared` tunnel sidecar.
+ * config means this is never called at all (ADR-0001's "fail closed when unconfigured"). Binds with
+ * no `hostname` passed to `Bun.serve`, so the listener is reachable on the container's non-loopback
+ * address — deliberate: `cloudflared` reaches this bot as a separate container over the compose
+ * network, at `http://bot:<port>`, which a loopback-only bind would refuse. (Observed on Bun 1.4.2
+ * on Linux: a connection to the host's non-loopback IPv4 address is accepted and `requestIP` reports
+ * it as plain IPv4; IPv6 was not testable there. `docker-compose.yml` publishes no host port for it —
+ * the only route in from outside the compose network is the opt-in `cloudflared` tunnel sidecar.)
  *
  * `CF-Connecting-IP` is trusted only from a peer address that resolves to `proxy`'s configured
  * `TRUSTED_PROXY_HOST` (#69) — Cloudflare's edge sets this header itself from the connection it

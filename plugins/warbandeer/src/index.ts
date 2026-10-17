@@ -8,7 +8,7 @@ import { setConnectorConfigured, startWarbandeerServer } from "./server.js";
 /**
  * The Warbandeer plugin. `createPlugin` is pure: it parses and validates `WARBANDEER_INGEST_PORT`
  * (throwing to have the host skip the plugin on an invalid value — the same error text the bot's
- * config threw at boot, per src/config.ts:116) and returns the `/link` and `/unlink` commands.
+ * config threw at boot) and returns the `/link` and `/unlink` commands.
  * All I/O — loading `links.json`, binding the characters store, starting the ingest server — runs
  * in `activate()`, after the host's `takeOver()`.
  */
@@ -63,8 +63,9 @@ export function createPlugin(host: HostApi): Plugin {
       // Absent WARBANDEER_INGEST_PORT means the connector never starts at all — fail closed
       // (ADR-0001) rather than binding a port nobody asked for. Bun.serve throwing (a privileged
       // port under the non-root user, the port already in use) must not crash the bot: the host
-      // catches nothing here, so this try/catch keeps the plugin alive with /link reporting the
-      // feature disabled (warbandeerServerRunning() stays false).
+      // would catch an activate() throw and record the plugin as inactive with that error
+      // (PluginStateEntry.active/error), so this try/catch instead keeps the plugin alive with /link
+      // reporting the feature disabled (warbandeerServerRunning() stays false).
       if (port !== undefined) {
         // #69: created once per activate(), only when the server is actually about to start --
         // TRUSTED_PROXY_HOST is the compose hostname of this instance's Cloudflare Tunnel sidecar;

@@ -23,7 +23,7 @@ export interface Realm {
 // Hand-duplicated mirror of the WOW_REALM manifest format (package.json botPlugin.env) — the accented
 // Latin letters cover EU realms like chants-éternels / aggra-português. Client-side pre-validation only;
 // the panel's env-set re-validates against this same manifest format on save. Moved verbatim from the
-// panel's old chooser (rackbops-discord-bot@main:ops/admin/public/index.html:1290).
+// panel's old chooser, now owned by this plugin.
 const REALM_SLUG_RE = /^[a-z0-9àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ-]{1,40}$/;
 
 // Mirror of the DMF_TIMEZONE manifest format — a 1-to-3-segment IANA-shaped zone. A RegExp built from a

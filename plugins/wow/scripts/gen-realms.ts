@@ -12,7 +12,7 @@
 // Inputs (both overridable by env, absolute paths only):
 //   BNET_SECRETS     Blizzard client creds JSON: { "ID": "...", "SECRET": "..." }
 //                    default R:/repos/secrets/BattleNetAPI-secrets.json
-//   BNET_CLIENT_DIR  the roshne/battlenet-api-research client/ checkout
+//   BNET_CLIENT_DIR  the Rackbops/battlenet-api-research client/ checkout
 //                    default R:/repos/battlenet-api-research/client
 //
 // Writes plugins/wow/src/admin/realms.json: { generated, source, regions: { us:[{slug,name}], eu:[...] } }.

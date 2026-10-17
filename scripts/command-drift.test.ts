@@ -2,7 +2,7 @@
 // commands its package.json "botPlugin.commands" declares. The generator reads the declaration
 // (into plugins.json) and the bot registers what the code returns, so a mismatch would register
 // a command the manifest never announced (or fail to register one it did). Runs against every real
-// plugins/* (none while the repo is empty) plus in-repo fixtures that pin the check itself.
+// plugins/* plus in-repo fixtures that pin the check itself.
 //
 // Builds each bundle inside the test with process.execPath (never bare "bun" — the ENOENT that
 // causes is Windows-specific and wouldn't reproduce on Linux CI), because the CI `test` job has no

@@ -1,4 +1,4 @@
-// The plugin's WoW config — the same values the bot resolved in src/config.ts, ported here with the
+// The plugin's WoW config — the same values the bot's own config once resolved, ported here with the
 // identical defaults, validation, and error text. The bot resolves them from process.env into a
 // `config` singleton at import; this plugin resolves them from `HostApi.env` in `initWowConfig`, which
 // `createPlugin` calls once (synchronously, before any command or tick can fire). The ported modules
@@ -28,10 +28,10 @@ type Env = Readonly<Record<string, string | undefined>>;
 /**
  * Resolve the WoW config from the plugin's declared env keys and populate the `config` singleton.
  * Pure apart from mutating that singleton — no I/O — so `createPlugin` stays pure and may THROW to
- * refuse an invalid value, with the exact error text the bot threw at boot (src/config.ts:77,105); the
+ * refuse an invalid value, with the exact error text the bot threw at boot; the
  * host then skips just this plugin and logs the reason, booting core-only, per the warbandeer port.
  *
- * Mirrors the bot's `optional()`: an env var set to "" is treated as unset (see src/config.ts:63), so a
+ * Mirrors the bot's `optional()`: an env var set to "" is treated as unset (the bot's old `optional()` did the same), so a
  * blank WOW_REALM/DMF_TIMEZONE falls back to its default exactly as it did in the bot.
  */
 export function initWowConfig(env: Env): WowConfig {

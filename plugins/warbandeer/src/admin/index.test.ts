@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { ADMIN_API_VERSION } from "../../../../packages/api/admin.js"; // runtime import: the const, not just the types
 import type { AdminApi } from "../../../../packages/api/admin.js";
 import type { PluginStateEntry } from "../../../../packages/api/contract.js";
 import { adminApiVersion, validatePort, statusLine, savePort, mountAdmin } from "./index.js";
@@ -26,6 +27,10 @@ function fakeApi(over: Partial<AdminApi> = {}): AdminApi {
 describe("warbandeer admin tab helpers (#123 child 3)", () => {
   test("adminApiVersion is 1", () => {
     expect(adminApiVersion).toBe(1);
+  });
+
+  test("adminApiVersion equals the panel contract's ADMIN_API_VERSION", () => {
+    expect(adminApiVersion).toBe(ADMIN_API_VERSION);
   });
 
   test("validatePort accepts a valid port or blank, rejects out-of-range/non-numeric", () => {

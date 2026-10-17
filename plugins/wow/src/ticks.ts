@@ -11,7 +11,7 @@ const RESET_ANNOUNCE_WINDOW_MS = 10 * 60 * 1000;
 const REALM_POLL_GAP_MS = 2 * 60 * 1000;
 let lastRealmPollAt = 0;
 
-// The three checks are ported from the bot's announce.ts (checkDmf/checkWeeklyReset/checkRealm), with
+// The three checks are ported from the bot's old announce.ts (checkDmf/checkWeeklyReset/checkRealm), with
 // `announce(client, kind, msg)` → `host.announce(msg)` (the same ANNOUNCE_CHANNEL_ID the bot posted to)
 // and the `state.X`/`saveState()` singleton → the plugin's own wow.json store. Announcement text is
 // byte-identical to the baked-in bot. Exported so their wiring is unit-tested directly.

@@ -1,7 +1,7 @@
 // #28: publish.yml's admin-bundle pack check has no .ts counterpart to unit-test -- it's a shell
 // step in a GitHub Actions workflow, exercised for real only on an actual tag push. This pins the
 // step's presence and ordering directly against the raw YAML text (no YAML parser dependency in
-// this repo -- see CLAUDE.md's "no linter configured" / minimal-deps note), the same
+// this repo; minimal deps), the same
 // static-regex-over-a-real-file pattern this repo's other drift guards already use.
 import { describe, expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";

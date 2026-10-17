@@ -355,9 +355,8 @@ describe("sameIgnoringGeneratedAt", () => {
   });
 });
 
-// The CLI's --check path against the repo's own committed plugins.json (empty envelope while no
-// plugins are committed). process.execPath, never bare "bun": Bun.spawn's ENOENT on a bare command
-// name is Windows-specific and won't reproduce on Linux CI.
+// The CLI's --check path against the repo's own committed plugins.json.
+// process.execPath, never bare "bun": Bun.spawn's ENOENT on a bare command name is Windows-specific and won't reproduce on Linux CI.
 describe("generate-index CLI --check", () => {
   async function run(args: string[]): Promise<{ exitCode: number; stdout: string }> {
     const proc = Bun.spawn([process.execPath, "run", "scripts/generate-index.ts", ...args], {

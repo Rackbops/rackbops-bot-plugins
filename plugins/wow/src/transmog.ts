@@ -170,8 +170,8 @@ export function realmSlug(realm: string): string {
       .replace(/['’]/g, "")
       .replace(/[\s_]+/g, "-")
       // Keep lowercase ASCII, digits, hyphen, and the lowercase Latin-1 accented letters — the same
-      // accented charset the WOW_REALM env validator accepts (ops/bot-ops.sh), so a generated slug
-      // uses only characters that gate allows. Blizzard does not fold accents in its slugs; folding
+      // accented charset the WOW_REALM format in plugins/wow/package.json (botPlugin.env) accepts, so a
+      // generated slug uses only characters that gate allows. Blizzard does not fold accents in its slugs; folding
       // here 404s every character on the accented realms.
       .replace(/[^a-z0-9àáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ-]/g, "")
   );

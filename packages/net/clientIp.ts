@@ -33,10 +33,12 @@ async function defaultLookup(host: string): Promise<string[]> {
 
 /**
  * Normalizes an IPv4-mapped IPv6 address (`::ffff:x.x.x.x`) down to its plain IPv4 form. Found
- * during round-2 gate testing: `Bun.serve` with no explicit `hostname` (every call site in this
- * repo) binds dual-stack, and an IPv4 peer connecting to that listener is reported by
- * `srv.requestIP()` in mapped notation -- confirmed directly (`bun -e` against a real listener),
- * not assumed. `dns.promises.lookup` never returns that notation for an IPv4 result, so without
+ * during round-2 gate testing: an IPv4 peer on a `Bun.serve` listener with no explicit `hostname`
+ * (every call site in this repo) was reported by `srv.requestIP()` in mapped notation. Re-checked
+ * on Bun 1.4.2 on Linux in a container with no IPv6 stack: an IPv4 client on 127.0.0.1 came back
+ * as plain `127.0.0.1` (family IPv4), and `[::1]` was refused, so the mapped form was NOT
+ * reproduced there -- it may depend on the platform / IPv6 availability. `dns.promises.lookup`
+ * never returns the mapped notation for an IPv4 result, so wherever Bun does report it, without
  * this the trusted-address Set and the peer address `isTrusted` is asked to check would never
  * match for a real IPv4 tunnel sidecar: the whole fix would silently never engage. Applied on BOTH
  * sides of the comparison (the resolved set and the incoming peer) so it doesn't matter which form
