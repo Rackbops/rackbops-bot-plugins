@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.2] - 2026-10-17
+
+### Fixed
+
+- Ingest rate limits now treat an IPv6 client's whole /64 as one client, expired limiter entries are swept by a timer instead of a full scan past 10,000 keys, and a bad `/link` code guess no longer rewrites `links.json` (Rackbops/rackbops-bot-plugins#197, #342).
+
 ## [1.3.1] - 2026-10-17
 
 ### Fixed

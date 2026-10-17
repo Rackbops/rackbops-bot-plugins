@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-17T22:08:41.305Z",
+  "generatedAt": "2026-10-17T22:56:34.996Z",
   "plugins": [
     {
       "name": "mcp",
@@ -194,7 +194,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.31.0",
+      "version": "0.31.1",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
@@ -328,6 +328,12 @@
       ],
       "releases": [
         {
+          "version": "0.31.1",
+          "publishedAt": "2026-10-17T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.31.1",
+          "notes": "### Fixed\n\n- Deleting a task, or it finishing, withdraws the invitations nobody has answered yet. A late Accept or Decline from one of those invitees is refused (\"That is not yours to answer.\") and writes no block against the owner; invitees who already accepted or declined are left alone (Rackbops/rackbops-bot-plugins#205, #343)."
+        },
+        {
           "version": "0.31.0",
           "publishedAt": "2026-10-17T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.31.0",
@@ -380,19 +386,13 @@
           "publishedAt": "2026-10-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.23.1",
           "notes": "### Fixed\n\n- `/allow` with the usr link on no longer tells someone usr already knew that \"they can finish\n  their usr sign-up with `/register`\" as if they were new. When usr linked an account it already\n  had, the reply now says \"Linked to usr, to the usr account it already had for them; if they have\n  not signed up there yet, they can with `/register`.\" (usr does not say whether that account\n  finished signing up); the plain sign-up hint stays for someone usr made a new account for.\n\n### Schema\n\n- No change."
-        },
-        {
-          "version": "0.23.0",
-          "publishedAt": "2026-10-07T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.23.0",
-          "notes": "### Added\n\n- **Link everyone to usr**, on the admin page while the usr link is on: one press starts a run in\n  the background that, for each person on the list with a Discord id and no usr link, checks they\n  are a member of the server as `/allow` does, allows them in usr as `tracker:member` with the\n  pressing admin as the one who allowed them, and links them. The admin page shows how far it has\n  got and then how it ended; a second press while it runs starts nothing. usr records each link\n  against `TRACKER_GUILD_ID`'s first server, so with no gate it refuses and says to `/allow` in the\n  server. Someone forgotten before their turn is never sent to usr. Only a 400 from usr about the\n  person's own details is theirs; any other refusal or failure stops the run, since it would fail everyone the same way.\n\n### Schema\n\n- No change."
         }
       ]
     },
     {
       "name": "warbandeer",
       "package": "@rackbops/plugin-warbandeer",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "description": "Warbandeer desktop-app character linking (/link, /unlink, ingest endpoint)",
       "hostApiVersion": 1,
       "intents": [],
@@ -416,9 +416,15 @@
           "secret": false
         }
       ],
-      "adminUrl": "https://cdn.jsdelivr.net/npm/@rackbops/plugin-warbandeer@1.3.1/dist/admin.js",
+      "adminUrl": "https://cdn.jsdelivr.net/npm/@rackbops/plugin-warbandeer@1.3.2/dist/admin.js",
       "adminApiVersion": 1,
       "releases": [
+        {
+          "version": "1.3.2",
+          "publishedAt": "2026-10-17T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/warbandeer-v1.3.2",
+          "notes": "### Fixed\n\n- Ingest rate limits now treat an IPv6 client's whole /64 as one client, expired limiter entries are swept by a timer instead of a full scan past 10,000 keys, and a bad `/link` code guess no longer rewrites `links.json` (Rackbops/rackbops-bot-plugins#197, #342)."
+        },
         {
           "version": "1.3.1",
           "publishedAt": "2026-10-17T00:00:00.000Z",
@@ -454,7 +460,7 @@
     {
       "name": "wow",
       "package": "@rackbops/plugin-wow",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "description": "World of Warcraft features: Darkmoon Faire schedule, resets, realm up/down watch, and /transmog import strings (/dmf, /reset, /status, /transmog)",
       "hostApiVersion": 1,
       "intents": [],
@@ -501,9 +507,15 @@
           "secret": true
         }
       ],
-      "adminUrl": "https://cdn.jsdelivr.net/npm/@rackbops/plugin-wow@1.0.3/dist/admin.js",
+      "adminUrl": "https://cdn.jsdelivr.net/npm/@rackbops/plugin-wow@1.0.4/dist/admin.js",
       "adminApiVersion": 1,
       "releases": [
+        {
+          "version": "1.0.4",
+          "publishedAt": "2026-10-17T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/wow-v1.0.4",
+          "notes": "### Fixed\n\n- `/transmog` accepts a character of at most 24 characters and a realm of at most 40, and the values it echoes back, item names and Blizzard error text are clipped, so an oversized value can no longer make the reply exceed Discord's 2000 characters and leave the command on \"thinking\" (Rackbops/rackbops-bot-plugins#200, #340).\n- A missing or corrupt `wow.json` is seeded from the bot's `state.json` and written back, so an open Faire, weekly reset or realm state no longer announces a second time after the plugin's own file is lost. A `wow.json` that loads is used as it is (#200, #341)."
+        },
         {
           "version": "1.0.3",
           "publishedAt": "2026-10-17T00:00:00.000Z",

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4] - 2026-10-17
+
+### Fixed
+
+- `/transmog` accepts a character of at most 24 characters and a realm of at most 40, and the values it echoes back, item names and Blizzard error text are clipped, so an oversized value can no longer make the reply exceed Discord's 2000 characters and leave the command on "thinking" (Rackbops/rackbops-bot-plugins#200, #340).
+- A missing or corrupt `wow.json` is seeded from the bot's `state.json` and written back, so an open Faire, weekly reset or realm state no longer announces a second time after the plugin's own file is lost. A `wow.json` that loads is used as it is (#200, #341).
+
 ## [1.0.3] - 2026-10-17
 
 ### Fixed
