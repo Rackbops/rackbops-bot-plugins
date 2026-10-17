@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -97,6 +97,19 @@ describe("validateCharacterPayload", () => {
     for (let i = 0; i < 500; i++) bomb[`k${i}`] = i;
     const result = validateCharacterPayload({ characters: [{ currency: bomb }] }, "Main");
     expect(result).toMatchObject({ ok: false });
+  });
+
+  test("a key with a newline or control characters is echoed only JSON-escaped and capped, never raw", () => {
+    const tooLong = { deep: "x".repeat(MAX_STRING_FIELD_LENGTH + 1) };
+    const nasty = "line\n[warbandeer] FAKE LOG LINE\u0007"; // under the 32-character cap, so only escaped
+    const result = validateCharacterPayload({ characters: [{ [nasty]: tooLong }] }, "Main");
+    expect(result).toEqual({ ok: false, error: expect.stringContaining('payload.characters[0]."line\\n[warbandeer] FAKE LOG LINE\\u0007".deep') });
+    if (!result.ok) expect(result.error).not.toMatch(/[\x00-\x1f]/);
+
+    const longKey = "k".repeat(100); // over the cap: cut to 32 characters and marked
+    const long = validateCharacterPayload({ characters: [{ [longKey]: tooLong }] }, "Main");
+    expect(long).toEqual({ ok: false, error: expect.stringContaining(`payload.characters[0]."${"k".repeat(32)}...".deep`) });
+    if (!long.ok) expect(long.error).not.toContain("k".repeat(33));
   });
 
   test("rejects an oversized object key WITHOUT echoing it into the error message", () => {
@@ -242,5 +255,64 @@ describe("deleteCharacterSnapshotFrom", () => {
     await deleteCharacterSnapshotFrom(dir, id, "NeverLinked");
     const stored = await loadCharacterSnapshotsFrom(dir, id);
     expect(stored.snapshots).toEqual([]);
+  });
+});
+
+describe("characters files of the wrong shape, and shouldWrite", () => {
+  const id = "123456789012345678";
+  let dir: string;
+  const file = () => join(dir, `${id}.json`);
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "warbandeer-characters-test-"));
+    initCharacters(dir, makeRealStorage());
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test.each([["{}"], ['{"snapshots":null}'], ["null"], ['{"snapshots":{}}']])("%s: load, save and delete work as on an empty file", async (body) => {
+    writeFileSync(file(), body);
+    expect((await loadCharacterSnapshotsFrom(dir, id)).snapshots).toEqual([]);
+    await deleteCharacterSnapshotFrom(dir, id, "Main");
+    expect(await saveCharacterSnapshotTo(dir, id, { accountLabel: "Main", warband: { bankGold: 1 }, characters: [] }, 1000)).toBe(true);
+    expect((await loadCharacterSnapshotsFrom(dir, id)).snapshots).toHaveLength(1);
+  });
+
+  test.each([["{}"], ['{"snapshots":null}']])("%s: a save straight onto it works (not only after a load or delete repaired it)", async (body) => {
+    writeFileSync(file(), body);
+    expect(await saveCharacterSnapshotTo(dir, id, { accountLabel: "Main", warband: { bankGold: 1 }, characters: [] }, 1000)).toBe(true);
+    expect((await loadCharacterSnapshotsFrom(dir, id)).snapshots).toHaveLength(1);
+  });
+
+  test.each([["{}"], ['{"snapshots":null}']])("%s: a delete straight onto it works", async (body) => {
+    writeFileSync(file(), body);
+    await deleteCharacterSnapshotFrom(dir, id, "Main");
+    expect((await loadCharacterSnapshotsFrom(dir, id)).snapshots).toEqual([]);
+  });
+
+  test("a snapshot entry without a string accountLabel is dropped, the rest kept", async () => {
+    const good = { accountLabel: "Main", warband: { bankGold: 1 }, characters: [], receivedAt: 1 };
+    writeFileSync(file(), JSON.stringify({ snapshots: [null, { characters: [] }, good] }));
+    expect((await loadCharacterSnapshotsFrom(dir, id)).snapshots).toEqual([good]);
+  });
+
+  test("shouldWrite returning false leaves the file as it was and reports not written", async () => {
+    await saveCharacterSnapshotTo(dir, id, { accountLabel: "Main", warband: { bankGold: 1 }, characters: [] }, 1000);
+    const before = readFileSync(file(), "utf8");
+    const written = await saveCharacterSnapshotTo(dir, id, { accountLabel: "Main", warband: { bankGold: 9 }, characters: [] }, 2000, () => false);
+    expect(written).toBe(false); // mutation: ignoring shouldWrite overwrites the snapshot
+    expect(readFileSync(file(), "utf8")).toBe(before);
+  });
+
+  test("shouldWrite is asked after a queued delete ran, so an unlink that queued first wins", async () => {
+    await saveCharacterSnapshotTo(dir, id, { accountLabel: "Main", warband: { bankGold: 1 }, characters: [] }, 1000);
+    let linked = true;
+    const del = deleteCharacterSnapshotFrom(dir, id, "Main").then(() => {
+      linked = false;
+    });
+    const save = saveCharacterSnapshotTo(dir, id, { accountLabel: "Main", warband: { bankGold: 2 }, characters: [] }, 2000, () => linked);
+    await del;
+    expect(await save).toBe(false);
+    expect((await loadCharacterSnapshotsFrom(dir, id)).snapshots).toEqual([]);
   });
 });

@@ -80,7 +80,7 @@ export function createRateLimiter(opts: { windowMs: number; max: number; now?: (
 }
 
 export type LinkResult = { ok: true; token: string } | { ok: false; error: string };
-export type StoreCharactersResult = { ok: true } | { ok: false; error: string };
+export type StoreCharactersResult = { ok: true } | { ok: false; error: string; status?: 400 | 401 };
 
 export interface WarbandeerDeps {
   /** Redeems a Link Code for `accountLabel`, minting and persisting a Device Token, or reports
@@ -204,7 +204,7 @@ export async function handleRequest(req: Request, clientIp: string, deps: Warban
     const parsed = parseJsonObjectBody(body);
     if (parsed === undefined) return new Response("invalid JSON", { status: 400 });
     const result = await deps.storeCharacters(owner.discordUserId, owner.accountLabel, parsed);
-    if (!result.ok) return new Response(result.error, { status: 400 });
+    if (!result.ok) return new Response(result.error, { status: result.status ?? 400 });
     return new Response(null, { status: 204 });
   }
 
@@ -272,7 +272,12 @@ export function createProductionDeps(overrides?: {
         console.error(`[warbandeer] rejected a push for discord user ${discordUserId}: ${validated.error}`);
         return validated;
       }
-      await saveCharacterSnapshotTo(charactersBaseDir, discordUserId, validated.snapshot);
+      // The body took time to arrive and `authenticate` ran before it: an /unlink in between must win, so the
+      // check is repeated inside the serialized write rather than trusted from the request's start.
+      const written = await saveCharacterSnapshotTo(charactersBaseDir, discordUserId, validated.snapshot, Date.now(), () =>
+        (state.accounts[discordUserId] ?? []).some((a) => a.accountLabel === accountLabel),
+      );
+      if (!written) return { ok: false, error: "unauthorized", status: 401 };
       const next = touchLinkedAccount(state, discordUserId, accountLabel, Date.now());
       state.accounts = next.accounts;
       await persistLinks();
