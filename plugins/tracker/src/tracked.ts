@@ -15,7 +15,7 @@ import {
   type User,
 } from "@rackbops/docket-core";
 import { money, type RenewalConfig, type RenewalDecision } from "@rackbops/docket-types";
-import { CURRENCY_LENGTH, DATE_LENGTH, MAX_NOTE, MAX_TITLE } from "./limits.js";
+import { CURRENCY_LENGTH, DATE_LENGTH, MAX_AMOUNT, MAX_NOTE, MAX_TITLE } from "./limits.js";
 import { TASK_BUSY } from "./locks.js";
 import { clip, latestRun, liveTaskCap, NO_SUCH_TASK, type Plan, replyLanes, said, type TaskResult, type TrackerDeps } from "./actions.js";
 
@@ -48,6 +48,16 @@ export interface RenewalInput {
   note?: string;
 }
 
+/**
+ * A renewal's amount, wherever one is set -- `/renewal`, `/task decide`, the web editor and the Task
+ * API: a finite number from 0 to `MAX_AMOUNT`. Null when it is fine.
+ */
+export function amountProblem(amount: number): string | null {
+  if (!Number.isFinite(amount) || amount < 0) return "The amount has to be zero or more.";
+  if (amount > MAX_AMOUNT) return `That amount is too large: the most is ${MAX_AMOUNT.toLocaleString("en-US")}.`;
+  return null;
+}
+
 export const PERIOD_UNITS: readonly PeriodUnit[] = ["year", "month", "week", "day"];
 
 /**
@@ -63,7 +73,8 @@ export function renewalPlan(
   const name = input.name.trim();
   if (name.length === 0) return bad("Say what renews: a subscription, a domain, a warranty.");
   if (name.length > MAX_TITLE) return bad(`That name is longer than ${MAX_TITLE} characters.`);
-  if (!Number.isFinite(input.amount) || input.amount < 0) return bad("The amount has to be zero or more.");
+  const amountBad = amountProblem(input.amount);
+  if (amountBad) return bad(amountBad);
   const currency = input.currency.trim().toUpperCase();
   if (!new RegExp(`^[A-Z]{${CURRENCY_LENGTH}}$`).test(currency)) return bad("The currency is a three-letter code, such as USD or EUR.");
   const note = input.note?.trim() ?? "";
@@ -157,7 +168,8 @@ export async function decideRenewal(
   const task = await visibleTask(d.store, { userId: user.id, admin: false }, input.taskId.trim());
   if (!task || task.ownerId !== user.id) return NO_SUCH_TASK;
   if (task.type !== "renewal") return `\`/task decide\` answers a renewal; \`${task.id}\` is a ${task.type}.`;
-  if (input.amount !== undefined && (!Number.isFinite(input.amount) || input.amount < 0)) return "The amount has to be zero or more.";
+  const amountBad = input.amount === undefined ? null : amountProblem(input.amount);
+  if (amountBad) return amountBad;
   const payload = input.amount === undefined ? input.choice : { choice: input.choice, amount: input.amount };
   // Picked and answered under the task's lock, so a run of the renewal never lands in between.
   const refused = await d.locks.turn(task.id, async (): Promise<string | null> => {

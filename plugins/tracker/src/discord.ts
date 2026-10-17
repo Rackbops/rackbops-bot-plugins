@@ -15,7 +15,7 @@ import {
   withNotice,
 } from "./actions.js";
 import { resumeTask } from "./manage.js";
-import { CURRENCY_LENGTH, DATE_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
+import { CURRENCY_LENGTH, DATE_LENGTH, MAX_AMOUNT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
 import { remind, type Repeat } from "./reminders.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./research.js";
 import { DEFAULT_BGG_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
@@ -242,7 +242,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
         b
           .setDescription("Track a subscription, domain or warranty: I ask before each renewal")
           .addStringOption((o) => o.setName("name").setDescription("What renews, e.g. Netflix").setRequired(true).setMaxLength(MAX_TITLE))
-          .addNumberOption((o) => o.setName("amount").setDescription("What one period costs").setRequired(true).setMinValue(0))
+          .addNumberOption((o) => o.setName("amount").setDescription("What one period costs").setRequired(true).setMinValue(0).setMaxValue(MAX_AMOUNT))
           .addStringOption((o) => o.setName("currency").setDescription("Currency code, e.g. USD").setRequired(true).setMinLength(CURRENCY_LENGTH).setMaxLength(CURRENCY_LENGTH))
           .addStringOption((o) => o.setName("renews").setDescription("The next renewal or expiry date, YYYY-MM-DD").setRequired(true).setMaxLength(DATE_LENGTH))
           .addStringOption((o) =>
@@ -472,7 +472,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
                   .setRequired(true)
                   .addChoices({ name: "keep", value: "keep" }, { name: "cancel", value: "cancel" }, { name: "renewed", value: "renewed" }),
               )
-              .addNumberOption((o) => o.setName("amount").setDescription("What you paid this time, if not the usual").setMinValue(0)),
+              .addNumberOption((o) => o.setName("amount").setDescription("What you paid this time, if not the usual").setMinValue(0).setMaxValue(MAX_AMOUNT)),
           )
           .addSubcommand((s) =>
             s

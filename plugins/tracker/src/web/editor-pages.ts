@@ -1,5 +1,5 @@
 import type { Task } from "@rackbops/docket-core";
-import { CURRENCY_LENGTH, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
+import { CURRENCY_LENGTH, MAX_AMOUNT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
 import { backOn } from "../delivery-health.js";
 import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
@@ -172,7 +172,7 @@ export function fieldsFor(type: NewType, mode: Mode, surface: Surface = "web"): 
   case "renewal":
     return [
       { name: "name", label: "What renews", kind: "text", required: true, maxlength: MAX_TITLE, help: "A subscription, a domain, a warranty." },
-      { name: "amount", label: "What one period costs", kind: "text", required: true, decimal: true },
+      { name: "amount", label: "What one period costs", kind: "text", required: true, decimal: true, max: MAX_AMOUNT, help: `0 to ${MAX_AMOUNT}.` },
       { name: "currency", label: "Currency", kind: "text", required: true, maxlength: CURRENCY_LENGTH, help: "A three-letter code, such as USD or EUR." },
       { name: "renews", label: "Next renewal or expiry date", kind: "date", required: true },
       { name: "unit", label: "Renews", kind: "select", options: UNIT_OPTIONS },

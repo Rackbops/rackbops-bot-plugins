@@ -20,6 +20,13 @@ export const MAX_NOTE = 300;
 export const MAX_URL = 1000;
 /** A price's `near` text. */
 export const MAX_NEAR = 100;
+/**
+ * The most a renewal's amount may be, as set by `/renewal`, `/task decide`, the web editor and the
+ * Task API alike (tracked.ts's `amountProblem`): far above any subscription, low enough that the
+ * amount still prints as a plain number (`1e21` would print as `1e+21 USD`). A default the owner
+ * can change.
+ */
+export const MAX_AMOUNT = 1_000_000;
 /** A currency code. */
 export const CURRENCY_LENGTH = 3;
 /** A `YYYY-MM-DD` date. */
