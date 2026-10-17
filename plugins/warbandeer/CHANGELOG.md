@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.1] - 2026-10-17
+
+### Fixed
+
+- A blank `WARBANDEER_INGEST_PORT` or `TRUSTED_PROXY_HOST` is treated as unset, the same as leaving it out (Rackbops/rackbops-bot-plugins#317).
+- A push that was authenticated before an `/unlink` is refused (401) instead of writing the snapshot back; `/link` and `/unlink` answer a failure instead of hanging, and `/unlink` says when its stored data could not be deleted; expired link codes are swept, malformed `links.json` account entries and wrong-shaped characters files no longer break pushes, and an object key in a rejected push is escaped in the error (#197, #329).
+- A failed first lookup of the tunnel sidecar's address no longer leaves the trusted-proxy set empty for a minute: with nothing resolved yet, the first request at least 5 seconds after the failure retries, and the request after that is trusted. A `CF-Connecting-IP` header with more than one value is now untrusted and the peer address is used, instead of taking the first value (Rackbops/rackbops-bot-plugins#181, #332).
+
 ## [1.3.0] - 2026-09-27
 
 ### Changed
