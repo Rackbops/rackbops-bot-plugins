@@ -5,6 +5,7 @@
 ### Fixed
 
 - Deleting a task, or it finishing, withdraws the invitations nobody has answered yet. After a delete, a late Accept or Decline from one of those invitees is refused ("That is not yours to answer.") and writes no block against the owner; invitees who already accepted or declined are left alone (Rackbops/rackbops-bot-plugins#205, #343).
+- Deleting or finishing an inbox watch now deletes its stored inbox rows, which nothing could read again (#208, #346).
 
 ## [0.31.0] - 2026-10-17
 
