@@ -36,9 +36,21 @@ export function validateRealmSlug(value: string): string | null {
   return "Enter a realm slug (lowercase letters, digits and hyphens; accents allowed), or leave blank for no realm.";
 }
 
-/** Null when `value` is a validly-shaped IANA zone or blank; otherwise the reason to show the operator. */
+/** Whether this engine knows `zone`. initWowConfig (config.ts) makes the same check at startup and stays the
+ *  authority (browser and Bun time-zone data can differ); this only catches typos before the save. */
+function isKnownZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Null when `value` is a validly-shaped, known IANA zone or blank; otherwise the reason to show the operator. */
 export function validateTimezone(value: string): string | null {
-  if (value === "" || TZ_SHAPE_RE.test(value)) return null;
+  if (value === "") return null;
+  if (TZ_SHAPE_RE.test(value) && isKnownZone(value)) return null;
   return "Enter an IANA time zone like America/Los_Angeles, or leave blank for the region default.";
 }
 

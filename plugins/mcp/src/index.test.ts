@@ -80,6 +80,15 @@ describe("createPlugin", () => {
     expect(res.status).toBe(503);
   });
 
+  test("a blank or whitespace MCP_BRIDGE_TOKEN is unset: http answers 503, not 401", async () => {
+    for (const value of ["", "   "]) {
+      const host = makeFakeHost({ name: "mcp", dataDir: dir, env: { MCP_BRIDGE_TOKEN: value } });
+      const plugin = createPlugin(host);
+      const res = await plugin.http!(post("/capabilities"), INFO("/capabilities"));
+      expect(res.status).toBe(503);
+    }
+  });
+
   test("with MCP_BRIDGE_TOKEN set, a correctly authenticated call reaches the route", async () => {
     const host = makeFakeHost({ name: "mcp", dataDir: dir, env: { MCP_BRIDGE_TOKEN: TOKEN } });
     const plugin = createPlugin(host);
