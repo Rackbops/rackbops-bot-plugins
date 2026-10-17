@@ -112,18 +112,32 @@ pin only needs to change in one place.
   `import { Database } from "bun:sqlite"` as an import (verified 2026-09-29 on the built
   `plugins/tracker/dist/plugin.js`, then loaded and run under Bun), so a plugin can use
   `bun:sqlite` -- the bot runs on Bun. Not a native dependency: nothing is compiled or shipped.
-- **`@rackbops/docket-core` 0.3.0 leaves two things to its host** (read in its `dist/dispatch.js`,
-  2026-09-29, for `plugins/tracker` #79): `Lanes.tickNotify` runs every queued due occurrence
-  whatever its task's status, so a paused task still fires; and `runOne` fails the whole run when
-  one recipient's send throws. The tracker's notify lane therefore hands docket a view of its
-  store (`laneStore`, `notify-lane.ts`) that drops a non-active task's due runs, and pauses every
-  task that would DM a person whose delivery paused (`delivery-health.ts`), as plan 5.5 asks. docket's `registrationText` still wraps a usr link the tracker no
-  longer has (plan item 40), so `/register` builds its own text around `ADMIN_DISCLOSURE`.
-- **`@rackbops/docket-core` 0.3.0's Store port has no delete of a person or a task, and no list of
-  people or of blocks** (read in its `dist/ports.d.ts`, 2026-09-30, for `plugins/tracker` #80 slice
-  3): only `deleteQueuedOccurrences`, `removeRecipient` and per-pair `listBlocks`. So the tracker's
-  admin view and forget-me run plain SQL over the plugin's own database (`plugins/tracker/src/roster.ts`),
-  as `admissions.ts` and `delivery-health.ts` already do; docket is not changed.
+- **docket-core holds paused tasks and settles each recipient's send itself; 0.3.0 did not**
+  (history, for `plugins/tracker` #79). 0.3.0's `Lanes.tickNotify` ran every queued due run
+  whatever its task's status, and its `runOne` failed the whole run when one recipient's send threw,
+  so the tracker's first notify lane filtered a paused task's due runs out of the store it handed
+  docket. 0.4.0 took both over: `Lanes.due()` leaves a paused, done or archived task's runs queued
+  and `runOne` re-checks the status before a run starts (an execute Job already out is still
+  collected) (read in docket-core 0.10.0's `dist/dispatch.js`,
+  2026-10-17), and each person's copy of a run is its own delivery row, claimed and settled on its
+  own (`dist/delivery.js` `deliver`). The tracker's views of its store (`notify-lane.ts`'s `taskStore`,
+  and `tasksStore` for the execute tick) now only scope a pass to the task or tasks it runs; what is still the tracker's is plan
+  5.5's pause after three failed DMs, which pauses every task that would DM that person
+  (`delivery-health.ts`). Likewise 0.3.0's `registrationText` wrapped a usr link, so `/register`
+  built its own text; since 0.4.0 it carries no link, and `/register` uses it with the tracker's
+  pause note (`actions.ts` `registeredText`), with the usr sign-up link appended by
+  `registerPerson` when the usr link is on and the person has not signed up there.
+- **docket-core's Store port never deletes a person or a task, and lists blocks only per
+  owner/recipient pair** (`listBlocks`; read in 0.10.0's `dist/ports.d.ts`, 2026-10-17). So the
+  admin view's lists of people and of blocks in force, and forget-me's erasure of a person, run
+  plain SQL over the plugin's own database (`plugins/tracker/src/roster.ts`), as `admissions.ts` and
+  `delivery-health.ts` already do; docket is not changed. 0.3.0 (#80 slice 3) also had no list of
+  people; `listUsers` came in 0.4.0, and the admin view still reads people with its own query
+  (`roster.ts` `people()`), which joins admissions, delivery health and task counts a docket `User`
+  does not carry -- inferred to be why it was not moved to `listUsers`; no comment says. The port's per-person forget-me deletes
+  (`deleteDeliveries` from 0.4.0, `deleteFindings` from 0.5.0) are implemented by the tracker's own
+  statements (`store.ts` `deleteDeliveriesOf`/`deleteFindingsOf`), which roster.ts's erasure runs
+  inside its own transaction.
 - **`TRACKER_GUILD_ID`'s server-membership gate is an addition beyond the plan.** Plan 5.5's
   "membership gate" is the admission list alone, with a Discord-role check left unknown; checking
   membership of one configured server came with #79's brief, not the plan of record; a list of
