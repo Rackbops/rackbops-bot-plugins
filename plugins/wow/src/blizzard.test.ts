@@ -62,4 +62,47 @@ describe("blizzardGet", () => {
     expect(msg).toContain("Blizzard OAuth failed: 503 <html>");
     expect(msg.length).toBeLessThan("Blizzard OAuth failed: 503 ".length + ECHO_LIMIT + 1); // mutation: dropping clip() passes 5000 chars on
   });
+
+  describe("the cached token", () => {
+    const realNow = Date.now;
+    let tokenFetches: number;
+    beforeEach(() => {
+      tokenFetches = 0;
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        if (String(input).includes("oauth.battle.net/token")) {
+          tokenFetches++;
+          return new Response(JSON.stringify({ access_token: `t${tokenFetches}`, expires_in: 3600 }), { status: 200 });
+        }
+        return new Response("{}", { status: 200 });
+      }) as typeof fetch;
+    });
+    afterEach(() => {
+      Date.now = realNow;
+    });
+
+    test("is reused while it is valid, so a second call does not hit the token endpoint", async () => {
+      expect(await blizzardToken()).toBe("t1");
+      expect(await blizzardToken()).toBe("t1"); // mutation: dropping the Date.now() < expiresAt check refetches every time
+      expect(tokenFetches).toBe(1);
+    });
+
+    test("is refreshed a minute before it expires, not after", async () => {
+      const start = realNow();
+      Date.now = () => start;
+      await blizzardToken();
+      Date.now = () => start + 3500 * 1000; // 100 s left of 3600: still valid
+      expect(await blizzardToken()).toBe("t1");
+      Date.now = () => start + 3545 * 1000; // inside the final minute: refresh (mutation: expires_in + 60 keeps the old token)
+      expect(await blizzardToken()).toBe("t2");
+      expect(tokenFetches).toBe(2);
+    });
+
+    test("a failed token request throws with the status and is not cached", async () => {
+      globalThis.fetch = (async (_i: string | URL | Request) => new Response("denied", { status: 401 })) as typeof fetch;
+      await expect(blizzardToken()).rejects.toThrow("Blizzard OAuth failed: 401 denied");
+      globalThis.fetch = (async (_i: string | URL | Request) =>
+        new Response(JSON.stringify({ access_token: "ok", expires_in: 3600 }), { status: 200 })) as typeof fetch;
+      expect(await blizzardToken()).toBe("ok");
+    });
+  });
 });
