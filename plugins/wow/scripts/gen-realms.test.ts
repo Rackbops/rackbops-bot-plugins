@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 
-const script = new URL("./gen-realms.ts", import.meta.url).pathname;
+const script = fileURLToPath(new URL("./gen-realms.ts", import.meta.url));
 
 /** Runs the script with only the given variables set, so a developer's own environment cannot satisfy it. */
 async function run(env: Record<string, string>): Promise<{ code: number; stderr: string }> {
@@ -17,7 +18,8 @@ describe("gen-realms.ts inputs", () => {
     ["blank values", { BNET_SECRETS: "  ", BNET_CLIENT_DIR: "" }],
   ])("%s: fails naming both variables, before reading anything", async (_name, env) => {
     const r = await run(env);
-    expect(r.code).not.toBe(0); // mutation: restoring a default path makes this read a file or call the client
+    expect(r.code).not.toBe(0);
+    // The names in stderr are what fail if a default path is restored: the old script died on a missing file instead.
     expect(r.stderr).toContain("BNET_SECRETS");
     expect(r.stderr).toContain("BNET_CLIENT_DIR");
   });
