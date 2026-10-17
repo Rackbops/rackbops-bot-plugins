@@ -4,13 +4,21 @@
 // without a cross-repo import. A mismatch here means the vendored copy has drifted.
 const UPSTREAM_URL =
   "https://raw.githubusercontent.com/Rackbops/rackbops-discord-bot/main/src/plugins/contract.ts";
+// A hung connection to raw.githubusercontent.com would otherwise sit until the CI job's own timeout.
+const FETCH_TIMEOUT_MS = 30_000;
 const VENDORED_PATH = new URL("../packages/api/contract.d.ts", import.meta.url);
 
 const [upstream, vendored] = await Promise.all([
-  fetch(UPSTREAM_URL).then((res) => {
-    if (!res.ok) throw new Error(`fetch ${UPSTREAM_URL}: ${res.status} ${res.statusText}`);
-    return res.text();
-  }),
+  fetch(UPSTREAM_URL, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+    .then((res) => {
+      if (!res.ok) throw new Error(`fetch ${UPSTREAM_URL}: ${res.status} ${res.statusText}`);
+      return res.text();
+    })
+    .catch((err) => {
+      // Name the URL and cause so an unreachable upstream is never mistaken for real drift.
+      if (err instanceof Error && err.name === "TimeoutError") throw new Error(`fetch ${UPSTREAM_URL}: timed out after ${FETCH_TIMEOUT_MS} ms`);
+      throw err;
+    }),
   Bun.file(VENDORED_PATH).text(),
 ]);
 
