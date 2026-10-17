@@ -22,6 +22,9 @@ import { type Listing, type Submitted, submittedListing } from "@rackbops/docket
  * twice, so a row that goes after it was read loses nothing; one that goes before it was read --
  * more than `MAX_INBOX_ROWS` (100) sent between two runs -- is lost, which is why an inbox watch polls
  * hourly by default (want.ts's `DEFAULT_INBOX_HOURS`).
+ *
+ * A watch's rows go when it ends: `SqliteStore.updateTask` deletes them as the task becomes `done` or
+ * `archived` (neither can be restored), so a deleted watch leaves no listings behind (#208).
  */
 
 /** Rows kept per inbox key, newest first: docket's source reads at most 100 distinct listings a run, so a row past that would never be read. */

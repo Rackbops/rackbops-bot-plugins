@@ -409,6 +409,8 @@ export class SqliteStore implements Store {
     );
     const ended = (status: string) => status === "done" || status === "archived";
     if (ended(next.status) && !ended(cur.status)) {
+      // A watch that ends takes its inbox rows with it (#208, Epic #265 decision 7): its key is dead, so nothing reads them again.
+      this.run("DELETE FROM want_inbox WHERE task_id = ?", id);
       const why = next.status === "archived" ? "deleted" : "finished";
       for (const r of this.all("SELECT * FROM task_recipients WHERE task_id = ? AND state = 'invited' ORDER BY seq", id).map(toRecipient)) {
         this.run("DELETE FROM task_recipients WHERE task_id = ? AND user_id = ?", id, r.userId);
