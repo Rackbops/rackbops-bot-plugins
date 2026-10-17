@@ -19,6 +19,8 @@ const OUTPUT_PATH = new URL("plugins.json", ROOT);
 // The `PLUGINS=` token, the `[name]` log prefix, and the data/plugins/<name> directory on the bot's
 // host all resolve by this name — see contract.d.ts's PluginIndexEntry.name.
 const NAME_RE = /^[a-z][a-z0-9-]*$/;
+/** The repository URL a plugin's package.json must declare (npm provenance needs it to match the publishing repo). */
+const REPOSITORY_URL_RE = /^(?:git\+)?https:\/\/github\.com\/Rackbops\/rackbops-bot-plugins(?:\.git)?$/;
 // Tolerates trailing text after the date, e.g. Keep-a-Changelog's "## [1.0.0] - 2026-01-02 [YANKED]".
 const RELEASE_HEADING_RE = /^## \[([^\]]+)\]\s*-\s*(\d{4}-\d{2}-\d{2})(?:\s.*)?$/;
 const MAX_RELEASES = 10;
@@ -30,6 +32,7 @@ interface PluginPackageJson {
   version?: unknown;
   description?: unknown;
   files?: unknown;
+  repository?: unknown;
   botPlugin?: {
     hostApiVersion?: unknown;
     intents?: unknown;
@@ -191,9 +194,32 @@ function parseAdmin(
 }
 
 /**
+ * The package is published by `npm publish` run in plugins/<name>, authenticating as a Trusted
+ * Publisher configured per package: a copied package.json that kept another plugin's name would
+ * index (and, on a tag, publish) under the wrong package, and a missing or wrong `repository` is
+ * otherwise found only at the first publish, after the index already advertises the package.
+ */
+function requirePublishIdentity(repository: unknown, packageName: string, name: string): void {
+  if (packageName !== `@rackbops/plugin-${name}`) {
+    throw new Error(`${name}: package.json name must be "@rackbops/plugin-${name}" (got "${packageName}")`);
+  }
+  const repo = repository as { url?: unknown; directory?: unknown } | null | undefined;
+  if (typeof repo !== "object" || repo === null || typeof repo.url !== "string" || !REPOSITORY_URL_RE.test(repo.url)) {
+    const got = typeof repo === "object" && repo !== null && !Array.isArray(repo) ? repo.url : repository;
+    throw new Error(
+      `${name}: package.json repository.url must be https://github.com/Rackbops/rackbops-bot-plugins (a "git+" prefix and ".git" suffix are accepted) (got ${JSON.stringify(got ?? null)})`,
+    );
+  }
+  if (repo.directory !== `plugins/${name}`) {
+    throw new Error(`${name}: package.json repository.directory must be "plugins/${name}" (got ${JSON.stringify(repo.directory ?? null)})`);
+  }
+}
+
+/**
  * Keep-a-Changelog: "## [x.y.z] - YYYY-MM-DD" headings, in file order (the convention is
  * reverse-chronological, so newest first), capped at MAX_RELEASES. A heading with no date (e.g.
- * "## [Unreleased]") is skipped. Throws when `currentVersion` has no section — a published version
+ * "## [Unreleased]") is skipped, and so is its body: ANY other "## " heading ends the release section
+ * above it, so an Unreleased body never lands in the previous release's notes. Throws when `currentVersion` has no section — a published version
  * the update notification can't show release notes for is a release we refuse to index.
  */
 export function parseChangelogReleases(
@@ -226,6 +252,8 @@ export function parseChangelogReleases(
     if (heading) {
       flush();
       current = { version: heading[1], date: heading[2], notes: [] };
+    } else if (/^## /.test(line)) {
+      flush();
     } else if (current) {
       current.notes.push(line);
     }
@@ -301,6 +329,7 @@ export async function buildIndex(
     }
 
     const packageName = requireString(pkg.name, `${name}: package.json name`);
+    requirePublishIdentity(pkg.repository, packageName, name);
     // Read from the same source dir the manifest is generated over, so a declared admin bundle whose
     // source is absent is caught here (parseAdmin), not silently shipped as a 404-ing adminUrl.
     const hasAdminEntry = await Bun.file(new URL("src/admin/index.ts", dir)).exists();
