@@ -76,7 +76,7 @@ describe("createRateLimiter expiry sweep", () => {
     const deadline = Date.now() + 2000;
     while (limiter.size() > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
     expect(limiter.size()).toBe(0);
-    // The sweep that emptied the map stopped the timer; a later key starts a new one.
+    // A later key is counted and swept again (the mocked-timer test pins that the emptying sweep clears the timer).
     expect(limiter.allow("again")).toBe(true);
     while (limiter.size() > 0 && Date.now() < deadline + 2000) await new Promise((r) => setTimeout(r, 10));
     expect(limiter.size()).toBe(0);
@@ -155,6 +155,10 @@ describe("rateLimitKeyFor", () => {
   test("a zone id and an embedded IPv4 tail do not change the /64", () => {
     expect(rateLimitKeyFor("fe80::1%eth0")).toBe(rateLimitKeyFor("fe80::2"));
     expect(rateLimitKeyFor("64:ff9b::1.2.3.4")).toBe(rateLimitKeyFor("64:ff9b::9"));
+  });
+
+  test("a malformed mapped literal is not reinterpreted as IPv4", () => {
+    expect(rateLimitKeyFor("::ffff:300.2.3.4")).toBe("::ffff:300.2.3.4");
   });
 
   test("a non-IP identity such as \"unknown\" passes through", () => {

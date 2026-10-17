@@ -113,9 +113,9 @@ export function createRateLimiter(opts: {
  * through unchanged. A zone id (`fe80::1%eth0`) is ignored.
  */
 export function rateLimitKeyFor(clientIp: string): string {
+  if (isIP(clientIp) !== 6) return clientIp;
   const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(clientIp);
   if (mapped) return mapped[1] as string;
-  if (isIP(clientIp) !== 6) return clientIp;
   const zoneAt = clientIp.indexOf("%");
   const bare = zoneAt === -1 ? clientIp : clientIp.slice(0, zoneAt);
   // An embedded IPv4 tail (`64:ff9b::1.2.3.4`) is two groups; it only matters for how many groups `::` hides.
@@ -150,11 +150,11 @@ export interface WarbandeerDeps {
   authenticate: (token: string) => { discordUserId: string; accountLabel: string } | undefined;
   /** Validates and persists a character payload for an already-authenticated owner. */
   storeCharacters: (discordUserId: string, accountLabel: string, raw: unknown) => Promise<StoreCharactersResult>;
-  /** Per-token (`POST /characters`, post-auth) and per-IP (`POST /link`) — the tight limit that
+  /** Per-token (`POST /characters`, post-auth) and per client (`POST /link`; an IPv4 address or an IPv6 /64) — the tight limit that
    * actually bounds one identified pusher. */
   rateLimiter: RateLimiter;
   /** A separate, deliberately much higher-ceiling limiter for `POST /characters` requests that
-   * fail to authenticate, keyed by IP — bounds the cost of a flood of garbage bearer tokens
+   * fail to authenticate, keyed by IPv4 address or IPv6 /64 — bounds the cost of a flood of garbage bearer tokens
    * (a hash + a full account scan each) from one address without colliding with several
    * legitimate users who happen to share that address (NAT, a household, the tunnel egress
    * itself if `CF-Connecting-IP` is ever absent) — see `startWarbandeerServer`'s doc comment. */
