@@ -90,3 +90,28 @@ describe("dmfWindow (US)", () => {
     expect(`${parts.hour}:${parts.minute} ${parts.dayPeriod}`).toBe("12:01 AM");
   });
 });
+
+// Absolute UTC instants, written out by hand (the window opens 00:01 realm-local on the first Sunday and
+// closes 00:01 seven days later), so a wrong offset or a missed DST change shows in the number itself.
+describe("dmfWindow: absolute instants", () => {
+  const span = (y: number, m: number, tz: string) => {
+    const { start, end } = dmfWindow(y, m, tz);
+    return [start.toISOString(), end.toISOString()];
+  };
+
+  test("US November 2026: opens in PDT, closes in PST (DST ends the day it opens)", () => {
+    expect(span(2026, 10, US)).toEqual(["2026-11-01T07:01:00.000Z", "2026-11-08T08:01:00.000Z"]);
+  });
+
+  test("US March 2026: DST starts the day the window closes, after the 00:01 close", () => {
+    expect(span(2026, 2, US)).toEqual(["2026-03-01T08:01:00.000Z", "2026-03-08T08:01:00.000Z"]);
+  });
+
+  test("EU October 2026: both ends in CEST, before the 25 October change", () => {
+    expect(span(2026, 9, EU)).toEqual(["2026-10-03T22:01:00.000Z", "2026-10-10T22:01:00.000Z"]);
+  });
+
+  test("EU March 2026: opens in CET the evening before the first Sunday", () => {
+    expect(span(2026, 2, EU)).toEqual(["2026-02-28T23:01:00.000Z", "2026-03-07T23:01:00.000Z"]);
+  });
+});

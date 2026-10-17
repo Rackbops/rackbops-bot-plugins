@@ -2,14 +2,17 @@ import type { HostApi } from "../../../packages/api/contract.js";
 import type { RealmStatus } from "./realm.js";
 
 /**
- * The plugin's own dedup state, kept in `${dataDir}/wow.json` — the three keys the bot used to keep in
- * `state.json` (`dmfAnnouncedFor` / `weeklyAnnouncedFor` / `realmStatus`), now owned here so the bot
+ * The plugin's own dedup state, kept in `${dataDir}/wow.json` — the keys the bot used to keep in
+ * `state.json` (`dmfAnnouncedFor` / `weeklyAnnouncedFor` / `realmStatus`, plus `realmKey` added here), now owned here so the bot
  * core knows nothing WoW-specific.
  */
 export interface WowState {
   dmfAnnouncedFor?: string;
   weeklyAnnouncedFor?: string;
   realmStatus?: RealmStatus;
+  /** `<region>/<realm slug>` the stored `realmStatus` was observed for. Absent in a file written before
+   *  this key existed, which is read as "the realm configured now". */
+  realmKey?: string;
 }
 
 let current: WowState = {};
@@ -37,7 +40,7 @@ export async function saveWowState(): Promise<void> {
  * "already announced" history across the extraction and never re-announces. Read `state.json` RAW
  * (`Bun.file().json()` in a try/catch), NOT `host.storage.readJsonOrFresh` — that moves a corrupt file
  * aside for inspection, and `state.json` is the bot's file, not ours. An absent or corrupt `state.json`
- * seeds empty (a fresh install: `realmStatus` undefined ⇒ the first realm reading is silent). Idempotent:
+ * seeds empty (a fresh install: `realmStatus` undefined, or stored for another realm/region ⇒ the first realm reading is silent). Idempotent:
  * once `wow.json` exists it's loaded as-is and the seed never runs again.
  */
 export async function initWowStore(host: HostApi): Promise<void> {

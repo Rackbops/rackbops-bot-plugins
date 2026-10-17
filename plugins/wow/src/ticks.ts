@@ -24,9 +24,31 @@ export async function checkDmf(host: HostApi, now: Date = new Date()): Promise<v
   const decision = decideDmfAnnouncement(now, state.dmfAnnouncedFor);
   if (!decision) return;
   const closes = Math.floor(decision.window.end.getTime() / 1000);
-  await host.announce(`🎪 The **Darkmoon Faire** is open! It runs until <t:${closes}:F>.`);
-  state.dmfAnnouncedFor = decision.key;
-  await saveWowState();
+  await announceOnce(host, `🎪 The **Darkmoon Faire** is open! It runs until <t:${closes}:F>.`, () => {
+    const previous = state.dmfAnnouncedFor;
+    state.dmfAnnouncedFor = decision.key;
+    return () => void (state.dmfAnnouncedFor = previous);
+  });
+}
+
+/**
+ * Records the dedup key and persists it BEFORE `host.announce` (README: "Write your dedup key before you
+ * announce"), so a stop that outlasts the grace while the post is in flight cannot re-announce after the
+ * restart. If the save or the announce rejects, the key is put back (and persisted again, best effort),
+ * so the next tick retries and the original error is the one that surfaces. A hard kill between the save
+ * and the post loses that one announcement (at most once across a kill); a rejection after Discord did
+ * deliver the post (a timeout, say) retries it. `mark` sets the key and returns how to undo it.
+ */
+async function announceOnce(host: HostApi, message: string, mark: () => () => void): Promise<void> {
+  const undo = mark();
+  try {
+    await saveWowState();
+    await host.announce(message);
+  } catch (err) {
+    undo();
+    await saveWowState().catch((saveErr) => host.log.error("wow: could not restore the dedup key", saveErr));
+    throw err;
+  }
 }
 
 // `now` defaulted for the same test seam as checkDmf — production passes nothing (→ new Date()).
@@ -36,9 +58,11 @@ export async function checkWeeklyReset(host: HostApi, now: Date = new Date()): P
   const key = last.toISOString();
   const state = wowState();
   if (state.weeklyAnnouncedFor === key) return;
-  await host.announce("📅 **Weekly reset!** Vault, lockouts, and quests have rolled over.");
-  state.weeklyAnnouncedFor = key;
-  await saveWowState();
+  await announceOnce(host, "📅 **Weekly reset!** Vault, lockouts, and quests have rolled over.", () => {
+    const previous = state.weeklyAnnouncedFor;
+    state.weeklyAnnouncedFor = key;
+    return () => void (state.weeklyAnnouncedFor = previous);
+  });
 }
 
 // Continuously watch the realm and announce every UP↔DOWN transition, so an outage at any hour is
@@ -58,14 +82,31 @@ export async function checkRealm(host: HostApi, signal?: AbortSignal): Promise<v
   }
   // The host abandoned this run (shutdown): announce and persist nothing, the next poll redoes it.
   if (signal?.aborted) return;
-  const transition = decideRealmTransition(state.realmStatus, status);
-  if (transition === "down") {
-    await host.announce(`🔴 **${config.realmSlug}** is down — servers are offline.`);
-  } else if (transition === "up") {
-    await host.announce(`🟢 **${config.realmSlug}** is back up — servers are live!`);
-  }
-  if (state.realmStatus !== status) {
+  // A status stored for another realm or region is no previous reading at all: seed silently rather than
+  // announce a transition between two different realms. A file without a key predates it: the realm
+  // configured now.
+  const realmKey = `${config.region}/${config.realmSlug}`;
+  const previous = state.realmKey === undefined || state.realmKey === realmKey ? state.realmStatus : undefined;
+  const transition = decideRealmTransition(previous, status);
+  const message =
+    transition === "down"
+      ? `🔴 **${config.realmSlug}** is down — servers are offline.`
+      : transition === "up"
+        ? `🟢 **${config.realmSlug}** is back up — servers are live!`
+        : undefined;
+  const mark = () => {
+    const before = { realmStatus: state.realmStatus, realmKey: state.realmKey };
     state.realmStatus = status;
+    state.realmKey = realmKey;
+    return () => {
+      state.realmStatus = before.realmStatus;
+      state.realmKey = before.realmKey;
+    };
+  };
+  if (message !== undefined) {
+    await announceOnce(host, message, mark);
+  } else if (state.realmStatus !== status || state.realmKey !== realmKey) {
+    mark();
     await saveWowState();
   }
 }

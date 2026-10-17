@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeFakeHost } from "../../../packages/testkit/index.js";
@@ -168,6 +168,12 @@ describe("checkWeeklyReset", () => {
     expect(announced).toHaveLength(1); // persisted key dedups it (mutation: dropping the write → 2)
   });
 
+  test("at a hand-written instant the dedup key is the literal Tuesday reset (the expectation is not derived from the code)", async () => {
+    const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async () => {} });
+    await checkWeeklyReset(host, new Date("2026-09-15T15:05:00Z")); // 2026-09-15 is a Tuesday
+    expect(wowState().weeklyAnnouncedFor).toBe("2026-09-15T15:00:00.000Z");
+  });
+
   test("stays silent well outside the 10-minute post-reset window", async () => {
     const announced: string[] = [];
     const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async (m) => void announced.push(m) });
@@ -175,5 +181,188 @@ describe("checkWeeklyReset", () => {
     const wellAfter = new Date(last.getTime() + 30 * 60 * 1000); // 30 min > RESET_ANNOUNCE_WINDOW_MS
     await checkWeeklyReset(host, wellAfter);
     expect(announced).toEqual([]);
+  });
+});
+
+// The dedup key is written BEFORE host.announce (README: "Write your dedup key before you announce"), so a
+// stop that outlasts the grace while a post is in flight cannot re-announce after the restart (#200 wow-1).
+describe("the dedup key is written before the announcement", () => {
+  const onDisk = () => JSON.parse(readFileSync(join(dir, "wow.json"), "utf8")) as Record<string, unknown>;
+  const during = () => {
+    const w = dmfWindow(2026, 8, "America/Los_Angeles");
+    return new Date(w.start.getTime() + 24 * 60 * 60 * 1000);
+  };
+  const justAfterReset = () => new Date(lastWeeklyReset(new Date("2026-09-16T20:00:00Z")).getTime() + 5 * 60 * 1000);
+
+  test("checkDmf: when announce runs, the key is already in memory and in wow.json", async () => {
+    let seen: { memory?: string; disk?: unknown } = {};
+    const host = makeFakeHost({
+      name: "wow",
+      dataDir: dir,
+      announce: async () => {
+        seen = { memory: wowState().dmfAnnouncedFor, disk: onDisk().dmfAnnouncedFor };
+      },
+    });
+    const key = decideDmfAnnouncement(during(), undefined, "America/Los_Angeles")!.key;
+    await checkDmf(host, during());
+    expect(seen).toEqual({ memory: key, disk: key }); // mutation: announcing first leaves both undefined
+  });
+
+  test("checkDmf: a rejected announce puts the key back, in memory and on disk, and the next tick retries", async () => {
+    let fail = true;
+    const announced: string[] = [];
+    const host = makeFakeHost({
+      name: "wow",
+      dataDir: dir,
+      announce: async (m) => {
+        if (fail) throw new Error("discord down");
+        announced.push(m);
+      },
+    });
+    await expect(checkDmf(host, during())).rejects.toThrow("discord down");
+    expect(wowState().dmfAnnouncedFor).toBeUndefined();
+    expect(onDisk().dmfAnnouncedFor).toBeUndefined();
+    fail = false;
+    await checkDmf(host, during());
+    expect(announced).toHaveLength(1);
+  });
+
+  test("checkWeeklyReset: key first, and a rejected announce restores the previous key", async () => {
+    const previous = "2026-09-08T15:00:00.000Z";
+    wowState().weeklyAnnouncedFor = previous;
+    const expected = lastWeeklyReset(justAfterReset()).toISOString();
+    let seen: unknown;
+    let fail = false;
+    const host = makeFakeHost({
+      name: "wow",
+      dataDir: dir,
+      announce: async () => {
+        seen = onDisk().weeklyAnnouncedFor;
+        if (fail) throw new Error("discord down");
+      },
+    });
+    await checkWeeklyReset(host, justAfterReset());
+    expect(seen).toBe(expected);
+
+    wowState().weeklyAnnouncedFor = previous;
+    fail = true;
+    await expect(checkWeeklyReset(host, justAfterReset())).rejects.toThrow("discord down");
+    expect(wowState().weeklyAnnouncedFor).toBe(previous); // mutation: no rollback leaves the new key, silencing the retry
+    expect(onDisk().weeklyAnnouncedFor).toBe(previous);
+  });
+
+  test("checkRealm: status first, and a rejected announce restores the previous status", async () => {
+    let seen: unknown;
+    let fail = false;
+    const host = makeFakeHost({
+      name: "wow",
+      dataDir: dir,
+      announce: async () => {
+        seen = onDisk().realmStatus;
+        if (fail) throw new Error("discord down");
+      },
+    });
+    mockRealm("UP");
+    await checkRealm(host); // seed
+    _resetRealmPollThrottle();
+    mockRealm("DOWN");
+    await checkRealm(host);
+    expect(seen).toBe("DOWN");
+
+    _resetRealmPollThrottle();
+    mockRealm("UP");
+    fail = true;
+    await expect(checkRealm(host)).rejects.toThrow("discord down");
+    expect(wowState().realmStatus).toBe("DOWN"); // the up-announcement is retried on the next poll
+    expect(onDisk().realmStatus).toBe("DOWN");
+    expect(wowState().realmKey).toBe("us/argent-dawn");
+  });
+
+  test("a save that fails before the announce restores the key and surfaces that error", async () => {
+    const real = makeFakeHost({ name: "wow", dataDir: dir });
+    let failSaves = false;
+    _resetWowStore();
+    await initWowStore({
+      ...real,
+      storage: {
+        ...real.storage,
+        createJsonWriter: <T,>(path: string) => {
+          const w = real.storage.createJsonWriter<T>(path);
+          return { ...w, save: async (d: T) => (failSaves ? Promise.reject(new Error("disk full")) : w.save(d)) };
+        },
+      },
+    });
+    let announces = 0;
+    const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async () => void announces++ });
+    failSaves = true;
+    await expect(checkWeeklyReset(host, justAfterReset())).rejects.toThrow("disk full");
+    expect(announces).toBe(0);
+    expect(wowState().weeklyAnnouncedFor).toBeUndefined(); // mutation: a key left in memory skips the post for the process
+    failSaves = false;
+    await checkWeeklyReset(host, justAfterReset());
+    expect(announces).toBe(1);
+  });
+});
+
+// wow.json used to hold one realmStatus with no realm or region (#200 wow-5).
+describe("a stored realm status belongs to the realm it was read for", () => {
+  const onDisk = () => JSON.parse(readFileSync(join(dir, "wow.json"), "utf8")) as Record<string, unknown>;
+  test("switching realms seeds silently instead of announcing a phantom transition", async () => {
+    const announced: string[] = [];
+    const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async (m) => void announced.push(m) });
+    mockRealm("UP");
+    await checkRealm(host); // argent-dawn seeded UP
+    expect(wowState().realmKey).toBe("us/argent-dawn");
+
+    initWowConfig({ WOW_REGION: "us", WOW_REALM: "area-52", BLIZZARD_CLIENT_ID: "id", BLIZZARD_CLIENT_SECRET: "secret" });
+    _resetRealmPollThrottle();
+    mockRealm("DOWN");
+    await checkRealm(host);
+    expect(announced).toEqual([]); // mutation: ignoring the key announces "area-52 is down"
+    expect(wowState()).toMatchObject({ realmStatus: "DOWN", realmKey: "us/area-52" });
+    expect(onDisk()).toMatchObject({ realmStatus: "DOWN", realmKey: "us/area-52" }); // the silent branch saves
+
+    _resetRealmPollThrottle();
+    mockRealm("UP");
+    await checkRealm(host);
+    expect(announced).toEqual(["🟢 **area-52** is back up — servers are live!"]); // and it tracks the new realm from here
+  });
+
+  test("switching realms to one with the same status still records the new key", async () => {
+    const announced: string[] = [];
+    const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async (m) => void announced.push(m) });
+    mockRealm("UP");
+    await checkRealm(host);
+    initWowConfig({ WOW_REGION: "us", WOW_REALM: "area-52", BLIZZARD_CLIENT_ID: "id", BLIZZARD_CLIENT_SECRET: "secret" });
+    _resetRealmPollThrottle();
+    await checkRealm(host); // area-52 is UP too: no status change, but the key must move
+    expect(onDisk().realmKey).toBe("us/area-52");
+    _resetRealmPollThrottle();
+    mockRealm("DOWN");
+    await checkRealm(host);
+    expect(announced).toEqual(["🔴 **area-52** is down — servers are offline."]); // mutation: a stale key swallows this
+  });
+
+  test("switching region counts the same", async () => {
+    const announced: string[] = [];
+    const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async (m) => void announced.push(m) });
+    mockRealm("UP");
+    await checkRealm(host);
+    initWowConfig({ WOW_REGION: "eu", WOW_REALM: "argent-dawn", BLIZZARD_CLIENT_ID: "id", BLIZZARD_CLIENT_SECRET: "secret" });
+    _resetRealmPollThrottle();
+    mockRealm("DOWN");
+    await checkRealm(host);
+    expect(announced).toEqual([]);
+    expect(wowState().realmKey).toBe("eu/argent-dawn");
+  });
+
+  test("a status stored before the key existed is read as the realm configured now", async () => {
+    const announced: string[] = [];
+    const host = makeFakeHost({ name: "wow", dataDir: dir, announce: async (m) => void announced.push(m) });
+    wowState().realmStatus = "UP"; // as seeded from an older wow.json or the bot's state.json: no realmKey
+    mockRealm("DOWN");
+    await checkRealm(host);
+    expect(announced).toEqual(["🔴 **argent-dawn** is down — servers are offline."]);
+    expect(wowState().realmKey).toBe("us/argent-dawn");
   });
 });
