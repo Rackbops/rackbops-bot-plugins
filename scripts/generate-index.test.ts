@@ -334,6 +334,12 @@ describe("parseChangelogReleases", () => {
     expect(parseChangelogReleases(other, "alpha", "1.0.0")[0]!.notes).toBe("- shipped");
   });
 
+  test("a bottom block of link-reference definitions is not part of the last release's notes", () => {
+    const text = "## [1.1.0] - 2026-02-01\n- newest\n\n## [1.0.0] - 2026-01-01\n- oldest\n\n[1.1.0]: https://example.com/1.1.0\n[1.0.0]: https://example.com/1.0.0\n";
+    const releases = parseChangelogReleases(text, "alpha", "1.1.0");
+    expect(releases.map((r) => r.notes)).toEqual(["- newest", "- oldest"]);
+  });
+
   test("caps at 10, keeping the newest", () => {
     const many = ["1.11.0", "1.10.0", "1.9.0", "1.8.0", "1.7.0", "1.6.0", "1.5.0", "1.4.0", "1.3.0", "1.2.0", "1.1.0", "1.0.0"];
     const text = many.map((v, i) => `## [${v}] - 2026-01-${String(i + 1).padStart(2, "0")}\n- note ${v}`).join("\n\n");

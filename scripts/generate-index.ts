@@ -23,6 +23,9 @@ const NAME_RE = /^[a-z][a-z0-9-]*$/;
 const REPOSITORY_URL_RE = /^(?:git\+)?https:\/\/github\.com\/Rackbops\/rackbops-bot-plugins(?:\.git)?$/;
 // Tolerates trailing text after the date, e.g. Keep-a-Changelog's "## [1.0.0] - 2026-01-02 [YANKED]".
 const RELEASE_HEADING_RE = /^## \[([^\]]+)\]\s*-\s*(\d{4}-\d{2}-\d{2})(?:\s.*)?$/;
+// A Markdown link-reference definition ("[1.0.0]: https://..."). Keep-a-Changelog puts them in a block
+// at the bottom of the file, which would otherwise be read as the oldest release's notes.
+const LINK_REFERENCE_RE = /^\[[^\]]+\]:\s*\S/;
 const MAX_RELEASES = 10;
 
 // The subset of a plugin's package.json this generator reads. Typed loosely because it is untrusted
@@ -194,7 +197,7 @@ function parseAdmin(
 }
 
 /**
- * The package is published by `npm publish` run in plugins/<name>, authenticating as a Trusted
+ * The package is packed from plugins/<name> and published with `npm publish`, authenticating as a Trusted
  * Publisher configured per package: a copied package.json that kept another plugin's name would
  * index (and, on a tag, publish) under the wrong package, and a missing or wrong `repository` is
  * otherwise found only at the first publish, after the index already advertises the package.
@@ -219,7 +222,9 @@ function requirePublishIdentity(repository: unknown, packageName: string, name: 
  * Keep-a-Changelog: "## [x.y.z] - YYYY-MM-DD" headings, in file order (the convention is
  * reverse-chronological, so newest first), capped at MAX_RELEASES. A heading with no date (e.g.
  * "## [Unreleased]") is skipped, and so is its body: ANY other "## " heading ends the release section
- * above it, so an Unreleased body never lands in the previous release's notes. Throws when `currentVersion` has no section — a published version
+ * above it, so an Unreleased body never lands in the previous release's notes. A link-reference
+ * definition ("[1.0.0]: https://...", Keep-a-Changelog's bottom block) ends it the same way. Throws when
+ * `currentVersion` has no section — a published version
  * the update notification can't show release notes for is a release we refuse to index.
  */
 export function parseChangelogReleases(
@@ -252,7 +257,7 @@ export function parseChangelogReleases(
     if (heading) {
       flush();
       current = { version: heading[1], date: heading[2], notes: [] };
-    } else if (/^## /.test(line)) {
+    } else if (/^## /.test(line) || LINK_REFERENCE_RE.test(line)) {
       flush();
     } else if (current) {
       current.notes.push(line);

@@ -1,4 +1,4 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>Rackbops/renovate-config"]
+  "extends": ["github>Rackbops/renovate-config", "helpers:pinGitHubActionDigests"]
 }
