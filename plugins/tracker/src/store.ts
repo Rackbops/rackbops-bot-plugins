@@ -375,6 +375,14 @@ export class SqliteStore implements Store {
     return this.all(`SELECT * FROM tasks ${clause} ORDER BY seq`, ...params).map(toTask);
   }
 
+  /**
+   * Also the one place an ended task's open invitations are withdrawn (#205, Epic #265 decision 6): a task
+   * leaves `active`/`paused` for `done` (docket's dispatcher, once a one-off has run) or `archived` (the
+   * owner's delete), and every recipient still `invited` is removed with a `recipient_removed` event, in the
+   * same synchronous run as the status write. A late Accept or Decline then finds no open invitation to answer
+   * (docket's `replyForRef` refuses it), so no accept is confirmed and no decline block is written against the
+   * owner. Accepted recipients are left alone.
+   */
   async updateTask(id: string, patch: TaskPatch): Promise<Task> {
     const cur = toTask(this.mustGet("tasks", "t", id, "task"));
     const next: Task = {
@@ -399,6 +407,20 @@ export class SqliteStore implements Store {
       next.updatedAt,
       seqOf("t", id),
     );
+    const ended = (status: string) => status === "done" || status === "archived";
+    if (ended(next.status) && !ended(cur.status)) {
+      const why = next.status === "archived" ? "deleted" : "finished";
+      for (const r of this.all("SELECT * FROM task_recipients WHERE task_id = ? AND state = 'invited' ORDER BY seq", id).map(toRecipient)) {
+        this.run("DELETE FROM task_recipients WHERE task_id = ? AND user_id = ?", id, r.userId);
+        this.insertTaskEvent({
+          taskId: id,
+          actorId: null,
+          kind: "recipient_removed",
+          detail: `${r.userId}: the task was ${why}, so the invitation is withdrawn`,
+          at: patch.at,
+        });
+      }
+    }
     return toTask(this.mustGet("tasks", "t", id, "task"));
   }
 
@@ -564,6 +586,10 @@ export class SqliteStore implements Store {
   }
 
   async addTaskEvent(e: NewTaskEvent): Promise<TaskEvent> {
+    return this.insertTaskEvent(e);
+  }
+
+  private insertTaskEvent(e: NewTaskEvent): TaskEvent {
     const { lastInsertRowid } = this.run(
       "INSERT INTO task_events (task_id, actor_id, kind, detail, at) VALUES (?, ?, ?, ?, ?)",
       e.taskId,

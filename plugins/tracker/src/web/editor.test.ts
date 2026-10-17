@@ -86,6 +86,20 @@ function events(dbPath: string, taskId: string): string[] {
   return rows.map((r) => (r.kind === "created" || r.kind === "schedule_changed" ? r.kind : `${r.kind}${r.detail ? `: ${r.detail}` : ""}`));
 }
 
+function recipients(dbPath: string, taskId: string): string[][] {
+  const db = new Database(dbPath, { readonly: true });
+  const rows = db.query("SELECT user_id, state FROM task_recipients WHERE task_id = ? ORDER BY seq").all(taskId) as { user_id: string; state: string }[];
+  db.close();
+  return rows.map((r) => [r.user_id, r.state]);
+}
+
+function blocks(dbPath: string): number {
+  const db = new Database(dbPath, { readonly: true });
+  const n = (db.query("SELECT COUNT(*) AS n FROM invite_blocks").get() as { n: number }).n;
+  db.close();
+  return n;
+}
+
 function queued(dbPath: string, taskId: string): string[] {
   const db = new Database(dbPath, { readonly: true });
   const rows = db.query("SELECT due_at FROM occurrences WHERE task_id = ? AND status = 'queued' ORDER BY due_at").all(taskId) as { due_at: string }[];
@@ -1344,5 +1358,29 @@ describe("Resume DMs on the web (#168)", () => {
     expect(result).not.toContain(BANNER);
     expect(result).not.toContain("/resume-dms");
     expect(deliveryPausedAt(w.dbPath, "u1")).toBeNull();
+  });
+});
+
+describe("an owner's delete withdraws the task's open invitations (#205)", () => {
+  it("only the invited are withdrawn, with an event; a late Accept or Decline is refused, confirms nothing and writes no block", async () => {
+    const w = await setup();
+    await slash(w.plugin, "allow", ADMIN, { users: { user: STRANGER } });
+    await slash(w.plugin, "register", STRANGER);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "bins out", when: "9am", repeat: "day" } });
+    await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: CURLY } });
+    await slash(w.plugin, "task", LARRY, { sub: "share", strings: { task: "t1" }, users: { user: STRANGER } });
+    await press(w.plugin, "tracker:a.t.t1", STRANGER); // accepted before the delete: they stay on the task
+
+    expect((await post(w.plugin, w.larry, w.csrf, "/tasks/t1/delete", { confirm: "yes" })).status).toBe(303);
+    expect(events(w.dbPath, "t1").slice(-2)).toEqual([
+      "recipient_removed: u3: the task was deleted, so the invitation is withdrawn",
+      "archived: deleted by the owner",
+    ]);
+    expect(recipients(w.dbPath, "t1")).toEqual([["u4", "accepted"]]);
+
+    expect(await press(w.plugin, "tracker:a.t.t1", CURLY)).toEqual(["That is not yours to answer."]);
+    expect(await press(w.plugin, "tracker:x.t.t1", CURLY)).toEqual(["That is not yours to answer."]);
+    expect(blocks(w.dbPath)).toBe(0);
+    expect(events(w.dbPath, "t1").some((e) => e.startsWith("recipient_declined") || e.startsWith("blocked"))).toBe(false);
   });
 });
