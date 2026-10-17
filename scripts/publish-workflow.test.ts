@@ -19,7 +19,7 @@ describe("publish.yml carries the admin-bundle pack check (issue #28)", () => {
     // Mutation: moving/removing the step so it no longer runs before the artifact leaves the job -> red.
     const packIdx = text.indexOf("npm pack --pack-destination");
     const uploadIdx = text.indexOf("actions/upload-artifact");
-    const publishIdx = text.indexOf('npm publish "release/$TARBALL" --access public');
+    const publishIdx = text.indexOf('npm publish "./release/$TARBALL" --access public');
     expect(packIdx).toBeGreaterThan(-1);
     expect(uploadIdx).toBeGreaterThan(packIdx);
     expect(publishIdx).toBeGreaterThan(uploadIdx);
@@ -39,7 +39,7 @@ describe("publish.yml hardening (issue #178)", () => {
     const ancestor = text.indexOf('git merge-base --is-ancestor "$GITHUB_SHA" origin/main');
     expect(ancestor).toBeGreaterThan(-1);
     expect(ancestor).toBeLessThan(text.indexOf("bun install --frozen-lockfile"));
-    expect(ancestor).toBeLessThan(text.indexOf('npm publish "release/$TARBALL"'));
+    expect(ancestor).toBeLessThan(text.indexOf('npm publish "./release/$TARBALL"'));
     // The refusal must actually fail the job, not just print.
     const afterCheck = text.slice(ancestor, text.indexOf("- name:", ancestor));
     expect(afterCheck).toContain("exit 1");
@@ -96,7 +96,7 @@ describe("publish.yml splits the privileged publish from the build (issue #178)"
     expect(publish).not.toMatch(/\bbun\b/);
     expect(publish).not.toContain("actions/checkout");
     // It publishes the tarball the verify job packed, unchanged -- not a fresh `npm publish` of a directory.
-    expect(publish).toContain('npm publish "release/$TARBALL" --access public');
+    expect(publish).toContain('npm publish "./release/$TARBALL" --access public');
   });
 
   test("the verify job re-reads the packed tarball's own name and version before handing it over", async () => {
