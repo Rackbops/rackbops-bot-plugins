@@ -20,7 +20,8 @@ export interface TrustedProxy {
   refresh(): Promise<void>;
 }
 
-/** Re-resolution is capped at once per this window, triggered by a cache miss in `isTrusted`
+/** Re-resolution is capped at once per this window (shortened to EMPTY_RETRY_BACKOFF_MS while the
+ *  address set is empty after a failed lookup, below), triggered by a cache miss in `isTrusted`
  *  (never by a timer) -- compose can recreate the tunnel sidecar with a new address at any time,
  *  but a hot loop of misses (an attacker deliberately varying its own address) must not turn into a
  *  hot loop of DNS lookups either. */
@@ -79,15 +80,14 @@ export function createTrustedProxy(opts: {
   function doRefresh(): Promise<void> {
     if (host === undefined) return Promise.resolve();
     if (inFlight) return inFlight;
-    const startedAt = now();
-    lastRefreshAt = startedAt;
+    lastRefreshAt = now();
     inFlight = (async () => {
       try {
         addresses = new Set((await lookup(host)).map(canonicalAddress));
       } catch {
         // Leave `addresses` as it was -- see the interface doc comment. With nothing cached yet,
         // pull the throttle clock back so the next miss retries after EMPTY_RETRY_BACKOFF_MS.
-        if (addresses.size === 0) lastRefreshAt = startedAt - (REFRESH_THROTTLE_MS - EMPTY_RETRY_BACKOFF_MS);
+        if (addresses.size === 0) lastRefreshAt = now() - (REFRESH_THROTTLE_MS - EMPTY_RETRY_BACKOFF_MS);
       } finally {
         inFlight = undefined;
       }

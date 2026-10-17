@@ -243,7 +243,7 @@ describe("clientIpFrom", () => {
     }
   });
 
-  test("an IPv6 trusted peer (any case, mapped or not) is matched", async () => {
+  test("an IPv6 trusted peer and an uppercase mapped-IPv4 peer are matched", async () => {
     const proxy = createTrustedProxy({ host: "cloudflared", lookup: async () => ["10.0.0.5", "2001:db8::5"] });
     await proxy.refresh();
     expect(proxy.isTrusted("2001:db8::5")).toBe(true);
