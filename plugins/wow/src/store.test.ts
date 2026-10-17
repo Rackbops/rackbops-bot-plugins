@@ -52,6 +52,19 @@ describe("initWowStore", () => {
     expect(readdirSync(dir).some((f) => f.startsWith("wow.json.corrupt"))).toBe(true);
   });
 
+  test("a corrupt wow.json beside an absent or corrupt state.json starts empty, writes wow.json and does not throw", async () => {
+    for (const state of [undefined, "{ not json "]) {
+      rmSync(join(dir, "wow.json"), { force: true });
+      rmSync(join(dir, "state.json"), { force: true });
+      writeFileSync(join(dir, "wow.json"), "{ not json ");
+      if (state !== undefined) writeFileSync(join(dir, "state.json"), state);
+      _resetWowStore();
+      await initWowStore(makeFakeHost({ name: "wow", dataDir: dir }));
+      expect(wowState()).toEqual({});
+      expect(readJson("wow.json")).toEqual({});
+    }
+  });
+
   test("seeds empty when state.json is absent (a fresh install)", async () => {
     await initWowStore(makeFakeHost({ name: "wow", dataDir: dir }));
     expect(wowState()).toEqual({});
