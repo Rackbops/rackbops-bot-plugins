@@ -6,6 +6,7 @@ import {
   createProductionDeps,
   createRateLimiter,
   handleRequest,
+  rateLimitKeyFor,
   startWarbandeerServer,
   warbandeerServerRunning,
   type WarbandeerDeps,
@@ -39,6 +40,125 @@ describe("createRateLimiter", () => {
     expect(limiter.allow("b")).toBe(true);
     expect(limiter.allow("a")).toBe(false);
     expect(limiter.allow("b")).toBe(false);
+  });
+});
+
+describe("createRateLimiter expiry sweep", () => {
+  test("allow() never sweeps: expired keys stay until sweep() runs, however many there are", () => {
+    let t = 0;
+    const limiter = createRateLimiter({ windowMs: 1000, max: 1, now: () => t });
+    for (let i = 0; i < 10_500; i++) limiter.allow(`k${i}`);
+    expect(limiter.size()).toBe(10_500);
+    t = 1001;
+    limiter.allow("fresh"); // used to trigger a full scan past 10,000 keys
+    expect(limiter.size()).toBe(10_501);
+    limiter.stop?.();
+  });
+
+  test("sweep() drops expired keys and keeps live ones", () => {
+    let t = 0;
+    const limiter = createRateLimiter({ windowMs: 1000, max: 1, now: () => t });
+    limiter.allow("old");
+    t = 600;
+    limiter.allow("young");
+    t = 1001;
+    limiter.sweep();
+    expect(limiter.size()).toBe(1);
+    expect(limiter.allow("young")).toBe(false); // still counted in its window
+    expect(limiter.allow("old")).toBe(true); // swept, so a fresh window
+    limiter.stop?.();
+  });
+
+  test("the timer sweeps expired keys on its own", async () => {
+    const limiter = createRateLimiter({ windowMs: 20, max: 1 });
+    for (let i = 0; i < 5; i++) limiter.allow(`k${i}`);
+    expect(limiter.size()).toBe(5);
+    const deadline = Date.now() + 2000;
+    while (limiter.size() > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    expect(limiter.size()).toBe(0);
+    // The sweep that emptied the map stopped the timer; a later key starts a new one.
+    expect(limiter.allow("again")).toBe(true);
+    while (limiter.size() > 0 && Date.now() < deadline + 2000) await new Promise((r) => setTimeout(r, 10));
+    expect(limiter.size()).toBe(0);
+  });
+
+  test("the sweep that empties the map clears the timer, and the next key starts a new one", () => {
+    const realSet = globalThis.setInterval;
+    const realClear = globalThis.clearInterval;
+    let started = 0;
+    let cleared = 0;
+    let tick: (() => void) | undefined;
+    globalThis.setInterval = ((fn: () => void) => {
+      started += 1;
+      tick = fn;
+      return { unref() {} };
+    }) as unknown as typeof setInterval;
+    globalThis.clearInterval = (() => {
+      cleared += 1;
+    }) as typeof clearInterval;
+    try {
+      let t = 0;
+      const limiter = createRateLimiter({ windowMs: 1000, max: 1, now: () => t });
+      limiter.allow("a");
+      limiter.allow("b"); // a second key does not start a second timer
+      expect(started).toBe(1);
+      t = 1001;
+      tick?.();
+      expect(limiter.size()).toBe(0);
+      expect(cleared).toBe(1);
+      limiter.allow("c");
+      expect(started).toBe(2);
+    } finally {
+      globalThis.setInterval = realSet;
+      globalThis.clearInterval = realClear;
+    }
+  });
+
+  test("startWarbandeerServer's stop() stops both limiters", () => {
+    const stopped: string[] = [];
+    const spy = (name: string) => ({ allow: () => true, stop: () => void stopped.push(name) });
+    const { stop } = startWarbandeerServer(
+      0,
+      { ...makeDeps(), rateLimiter: spy("rate"), authFailureLimiter: spy("auth") },
+      { isTrusted: () => false, refresh: async () => {} },
+    );
+    stop();
+    expect(stopped.sort()).toEqual(["auth", "rate"]);
+  });
+
+  test("stop() clears the counters", () => {
+    const limiter = createRateLimiter({ windowMs: 1000, max: 1, now: () => 0 });
+    limiter.allow("k");
+    limiter.stop?.();
+    expect(limiter.size()).toBe(0);
+  });
+});
+
+describe("rateLimitKeyFor", () => {
+  test("IPv4 is keyed by the address; an IPv4-mapped IPv6 address is that IPv4 peer", () => {
+    expect(rateLimitKeyFor("203.0.113.9")).toBe("203.0.113.9");
+    expect(rateLimitKeyFor("::ffff:203.0.113.9")).toBe("203.0.113.9");
+    expect(rateLimitKeyFor("::FFFF:cb00:7109")).toBe("203.0.113.9");
+  });
+
+  test("IPv6 is keyed by its /64, whatever the spelling", () => {
+    const key = rateLimitKeyFor("2001:db8:1:2:aaaa:bbbb:cccc:dddd");
+    expect(rateLimitKeyFor("2001:db8:1:2::1")).toBe(key);
+    expect(rateLimitKeyFor("2001:DB8:1:2:0:0:0:ffff")).toBe(key);
+    expect(rateLimitKeyFor("2001:db8:1:2:aaaa::")).toBe(key);
+    expect(rateLimitKeyFor("2001:db8:1:3::1")).not.toBe(key);
+    expect(rateLimitKeyFor("2001:db8:2:2::1")).not.toBe(key);
+    expect(rateLimitKeyFor("2001:db8::1")).toBe(rateLimitKeyFor("2001:db8:0:0:9::2"));
+    expect(rateLimitKeyFor("2001:db9::1")).not.toBe(rateLimitKeyFor("2001:db8::1"));
+  });
+
+  test("a zone id and an embedded IPv4 tail do not change the /64", () => {
+    expect(rateLimitKeyFor("fe80::1%eth0")).toBe(rateLimitKeyFor("fe80::2"));
+    expect(rateLimitKeyFor("64:ff9b::1.2.3.4")).toBe(rateLimitKeyFor("64:ff9b::9"));
+  });
+
+  test("a non-IP identity such as \"unknown\" passes through", () => {
+    expect(rateLimitKeyFor("unknown")).toBe("unknown");
   });
 });
 
@@ -151,6 +271,28 @@ describe("handleRequest — POST /link", () => {
       deps,
     );
     expect(receivedCode).toBe("ABC12345");
+  });
+});
+
+describe("handleRequest — IPv6 rate-limit keys", () => {
+  test("/link: addresses in one /64 share a budget; another /64 has its own", async () => {
+    const deps = makeDeps({ rateLimiter: createRateLimiter({ windowMs: 60_000, max: 1 }) });
+    const post = (ip: string) => handleRequest(req("POST", "/link", { body: "{}" }), ip, deps);
+    expect((await post("2001:db8:1:2::1")).status).toBe(400);
+    expect((await post("2001:db8:1:2:aaaa:bbbb:cccc:dddd")).status).toBe(429);
+    expect((await post("2001:db8:1:3::1")).status).toBe(400);
+  });
+
+  test("/characters failed-auth limiter is keyed by /64 too", async () => {
+    const deps = makeDeps({
+      authFailureLimiter: createRateLimiter({ windowMs: 60_000, max: 1 }),
+      authenticate: () => undefined,
+    });
+    const post = (ip: string) =>
+      handleRequest(req("POST", "/characters", { body: "{}", headers: { Authorization: "Bearer x" } }), ip, deps);
+    expect((await post("2001:db8:1:2::1")).status).toBe(401);
+    expect((await post("2001:db8:1:2::2")).status).toBe(429);
+    expect((await post("2001:db8:1:3::1")).status).toBe(401);
   });
 });
 
@@ -532,6 +674,33 @@ describe("createProductionDeps — real auth + persistence wiring", () => {
     const unknown = await handleRequest(req("POST", "/link", { body: JSON.stringify({ code: "NOSUCHCODE", accountLabel: "Main" }) }), "1.2.3.4", deps);
     expect(unknown.status).toBe(400);
     expect(await unknown.text()).toBe("unknown code");
+  });
+
+  test("a not-found redemption does not rewrite links.json; an expired one (a burned code) does", async () => {
+    let persisted = 0;
+    const deps = createProductionDeps({
+      linksState: localLinksState,
+      persistLinks: async () => {
+        persisted += 1;
+      },
+      charactersBaseDir: charactersDir,
+    });
+    const link = (code: string) =>
+      handleRequest(req("POST", "/link", { body: JSON.stringify({ code, accountLabel: "Main" }) }), "1.2.3.4", deps);
+
+    expect((await link("NOSUCHCODE")).status).toBe(400);
+    expect(persisted).toBe(0);
+
+    const { code, state } = mintLinkCode(localLinksState, freshId(), Date.now() - 11 * 60 * 1000);
+    localLinksState.pending = state.pending;
+    expect(await (await link(code)).text()).toBe("code expired");
+    expect(persisted).toBe(1);
+    expect(localLinksState.pending).toHaveLength(0); // the burn is what the write records
+
+    const fresh = mintLinkCode(localLinksState, freshId(), Date.now());
+    localLinksState.pending = fresh.state.pending;
+    expect((await link(fresh.code)).status).toBe(200);
+    expect(persisted).toBe(2);
   });
 
   test("concurrent pushes for the same user's two linked accounts both land — end-to-end regression for the storage fix", async () => {

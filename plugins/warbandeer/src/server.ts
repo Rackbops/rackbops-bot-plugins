@@ -3,6 +3,7 @@
 // `server.test.ts` calls it with hand-built `Request` objects and never binds a real port.
 // `startWarbandeerServer` is the only thing that touches `Bun.serve`, called from the plugin's
 // `createPlugin` -> `activate()`.
+import { isIP } from "node:net";
 import {
   findAccountByToken,
   generateDeviceToken,
@@ -42,6 +43,8 @@ export interface RateLimiter {
   /** True if `key` is still under its limit for this call (and records the call); false if it
    * should be rejected. */
   allow(key: string): boolean;
+  /** Drops the limiter's expiry timer and every counter; `startWarbandeerServer`'s `stop()` calls it. */
+  stop?(): void;
 }
 
 /**
@@ -50,33 +53,89 @@ export interface RateLimiter {
  * counter, which is fine, since the threat this defends is a hot loop within one process's
  * uptime, not a long-lived quota.
  *
- * Opportunistically sweeps expired entries once the map grows past `PRUNE_THRESHOLD`, so a
- * long-running process fed a stream of distinct keys (one per rotating IP, one per attacker-
- * chosen token) doesn't grow this map forever between restarts.
+ * Expired entries are swept by a timer, once per window, so a long-running process fed a stream of
+ * distinct keys (one per rotating IP, one per attacker-chosen token) doesn't grow this map forever
+ * between restarts, and `allow()` never scans the map. The timer runs only while there are
+ * entries (started by the first `allow()` into an empty map, cleared by the sweep that empties it),
+ * and is `unref`ed so it never keeps the process alive. `sweep()` and `size()` are exposed for
+ * `server.test.ts`, which drives an injected clock.
  */
-const PRUNE_THRESHOLD = 10_000;
-
-export function createRateLimiter(opts: { windowMs: number; max: number; now?: () => number }): RateLimiter {
+export function createRateLimiter(opts: {
+  windowMs: number;
+  max: number;
+  now?: () => number;
+}): RateLimiter & { sweep(): void; size(): number } {
   const now = opts.now ?? Date.now;
   const windows = new Map<string, { count: number; resetAt: number }>();
+  let timer: ReturnType<typeof setInterval> | undefined;
+
+  function stopTimer(): void {
+    if (timer !== undefined) clearInterval(timer);
+    timer = undefined;
+  }
+  function sweep(): void {
+    const t = now();
+    for (const [k, w] of windows) {
+      if (t >= w.resetAt) windows.delete(k);
+    }
+    if (windows.size === 0) stopTimer();
+  }
   return {
     allow(key: string): boolean {
       const t = now();
-      if (windows.size > PRUNE_THRESHOLD) {
-        for (const [k, w] of windows) {
-          if (t >= w.resetAt) windows.delete(k);
-        }
-      }
       const w = windows.get(key);
       if (!w || t >= w.resetAt) {
         windows.set(key, { count: 1, resetAt: t + opts.windowMs });
+        if (timer === undefined) {
+          timer = setInterval(sweep, opts.windowMs);
+          timer.unref();
+        }
         return true;
       }
       if (w.count >= opts.max) return false;
       w.count += 1;
       return true;
     },
+    stop(): void {
+      stopTimer();
+      windows.clear();
+    },
+    sweep,
+    size: () => windows.size,
   };
+}
+
+/**
+ * The rate-limit identity for a client address. An IPv6 client is keyed by its /64 (the first four
+ * groups): a single subscriber is routinely handed a whole /64, so a per-address key would give one
+ * host a fresh budget per address. IPv4 (and an IPv4-mapped IPv6 address, which is an IPv4 peer) is
+ * keyed by the address itself; anything that is not an IP literal, such as `"unknown"`, passes
+ * through unchanged. A zone id (`fe80::1%eth0`) is ignored.
+ */
+export function rateLimitKeyFor(clientIp: string): string {
+  const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(clientIp);
+  if (mapped) return mapped[1] as string;
+  if (isIP(clientIp) !== 6) return clientIp;
+  const zoneAt = clientIp.indexOf("%");
+  const bare = zoneAt === -1 ? clientIp : clientIp.slice(0, zoneAt);
+  // An embedded IPv4 tail (`64:ff9b::1.2.3.4`) is two groups; it only matters for how many groups `::` hides.
+  const text = bare.replace(/(\d+)\.(\d+)\.(\d+)\.(\d+)$/, (_m, a, b, c, d) =>
+    `${((Number(a) << 8) | Number(b)).toString(16)}:${((Number(c) << 8) | Number(d)).toString(16)}`,
+  );
+  const [head = "", tail] = text.split("::");
+  const headGroups = head === "" ? [] : head.split(":");
+  const tailGroups = tail === undefined || tail === "" ? [] : tail.split(":");
+  const groups = tail === undefined
+    ? headGroups
+    : [...headGroups, ...Array<string>(Math.max(0, 8 - headGroups.length - tailGroups.length)).fill("0"), ...tailGroups];
+  // The hex spelling of an IPv4-mapped address (`::ffff:102:304`) is still an IPv4 peer.
+  if (groups.slice(0, 5).every((g) => parseInt(g, 16) === 0) && parseInt(groups[5] ?? "", 16) === 0xffff) {
+    const hi = parseInt(groups[6] ?? "0", 16);
+    const lo = parseInt(groups[7] ?? "0", 16);
+    return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+  }
+  const prefix = groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16));
+  return `${prefix.join(":")}::/64`;
 }
 
 export type LinkResult = { ok: true; token: string } | { ok: false; error: string };
@@ -161,7 +220,7 @@ export async function handleRequest(req: Request, clientIp: string, deps: Warban
   const url = new URL(req.url);
 
   if (req.method === "POST" && url.pathname === "/link") {
-    if (!deps.rateLimiter.allow(`link:${clientIp}`)) {
+    if (!deps.rateLimiter.allow(`link:${rateLimitKeyFor(clientIp)}`)) {
       return new Response("too many requests", { status: 429 });
     }
     const body = await readBodyWithCap(req, deps.maxBodyBytes);
@@ -187,7 +246,7 @@ export async function handleRequest(req: Request, clientIp: string, deps: Warban
     // than the per-token one below: bounds the cost of a flood of garbage bearer tokens (a hash
     // + a full accounts scan each) without punishing several legitimate users who happen to
     // share an address.
-    if (!deps.authFailureLimiter.allow(`characters-ip:${clientIp}`)) {
+    if (!deps.authFailureLimiter.allow(`characters-ip:${rateLimitKeyFor(clientIp)}`)) {
       return new Response("too many requests", { status: 429 });
     }
     const token = extractBearerToken(req.headers.get("Authorization"));
@@ -242,7 +301,9 @@ export function createProductionDeps(overrides?: {
       state.pending = redeemed.state.pending;
       state.accounts = redeemed.state.accounts;
       if (!redeemed.ok) {
-        await persistLinks();
+        // A not-found guess changes nothing (no code matched, so none was burned): rewriting links.json
+        // for every unauthenticated bad guess is a free disk write for an attacker. An expired match was burned.
+        if (redeemed.reason === "expired") await persistLinks();
         console.error(`[warbandeer] /link redeem failed (${redeemed.reason})`);
         return { ok: false, error: redeemed.reason === "expired" ? "code expired" : "unknown code" };
       }
@@ -343,6 +404,8 @@ export function startWarbandeerServer(
     stop: () => {
       serverRunning = false;
       server.stop();
+      deps.rateLimiter.stop?.();
+      deps.authFailureLimiter.stop?.();
     },
   };
 }
