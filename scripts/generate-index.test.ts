@@ -57,6 +57,25 @@ const changelog = (version = "1.0.0"): string => `# Changelog\n\n## [${version}]
 
 const fixedNow = (): Date => new Date("2026-09-04T00:00:00.000Z");
 
+describe("buildIndex core command names", () => {
+  const one = (name: string, over: Record<string, unknown> = {}) =>
+    withPlugins({ [name]: { pkg: pkg(name, over), changelog: changelog() } }, (dir) => buildIndex(dir, fixedNow));
+
+  for (const core of ["report", "update", "plugins"]) {
+    test(`a plugin named "${core}" is refused`, async () => {
+      await expect(one(core)).rejects.toThrow(new RegExp(`${core}: plugin name collides with the bot's core command "${core}"`));
+    });
+    test(`a plugin command named "${core}" is refused`, async () => {
+      await expect(one("alpha", { commands: [core] })).rejects.toThrow(new RegExp(`alpha: command "${core}" collides with the bot's core command`));
+    });
+  }
+
+  test("a name that only contains a core name is fine", async () => {
+    const index = await one("reporter", { commands: ["report-all"] });
+    expect(index.plugins.map((p) => p.name)).toEqual(["reporter"]);
+  });
+});
+
 describe("buildIndex publish identity", () => {
   const build = (name: string, over: Record<string, unknown>) =>
     withPlugins({ [name]: { pkg: { ...(pkg(name) as object), ...over }, changelog: changelog() } }, (dir) => buildIndex(dir, fixedNow));
@@ -422,6 +441,7 @@ describe("generate-index CLI --check", () => {
       await mkdir(join(root, "scripts"));
       await mkdir(join(root, "plugins"));
       await Bun.write(join(root, "scripts", "generate-index.ts"), Bun.file(new URL("./generate-index.ts", import.meta.url)));
+      await Bun.write(join(root, "scripts", "core-commands.ts"), Bun.file(new URL("./core-commands.ts", import.meta.url)));
       const stale: PluginIndex = {
         schemaVersion: 1,
         generatedAt: "2026-01-01T00:00:00.000Z",

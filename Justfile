@@ -40,6 +40,7 @@ index:
 published-check:
     bun run check-published
 
-# Fail if packages/api/contract.d.ts has drifted from rackbops-discord-bot's contract.ts (needs network)
+# Fail if packages/api/contract.d.ts or scripts/core-commands.ts has drifted from rackbops-discord-bot (needs network)
 contract-check:
     bun run check-contract
+    bun run check-core-commands

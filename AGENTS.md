@@ -72,7 +72,7 @@ also its own recipe (`just --list`).
   yet. It is **not** part of `just check` and not a PR check: it runs on a schedule
   (`published-check.yml`), and a bump PR is meant to fail it until its `<name>-v<semver>` tag is
   pushed -- tag right after merging a bump. Exit 2 means the registry was unreachable, not missing.
-- **Contract drift** -- `bun run check-contract`; needs network access to
+- **Contract drift** -- `bun run check-contract` (and `bun run check-core-commands` for the mirrored core command names; `just contract-check` runs both); needs network access to
   `rackbops-discord-bot`'s live `main` and fails if that repo is unreachable, not just on a real
   mismatch -- distinguish the two before treating a failure as drift.
 
@@ -120,8 +120,8 @@ Follows personal's **Code style** baseline. This repo's individuality:
 - **`scripts/generate-index.ts` extracts every `plugins/<name>` into `plugins.json`** (from each
   `package.json` `botPlugin` block + `CHANGELOG.md`) and fails on a bad name, a package name
   or `repository` that isn't this plugin's own, a missing
-  `hostApiVersion`, a current version with no CHANGELOG section, or a duplicate command name across
-  plugins. See `CONTEXT.md` for the extractor's shape and the OIDC publishing path.
+  `hostApiVersion`, a current version with no CHANGELOG section, a duplicate command name across
+  plugins, or a plugin name or command equal to a bot core command (`scripts/core-commands.ts`). See `CONTEXT.md` for the extractor's shape and the OIDC publishing path.
 - **`main` is governed by a repository ruleset** (Project Operations section 4, set 2026-10-04):
   no deletion or force push; a PR with one approving code-owner review (`.github/CODEOWNERS`),
   stale approvals dismissed, conversations resolved; squash only; `lint`, `test` and `pr-title`
