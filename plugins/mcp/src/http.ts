@@ -37,8 +37,8 @@ function json(status: number, body: unknown): Response {
  * so a failure there is logged and the attempt proceeds anyway, rather than left to propagate
  * uncaught -- which used to skip past the `.finally()` below entirely and strand the lock for that
  * request_id forever (review finding, Tooling#742). Returns whether the claim succeeded -- on
- * `false` (the tick's re-drive already holds this id) NOTHING is written or started; the caller must
- * answer with the unmodified existing state instead. The same lock, shared with the tick (index.ts),
+ * `false` (the tick's re-drive already holds this id) NOTHING is written or started; the caller answers
+ * from the existing state (see the retry branch of handleCreateDelivery). The same lock, shared with the tick (index.ts),
  * is what stops a caller's retry and the tick's re-drive from ever draining one id at the same time:
  * for a brand-new reservation the claim always succeeds (the id cannot already be in flight
  * anywhere), so this is also the one place that writes the store for both a fresh `pending` and a
@@ -104,9 +104,9 @@ async function handleCreateDelivery(request: Request, deps: HttpDeps): Promise<R
 
   // Retry semantics (decision 5): delivered/pending answer the stored state with no new drain;
   // failed/unknown reset to pending (keeping the ORIGINAL createdAt -- the request's true age is
-  // what prune measures) and drain again -- unless the tick's re-drive already holds this id's
-  // drain lock, in which case startDrain leaves the stored state untouched and this retry
-  // re-attaches to whatever the tick is already doing instead of starting a second attempt.
+  // what prune measures) and drain again -- unless another drain already holds this id's lock (the
+  // tick's re-drive, or a concurrent retry), in which case startDrain leaves the stored state
+  // untouched and this retry re-attaches to that drain instead of starting a second attempt.
   if (value.state === "delivered" || value.state === "pending") {
     return json(202, { state: toWireState(value), existing });
   }
@@ -118,7 +118,11 @@ async function handleCreateDelivery(request: Request, deps: HttpDeps): Promise<R
     createdAt: value.createdAt,
   };
   const started = await startDrain(deps, requestId, reset);
-  return json(202, { state: toWireState(started ? reset : value), existing });
+  // A retry that lost the lock race to another retry of the same failed id is answered pending: that
+  // other retry has reset the record and is delivering, and the stale `failed` would tell a caller that
+  // treats failed as final to report a failure for a request that is being delivered. An `unknown` record
+  // the tick is re-driving keeps answering `unknown` (the tick has not written a new state yet).
+  return json(202, { state: toWireState(started || value.state === "failed" ? reset : value), existing });
 }
 
 async function handleGetDelivery(requestId: string, deps: HttpDeps): Promise<Response> {

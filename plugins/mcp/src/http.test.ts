@@ -230,6 +230,32 @@ describe("handleMcpHttp: POST /deliveries + GET /deliveries/{id}, the full flow"
     expect(attempts).toBe(2);
   });
 
+  test("a retry that loses the drain lock to another retry of the same failed id answers pending, not the stale failed", async () => {
+    let attempts = 0;
+    const host = makeFakeHost({
+      name: "mcp",
+      post: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("first attempt fails");
+        return { guildId: GUILD, channelId: "222222222222222222", messageId: "333333333333333333" };
+      },
+    });
+    const d = deps(host, TOKEN);
+    await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
+    await drainLock.settled(REQUEST_ID);
+    expect((await store.get(REQUEST_ID))!.state).toBe("failed");
+
+    // The other retry has won the lock and is mid-delivery; this one reserved the id while it was still failed.
+    expect(drainLock.tryStart(REQUEST_ID)).toBe(true);
+    const retry = await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
+    const retryBody = (await retry.json()) as { state: { state: string; code?: string }; existing: boolean };
+    expect(retryBody.existing).toBe(true);
+    expect(retryBody.state.state).toBe("pending"); // mutation: answering the stale `value` says failed
+    expect(retryBody.state.code).toBeUndefined();
+    expect(attempts).toBe(1); // and it started no second delivery
+    drainLock.finish(REQUEST_ID);
+  });
+
   test("a retry keeps the original createdAt across the failed -> pending reset", async () => {
     const host = makeFakeHost({
       name: "mcp",
