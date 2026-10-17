@@ -76,6 +76,20 @@ describe("handleRequest — POST /link", () => {
     expect(res.status).toBe(400);
   });
 
+  test("413s an oversized /link body without ever calling redeemCode (the cap applies here too)", async () => {
+    let redeemed = false;
+    const deps = makeDeps({
+      maxBodyBytes: 64,
+      redeemCode: async () => {
+        redeemed = true;
+        return { ok: true, token: "t" };
+      },
+    });
+    const res = await handleRequest(req("POST", "/link", { body: JSON.stringify({ code: "ABC12345", accountLabel: "x".repeat(200) }) }), "1.2.3.4", deps);
+    expect(res.status).toBe(413);
+    expect(redeemed).toBe(false);
+  });
+
   test("surfaces the redeem failure's own message", async () => {
     const deps = makeDeps({ redeemCode: async () => ({ ok: false, error: "code expired" }) });
     const res = await handleRequest(
@@ -148,6 +162,12 @@ describe("handleRequest — POST /characters", () => {
       makeDeps(),
     );
     expect(res.status).toBe(204);
+  });
+
+  test("401s when storeCharacters reports the account was unlinked meanwhile", async () => {
+    const deps = makeDeps({ storeCharacters: async () => ({ ok: false, error: "unauthorized", status: 401 }) });
+    const res = await handleRequest(req("POST", "/characters", { body: "{}", headers: { Authorization: "Bearer real-token" } }), "1.2.3.4", deps);
+    expect(res.status).toBe(401);
   });
 
   test("401s with no Authorization header", async () => {
@@ -444,6 +464,74 @@ describe("createProductionDeps — real auth + persistence wiring", () => {
       deps,
     );
     expect(pushRes.status).toBe(401);
+  });
+
+  test("a push authenticated before an /unlink writes nothing once the account is gone, and answers unauthorized", async () => {
+    const discordUserId = freshId();
+    const deps = realDeps();
+    const token = await linkRealAccount(deps, discordUserId, "Main");
+    const owner = deps.authenticate(token);
+    expect(owner).toEqual({ discordUserId, accountLabel: "Main" }); // authenticated, body still to come
+
+    const removal = removeLinkedAccount(localLinksState, discordUserId, "Main");
+    if (removal) localLinksState.accounts = removal.state.accounts; // the /unlink lands while the body streams in
+
+    const result = await deps.storeCharacters(discordUserId, "Main", { characters: [{ tag: "late" }] });
+    expect(result).toEqual({ ok: false, error: "unauthorized", status: 401 }); // mutation: no re-check writes the snapshot back
+    expect((await loadCharacterSnapshotsFrom(charactersDir, discordUserId)).snapshots).toEqual([]);
+  });
+
+  test("over handleRequest: a push whose body is still arriving when the /unlink lands answers 401 and writes nothing", async () => {
+    const discordUserId = freshId();
+    const deps = realDeps();
+    const token = await linkRealAccount(deps, discordUserId, "Main");
+    const payload = new TextEncoder().encode(JSON.stringify({ characters: [{ tag: "late" }] }));
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        // Authentication already happened; the unlink lands before the last byte.
+        const removal = removeLinkedAccount(localLinksState, discordUserId, "Main");
+        if (removal) localLinksState.accounts = removal.state.accounts;
+        controller.enqueue(payload);
+        controller.close();
+      },
+    });
+    const res = await handleRequest(
+      new Request("http://x/characters", { method: "POST", body, headers: { Authorization: `Bearer ${token}` }, duplex: "half" } as RequestInit),
+      "1.2.3.4",
+      deps,
+    );
+    expect(res.status).toBe(401);
+    expect((await loadCharacterSnapshotsFrom(charactersDir, discordUserId)).snapshots).toEqual([]);
+  });
+
+  test("a rejected push with a newline in an object key answers 400 with the key escaped, on one line", async () => {
+    const deps = realDeps();
+    const token = await linkRealAccount(deps, freshId(), "Main");
+    const res = await handleRequest(
+      req("POST", "/characters", {
+        body: JSON.stringify({ characters: [{ "a\nb": "x".repeat(300) }] }),
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      "1.2.3.4",
+      deps,
+    );
+    expect(res.status).toBe(400);
+    const text = await res.text();
+    expect(text).not.toContain("\n");
+    expect(text).toContain('"a\\nb"');
+  });
+
+  test("redeeming through the production deps names why: expired vs unknown code", async () => {
+    const deps = realDeps();
+    const userId = freshId();
+    const { code, state } = mintLinkCode(localLinksState, userId, Date.now() - 11 * 60 * 1000);
+    localLinksState.pending = state.pending;
+    const expired = await handleRequest(req("POST", "/link", { body: JSON.stringify({ code, accountLabel: "Main" }) }), "1.2.3.4", deps);
+    expect(expired.status).toBe(400);
+    expect(await expired.text()).toBe("code expired");
+    const unknown = await handleRequest(req("POST", "/link", { body: JSON.stringify({ code: "NOSUCHCODE", accountLabel: "Main" }) }), "1.2.3.4", deps);
+    expect(unknown.status).toBe(400);
+    expect(await unknown.text()).toBe("unknown code");
   });
 
   test("concurrent pushes for the same user's two linked accounts both land — end-to-end regression for the storage fix", async () => {

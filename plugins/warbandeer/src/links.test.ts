@@ -61,6 +61,22 @@ describe("mintLinkCode", () => {
     expect(JSON.stringify(state)).not.toContain(code);
   });
 
+  test("minting drops every expired pending code, not only the same user's", () => {
+    const now = 1_000_000;
+    const state: LinksState = {
+      accounts: {},
+      pending: [
+        { codeHash: "expired-other", discordUserId: "user-2", expiresAt: now - 1 },
+        { codeHash: "live-other", discordUserId: "user-3", expiresAt: now },
+      ],
+    };
+    const { state: next } = mintLinkCode(state, "user-1", now);
+    // mutation: filtering only the same user's codes keeps "expired-other" for ever
+    expect(next.pending.map((p) => p.codeHash)).toContain("live-other");
+    expect(next.pending.map((p) => p.codeHash)).not.toContain("expired-other");
+    expect(next.pending).toHaveLength(2);
+  });
+
   test("minting a second code for the same user invalidates the first", () => {
     const now = 1_000_000;
     const first = mintLinkCode(empty(), "user-1", now);
@@ -277,6 +293,27 @@ describe("loadLinksFrom", () => {
       );
       const result = await loadLinksFrom(file, makeRealStorage());
       expect(result).toEqual({ pending: [], accounts: {} });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an account entry that is null or has no string tokenHash/accountLabel is dropped, so a token scan cannot throw", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "links-test-"));
+    try {
+      const file = join(dir, "links.json");
+      const good = { accountLabel: "Main", tokenHash: hashToken("tok"), linkedAt: 1, updatedAt: 2 };
+      await Bun.write(
+        file,
+        JSON.stringify({
+          pending: [],
+          accounts: { "user-1": [null, { accountLabel: "NoHash" }, { tokenHash: "x" }, good], "user-2": [7, "x"] },
+        }),
+      );
+      const result = await loadLinksFrom(file, makeRealStorage());
+      expect(result.accounts).toEqual({ "user-1": [good], "user-2": [] });
+      expect(findAccountByToken(result, "tok")).toMatchObject({ discordUserId: "user-1" });
+      expect(findAccountByToken(result, "nope")).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

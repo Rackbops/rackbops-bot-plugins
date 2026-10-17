@@ -98,7 +98,10 @@ export function mintLinkCode(
   now: number,
   generateCode: () => string = generateLinkCode,
 ): { code: string; state: LinksState } {
-  const others = state.pending.filter((p) => p.discordUserId !== discordUserId);
+  // Drops every expired code, not only this user's own: a user who runs /link once and never redeems
+  // would otherwise leave an expired entry in links.json (loaded whole at boot) forever. `redeemLinkCode`
+  // treats `expiresAt < now` as expired, so exactly those go.
+  const others = state.pending.filter((p) => p.discordUserId !== discordUserId && p.expiresAt >= now);
   let code = generateCode();
   let codeHash = hashToken(code);
   while (others.some((p) => p.codeHash === codeHash)) {
@@ -209,6 +212,14 @@ export function findAccountByToken(
   return undefined;
 }
 
+/** The two fields every consumer reads across ALL users (`findAccountByToken` scans every account, so one
+ *  entry whose hash is not a string would make the token comparison throw and turn every user's push into a 500). */
+function isLinkedAccountLike(value: unknown): value is LinkedAccount {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Partial<LinkedAccount>;
+  return typeof v.accountLabel === "string" && typeof v.tokenHash === "string";
+}
+
 /**
  * A parsed `links.json` is trusted to be well-formed by `readJsonOrFresh` (it only distinguishes
  * absent/corrupt from present), so this guarantees both top-level fields have the right SHAPE,
@@ -233,7 +244,11 @@ function normalizeLinksState(raw: Partial<LinksState> | undefined): LinksState {
   const accountsRaw = raw?.accounts;
   const accounts =
     accountsRaw && typeof accountsRaw === "object" && !Array.isArray(accountsRaw)
-      ? Object.fromEntries(Object.entries(accountsRaw).filter(([, v]) => Array.isArray(v)))
+      ? Object.fromEntries(
+          Object.entries(accountsRaw)
+            .filter(([, v]) => Array.isArray(v))
+            .map(([id, list]) => [id, (list as unknown[]).filter(isLinkedAccountLike)]),
+        )
       : {};
   return { pending, accounts };
 }

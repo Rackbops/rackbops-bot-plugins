@@ -1,6 +1,6 @@
 import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
 import { charactersDir, deleteCharacterSnapshotFrom } from "./characters.js";
-import { type LinkedAccount, links, mintLinkCode, removeLinkedAccount, saveLinks } from "./links.js";
+import { type LinkedAccount, hashToken, links, mintLinkCode, removeLinkedAccount, saveLinks } from "./links.js";
 import { warbandeerConnectorConfigured, warbandeerServerRunning } from "./server.js";
 
 const LINK_CODE_TTL_MINUTES = 10; // keep in sync with links.ts's LINK_CODE_TTL_MS
@@ -53,10 +53,33 @@ export async function handleLinkCommand(interaction: ChatInputCommandInteraction
   }
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const { code, state } = mintLinkCode(links, interaction.user.id, Date.now());
+  const minted = state.pending.find((p) => p.codeHash === hashToken(code));
   links.pending = state.pending;
   links.accounts = state.accounts;
-  await saveLinks();
-  await interaction.editReply({ content: linkReply(code) });
+  try {
+    await saveLinks();
+  } catch (err) {
+    // Deferred, so the host's "something went wrong" safety net no longer applies. A code that was never
+    // saved (and never shown) must not stay redeemable in memory. Only this code is taken back: whatever a
+    // redeem or another /link changed while the save was pending is not ours to undo.
+    links.pending = links.pending.filter((p) => p !== minted);
+    await failReply(interaction, "/link", err);
+    return;
+  }
+  // Saved, so the code stays valid even if this reply fails: the user never saw it, and it expires on its own.
+  try {
+    await interaction.editReply({ content: linkReply(code) });
+  } catch (err) {
+    console.error("[warbandeer] /link: the reply carrying the code failed", err);
+  }
+}
+
+/** Logs and answers a handler that threw after `deferReply`; the answer itself failing is only logged. */
+async function failReply(interaction: ChatInputCommandInteraction, command: string, err: unknown): Promise<void> {
+  console.error(`[warbandeer] ${command} failed`, err);
+  await interaction.editReply({ content: "Something went wrong on my side. Try again in a moment." }).catch((replyErr: unknown) => {
+    console.error(`[warbandeer] ${command}: the failure reply also failed`, replyErr);
+  });
 }
 
 /**
@@ -99,8 +122,29 @@ export async function handleUnlinkCommand(interaction: ChatInputCommandInteracti
     const result = removeLinkedAccount(links, interaction.user.id, decision.remove);
     if (result) {
       links.accounts = result.state.accounts;
-      await saveLinks();
-      await deleteCharacterSnapshotFrom(charactersDir(), interaction.user.id, decision.remove);
+      try {
+        await saveLinks();
+      } catch (err) {
+        // Not saved, so not unlinked: put back this account alone (not a snapshot of everyone's, which would
+        // undo a link or push-time update that landed while the save was pending), unless it was re-added.
+        const mine = links.accounts[interaction.user.id] ?? [];
+        if (!mine.some((a) => a.accountLabel === result.removed.accountLabel)) {
+          links.accounts = { ...links.accounts, [interaction.user.id]: [...mine, result.removed] };
+        }
+        await failReply(interaction, "/unlink", err);
+        return;
+      }
+      try {
+        await deleteCharacterSnapshotFrom(charactersDir(), interaction.user.id, decision.remove);
+      } catch (err) {
+        // The account is gone and its token no longer verifies, so the reply must still say so; but the
+        // snapshot stays on disk, and the user should not be told otherwise.
+        console.error("[warbandeer] /unlink: deleting the character snapshot failed", err);
+        await interaction
+          .editReply({ content: `${decision.message}\n⚠️ Your stored character data could not be deleted just now; ask the bot's operator to remove it.` })
+          .catch((replyErr: unknown) => console.error("[warbandeer] /unlink: the reply also failed", replyErr));
+        return;
+      }
     }
   }
   await interaction.editReply({ content: decision.message });

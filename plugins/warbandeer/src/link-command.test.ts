@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
@@ -146,6 +146,72 @@ describe("handleLinkCommand / handleUnlinkCommand", () => {
     await handleLinkCommand(interaction);
     expect(replies[0]!.flags).toBe(MessageFlags.Ephemeral);
     expect(links.pending).toHaveLength(0);
+  });
+
+  test("/link answers a failure when the save throws, and the unsaved code is not left redeemable", async () => {
+    await loadLinks(dir, { ...makeRealStorage(), createJsonWriter: () => ({ save: async () => { throw new Error("disk full"); } }) });
+    const { interaction, replies } = fakeInteraction();
+    await handleLinkCommand(interaction);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.content).toContain("Something went wrong");
+    expect(replies[0]!.content).not.toMatch(/\*\*[A-Z0-9]+\*\*/); // mutation: no catch leaves "thinking..."
+    expect(links.pending).toHaveLength(0);
+  });
+
+  test("/link taking back an unsaved code does not undo a change another request made meanwhile", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    await loadLinks(dir, {
+      ...makeRealStorage(),
+      createJsonWriter: () => ({
+        save: async () => {
+          await gate;
+          throw new Error("disk full");
+        },
+      }),
+    });
+    const { interaction } = fakeInteraction();
+    const pending = handleLinkCommand(interaction);
+    await Bun.sleep(0);
+    // While the save is pending, a redeem lands on the same shared state.
+    links.accounts = { ...links.accounts, other: [{ accountLabel: "Alts", tokenHash: "h", linkedAt: 0, updatedAt: 0 }] };
+    release();
+    await pending;
+    expect(links.pending).toHaveLength(0);
+    expect(links.accounts.other).toHaveLength(1); // mutation: restoring a snapshot of `accounts` drops it
+  });
+
+  test("/link whose code was saved but whose reply failed leaves the saved code redeemable and does not throw", async () => {
+    const { interaction } = fakeInteraction();
+    (interaction as unknown as { editReply: () => Promise<never> }).editReply = async () => {
+      throw new Error("Unknown interaction");
+    };
+    await handleLinkCommand(interaction);
+    expect(links.pending).toHaveLength(1);
+  });
+
+  test("/unlink answers a failure when the save throws, and the account stays linked", async () => {
+    links.accounts = { [USER]: [{ accountLabel: "Main", tokenHash: "h", linkedAt: 0, updatedAt: 0 }] };
+    await loadLinks(dir, { ...makeRealStorage(), createJsonWriter: () => ({ save: async () => { throw new Error("disk full"); } }) });
+    links.accounts = { [USER]: [{ accountLabel: "Main", tokenHash: "h", linkedAt: 0, updatedAt: 0 }] };
+    const { interaction, replies } = fakeInteraction();
+    await handleUnlinkCommand(interaction);
+    expect(replies[0]!.content).toContain("Something went wrong");
+    expect(links.accounts[USER]).toHaveLength(1);
+  });
+
+  test("/unlink still says the account is unlinked when deleting its snapshot throws, and says the data remains", async () => {
+    links.accounts = { [USER]: [{ accountLabel: "Main", tokenHash: "h", linkedAt: 0, updatedAt: 0 }] };
+    await saveCharacterSnapshotTo(charactersDir(), USER, { accountLabel: "Main", characters: [] } as never);
+    const snapshotFile = join(charactersDir(), `${USER}.json`);
+    initCharacters(dir, { ...makeRealStorage(), createKeyedJsonMutator: () => ({ update: async () => { throw new Error("EIO"); } }) } as never);
+    const { interaction, replies } = fakeInteraction();
+    await handleUnlinkCommand(interaction);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]!.content).toContain("Unlinked");
+    expect(replies[0]!.content).toContain("could not be deleted");
+    expect(links.accounts[USER] ?? []).toHaveLength(0);
+    expect(existsSync(snapshotFile)).toBe(true); // and the message does not lie: the data really is still there
   });
 
   test("/unlink removes the account and deletes its Character Snapshot from disk", async () => {

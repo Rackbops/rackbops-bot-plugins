@@ -85,7 +85,10 @@ function checkBoundedShape(value: unknown, path: string, depth: number): string 
       // this error reaches both a log line and a raw HTTP reply, so an oversized key must not
       // become an oversized message in turn.
       if (key.length > MAX_STRING_FIELD_LENGTH) return `${path}: an object key exceeds ${MAX_STRING_FIELD_LENGTH} characters`;
-      const err = checkBoundedShape(obj[key], `${path}.${key}`, depth + 1);
+      // The key goes through JSON.stringify and a length cap: it reaches a log line and the HTTP reply, and a
+      // pusher chooses it, so a newline in it could otherwise forge a log line.
+      const shown = /^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(key) ? key : JSON.stringify(key.length > 32 ? `${key.slice(0, 32)}...` : key);
+      const err = checkBoundedShape(obj[key], `${path}.${shown}`, depth + 1);
       if (err) return err;
     }
     return undefined;
@@ -189,7 +192,20 @@ function charactersFilePathIn(baseDir: string, discordUserId: string): string {
 /** Path-parameterized so tests point it at a temp dir — never the real `data/characters/`. */
 export async function loadCharacterSnapshotsFrom(baseDir: string, discordUserId: string): Promise<StoredCharacters> {
   const path = charactersFilePathIn(baseDir, discordUserId);
-  return requireStorage().readJsonOrFresh<StoredCharacters>(path, () => ({ snapshots: [] }), "characters");
+  return normalizeStored(await requireStorage().readJsonOrFresh<StoredCharacters>(path, () => ({ snapshots: [] }), "characters"));
+}
+
+/** `readJsonOrFresh` recovers only from a file that does not parse. A characters file that parses to the
+ *  wrong shape (`{}`, `{"snapshots":null}`) would make every push and unlink for that user throw on
+ *  `.filter`, so it reads as no snapshots, and a snapshot without a string `accountLabel` is dropped. */
+function normalizeStored(raw: unknown): StoredCharacters {
+  const list = typeof raw === "object" && raw !== null ? (raw as { snapshots?: unknown }).snapshots : undefined;
+  if (!Array.isArray(list)) return { snapshots: [] };
+  return {
+    snapshots: list.filter(
+      (s): s is CharacterSnapshot => typeof s === "object" && s !== null && typeof (s as { accountLabel?: unknown }).accountLabel === "string",
+    ),
+  };
 }
 
 /** Replaces the Account Label's prior snapshot wholesale — never a diff or a merge. One file per
@@ -201,17 +217,27 @@ export async function saveCharacterSnapshotTo(
   discordUserId: string,
   snapshot: Omit<CharacterSnapshot, "receivedAt">,
   now: number = Date.now(),
-): Promise<void> {
+  /** Asked inside the serialized mutation, after any queued write for this file ran: false leaves the file as
+   *  it was. `server.ts` passes "the Linked Account still exists", so a push that was authenticated before
+   *  an `/unlink` (and `deleteCharacterSnapshotFrom` queues behind this same mutator) cannot write the
+   *  snapshot back after the unlink removed the account. Resolves to whether the snapshot was written. */
+  shouldWrite: () => boolean = () => true,
+): Promise<boolean> {
   const path = charactersFilePathIn(baseDir, discordUserId);
+  let written = false;
   await requireMutator().update(
     path,
     () => ({ snapshots: [] }),
-    (current) => {
+    (raw) => {
+      const current = normalizeStored(raw);
+      if (!shouldWrite()) return current;
+      written = true;
       const withoutLabel = current.snapshots.filter((s) => s.accountLabel !== snapshot.accountLabel);
       return { snapshots: [...withoutLabel, { ...snapshot, receivedAt: now }] };
     },
     "characters",
   );
+  return written;
 }
 
 /** Removes one Account Label's Character Snapshot, if present — a no-op (not an error) when
@@ -226,7 +252,7 @@ export async function deleteCharacterSnapshotFrom(
   await requireMutator().update(
     path,
     () => ({ snapshots: [] }),
-    (current) => ({ snapshots: current.snapshots.filter((s) => s.accountLabel !== accountLabel) }),
+    (current) => ({ snapshots: normalizeStored(current).snapshots.filter((s) => s.accountLabel !== accountLabel) }),
     "characters",
   );
 }
@@ -243,6 +269,6 @@ export function saveCharacterSnapshot(
   discordUserId: string,
   snapshot: Omit<CharacterSnapshot, "receivedAt">,
   now: number = Date.now(),
-): Promise<void> {
+): Promise<boolean> {
   return saveCharacterSnapshotTo(charactersDirValue, discordUserId, snapshot, now);
 }
