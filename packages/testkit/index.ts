@@ -28,7 +28,7 @@ import type { HostApi, HostDelivery, HostMappedDestination, HostMessage, HostSto
 let tmpCounter = 0;
 const TMP_TOKEN = randomBytes(4).toString("hex");
 
-function tmpPathFor(path: string, pid: number, token: string, counter: number): string {
+export function tmpPathFor(path: string, pid: number, token: string, counter: number): string {
   return `${path}.${pid}.${token}.${counter}.tmp`;
 }
 
@@ -41,6 +41,9 @@ function tmpPathFor(path: string, pid: number, token: string, counter: number): 
  *  real `setTimeout` (never a busy-wait -- that would block the whole event loop, starving every
  *  OTHER concurrent read/write in the same process for the entire delay).
  *
+ *  (`rename`, `maxAttempts` and `delayMs` are seams for the testkit's own tests; the defaults are the real
+ *  rename and the budget described below.)
+ *
  *  The numbers below came from isolated reproduction (`Bun.file(path).json()` polled every 1ms
  *  against 3 sequential real writes to the same path, matching #742's own reserve-then-startDrain-
  *  then-drainAndPersist shape), not a guess: with NO concurrent reader, 6/6 runs of that reproduction
@@ -52,18 +55,21 @@ function tmpPathFor(path: string, pid: number, token: string, counter: number): 
  *  under the 2s `waitUntil` timeout the plugin's own tests already use) cleared 8/8 reproduction runs
  *  with margin, worst case 16 attempts. If this ever needs to go even higher, that is real
  *  information about this runtime's GC/handle-release latency, not a sign the approach is wrong. */
-async function renameWithRetry(tmp: string, path: string): Promise<void> {
+export async function renameWithRetry(
+  tmp: string,
+  path: string,
+  // Seams for the testkit's own tests: the defaults are the real rename and the real budget.
+  { rename = renameSync, maxAttempts = 90, delayMs = 20 }: { rename?: (from: string, to: string) => void; maxAttempts?: number; delayMs?: number } = {},
+): Promise<void> {
   const RETRY_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
-  const MAX_ATTEMPTS = 90;
-  const RETRY_DELAY_MS = 20;
   for (let attempt = 1; ; attempt++) {
     try {
-      renameSync(tmp, path);
+      rename(tmp, path);
       return;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
-      if (attempt >= MAX_ATTEMPTS || code === undefined || !RETRY_CODES.has(code)) throw err;
-      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      if (attempt >= maxAttempts || code === undefined || !RETRY_CODES.has(code)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 }
@@ -158,7 +164,8 @@ const FAKE_DM_DELIVERY: HostDelivery = { guildId: null, channelId: "200000000000
  * plugin's tests exercise the degraded, pre-#736 path unless this is explicitly added -- matching
  * how a real host that predates them behaves.
  *
- * Each records its call in `calls`, a property of the object THIS returns, not of the four functions
+ * Each records its call in `calls` (deep-copying `message`, and `edit`'s `delivery`, at call time so a later
+ * mutation by the caller can't rewrite the record), a property of the object THIS returns, not of the four functions
  * themselves. Spreading that object into `makeFakeHost`'s overrides does copy `calls` onto the host
  * value too (a plain object spread copies every own key) -- but `makeFakeHost`'s `HostApi` return
  * type has no `calls` field, so typed code can never read it back off the host either way. Read
@@ -196,15 +203,15 @@ export function makeFakeDelivery(): {
   return {
     calls,
     async post(guildId, destination, message) {
-      calls.post.push({ guildId, destination, message });
+      calls.post.push({ guildId, destination, message: structuredClone(message) });
       return { ...FAKE_POST_DELIVERY, guildId };
     },
     async dm(userId, message) {
-      calls.dm.push({ userId, message });
+      calls.dm.push({ userId, message: structuredClone(message) });
       return { ...FAKE_DM_DELIVERY };
     },
     async edit(delivery, message) {
-      calls.edit.push({ delivery, message });
+      calls.edit.push({ delivery: { ...delivery }, message: structuredClone(message) });
     },
     async destinations(): Promise<HostMappedDestination[]> {
       calls.destinations += 1;
@@ -223,11 +230,15 @@ export function makeFakeInteraction(
   customId: string,
   overrides: Partial<{ replied: boolean; deferred: boolean; reply: (opts: unknown) => Promise<unknown> }> = {},
 ): MessageComponentInteraction | ModalSubmitInteraction {
-  return {
+  const interaction = {
     customId,
     replied: false,
     deferred: false,
-    reply: async () => {},
+    // Like discord.js, a successful reply() leaves the interaction `replied`.
+    reply: async () => {
+      interaction.replied = true;
+    },
     ...overrides,
-  } as unknown as MessageComponentInteraction;
+  };
+  return interaction as unknown as MessageComponentInteraction;
 }

@@ -6,7 +6,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { makeFakeDelivery, makeFakeHost, makeFakeInteraction, makeRealStorage } from "./index.js";
+import { makeFakeDelivery, makeFakeHost, makeFakeInteraction, makeRealStorage, renameWithRetry, tmpPathFor } from "./index.js";
 
 describe("makeFakeHost", () => {
   test("requires name and derives dataDir from it", () => {
@@ -95,6 +95,20 @@ describe("makeFakeDelivery (#736)", () => {
     const mapped = [{ guildId: "1", guildName: "g", destination: "news" }];
     const host = makeFakeHost({ name: "wow", ...makeFakeDelivery(), destinations: async () => mapped });
     expect(await host.destinations!()).toEqual(mapped);
+  });
+
+  test("recorded calls are snapshots: mutating the arguments afterwards doesn't change them", async () => {
+    const delivery = makeFakeDelivery();
+    const message = { content: "before" };
+    const target = { guildId: "1", channelId: "2", messageId: "3" };
+    await delivery.post("1", "alerts", message);
+    await delivery.dm("9", message);
+    await delivery.edit(target, message);
+    message.content = "after";
+    target.messageId = "mutated";
+    expect(delivery.calls.post[0]!.message).toEqual({ content: "before" });
+    expect(delivery.calls.dm[0]!.message).toEqual({ content: "before" });
+    expect(delivery.calls.edit[0]).toEqual({ delivery: { guildId: "1", channelId: "2", messageId: "3" }, message: { content: "before" } });
   });
 
   test("two instances never share recorded calls", async () => {
@@ -190,7 +204,86 @@ describe("makeRealStorage", () => {
   });
 });
 
+describe("renameWithRetry", () => {
+  const lockError = (code: string) => Object.assign(new Error(code), { code });
+
+  test("retries a transient EPERM/EBUSY/EACCES and then succeeds", async () => {
+    for (const code of ["EPERM", "EBUSY", "EACCES"]) {
+      let calls = 0;
+      await renameWithRetry("a", "b", {
+        delayMs: 0,
+        rename: () => {
+          if (++calls < 3) throw lockError(code);
+        },
+      });
+      expect(calls).toBe(3);
+    }
+  });
+
+  test("throws a non-lock error on the first attempt, without retrying", async () => {
+    let calls = 0;
+    await expect(
+      renameWithRetry("a", "b", {
+        delayMs: 0,
+        rename: () => {
+          calls++;
+          throw lockError("ENOENT");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(calls).toBe(1);
+  });
+
+  test("gives up with the lock error once the attempt budget is spent", async () => {
+    let calls = 0;
+    await expect(
+      renameWithRetry("a", "b", {
+        maxAttempts: 4,
+        delayMs: 0,
+        rename: () => {
+          calls++;
+          throw lockError("EBUSY");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "EBUSY" });
+    expect(calls).toBe(4);
+  });
+});
+
+describe("tmp file names", () => {
+  test("tmpPathFor differs by pid, token and counter", () => {
+    const names = new Set([
+      tmpPathFor("/d/x.json", 1, "aa", 1),
+      tmpPathFor("/d/x.json", 2, "aa", 1),
+      tmpPathFor("/d/x.json", 1, "bb", 1),
+      tmpPathFor("/d/x.json", 1, "aa", 2),
+    ]);
+    expect(names.size).toBe(4);
+    expect(tmpPathFor("/d/x.json", 7, "tok", 3)).toBe("/d/x.json.7.tok.3.tmp");
+  });
+
+  test("concurrent writes to one path leave valid JSON and no stray tmp files", async () => {
+    const d = mkdtempSync(join(tmpdir(), "testkit-tmp-"));
+    try {
+      const storage = makeRealStorage();
+      const path = join(d, "shared.json");
+      await Promise.all(Array.from({ length: 20 }, (_, n) => storage.writeJsonAtomic(path, { n })));
+      const final = (await storage.readJsonOrFresh(path, () => ({ n: -1 }), "test")) as { n: number };
+      expect(final.n).toBeGreaterThanOrEqual(0);
+      expect(readdirSync(d)).toEqual(["shared.json"]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("makeFakeInteraction", () => {
+  test("reply() leaves the interaction replied", async () => {
+    const interaction = makeFakeInteraction("plugin:x");
+    await interaction.reply({ content: "ok" });
+    expect(interaction.replied).toBe(true);
+  });
+
   test("carries the FULL customId through, unstripped", () => {
     const interaction = makeFakeInteraction("plugin:action:sub");
     expect(interaction.customId).toBe("plugin:action:sub");
