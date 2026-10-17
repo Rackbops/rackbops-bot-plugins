@@ -22,7 +22,7 @@ command's own replies name whichever form the user invoked.
   restart mid-delivery) so a retry with the same `request_id` of a `delivered` or `pending` request
   never delivers again.
 - A retry of a `failed` or `unknown` request resets it to `pending` and delivers again. A tick
-  re-drives any delivery a restart left `unknown` the same way, and prunes records older than 8
+  re-drives any delivery a restart left `unknown`, and prunes records older than 8
   days. Delivery is therefore at-least-once: a restart between the Discord call and the state
   write can post a second copy.
 - `kind: "post"` goes through `host.post` (or `host.announce` when the host predates it); `kind: "dm"`
