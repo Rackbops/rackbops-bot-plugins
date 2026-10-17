@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- A failed first lookup of the tunnel sidecar's address no longer leaves the trusted-proxy set empty for a minute: with nothing resolved yet, the next request retries 5 seconds after the failure. A `CF-Connecting-IP` header with more than one value is now untrusted and the peer address is used, instead of taking the first value (Rackbops/rackbops-bot-plugins#181, #332).
+- A failed first lookup of the tunnel sidecar's address no longer leaves the trusted-proxy set empty for a minute: with nothing resolved yet, the first request at least 5 seconds after the failure retries, and the request after that is trusted. A `CF-Connecting-IP` header with more than one value is now untrusted and the peer address is used, instead of taking the first value (Rackbops/rackbops-bot-plugins#181, #332).
 
 ## [1.7.0] - 2026-10-14
 

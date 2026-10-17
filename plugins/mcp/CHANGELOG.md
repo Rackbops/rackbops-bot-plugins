@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- A delivery whose Discord send succeeded but whose final record write failed is no longer posted a second time: the outcome is held in memory, answered from there, and its write is retried by the next tick. A crash between the send and the write can still post once more (Rackbops/rackbops-bot-plugins#140, #321).
+- A delivery whose Discord send succeeded but whose final record write failed is no longer posted a second time: the outcome is held in memory, answered from there, and its write is retried by the next tick for up to 8 days. A crash between the send and the write can still post once more (Rackbops/rackbops-bot-plugins#140, #321).
 - Delivery failure logs carry only the error's name, status and code, never the message that was sent (Rackbops/rackbops-bot-plugins#318).
 - A blank `MCP_BRIDGE_TOKEN` is treated as unset (the bridge answers 503) (#318).
 - A wrong pairing code no longer rewrites the registry; a registry file of the wrong shape no longer breaks every command; a retry that loses the delivery race now reads `pending` instead of the stale `failed` (#187, #328).

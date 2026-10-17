@@ -4,12 +4,12 @@
 
 ### Added
 
-- **Refresh usr links.** The admin page's "usr links" section has a second button. One press asks usr again for everyone on the list who is linked and keeps the account usr has for each of them now, so someone usr moved to an account they already had can sign in through usr straight after, without an admin running `/allow` for them one at a time. It ends with a summary of how many changed, are new, failed or were skipped, and names each failure. A refresh changes usr: it puts `tracker:member` back for everyone still linked and in the server, and someone whose usr link a usr admin removed gets a new usr account (Rackbops/rackbops-bot-plugins#170, #316).
+- **Refresh usr links.** The admin page's "usr links" section has a second button. One press asks usr again for everyone on the list who is linked and keeps the account usr has for each of them now, so someone usr moved to an account they already had can sign in through usr straight after, without an admin running `/allow` for them one at a time. It ends with a summary of how many changed, are new, failed or were skipped, and names each failure. A refresh changes usr: it puts the tracker's member role back for everyone still linked and in the server, and someone whose usr link a usr admin removed gets a new usr account (Rackbops/rackbops-bot-plugins#170, #316).
 
 ### Fixed
 
 - A city-hall key or Access value that is not visible ASCII is refused when it is set (#214, #314).
-- A renewal amount is capped at 1,000,000, in the command, the web editor and the Task API; a renewal saved earlier with a larger amount must be lowered before it can be edited again (#209, #315).
+- A renewal amount is capped at 1,000,000, in the command, the web editor and the Task API; a renewal saved earlier with a larger amount must be lowered before an edit that carries the amount will be accepted (#209, #315).
 
 ## [0.30.0] - 2026-10-16
 

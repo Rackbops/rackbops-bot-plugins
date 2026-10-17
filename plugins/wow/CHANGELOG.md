@@ -6,7 +6,7 @@
 
 - The Darkmoon Faire, weekly-reset and realm announcements now write their dedup key to `wow.json` before posting and put it back if the post fails, so a stop while a post is in flight no longer re-announces after the restart. A hard kill between the save and the post loses that one announcement (Rackbops/rackbops-bot-plugins#200, #331).
 - `wow.json` gains `realmKey` (`<region>/<realm>`): a realm status stored for another realm or region is no longer compared with the new realm's reading, so switching realm or region seeds silently instead of announcing a phantom up/down. A file without the key is read as the realm configured now (#200, #331).
-- Each Blizzard request is bounded at 10 seconds and stops with the host's tick signal, so a connection that is accepted but never answered no longer holds a tick in flight (Rackbops/rackbops-bot-plugins#319).
+- Each Blizzard request is bounded at 10 seconds and the realm tick's requests also stop with the host's tick signal, so a connection that is accepted but never answered no longer holds a tick in flight (Rackbops/rackbops-bot-plugins#319).
 - The admin tab rejects a time zone this engine does not know, instead of saving a name that fails at the next start (#318).
 
 ## [1.0.2] - 2026-10-14
