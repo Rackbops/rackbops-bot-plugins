@@ -86,9 +86,11 @@ export const CODE_LENGTH = 27;
 
 /** One code, drawn via `randomInt` (rejection-sampled, unbiased) rather than a modulo of
  *  `randomBytes` -- avoids the small bias a 256-values-into-30-buckets modulo would introduce. */
-export function generateCode(): string {
+export const defaultDraw: (max: number) => number = randomInt;
+
+export function generateCode(draw: (max: number) => number = defaultDraw): string {
   let code = "";
-  for (let i = 0; i < CODE_LENGTH; i++) code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
+  for (let i = 0; i < CODE_LENGTH; i++) code += CODE_ALPHABET[draw(CODE_ALPHABET.length)];
   return code;
 }
 

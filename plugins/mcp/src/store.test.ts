@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -70,6 +70,16 @@ describe("set / get", () => {
 describe("list", () => {
   test("empty when nothing has been reserved, and an absent directory is not an error", async () => {
     expect(await store.list()).toEqual([]);
+  });
+
+  test("ignores a temp or moved-aside corrupt sibling, listing only <id>.json files", async () => {
+    const id = "a".repeat(64);
+    await store.reserve(id, "post", TARGET, BODY, () => new Date(NOW));
+    const deliveries = join(dir, "mcp", "deliveries");
+    writeFileSync(join(deliveries, `${id}.json.corrupt-123`), "{");
+    writeFileSync(join(deliveries, `${"b".repeat(64)}.json.tmp-9`), "{}");
+    writeFileSync(join(deliveries, "notes.txt"), "x");
+    expect(await store.list()).toEqual([id]); // mutation: dropping the .json filter lists the siblings
   });
 
   test("lists every reserved request_id", async () => {
