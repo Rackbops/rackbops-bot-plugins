@@ -110,7 +110,7 @@ async function fetchRealmIndex(region: string): Promise<RealmIndexEntry[]> {
 
 /**
  * Resolve `realm` (raw user input) to Blizzard's canonical slug via the realm index, for the one
- * case `realmSlug`'s heuristic in ../wow/transmog.ts can't get right on its own: a literal hyphen
+ * case `realmSlug`'s heuristic in ./transmog.ts can't get right on its own: a literal hyphen
  * in the realm's NAME (Azjol-Nerub, Arak-arahm) that Blizzard's slug drops but the heuristic
  * keeps (#32). Meant to be called only after the heuristic slug has already failed both the
  * equipment fetch and `realmExists`, so a working lookup never pays for the extra call.

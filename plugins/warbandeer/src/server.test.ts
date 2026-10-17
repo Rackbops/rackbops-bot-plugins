@@ -311,7 +311,7 @@ describe("handleRequest — POST /characters", () => {
     expect(second.status).toBe(401); // not 429 — a different IP, its own bucket
   });
 
-  test("the pre-auth IP bucket is charged on every request, success or failure (known tradeoff — see docs/adr/0001)", async () => {
+  test("the pre-auth IP bucket is charged on every request, success or failure (known tradeoff)", async () => {
     const deps = makeDeps({ authFailureLimiter: createRateLimiter({ windowMs: 60_000, max: 1 }) });
     const success = await handleRequest(
       req("POST", "/characters", { body: "{}", headers: { Authorization: "Bearer real-token" } }),

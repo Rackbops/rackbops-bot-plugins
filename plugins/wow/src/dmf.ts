@@ -87,7 +87,7 @@ export function dmfKey(window: DmfWindow): string {
 }
 
 // Pure decision: is there a new Darkmoon Faire to announce right now? Mirrors
-// decideRealmTransition/decideReleaseAnnouncements so announce.ts stays a thin wrapper.
+// decideRealmTransition/decideReleaseAnnouncements so the scheduler tick in ./ticks.ts stays a thin wrapper.
 export function decideDmfAnnouncement(
   now: Date,
   announcedFor: string | undefined,

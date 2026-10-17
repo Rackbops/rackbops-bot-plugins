@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { ADMIN_API_VERSION } from "../../../../packages/api/admin.js"; // runtime import: the const, not just the types
 import type { AdminApi } from "../../../../packages/api/admin.js";
 import type { PluginStateEntry } from "../../../../packages/api/contract.js";
 import {
@@ -38,6 +39,10 @@ describe("wow admin tab helpers (#123 realm chooser)", () => {
   test("adminApiVersion is 1 and REGIONS is us + eu", () => {
     expect(adminApiVersion).toBe(1);
     expect([...REGIONS]).toEqual(["us", "eu"]);
+  });
+
+  test("adminApiVersion equals the panel contract's ADMIN_API_VERSION", () => {
+    expect(adminApiVersion).toBe(ADMIN_API_VERSION);
   });
 
   test("validateRealmSlug accepts a valid slug (accents included) or blank, rejects the rest", () => {
