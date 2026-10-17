@@ -244,6 +244,41 @@ describe("the redrive tick", () => {
     expect((await externalStore.get(REQUEST_ID))!.state).toBe("delivered");
   });
 
+  test("a write that fails after the send is retried alone: the message is posted once, however many ticks run (#140)", async () => {
+    let postCalls = 0;
+    let failing = true;
+    const realStorage = makeRealStorage();
+    const flakyStorage = {
+      ...realStorage,
+      writeJsonAtomic: async (path: string, data: unknown) => {
+        if (failing && path.includes(REQUEST_ID)) throw new Error("disk full");
+        return realStorage.writeJsonAtomic(path, data);
+      },
+    };
+    const host = makeFakeHost({
+      name: "mcp",
+      dataDir: dir,
+      storage: flakyStorage,
+      env: { MCP_BRIDGE_TOKEN: TOKEN },
+      post: async () => {
+        postCalls += 1;
+        return { guildId: GUILD, channelId: "222222222222222222", messageId: "333333333333333333" };
+      },
+    });
+    externalStore = createDeliveryStore(dir, realStorage);
+    await externalStore.set(REQUEST_ID, { state: "unknown", kind: "post", target: TARGET, body: BODY, createdAt: new Date().toISOString() });
+
+    const plugin = createPlugin(host);
+    for (let i = 0; i < 3; i++) await plugin.ticks![0]!.run();
+    expect(postCalls).toBe(1); // mutation: dropping the tick's unpersisted skip re-posts every tick
+    expect((await externalStore.get(REQUEST_ID))!.state).toBe("unknown"); // the write has not landed yet
+
+    failing = false;
+    await plugin.ticks![0]!.run();
+    expect(postCalls).toBe(1);
+    expect((await externalStore.get(REQUEST_ID))!.state).toBe("delivered"); // mutation: dropping the flush leaves it unknown
+  });
+
   test("skips entries that are not unknown, and prunes nothing that's still fresh", async () => {
     const host = makeFakeHost({ name: "mcp", dataDir: dir, env: { MCP_BRIDGE_TOKEN: TOKEN } });
     externalStore = createDeliveryStore(dir, host.storage);

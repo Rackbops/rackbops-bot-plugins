@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { makeFakeDelivery, makeFakeHost, makeRealStorage } from "../../../packages/testkit/index.js";
 import type { HostApi, PluginHttpInfo } from "../../../packages/api/contract.js";
 import { createRateLimiter, type RateLimiter } from "./auth.js";
-import { createDrainLock, createEditQueue, type DrainLock, type EditQueue } from "./drain.js";
+import { createDrainLock, createEditQueue, createUnpersistedOutcomes, type DrainLock, type EditQueue, type UnpersistedOutcomes } from "./drain.js";
 import { handleMcpHttp, type HttpDeps } from "./http.js";
 import { createRegistryStore, type RegistryStore } from "./registry.js";
 import { createDeliveryStore, type DeliveryStore } from "./store.js";
@@ -47,6 +47,7 @@ let registry: RegistryStore;
 let limiter: RateLimiter;
 let drainLock: DrainLock;
 let editQueue: EditQueue;
+let unpersisted: UnpersistedOutcomes;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mcp-http-"));
@@ -55,6 +56,7 @@ beforeEach(() => {
   limiter = createRateLimiter();
   drainLock = createDrainLock();
   editQueue = createEditQueue();
+  unpersisted = createUnpersistedOutcomes();
 });
 
 afterEach(() => {
@@ -64,7 +66,7 @@ afterEach(() => {
 // No default for `token`: a JS default parameter also fires when the caller passes `undefined`
 // explicitly, which is exactly the value the "token unset" tests need to get through untouched.
 function deps(host: HostApi, token: string | undefined): HttpDeps {
-  return { host, store, registry, editQueue, token, limiter, drainLock, now: () => new Date(NOW), log: { info() {}, warn() {}, error() {} } };
+  return { host, store, registry, editQueue, unpersisted, token, limiter, drainLock, now: () => new Date(NOW), log: { info() {}, warn() {}, error() {} } };
 }
 
 // Matches auth.test.ts's own makeLog() shape/convention.
@@ -629,3 +631,31 @@ describe("handleMcpHttp: a throw from the initial state write does not strand th
     expect((await store.get(REQUEST_ID))!.state).toBe("delivered");
   });
 });
+
+describe("handleMcpHttp: an outcome whose write failed after the send (#140)", () => {
+  test("GET and a retried POST answer delivered from memory and never re-send", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "mcp", ...delivery });
+    const d = deps(host, TOKEN);
+    // On disk the record is still pending; in memory the send already succeeded.
+    await store.reserve(REQUEST_ID, "post", { guildId: GUILD, destination: "alerts" }, { content: "hi" }, () => new Date(NOW));
+    d.unpersisted.set(REQUEST_ID, {
+      state: "delivered",
+      kind: "post",
+      target: { guildId: GUILD, destination: "alerts" },
+      body: { content: "hi" },
+      createdAt: new Date(NOW).toISOString(),
+      messageRef: REQUEST_ID,
+      url: "https://discord.com/channels/1/2/3",
+      delivery: { guildId: GUILD, channelId: "2", messageId: "3" },
+    });
+
+    const got = await handleMcpHttp(get(`/deliveries/${REQUEST_ID}`, { authorization: `Bearer ${TOKEN}` }), INFO(`/deliveries/${REQUEST_ID}`), d);
+    expect(((await got.json()) as { state: string }).state).toBe("delivered");
+
+    const retried = await handleMcpHttp(post("/deliveries", validDeliveryBody(), { authorization: `Bearer ${TOKEN}` }), INFO("/deliveries"), d);
+    expect(((await retried.json()) as { state: { state: string } }).state.state).toBe("delivered");
+    expect(delivery.calls.post).toHaveLength(0);
+  });
+});
+

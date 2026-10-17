@@ -24,7 +24,8 @@ command's own replies name whichever form the user invoked.
 - A retry of a `failed` or `unknown` request resets it to `pending` and delivers again. A tick
   re-drives any delivery a restart left `unknown`, and prunes records older than 8
   days. Delivery is therefore at-least-once: a restart between the Discord call and the state
-  write can post a second copy.
+  write can post a second copy. A state write that fails without a restart does not: the outcome is
+  held in memory, answered from there, and the tick retries the write alone (that memory is lost on a restart).
 - `kind: "post"` goes through `host.post` (or `host.announce` when the host predates it); `kind: "dm"`
   goes through `host.dm`, to a registered user only; `kind: "edit"` goes through `host.edit`, applied
   against the stored delivery `message_ref` names. `GET /capabilities` reports `dm`/`edit` as `true`
