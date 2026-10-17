@@ -396,7 +396,11 @@ export interface PluginHttpInfo {
    *  never redirect to it unchecked. */
   path: string;
   /** `CF-Connecting-IP` when the request came through the deployment's own tunnel, falling back to the
-   *  socket address, or `"unknown"` (ADR-0007 decision 2 and its #319 amendment). */
+   *  socket address, or `"unknown"` (ADR-0007 decision 2 and its #319 amendment). The host honours the
+   *  header only from a peer whose address matches `TRUSTED_PROXY_HOST`, and only when it is a single IP
+   *  literal; with that unset (the default), or for any other peer or header, this is the socket peer,
+   *  which behind the tunnel is the sidecar's address for every caller. A per-IP limiter then degrades to
+   *  one shared bucket, so do not build a per-client lockout on it that one caller can trip for everyone. */
   clientIp: string;
 }
 
