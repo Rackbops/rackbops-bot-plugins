@@ -15,6 +15,7 @@
     "build": "bun run scripts/build-plugins.ts",
     "generate-index": "bun run scripts/generate-index.ts",
     "check-contract": "bun run scripts/check-contract.ts",
+    "check-core-commands": "bun run scripts/check-core-commands.ts",
     "check-published": "bun run scripts/check-published.ts"
   },
   "devDependencies": {

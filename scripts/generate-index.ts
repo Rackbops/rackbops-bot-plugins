@@ -10,6 +10,7 @@
 // extraction and validation are unit-tested without a subprocess; the CLI below is a thin wrapper.
 import { readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { CORE_COMMAND_NAMES } from "./core-commands.js";
 import type { PluginDestination, PluginIndex, PluginIndexEntry, PluginEnvKey, PluginRelease } from "../packages/api/contract.js";
 
 const ROOT = new URL("../", import.meta.url);
@@ -303,6 +304,9 @@ export async function buildIndex(
     if (!NAME_RE.test(name)) {
       throw new Error(`${name}: plugin directory name must match ${NAME_RE.source}`);
     }
+    if (CORE_COMMAND_NAMES.includes(name)) {
+      throw new Error(`${name}: plugin name collides with the bot's core command "${name}" (the bot skips such a plugin)`);
+    }
     const dir = new URL(`${name}/`, pluginsDir);
     let pkg: PluginPackageJson;
     try {
@@ -321,6 +325,9 @@ export async function buildIndex(
     const version = requireString(pkg.version, `${name}: package.json version`);
     const commands = requireStringArray(bp.commands, `${name}: botPlugin.commands`);
     for (const command of commands) {
+      if (CORE_COMMAND_NAMES.includes(command)) {
+        throw new Error(`${name}: command "${command}" collides with the bot's core command (the bot skips such a plugin)`);
+      }
       const owner = commandOwner.get(command);
       if (owner) throw new Error(`command "${command}" is declared by both "${owner}" and "${name}"`);
       commandOwner.set(command, name);
