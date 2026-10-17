@@ -124,6 +124,30 @@ describe("the city-hall Executor's settings", () => {
     expect(message).not.toContain("has space");
   });
 
+  it("refuses a key or Access value that is not visible ASCII, naming the variable and never the value (#214)", () => {
+    const base = {
+      TRACKER_CITY_HALL_URL: URL_,
+      TRACKER_CITY_HALL_KEY: KEY,
+      TRACKER_CITY_HALL_CAPABILITY: "claude-cli:subscription",
+      TRACKER_CITY_HALL_ACCESS_CLIENT_ID: "id.access",
+      TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET: "s3cret",
+    };
+    expect(parseCityHallConfig(base).config?.access).toEqual({ clientId: "id.access", clientSecret: "s3cret" });
+    const bad = ["k\u00e9y-latin1", "k\u2603y-snowman", "k\u0001y-control", "k\u007fy-delete"];
+    for (const name of ["TRACKER_CITY_HALL_KEY", "TRACKER_CITY_HALL_ACCESS_CLIENT_ID", "TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET"]) {
+      for (const value of bad) {
+        let message = "";
+        try {
+          parseCityHallConfig({ ...base, [name]: value });
+        } catch (err) {
+          message = (err as Error).message;
+        }
+        expect(message).toBe(`${name} has a character in it that is not visible ASCII (letters, digits and punctuation only)`);
+        expect(message).not.toContain(value.slice(3));
+      }
+    }
+  });
+
   it("refuses a URL with credentials in it without echoing it", () => {
     const base = { TRACKER_CITY_HALL_KEY: KEY, TRACKER_CITY_HALL_CAPABILITY: "claude-cli:subscription" };
     for (const url of ["https://user:hunter2@city-hall.example.com", "https://hunter2@city-hall.example.com/"]) {
