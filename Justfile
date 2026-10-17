@@ -36,6 +36,10 @@ index-check:
 index:
     bun run generate-index
 
+# Fail if a package@version in plugins.json is not on npm yet (needs network; NOT part of `check`: a bump PR fails it until tagged)
+published-check:
+    bun run check-published
+
 # Fail if packages/api/contract.d.ts has drifted from rackbops-discord-bot's contract.ts (needs network)
 contract-check:
     bun run check-contract

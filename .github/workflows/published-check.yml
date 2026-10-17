@@ -1,0 +1,29 @@
+name: published-check
+
+# rackbops-bot-plugins#135: plugins.json is committed in the PR that bumps a plugin, but npm only has
+# the version once its `<name>-v<semver>` tag is pushed and publish.yml has run. This fails when a
+# version the index advertises is still missing on npm. It is deliberately NOT a PR check (a bump PR
+# is meant to fail it until it is tagged) and not a required check; the rule is "tag right after
+# merge", and this is the alarm if that does not happen. Exit 1 = a version is missing; exit 2 = the
+# npm registry could not be read (not the same thing).
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  published-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: extractions/setup-just@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - run: just install
+      - run: just published-check
