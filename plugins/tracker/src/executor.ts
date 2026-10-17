@@ -170,7 +170,8 @@ function value(env: Readonly<Record<string, string | undefined>>, key: string): 
  * capability: off, with `missing` naming what is not set, so the plugin can say why (there is no
  * default capability: a guessed tag could route the tracker's Jobs to another agent, item 71). A
  * value that is set but malformed throws, naming the variable and never echoing a secret, as
- * `TRACKER_WEB_URL` does. The Access pair is both or neither.
+ * `TRACKER_WEB_URL` does. The Access pair is both or neither. The key and the Access pair are
+ * visible ASCII only, as their manifest formats say.
  */
 export function parseCityHallConfig(env: Readonly<Record<string, string | undefined>>): CityHallSetting {
   const url = value(env, ENV.url);
@@ -201,7 +202,14 @@ export function parseCityHallConfig(env: Readonly<Record<string, string | undefi
   if (capability !== undefined && (capability.length > MAX_CAPABILITY || !CAPABILITY.test(capability))) {
     throw new Error(`${ENV.capability}: "${capability}" is not a capability tag (lowercase words joined by ":" or "-", e.g. claude-cli:subscription)`);
   }
-  if (key !== undefined && /\s/.test(key)) throw new Error(`${ENV.key} has whitespace in it`);
+  // Each goes out as a header value. One outside visible ASCII (the manifest's `^[!-~]+$`,
+  // decision 8, #307) is refused here, naming the variable, never the value: fetch would otherwise
+  // throw on it (or send bytes city-hall never issued) and the lane would read as unreachable.
+  for (const [name, v] of [[ENV.key, key], [ENV.accessId, accessId], [ENV.accessSecret, accessSecret]] as const) {
+    if (v === undefined) continue;
+    if (/\s/.test(v)) throw new Error(`${name} has whitespace in it`);
+    if (!/^[!-~]+$/.test(v)) throw new Error(`${name} has a character in it that is not visible ASCII (letters, digits and punctuation only)`);
+  }
   const missing = [
     ...(origin === undefined ? [ENV.url] : []),
     ...(key === undefined ? [ENV.key] : []),
