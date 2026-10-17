@@ -116,23 +116,25 @@ pin only needs to change in one place.
   (history, for `plugins/tracker` #79). 0.3.0's `Lanes.tickNotify` ran every queued due run
   whatever its task's status, and its `runOne` failed the whole run when one recipient's send threw,
   so the tracker's first notify lane filtered a paused task's due runs out of the store it handed
-  docket. 0.4.0 took both over: `Lanes.due()` keeps only an active task's runs and `runOne`
-  re-checks the status before a run starts (read in docket-core 0.10.0's `dist/dispatch.js`,
+  docket. 0.4.0 took both over: `Lanes.due()` leaves a paused, done or archived task's runs queued
+  and `runOne` re-checks the status before a run starts (an execute Job already out is still
+  collected) (read in docket-core 0.10.0's `dist/dispatch.js`,
   2026-10-17), and each person's copy of a run is its own delivery row, claimed and settled on its
-  own (`dist/delivery.js` `deliver`). The tracker's views of its store (`taskStore`/`tasksStore`,
-  `notify-lane.ts`) now only scope a pass to its own tasks; what is still the tracker's is plan
+  own (`dist/delivery.js` `deliver`). The tracker's views of its store (`notify-lane.ts`'s `taskStore`,
+  and `tasksStore` for the execute tick) now only scope a pass to the task or tasks it runs; what is still the tracker's is plan
   5.5's pause after three failed DMs, which pauses every task that would DM that person
   (`delivery-health.ts`). Likewise 0.3.0's `registrationText` wrapped a usr link, so `/register`
   built its own text; since 0.4.0 it carries no link, and `/register` uses it with the tracker's
   pause note (`actions.ts` `registeredText`), with the usr sign-up link appended by
-  `registerPerson` when the usr link is on.
+  `registerPerson` when the usr link is on and the person has not signed up there.
 - **docket-core's Store port never deletes a person or a task, and lists blocks only per
   owner/recipient pair** (`listBlocks`; read in 0.10.0's `dist/ports.d.ts`, 2026-10-17). So the
   admin view's lists of people and of blocks in force, and forget-me's erasure of a person, run
   plain SQL over the plugin's own database (`plugins/tracker/src/roster.ts`), as `admissions.ts` and
   `delivery-health.ts` already do; docket is not changed. 0.3.0 (#80 slice 3) also had no list of
-  people; `listUsers` came in 0.4.0, but the admin view's rows carry admission, delivery-pause and
-  task counts a docket `User` has not, so its query stayed. The port's per-person forget-me deletes
+  people; `listUsers` came in 0.4.0, and the admin view still reads people with its own query
+  (`roster.ts` `people()`), which joins admissions, delivery health and task counts a docket `User`
+  does not carry -- inferred to be why it was not moved to `listUsers`; no comment says. The port's per-person forget-me deletes
   (`deleteDeliveries` from 0.4.0, `deleteFindings` from 0.5.0) are implemented by the tracker's own
   statements (`store.ts` `deleteDeliveriesOf`/`deleteFindingsOf`), which roster.ts's erasure runs
   inside its own transaction.
