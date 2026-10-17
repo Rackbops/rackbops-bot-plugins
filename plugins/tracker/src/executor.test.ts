@@ -145,6 +145,13 @@ describe("the city-hall Executor's settings", () => {
         expect(message).toBe(`${name} has a character in it that is not visible ASCII (letters, digits and punctuation only)`);
         expect(message).not.toContain(value.slice(3));
       }
+      let spaced = "";
+      try {
+        parseCityHallConfig({ ...base, [name]: "has space-inside" });
+      } catch (err) {
+        spaced = (err as Error).message;
+      }
+      expect(spaced).toBe(`${name} has whitespace in it`);
     }
   });
 
