@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -12,6 +12,7 @@ import {
   generateGeneration,
   generationOf,
   hashCode,
+  normalizeRegistry,
   issueCode,
   pruneRegistry,
   redeemCode,
@@ -189,7 +190,7 @@ describe("redeemCode", () => {
     const issued = issueCode(registered.registry, USER, NAME, NOW);
     if (!issued.outcome.ok) throw new Error("unreachable");
 
-    const { registry, outcome } = redeemCode(issued.registry, issued.outcome.code, NOW);
+    const { registry, outcome } = redeemCode(issued.registry, issued.outcome.code);
     expect(outcome).toEqual({ ok: true, discordUserId: USER, generation: registered.outcome.generation });
     expect(registry.users[USER]!.codes).toHaveLength(0);
   });
@@ -198,13 +199,13 @@ describe("redeemCode", () => {
     const registered = registerUser(freshRegistry(), USER, NAME, NOW).registry;
     const issued = issueCode(registered, USER, NAME, NOW);
     if (!issued.outcome.ok) throw new Error("unreachable");
-    const first = redeemCode(issued.registry, issued.outcome.code, NOW);
-    const second = redeemCode(first.registry, issued.outcome.code, NOW);
+    const first = redeemCode(issued.registry, issued.outcome.code);
+    const second = redeemCode(first.registry, issued.outcome.code);
     expect(second.outcome).toEqual({ ok: false });
   });
 
   test("an unknown code fails", () => {
-    const { outcome } = redeemCode(freshRegistry(), "NOTAREALCODEXXXXXXXXXXXXXX", NOW);
+    const { outcome } = redeemCode(freshRegistry(), "NOTAREALCODEXXXXXXXXXXXXXX");
     expect(outcome).toEqual({ ok: false });
   });
 
@@ -213,7 +214,7 @@ describe("redeemCode", () => {
     const issued = issueCode(registered, USER, NAME, NOW);
     if (!issued.outcome.ok) throw new Error("unreachable");
     const pruned = pruneRegistry(issued.registry, new Date(NOW.getTime() + 11 * 60 * 1000));
-    const { outcome } = redeemCode(pruned, issued.outcome.code, new Date(NOW.getTime() + 11 * 60 * 1000));
+    const { outcome } = redeemCode(pruned, issued.outcome.code);
     expect(outcome).toEqual({ ok: false });
   });
 
@@ -222,7 +223,7 @@ describe("redeemCode", () => {
     const issued = issueCode(registered, USER, NAME, NOW);
     if (!issued.outcome.ok) throw new Error("unreachable");
     const unregistered = unregisterUser(issued.registry, USER).registry;
-    const { outcome } = redeemCode(unregistered, issued.outcome.code, NOW);
+    const { outcome } = redeemCode(unregistered, issued.outcome.code);
     expect(outcome).toEqual({ ok: false });
   });
 });
@@ -391,5 +392,107 @@ describe("createRegistryStore: code expiry and the five-code cap, through the st
     }
     expect((await store.redeem(codes[0]!, at(10))).ok).toBe(false); // dropped by the cap
     for (const code of codes.slice(1)) expect((await store.redeem(code, at(10))).ok).toBe(true);
+  });
+});
+
+describe("normalizeRegistry", () => {
+  const entry = { generation: "g", displayName: NAME, registeredAt: NOW.toISOString(), codes: [{ hash: "h", expiresAt: NOW.toISOString() }] };
+
+  test.each([[null], [undefined], [[]], ["x"], [{}], [{ users: null }], [{ users: [] }]])("%p reads as an empty registry", (raw) => {
+    expect(normalizeRegistry(raw)).toEqual(freshRegistry());
+  });
+
+  test("a user id of __proto__ is kept as an own key", () => {
+    const users = JSON.parse(`{"__proto__": ${JSON.stringify(entry)}}`);
+    expect(Object.hasOwn(normalizeRegistry({ users }).users, "__proto__")).toBe(true);
+  });
+
+  test("a well-formed registry passes through unchanged", () => {
+    expect(normalizeRegistry({ users: { [USER]: entry } })).toEqual({ users: { [USER]: entry } });
+  });
+
+  test.each([
+    ["a null entry", null],
+    ["an entry without codes", { ...entry, codes: undefined }],
+    ["codes that is not an array", { ...entry, codes: {} }],
+    ["a code without a hash", { ...entry, codes: [{ expiresAt: "x" }] }],
+    ["a null code", { ...entry, codes: [null] }],
+    ["a numeric generation", { ...entry, generation: 7 }],
+    ["a missing displayName", { ...entry, displayName: undefined }],
+  ])("drops %s on its own, keeping the others", (_name, bad) => {
+    expect(normalizeRegistry({ users: { [USER]: bad, [OTHER_USER]: entry } })).toEqual({ users: { [OTHER_USER]: entry } });
+  });
+});
+
+describe("createRegistryStore: a registry file that parses to the wrong shape", () => {
+  let dir: string;
+  let store: RegistryStore;
+  const file = () => join(dir, "mcp", "registry.json");
+  const now = () => NOW;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mcp-registry-"));
+    mkdirSync(join(dir, "mcp"));
+    store = createRegistryStore(dir, makeRealStorage());
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test.each([["null"], ["{}"], ['{"users":null}'], ['{"users":{"111111111111111111":{}}}']])("%s: every operation works as on an empty registry", async (body) => {
+    writeFileSync(file(), body);
+    expect(await store.listRecipients()).toEqual([]);
+    expect(await store.generationOf(USER)).toBeUndefined();
+    expect(await store.redeem("NOSUCHCODE", now)).toEqual({ ok: false });
+    expect(await store.pair(USER, NAME, now)).toEqual({ ok: false });
+    expect((await store.register(USER, NAME, now)).changed).toBe(true);
+    expect(await store.listRecipients()).toEqual([{ userId: USER, displayName: NAME, registeredAt: NOW.toISOString() }]);
+  });
+
+  test("a hit redeems from a file that also holds a bad entry", async () => {
+    const hash = hashCode("RIGHTCODE");
+    const good = { generation: "g", displayName: "Bee", registeredAt: NOW.toISOString(), codes: [{ hash, expiresAt: new Date(NOW.getTime() + 60_000).toISOString() }] };
+    writeFileSync(file(), JSON.stringify({ users: { [USER]: null, [OTHER_USER]: good } }));
+    expect(await store.redeem("RIGHTCODE", now)).toEqual({ ok: true, discordUserId: OTHER_USER, generation: "g" });
+    expect(await store.redeem("RIGHTCODE", now)).toEqual({ ok: false });
+  });
+
+  test("one bad entry does not unregister the others", async () => {
+    const good = { generation: "g", displayName: "Bee", registeredAt: NOW.toISOString(), codes: [] };
+    writeFileSync(file(), JSON.stringify({ users: { [USER]: { codes: null }, [OTHER_USER]: good } }));
+    expect((await store.unregister(OTHER_USER, now)).changed).toBe(true);
+    expect(await store.listRecipients()).toEqual([]);
+  });
+});
+
+describe("createRegistryStore: a code that is not there leaves the file alone", () => {
+  let dir: string;
+  let store: RegistryStore;
+  const file = () => join(dir, "mcp", "registry.json");
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mcp-registry-"));
+    store = createRegistryStore(dir, makeRealStorage());
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a wrong or expired code is refused without rewriting registry.json, a right one still redeems", async () => {
+    await store.register(USER, NAME, () => NOW);
+    const paired = await store.pair(USER, NAME, () => NOW);
+    if (!paired.ok) throw new Error("unreachable");
+    // Corrupt-looking padding that a rewrite would normalise away, so a rewrite is visible byte for byte.
+    const before = readFileSync(file(), "utf8") + "\n\n\n";
+    writeFileSync(file(), before);
+
+    expect(await store.redeem("WRONGCODE", () => NOW)).toEqual({ ok: false });
+    expect(await store.redeem(paired.code, () => new Date(NOW.getTime() + 11 * 60 * 1000))).toEqual({ ok: false });
+    expect(readFileSync(file(), "utf8")).toBe(before);
+
+    expect((await store.redeem(paired.code, () => NOW)).ok).toBe(true);
+    expect(readFileSync(file(), "utf8")).not.toBe(before);
   });
 });

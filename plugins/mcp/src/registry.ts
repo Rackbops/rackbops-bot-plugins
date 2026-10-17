@@ -1,8 +1,8 @@
 // Registration and pairing (Tooling#743 decisions 2-6). Pure functions over the registry shape --
 // register/issueCode/unregister/redeemCode/generationOf/pruneRegistry -- plus a store wrapper
 // binding them to one keyed mutator (this store's own, separate from the delivery store's) on one file,
-// which is what makes every register, pair, unregister and redeem atomic and serialized against each
-// other (in-process only). Every lookup keyed by an
+// which is what makes every register, pair, unregister and redeem that writes atomic and serialized against
+// each other (in-process only; a redeem that finds no live code answers from a read and writes nothing). Every lookup keyed by an
 // externally-supplied id (a Discord user id) goes through Object.hasOwn rather than a bare
 // obj[key], matching the convention the host repo (rackbops-discord-bot, src/routing/resolve.ts)
 // established for the same class of untrusted-key lookup -- not a file in this repo.
@@ -28,6 +28,38 @@ export interface Registry {
 
 export function freshRegistry(): Registry {
   return { users: {} };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isEntry(value: unknown): value is RegistrationEntry {
+  if (!isPlainObject(value)) return false;
+  const { generation, displayName, registeredAt, codes } = value;
+  return (
+    typeof generation === "string" &&
+    typeof displayName === "string" &&
+    typeof registeredAt === "string" &&
+    Array.isArray(codes) &&
+    codes.every((c) => isPlainObject(c) && typeof c.hash === "string" && typeof c.expiresAt === "string")
+  );
+}
+
+/**
+ * The host's `readJsonOrFresh` recovers only from a file that does not parse, so a file that parses to
+ * the wrong shape (`null`, `{}`, `{"users":null}`, an entry without `codes`) would otherwise make every
+ * register/pair/unregister/redeem and `/recipients` throw until someone fixed the file by hand. A
+ * wrong-shaped file reads as an empty registry; a wrong-shaped entry is dropped on its own, so one bad
+ * entry does not unregister everybody. Only ever removes: a dropped entry has no generation (so
+ * `/recipients` omits it and no code redeems for it) and the user registers again. That is a loss, not a
+ * refusal: the correction reaches disk with the next mutation, and the dropped data is gone for good.
+ */
+export function normalizeRegistry(raw: unknown): Registry {
+  if (!isPlainObject(raw) || !isPlainObject(raw.users)) return freshRegistry();
+  // fromEntries defines own properties, so a user id of "__proto__" in a hand-edited file is kept, not
+  // swallowed by the prototype setter.
+  return { users: Object.fromEntries(Object.entries(raw.users).filter((pair): pair is [string, RegistrationEntry] => isEntry(pair[1]))) };
 }
 
 /** At most this many unexpired codes per user (decision 4); a 6th `pair` drops the oldest. */
@@ -132,8 +164,7 @@ export type RedeemOutcome = { ok: true; discordUserId: string; generation: strin
  *  already pruned (so "unexpired" here only needs the hash match, pruning already dropped the
  *  rest) -- a miss, for any reason (unknown, expired -- already gone via pruning -- wrong, or a code
  *  from before an unregister -- the whole entry is gone), answers the same `{ ok: false }`. */
-export function redeemCode(registry: Registry, code: string, now: Date): { registry: Registry; outcome: RedeemOutcome } {
-  void now; // pruning already removed anything expired; kept for a symmetric signature with the others
+export function redeemCode(registry: Registry, code: string): { registry: Registry; outcome: RedeemOutcome } {
   const hash = hashCode(code);
   for (const userId of Object.keys(registry.users)) {
     const entry = registry.users[userId]!;
@@ -173,8 +204,8 @@ function registryPath(dataDir: string): string {
 }
 
 /** Binds the pure functions above to one keyed mutator (owned by this store, in-process) on the ONE
- *  registry file (decision 2) -- every register/pair/unregister/redeem is therefore serialized against every
- *  other, which is what makes "two concurrent register/redeem calls succeed exactly once" hold. */
+ *  registry file (decision 2) -- every register/pair/unregister and every redeem that hits is therefore
+ *  serialized against every other, which is what makes "two concurrent register/redeem calls succeed exactly once" hold. */
 export function createRegistryStore(dataDir: string, storage: HostStorage): RegistryStore {
   const mutator = storage.createKeyedJsonMutator<Registry>();
   const path = registryPath(dataDir);
@@ -190,7 +221,7 @@ export function createRegistryStore(dataDir: string, storage: HostStorage): Regi
       path,
       freshRegistry,
       (current) => {
-        const pruned = pruneRegistry(current, now());
+        const pruned = pruneRegistry(normalizeRegistry(current), now());
         const outcome = op(pruned);
         result = outcome.result;
         return outcome.registry;
@@ -216,20 +247,27 @@ export function createRegistryStore(dataDir: string, storage: HostStorage): Regi
         const { registry, changed } = unregisterUser(pruned, userId);
         return { registry, result: { changed } };
       }),
-    redeem: (code, now) =>
-      mutate(now, (pruned) => {
-        const { registry, outcome } = redeemCode(pruned, code, now());
+    async redeem(code, now) {
+      // A wrong code changes nothing, but a mutation rewrites the whole file and holds the one registry
+      // queue that the `agent` commands also wait on, and a wrong code costs the caller nothing. So
+      // look first, unserialised (`writeJsonAtomic` is atomic, so a read sees a whole file): a code
+      // that is not there cannot appear by waiting, and a hit is redone inside the queue.
+      const current = pruneRegistry(normalizeRegistry(await storage.readJsonOrFresh<Registry>(path, freshRegistry, "mcp-registry")), now());
+      if (!redeemCode(current, code).outcome.ok) return { ok: false };
+      return mutate(now, (pruned) => {
+        const { registry, outcome } = redeemCode(pruned, code);
         return { registry, result: outcome };
-      }),
+      });
+    },
     async generationOf(userId) {
       // No pruning needed here -- generation is unrelated to codes/expiry, so a plain read suffices.
-      const current = await storage.readJsonOrFresh<Registry>(path, freshRegistry, "mcp-registry");
+      const current = normalizeRegistry(await storage.readJsonOrFresh<Registry>(path, freshRegistry, "mcp-registry"));
       return generationOf(current, userId);
     },
     async listRecipients() {
       // Same reasoning as generationOf: displayName/registeredAt are unrelated to code expiry, so a
       // plain read (no pruning) suffices here too.
-      const current = await storage.readJsonOrFresh<Registry>(path, freshRegistry, "mcp-registry");
+      const current = normalizeRegistry(await storage.readJsonOrFresh<Registry>(path, freshRegistry, "mcp-registry"));
       return Object.keys(current.users).map((userId) => {
         const entry = current.users[userId]!;
         return { userId, displayName: entry.displayName, registeredAt: entry.registeredAt };
