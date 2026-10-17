@@ -168,7 +168,9 @@ jobs:
             echo "Tarball package.json is $PACKED, expected @rackbops/plugin-$PLUGIN_NAME@$PLUGIN_VERSION" >&2
             exit 1
           fi
-          npm publish "release/$TARBALL" --access public
+          # "./" matters: npm reads a bare "release/x.tgz" as the GitHub shorthand owner/repo and tries to
+          # git-clone ssh://git@github.com/release/x.tgz.git (the first publish run, 2026-10-17, died there).
+          npm publish "./release/$TARBALL" --access public
 
       - name: Create GitHub release
         run: gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --verify-tag --title "${GITHUB_REF_NAME}" --notes-file release/release-notes.md

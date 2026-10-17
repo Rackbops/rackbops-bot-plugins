@@ -311,7 +311,7 @@ describe.skipIf(!posix)("publish: what the privileged job runs", () => {
     const env = await release("rackbops-plugin-wow-1.0.3.tgz", { name: "@rackbops/plugin-wow", version: "1.0.3" });
     const r = await run(stepScript(workflow, "publish", NAME), env);
     expect(r.code).toBe(0);
-    expect(await calls()).toBe("publish release/rackbops-plugin-wow-1.0.3.tgz --access public\n");
+    expect(await calls()).toBe("publish ./release/rackbops-plugin-wow-1.0.3.tgz --access public\n") // mutation: a bare release/... is read by npm as a GitHub owner/repo;
   });
 
   test("a tarball whose package.json is not the tagged plugin and version is never published", async () => {
