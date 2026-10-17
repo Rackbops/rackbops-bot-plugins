@@ -274,7 +274,8 @@ describe("POST /tasks/<id>/listings", () => {
     expect((await (await post("t1")).json()).message).toContain("The watch is paused");
     expect((await api(w.plugin, "DELETE", "/tasks/t1", { token })).status).toBe(200);
     expect((await post("t1")).status).toBe(404);
-    expect(query<{ task_id: string }>(w.dbPath, "SELECT task_id FROM want_inbox")).toEqual([{ task_id: "t1" }, { task_id: "t1" }]);
+    // The deleted watch's rows went with it (#208).
+    expect(query<{ task_id: string }>(w.dbPath, "SELECT task_id FROM want_inbox")).toEqual([]);
   });
 });
 
