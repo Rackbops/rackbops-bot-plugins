@@ -1,4 +1,4 @@
-// Test-only support shared across every plugin: a faithful HostStorage implementation, a fake
+// Test-only support shared across every plugin: a HostStorage copy (plus a Windows rename retry), a fake
 // HostApi builder, and a fake component/modal interaction builder. A plugin uses `host.storage` at
 // runtime (the bot provides it — rackbops-discord-bot's src/storage.ts), so it ships no storage of
 // its own; these are a copy of those primitives living in TEST code, so a plugin's tests exercise
@@ -6,7 +6,7 @@
 // server.test.ts/characters.test.ts guard) without importing across repos.
 //
 // This module is NOT published — it lives under packages/ (like packages/api/), is imported only by
-// `*.test.ts`, and never enters a plugin's `dist` bundle (build-plugins bundles src/index.ts only).
+// `*.test.ts`, and never enters a plugin's `dist` bundle (build-plugins bundles src/index.ts and src/admin/index.ts).
 import { randomBytes } from "node:crypto";
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
@@ -20,7 +20,7 @@ import type { HostApi, HostDelivery, HostMappedDestination, HostMessage, HostSto
 // under real fs I/O) could race on that one shared tmp file, one writer's rename consuming or
 // clobbering the file the other is still writing. Mirrors the host's tmpPathFor exactly (a monotonic
 // per-process counter alone isn't enough either -- two containers in a handoff can share a pid and
-// both start counting from zero, #253's own fix for #154's gap) so this "faithful copy" comment above
+// both start counting from zero, #253's own fix for #154's gap) so the copy claim above
 // is actually true of the write path, not just the serialization one. Diagnosed by running the full
 // plugins/mcp test suite repeatedly with the swallowed error logged: every failure was an ENOENT or
 // EPERM on this function's own renameSync, never a wrong VALUE -- confirming a write-path race, not a
@@ -92,7 +92,7 @@ async function readJsonOrFresh<T>(path: string, fresh: () => T, label: string): 
   }
 }
 
-/** A faithful copy of the host's storage primitives — the serialized writer and per-path keyed
+/** A copy of the host's storage primitives (plus a rename retry for Windows file locks) — the serialized writer and per-path keyed
  * mutator are what make the concurrency tests meaningful, so they must behave like the real thing. */
 export function makeRealStorage(): HostStorage {
   return {

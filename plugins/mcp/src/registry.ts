@@ -1,7 +1,8 @@
 // Registration and pairing (Tooling#743 decisions 2-6). Pure functions over the registry shape --
 // register/issueCode/unregister/redeemCode/generationOf/pruneRegistry -- plus a store wrapper
-// binding them to host.storage's keyed mutator on one file, which is what makes every register,
-// pair, unregister and redeem atomic and serialized against each other. Every lookup keyed by an
+// binding them to one keyed mutator (this store's own, separate from the delivery store's) on one file,
+// which is what makes every register, pair, unregister and redeem atomic and serialized against each
+// other (in-process only). Every lookup keyed by an
 // externally-supplied id (a Discord user id) goes through Object.hasOwn rather than a bare
 // obj[key], matching the convention the host repo (rackbops-discord-bot, src/routing/resolve.ts)
 // established for the same class of untrusted-key lookup -- not a file in this repo.
@@ -171,8 +172,8 @@ function registryPath(dataDir: string): string {
   return join(dataDir, "mcp", "registry.json");
 }
 
-/** Binds the pure functions above to `host.storage`'s keyed mutator on the ONE registry file
- *  (decision 2) -- every register/pair/unregister/redeem is therefore serialized against every
+/** Binds the pure functions above to one keyed mutator (owned by this store, in-process) on the ONE
+ *  registry file (decision 2) -- every register/pair/unregister/redeem is therefore serialized against every
  *  other, which is what makes "two concurrent register/redeem calls succeed exactly once" hold. */
 export function createRegistryStore(dataDir: string, storage: HostStorage): RegistryStore {
   const mutator = storage.createKeyedJsonMutator<Registry>();

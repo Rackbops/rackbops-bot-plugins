@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-16T01:15:02.235Z",
+  "generatedAt": "2026-10-17T19:54:21.820Z",
   "plugins": [
     {
       "name": "mcp",
@@ -16,7 +16,7 @@
         {
           "key": "MCP_BRIDGE_TOKEN",
           "format": "^[!-~]{43,}$",
-          "description": "Shared secret the Discord MCP service presents (>= 256 bits, base64url). Unset = the bridge answers 503.",
+          "description": "Shared secret the Discord MCP service presents (at least 43 printable ASCII characters; 256 bits of base64url recommended). Unset = the bridge answers 503.",
           "required": false,
           "secret": true
         }
@@ -56,13 +56,13 @@
           "version": "0.3.0",
           "publishedAt": "2026-09-25T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/mcp-v0.3.0",
-          "notes": "### Added\n\n- DM delivery, edit delivery and a recipient list (`Rackbops/Tooling#746`, S3d of Epic #734):\n  `kind: \"dm\"` now goes through `host.dm` to a registered user, and `kind: \"edit\"` goes through\n  `host.edit` against the stored delivery of the send `message_ref` names -- edits are applied in\n  `seq` order, serialized per message, and a lower `seq` arriving after a higher one is a no-op\n  (`applied: false`) rather than reapplying stale content. `GET /recipients` lists registered users\n  (id, display name), capped at 100, ordered by registration time. `GET /capabilities` now reports\n  `dm`/`edit` as `true` exactly when the host provides `host.dm`/`host.edit`, rather than always\n  `false`. A closed-DM recipient, or one who has since unregistered, fails\n  `failed{RECIPIENT_UNREACHABLE}` with no Discord call; an unknown or non-deliverable `message_ref`\n  fails `failed{NOT_FOUND}`. Every #742/#743 record without a `dm`/`edit`-shaped target (from before\n  this version) is refused the same way, never delivered."
+          "notes": "### Added\n\n- DM delivery, edit delivery and a recipient list (`Rackbops/Tooling#746`, S3d of Epic #734):\n  `kind: \"dm\"` now goes through `host.dm` to a registered user, and `kind: \"edit\"` goes through\n  `host.edit` against the stored delivery of the send `message_ref` names -- edits are applied in\n  arrival order, serialized per message, and a lower `seq` arriving after a higher one has been\n  applied is a no-op (`applied: false`) rather than reapplying stale content. `GET /recipients` lists registered users\n  (id, display name), capped at 100, ordered by registration time. `GET /capabilities` now reports\n  `dm`/`edit` as `true` exactly when the host provides `host.dm`/`host.edit`, rather than always\n  `false`. A recipient who is not registered (never was, or has since unregistered) fails\n  `failed{RECIPIENT_UNREACHABLE}` with no Discord call, and a registered recipient whose DMs are closed\n  fails the same way after Discord rejects the send; an unknown or non-deliverable `message_ref`\n  fails `failed{NOT_FOUND}`. Every #742/#743 record without a `dm`/`edit`-shaped target (from before\n  this version) is refused the same way, never delivered."
         },
         {
           "version": "0.2.0",
           "publishedAt": "2026-09-25T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/mcp-v0.2.0",
-          "notes": "### Added\n\n- Agent registration and pairing (`Rackbops/Tooling#743`, the first of five children split from\n  `Rackbops/Tooling#737`): the `/agent register` | `pair` | `unregister` slash command, plus\n  `POST /pair/redeem` and `GET /registration/{user_id}` under `/mcp/`. A registration mints a\n  random 128-bit `generation` id; `pair` issues a single-use, 10-minute pairing code (at least\n  128 bits, at most 5 live per user) that a connector redeems for the Discord user id and current\n  generation;\n  `unregister` deletes the registration -- and with it every outstanding code -- in one write.\n  Every register/pair/unregister/redeem is serialized against every other through the same keyed\n  JSON mutator the delivery store uses, on one `registry.json` file."
+          "notes": "### Added\n\n- Agent registration and pairing (`Rackbops/Tooling#743`, the first of five children split from\n  `Rackbops/Tooling#737`): the `/agent register` | `pair` | `unregister` slash command, plus\n  `POST /pair/redeem` and `GET /registration/{user_id}` under `/mcp/`. A registration mints a\n  random 128-bit `generation` id; `pair` issues a single-use, 10-minute pairing code (at least\n  128 bits, at most 5 live per user) that a connector redeems for the Discord user id and current\n  generation;\n  `unregister` deletes the registration -- and with it every outstanding code -- in one write.\n  Every register/pair/unregister/redeem is serialized against every other (in-process) through one\n  keyed JSON mutator owned by the registry store, on one `registry.json` file."
         },
         {
           "version": "0.1.0",
@@ -399,7 +399,7 @@
         {
           "key": "TRUSTED_PROXY_HOST",
           "format": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$",
-          "description": "Compose hostname of the Cloudflare Tunnel sidecar in front of this port (the compose service is named cloudflared; a multi-instance deployment should use this instance's own tunnel container name instead, e.g. rackbops-discord-bot-debug-tunnel, matching bridge.url's own convention). Only a request whose peer address resolves to this host gets CF-Connecting-IP trusted; unset = the header is never trusted and every caller shares one rate-limit budget.",
+          "description": "Compose hostname of the Cloudflare Tunnel sidecar in front of this port (the compose service is named cloudflared; a multi-instance deployment should use this instance's own tunnel container name instead, e.g. rackbops-discord-bot-debug-tunnel, matching bridge.url's own convention). Only a request whose peer address resolves to this host gets CF-Connecting-IP trusted; unset = the header is never trusted and every caller shares one rate-limit budget. Set by hand in the instance .env, not editable in the panel.",
           "required": false,
           "secret": false
         }
@@ -423,7 +423,7 @@
           "version": "1.1.0",
           "publishedAt": "2026-09-06T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/warbandeer-v1.1.0",
-          "notes": "### Added\n\n- An admin-panel tab, via the plugin admin-UI contract\n  (`rackbops-discord-bot#123`): shows whether the ingest connector is running and\n  lets an admin set (or clear) `WARBANDEER_INGEST_PORT` — saved through the panel's\n  guarded env-set, which recreates the bot to apply it. No character/link data is\n  shown."
+          "notes": "### Added\n\n- An admin-panel tab, via the plugin admin-UI contract\n  (`rackbops-discord-bot#123`): shows whether the ingest connector is configured (a port is set) and\n  lets an admin set (or clear) `WARBANDEER_INGEST_PORT` — saved through the panel's\n  guarded env-set, which recreates the bot to apply it. No character/link data is\n  shown."
         },
         {
           "version": "1.0.0",

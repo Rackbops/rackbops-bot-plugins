@@ -134,10 +134,10 @@ export function _resetRealmIndex(): void {
   realmIndexCache = new Map();
 }
 
-export async function realmStatus(): Promise<RealmStatus> {
+export async function realmStatus(signal?: AbortSignal): Promise<RealmStatus> {
   // String(...): config.realmSlug is optional in the type even though realmWatchConfigured()
   // guards every real caller; matches the old template literal's coercion of undefined -> "undefined".
-  const res = await blizzardGet(connectedRealmSearchUrl(String(config.realmSlug)));
+  const res = await blizzardGet(connectedRealmSearchUrl(String(config.realmSlug)), signal);
   if (!res.ok) throw new Error(`Blizzard realm query failed: ${res.status}`);
   const data = (await res.json()) as {
     results: { data: { status: { type: RealmStatus } } }[];

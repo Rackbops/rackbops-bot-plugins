@@ -31,7 +31,7 @@
         "format": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$",
         "required": false,
         "secret": false,
-        "description": "Compose hostname of the Cloudflare Tunnel sidecar in front of this port (the compose service is named cloudflared; a multi-instance deployment should use this instance's own tunnel container name instead, e.g. rackbops-discord-bot-debug-tunnel, matching bridge.url's own convention). Only a request whose peer address resolves to this host gets CF-Connecting-IP trusted; unset = the header is never trusted and every caller shares one rate-limit budget."
+        "description": "Compose hostname of the Cloudflare Tunnel sidecar in front of this port (the compose service is named cloudflared; a multi-instance deployment should use this instance's own tunnel container name instead, e.g. rackbops-discord-bot-debug-tunnel, matching bridge.url's own convention). Only a request whose peer address resolves to this host gets CF-Connecting-IP trusted; unset = the header is never trusted and every caller shares one rate-limit budget. Set by hand in the instance .env, not editable in the panel."
       }
     ]
   }

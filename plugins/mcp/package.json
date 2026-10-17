@@ -23,7 +23,7 @@
         "format": "^[!-~]{43,}$",
         "required": false,
         "secret": true,
-        "description": "Shared secret the Discord MCP service presents (>= 256 bits, base64url). Unset = the bridge answers 503."
+        "description": "Shared secret the Discord MCP service presents (at least 43 printable ASCII characters; 256 bits of base64url recommended). Unset = the bridge answers 503."
       }
     ],
     "destinations": [

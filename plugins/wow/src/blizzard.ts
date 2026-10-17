@@ -12,7 +12,17 @@ export function blizzardConfigured(): boolean {
   return Boolean(config.blizzardClientId && config.blizzardClientSecret);
 }
 
-export async function blizzardToken(): Promise<string> {
+/** Upper bound on one Blizzard request (headers and body). Without it a connection that is accepted but
+ *  never answered hangs the caller indefinitely, and the host keeps that tick marked in flight (#158). */
+const BLIZZARD_FETCH_TIMEOUT_MS = 10_000;
+
+/** The host's tick signal (when there is one) combined with the per-request timeout. */
+function requestSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(BLIZZARD_FETCH_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+export async function blizzardToken(signal?: AbortSignal): Promise<string> {
   if (token && Date.now() < token.expiresAt) return token.value;
   const res = await fetch("https://oauth.battle.net/token", {
     method: "POST",
@@ -21,6 +31,7 @@ export async function blizzardToken(): Promise<string> {
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: "grant_type=client_credentials",
+    signal: requestSignal(signal),
   });
   if (!res.ok) throw new Error(`Blizzard OAuth failed: ${res.status} ${await res.text()}`);
   const data = (await res.json()) as { access_token: string; expires_in: number };
@@ -35,6 +46,6 @@ export function _resetBlizzardToken(): void {
 }
 
 /** Authorized GET against any Blizzard endpoint. Response handling stays with each caller. */
-export async function blizzardGet(url: string): Promise<Response> {
-  return fetch(url, { headers: { Authorization: `Bearer ${await blizzardToken()}` } });
+export async function blizzardGet(url: string, signal?: AbortSignal): Promise<Response> {
+  return fetch(url, { headers: { Authorization: `Bearer ${await blizzardToken(signal)}` }, signal: requestSignal(signal) });
 }

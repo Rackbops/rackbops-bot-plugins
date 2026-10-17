@@ -29,8 +29,9 @@ export interface SaveResult {
  * What the panel hands a plugin's admin bundle — the panel-side analog of `HostApi`. The plugin owns
  * everything it renders into its mount element; the panel keeps AUTHORITY over every config write:
  * `setEnv` is routed through the same guarded path a manual edit uses (auth + bot-ops validation +
- * recreate) and is scoped by the panel to THIS plugin's declared keys, so a bundle can never touch a
- * key it doesn't own. A declared-capability boundary, not a sandbox.
+ * recreate) and is filtered by the panel to THIS plugin's declared keys (secret keys are write-only),
+ * which keeps an honest bundle in bounds. NOT a sandbox: the bundle runs in the panel's own origin, so
+ * the Plugin Index is the trust boundary (bot repo ADR-0005, decision 6).
  */
 export interface AdminApi {
   /** This plugin's identity, from its Plugin Index entry. */

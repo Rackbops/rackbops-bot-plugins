@@ -32,14 +32,7 @@ export const DISPLAY_NAME_MAX = 100;
 // has no request body, so its own id-shape lives only at http.ts's routing regex (REGISTRATION_ID_RE)
 // -- matching this file's existing DELIVERY_ID_RE/REQUEST_ID_RE split, where a path parameter's shape
 // is checked once, at the route match, and a handler never re-validates what its own routing already
-// guaranteed. A #743 revision removed this file's own DISCORD_USER_ID_RE as unused, on the reasoning
-// that no request body carried a user_id yet, and that composing it into REGISTRATION_ID_RE's already-
-// anchored routing regex would have been wrong anyway (a regex's `^`/`$` land in `.source` literally,
-// so nesting one inside another produces un-satisfiable inner anchors). Tooling#746 reinstates the
-// constant above (DISCORD_USER_ID_RE) for its own reason: a dm's `target.user_id` now IS a request-body
-// field, with its own 400 rule matching REGISTRATION_ID_RE's capture group exactly -- round-1 review
-// caught an earlier revision of this file reusing the looser SNOWFLAKE_RE for it instead, which
-// silently accepted a leading-zero or 5-16-digit value the documented `^[1-9][0-9]{16,19}$` rejects.
+// guaranteed.
 export const PAIR_CODE_RE = /^[A-Z2-9]{27}$/;
 
 // Mirrors package.json's botPlugin.destinations verbatim (Tooling#742 decision 1) -- kept as a

@@ -129,7 +129,7 @@ stale `generation` for a user has been revoked and re-paired since, not merely r
 
 | Key | Required | Secret | What it does |
 |---|---|---|---|
-| `MCP_BRIDGE_TOKEN` | No | Yes | The bearer token the MCP service must present. Unset = every request gets `503 {"error":"bridge not configured"}`. At least 256 bits, base64url -- generate one with e.g. `openssl rand -base64 32 \| tr -d '=' \| tr '/+' '_-'`. |
+| `MCP_BRIDGE_TOKEN` | No | Yes | The bearer token the MCP service must present. Unset = every request gets `503 {"error":"bridge not configured"}`. At least 43 printable ASCII characters (the manifest `format` checks only that, not entropy or alphabet); 256 bits of base64url is recommended -- generate one with e.g. `openssl rand -base64 32 \| tr -d '=' \| tr '/+' '_-'`. |
 
 ## Destinations
 
@@ -160,5 +160,5 @@ that verifies.
 
 `docs/bridge-protocol.md` in [`Rackbops/discord-mcp`](https://github.com/Rackbops/discord-mcp) is the
 protocol this plugin implements; where this README and that document ever disagree, the protocol
-document wins (this plugin is the implementation, not the source of truth). See `CONTEXT.md` in this
-repo for the file-by-file breakdown and the state-machine gotchas.
+document wins (this plugin is the implementation, not the source of truth). See the header comment of
+each file under `src/` for the file-by-file breakdown and the state-machine gotchas.

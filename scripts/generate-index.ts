@@ -214,6 +214,8 @@ export function parseChangelogReleases(
     releases.push({
       version: current.version,
       publishedAt: date.toISOString(),
+      // Best-effort link: derived from the CHANGELOG heading, so it 404s for a version that was never
+      // tagged (tag existence can't be checked offline).
       url: `https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/${pluginName}-v${current.version}`,
       notes: current.notes.join("\n").trim(),
     });
