@@ -5,8 +5,9 @@ The bridge plugin for the Discord delivery MCP ([`Rackbops/discord-mcp`](https:/
 side of that repo's `docs/bridge-protocol.md` under `/mcp/` on the bot's own HTTP listener
 (rackbops-discord-bot's host-owned router, ADR-0007) -- `GET /capabilities`,
 `POST /deliveries`, `GET /deliveries/{request_id}` and `GET /recipients` -- so the MCP service can
-hand it a message and get exactly one Discord post, DM or edit out of it, however many times it
-retries. It also owns Discord-side agent identity ([Rackbops/Tooling#743](https://github.com/Rackbops/Tooling/issues/743)):
+hand it a message and get one Discord post, DM or edit out of it: a retry of a request that is
+delivered or in flight never delivers again (a retry of a failed or unknown one, and the restart
+re-drive, deliver at least once -- see below). It also owns Discord-side agent identity ([Rackbops/Tooling#743](https://github.com/Rackbops/Tooling/issues/743)):
 the `/agent` slash command, and `POST /pair/redeem` + `GET /registration/{user_id}` under the same
 `/mcp/` path.
 
@@ -18,8 +19,12 @@ command's own replies name whichever form the user invoked.
 
 - Accepts a delivery request, answers `202` immediately, and delivers to Discord in the background.
 - Keeps one state file per `request_id` (`pending` -> `delivered`/`failed`, or `unknown` after a bot
-  restart mid-delivery) so a retry with the same `request_id` never delivers twice.
-- A tick re-drives any delivery a restart left `unknown`, and prunes records older than 8 days.
+  restart mid-delivery) so a retry with the same `request_id` of a `delivered` or `pending` request
+  never delivers again.
+- A retry of a `failed` or `unknown` request resets it to `pending` and delivers again. A tick
+  re-drives any delivery a restart left `unknown` the same way, and prunes records older than 8
+  days. Delivery is therefore at-least-once: a restart between the Discord call and the state
+  write can post a second copy.
 - `kind: "post"` goes through `host.post` (or `host.announce` when the host predates it); `kind: "dm"`
   goes through `host.dm`, to a registered user only; `kind: "edit"` goes through `host.edit`, applied
   against the stored delivery `message_ref` names. `GET /capabilities` reports `dm`/`edit` as `true`
