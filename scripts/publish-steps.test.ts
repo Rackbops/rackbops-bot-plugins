@@ -4,13 +4,15 @@
 // pulled out of the workflow by its step name and executed with `bash -e`, the shell GitHub uses when a
 // step names none. Only the tools the steps themselves call are needed (bash, git, tar, awk, node, npm);
 // `npm publish` is replaced by a recording stub on PATH. Skipped on Windows, where CI never runs it.
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PUBLISH_YML = fileURLToPath(new URL("../.github/workflows/publish.yml", import.meta.url));
+// `npm pack` twice on a cold runner can outlast the 5 s default.
+setDefaultTimeout(30_000);
 const posix = process.platform !== "win32";
 const hasNpm = Bun.which("npm") !== null;
 
@@ -60,7 +62,13 @@ async function run(script: string, env: Record<string, string>, cwd = dir): Prom
 }
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
-  const proc = Bun.spawn(["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "init.defaultBranch=main", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  // Isolated from the developer's own git config (signing, hooks, templates), which would change the fixture.
+  const proc = Bun.spawn(["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], {
+    cwd,
+    env: { PATH: process.env.PATH ?? "", HOME: dir, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [out, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
   if (code !== 0) throw new Error(`git ${args.join(" ")} failed`);
   return out.trim();
@@ -69,7 +77,7 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 describe.skipIf(!posix)("verify: the tagged commit must be on main", () => {
   const NAME = "Verify the tagged commit is on main";
 
-  /** A clone whose `origin` has main at one commit; a second commit exists only on a branch. */
+  /** A clone whose `origin` has main at one commit; a second commit exists only locally. Shaped like an Actions checkout of a tag. */
   async function repo(): Promise<{ clone: string; onMain: string; offMain: string }> {
     const origin = join(dir, "origin.git");
     const clone = join(dir, "clone");
@@ -88,6 +96,11 @@ describe.skipIf(!posix)("verify: the tagged commit must be on main", () => {
     await git(clone, "add", "b");
     await git(clone, "commit", "-q", "-m", "off main");
     const offMain = await git(clone, "rev-parse", "HEAD");
+    // Like actions/checkout of a tag: a detached HEAD, no local branches, no remote-tracking ref for main.
+    // The step has to fetch origin/main itself.
+    await git(clone, "checkout", "-q", "--detach", offMain);
+    await git(clone, "branch", "-D", "main", "branch");
+    await git(clone, "update-ref", "-d", "refs/remotes/origin/main");
     return { clone, onMain, offMain };
   }
 
@@ -124,10 +137,16 @@ describe.skipIf(!posix)("verify: the tag is resolved into a plugin name and vers
     expect(r.out).toBe("name=wow\nversion=1.0.3\n");
   });
 
-  test("a hyphenated name splits on the LAST -v, and a prerelease version is accepted", async () => {
+  test("a hyphenated name and a prerelease version are accepted", async () => {
     const r = await resolve("my-plugin-v2.10.0-rc.1");
     expect(r.code).toBe(0);
     expect(r.out).toBe("name=my-plugin\nversion=2.10.0-rc.1\n");
+  });
+
+  test("a name that itself contains -v is split on the LAST -v", async () => {
+    const r = await resolve("my-vim-v1.0.0");
+    expect(r.code).toBe(0);
+    expect(r.out).toBe("name=my-vim\nversion=1.0.0\n");
   });
 
   for (const tag of ["wow-v1.0", "wow-v1", "Wow-v1.0.0", "1wow-v1.0.0", "wow-v1.0.0;id", "wow-v$(id).0.0", "-v1.0.0", "wow_v1.0.0"]) {
@@ -205,16 +224,17 @@ describe.skipIf(!posix)("verify: the release notes are the version's own CHANGEL
 describe.skipIf(!posix || !hasNpm)("verify: the packed tarball is checked before it leaves the job", () => {
   const NAME = "Pack the tarball and verify what it carries";
 
-  async function plugin(over: { name?: string; admin?: boolean; withAdminFile?: boolean } = {}): Promise<Record<string, string>> {
+  async function plugin(over: { name?: string; version?: string; admin?: boolean; withAdminFile?: boolean; mapOnly?: boolean } = {}): Promise<Record<string, string>> {
     const pdir = join(dir, "plugins", "wow");
     await mkdir(join(pdir, "dist"), { recursive: true });
     await writeFile(join(pdir, "dist", "plugin.js"), "export {}");
     if (over.withAdminFile) await writeFile(join(pdir, "dist", "admin.js"), "export {}");
+    if (over.mapOnly) await writeFile(join(pdir, "dist", "admin.js.map"), "{}");
     await writeFile(
       join(pdir, "package.json"),
       JSON.stringify({
         name: over.name ?? "@rackbops/plugin-wow",
-        version: "1.0.3",
+        version: over.version ?? "1.0.3",
         files: ["dist"],
         botPlugin: over.admin ? { adminApiVersion: 1 } : {},
       }),
@@ -240,6 +260,19 @@ describe.skipIf(!posix || !hasNpm)("verify: the packed tarball is checked before
     await rm(join(dir, "release"), { recursive: true, force: true });
     const present = await plugin({ admin: true, withAdminFile: true });
     expect((await run(stepScript(workflow, "verify", NAME), present)).code).toBe(0);
+  });
+
+  test("only dist/admin.js itself satisfies the admin check, not a file that starts with its name", async () => {
+    const env = await plugin({ admin: true, mapOnly: true });
+    const r = await run(stepScript(workflow, "verify", NAME), env);
+    expect(r.code).toBe(1); // mutation: a substring grep accepts admin.js.map
+  });
+
+  test("a package.json version other than the tag's is refused", async () => {
+    const env = await plugin({ version: "1.0.4" });
+    const r = await run(stepScript(workflow, "verify", NAME), env);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("expected @rackbops/plugin-wow@1.0.3");
   });
 
   test("a plugin without adminApiVersion is not asked for dist/admin.js", async () => {
@@ -296,11 +329,12 @@ describe.skipIf(!posix)("publish: what the privileged job runs", () => {
     }
   });
 
-  test("a tarball name that is not a plain file name is refused before anything is read", async () => {
+  test("a tarball name that is not a plain file name is refused even when a valid tarball exists under it", async () => {
     const env = await release("ok.tgz", { name: "@rackbops/plugin-wow", version: "1.0.3" });
-    for (const bad of ["../ok.tgz", "ok.tgz --tag evil", "ok.tar", "$(id).tgz", ""]) {
+    for (const bad of ["../ok.tgz", "ok.tgz --tag evil", "ok.tar", "$(id).tgz"]) {
+      await copyFile(join(dir, "release", "ok.tgz"), join(dir, "release", bad)); // so only the name check can refuse it
       const r = await run(stepScript(workflow, "publish", NAME), { ...env, TARBALL: bad });
-      expect(r.code).toBe(1);
+      expect(r.code).toBe(1); // mutation: dropping the `exit 1` (tar would succeed on a real file) publishes it
       expect(r.stderr).toContain("Unexpected tarball name");
     }
     expect(await calls()).toBe("");
