@@ -7,6 +7,18 @@ import type { RegistryStore } from "./registry.js";
 import type { DeliveryStore } from "./store.js";
 import { isDmTarget, isEditTarget, isPostTarget, type DeliveryBody, type DeliveryKind, type DeliveryTarget, type StoredDelivery } from "./protocol.js";
 
+/** A log-safe summary of a rejected host call: name, status and code only. The raw error is never
+ *  logged because a discord.js `DiscordAPIError` carries the sent message in its own enumerable
+ *  `requestBody`, which `console.error` prints. */
+function describeError(err: unknown): string {
+  if (!(err instanceof Error)) return "non-Error rejection";
+  const { status, code } = err as { status?: unknown; code?: unknown };
+  const parts = [err.name];
+  if (typeof status === "number") parts.push(`status ${status}`);
+  if (typeof code === "number" || typeof code === "string") parts.push(`code ${code}`);
+  return parts.join(", ");
+}
+
 /** Discord's own closed-DMs refusal, rewritten by the host to this exact string (rackbops-discord-bot
  *  `src/plugins/delivery.ts:42`, pinned by that repo's `delivery.test.ts:75`) -- the one host error
  *  every caller of `host.dm` needs to tell apart from "something else went wrong". Anything else
@@ -104,7 +116,7 @@ async function attemptEdit(deps: DrainDeps, requestId: string, target: DeliveryT
     try {
       await deps.host.edit(delivered.delivery, body);
     } catch (err) {
-      deps.log.error(`edit ${requestId} (of ${messageRef}) failed`, err);
+      deps.log.error(`edit ${requestId} (of ${messageRef}) failed: ${describeError(err)}`);
       return { state: "failed", code: "UPSTREAM_UNAVAILABLE" };
     }
     await deps.store.recordEditSeq(messageRef, seq);
@@ -141,7 +153,7 @@ async function attemptDm(deps: DrainDeps, requestId: string, target: DeliveryTar
     if (err instanceof Error && err.message === RECIPIENT_UNREACHABLE_MESSAGE) {
       return { state: "failed", code: "RECIPIENT_UNREACHABLE" };
     }
-    deps.log.error(`delivery ${requestId} failed`, err);
+    deps.log.error(`delivery ${requestId} failed: ${describeError(err)}`);
     return { state: "failed", code: "UPSTREAM_UNAVAILABLE" };
   }
 }
@@ -184,7 +196,7 @@ export async function attemptDelivery(
       const url = `https://discord.com/channels/${delivery.guildId ?? "@me"}/${delivery.channelId}/${delivery.messageId}`;
       return { state: "delivered", messageRef: requestId, url, delivery };
     } catch (err) {
-      log.error(`delivery ${requestId} failed`, err);
+      log.error(`delivery ${requestId} failed: ${describeError(err)}`);
       return { state: "failed", code: "UPSTREAM_UNAVAILABLE" };
     }
   }
@@ -197,7 +209,7 @@ export async function attemptDelivery(
     await host.announce(body.content ?? "", target.destination);
     return { state: "delivered", messageRef: null, url: null, delivery: null };
   } catch (err) {
-    log.error(`delivery ${requestId} failed`, err);
+    log.error(`delivery ${requestId} failed: ${describeError(err)}`);
     return { state: "failed", code: "UPSTREAM_UNAVAILABLE" };
   }
 }

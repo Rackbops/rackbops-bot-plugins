@@ -101,6 +101,24 @@ describe("attemptDelivery: kind post, with host.post", () => {
   });
 });
 
+describe("attemptDelivery: failure logging", () => {
+  test("a rejection carrying the sent message in requestBody never reaches the log arguments", async () => {
+    const host = makeFakeHost({
+      name: "mcp",
+      post: async () => {
+        throw Object.assign(new Error("Invalid Form Body"), { status: 400, code: 50035, requestBody: { json: { content: "secret content" } } });
+      },
+    });
+    const { log, calls } = makeLog();
+    const result = await attemptDelivery(deps(host, { log }), REQUEST_ID, { kind: "post", target: TARGET, body: { content: "secret content" }, createdAt: NOW().toISOString() });
+    expect(result).toEqual({ state: "failed", code: "UPSTREAM_UNAVAILABLE" });
+    expect(calls).toHaveLength(1);
+    expect(JSON.stringify(calls)).not.toContain("secret content");
+    expect(calls[0]!.message).toContain("status 400");
+    expect(calls[0]!.message).toContain("code 50035");
+  });
+});
+
 describe("attemptDelivery: kind post, without host.post (announce fallback)", () => {
   test("announces content-only, recording the exact arguments", async () => {
     const announced: [string, string | undefined][] = [];

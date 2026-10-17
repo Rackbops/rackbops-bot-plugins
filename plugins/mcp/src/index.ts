@@ -11,8 +11,8 @@ import { createDeliveryStore } from "./store.js";
  * under `/mcp/`, plus the `/agent` slash command and its two registration/pairing endpoints.
  * `createPlugin` is pure -- it only reads `MCP_BRIDGE_TOKEN` and builds the (stateless until
  * activate()) stores, rate limiter and drain lock; `MCP_BRIDGE_TOKEN`'s `format` is validated by
- * `ops/bot-ops.sh env-set` only, never here (contract.ts's own PluginEnvKey doc comment) -- an
- * unset or malformed value both just mean http.ts answers 503.
+ * `ops/bot-ops.sh env-set` only, never here (contract.ts's own PluginEnvKey doc comment). An unset
+ * or blank value means http.ts answers 503; a non-blank value of any shape is used, trimmed, as the token.
  */
 export function createPlugin(host: HostApi): Plugin {
   const store = createDeliveryStore(host.dataDir, host.storage, host.log);
@@ -38,7 +38,8 @@ export function createPlugin(host: HostApi): Plugin {
     store,
     registry,
     editQueue,
-    token: host.env.MCP_BRIDGE_TOKEN,
+    // A cleared key (`MCP_BRIDGE_TOKEN=`) can reach the plugin as ""; treat it as unset, not as a token.
+    token: host.env.MCP_BRIDGE_TOKEN?.trim() || undefined,
     limiter,
     drainLock,
     now: () => new Date(),

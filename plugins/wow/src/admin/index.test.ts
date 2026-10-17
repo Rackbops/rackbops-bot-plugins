@@ -58,6 +58,10 @@ describe("wow admin tab helpers (#123 realm chooser)", () => {
     expect(validateTimezone("has space")).not.toBeNull();
   });
 
+  test("validateTimezone rejects a shape-valid zone the engine does not know", () => {
+    expect(validateTimezone("America/Los_Angles")).not.toBeNull();
+  });
+
   test("filterRealms returns a region's realms and ignores an unknown region", () => {
     const us = filterRealms("us");
     const eu = filterRealms("eu");
