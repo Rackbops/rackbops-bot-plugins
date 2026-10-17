@@ -110,12 +110,147 @@ describe("createTrustedProxy / isTrusted", () => {
   });
 });
 
+describe("createTrustedProxy / refresh behaviour", () => {
+  test("a successful refresh replaces the address set rather than adding to it", async () => {
+    let answer = ["10.0.0.5"];
+    const proxy = createTrustedProxy({ host: "cloudflared", lookup: async () => answer });
+    await proxy.refresh();
+    answer = ["10.0.0.7"];
+    await proxy.refresh();
+    expect(proxy.isTrusted("10.0.0.7")).toBe(true);
+    expect(proxy.isTrusted("10.0.0.5")).toBe(false);
+  });
+
+  test("concurrent refreshes share one in-flight lookup", async () => {
+    let calls = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const proxy = createTrustedProxy({
+      host: "cloudflared",
+      lookup: async () => {
+        calls += 1;
+        await gate;
+        return ["10.0.0.5"];
+      },
+    });
+    const a = proxy.refresh();
+    const b = proxy.refresh();
+    release();
+    await Promise.all([a, b]);
+    expect(calls).toBe(1);
+    expect(proxy.isTrusted("10.0.0.5")).toBe(true);
+  });
+
+  test("a failed first refresh is retried by the next miss after the short backoff, not the full 60 s", async () => {
+    let calls = 0;
+    let now = 1_000;
+    const proxy = createTrustedProxy({
+      host: "cloudflared",
+      lookup: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("ENOTFOUND");
+        return ["10.0.0.5"];
+      },
+      now: () => now,
+    });
+    await proxy.refresh(); // startup refresh fails; set stays empty
+    expect(calls).toBe(1);
+    expect(proxy.isTrusted("10.0.0.5")).toBe(false);
+
+    // Inside the backoff window: no retry yet.
+    now += 4_999;
+    expect(proxy.isTrusted("10.0.0.5")).toBe(false);
+    await Promise.resolve();
+    expect(calls).toBe(1);
+
+    // At the backoff: the miss triggers the retry, which succeeds; a later request is trusted.
+    now += 1;
+    expect(proxy.isTrusted("10.0.0.5")).toBe(false); // this very request still answers from the old set
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toBe(2);
+    expect(proxy.isTrusted("10.0.0.5")).toBe(true);
+  });
+
+  test("repeated failures with an empty set are retried at most once per backoff window", async () => {
+    let calls = 0;
+    let now = 0;
+    const proxy = createTrustedProxy({
+      host: "cloudflared",
+      lookup: async () => {
+        calls += 1;
+        throw new Error("ENOTFOUND");
+      },
+      now: () => now,
+    });
+    await proxy.refresh();
+    expect(calls).toBe(1);
+    now = 5_000;
+    proxy.isTrusted("10.0.0.99");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toBe(2);
+    proxy.isTrusted("10.0.0.99"); // same instant: throttled again
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toBe(2);
+  });
+
+  test("a failure with a non-empty set keeps the full 60 s throttle", async () => {
+    let calls = 0;
+    let now = 0;
+    const proxy = createTrustedProxy({
+      host: "cloudflared",
+      lookup: async () => {
+        calls += 1;
+        if (calls === 2) throw new Error("ENOTFOUND");
+        return ["10.0.0.5"];
+      },
+      now: () => now,
+    });
+    await proxy.refresh();
+    now = 60_000;
+    await proxy.refresh(); // fails, old set kept
+    expect(calls).toBe(2);
+    now = 65_000;
+    proxy.isTrusted("10.0.0.99");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toBe(2);
+  });
+});
+
 describe("clientIpFrom", () => {
-  test("a trusted peer with a valid header is keyed by the header's first value", async () => {
+  test("a trusted peer with a single valid header value is keyed by it", async () => {
     const proxy = createTrustedProxy({ host: "cloudflared", lookup: async () => ["10.0.0.5"] });
     await proxy.refresh();
-    const req = fakeRequest({ "CF-Connecting-IP": "203.0.113.9, 10.0.0.5" });
-    expect(clientIpFrom(req, "10.0.0.5", proxy)).toBe("203.0.113.9");
+    expect(clientIpFrom(fakeRequest({ "CF-Connecting-IP": "203.0.113.9" }), "10.0.0.5", proxy)).toBe("203.0.113.9");
+    expect(clientIpFrom(fakeRequest({ "CF-Connecting-IP": "  203.0.113.9 " }), "10.0.0.5", proxy)).toBe("203.0.113.9");
+    expect(clientIpFrom(fakeRequest({ "CF-Connecting-IP": "2001:db8::1" }), "10.0.0.5", proxy)).toBe("2001:db8::1");
+  });
+
+  // Cloudflare sets the header to one value, so a multi-valued one is untrusted whole -- even when
+  // every element is a valid IP (the old behaviour returned the first).
+  test("a multi-valued header is untrusted and falls back to the peer", async () => {
+    const proxy = createTrustedProxy({ host: "cloudflared", lookup: async () => ["10.0.0.5"] });
+    await proxy.refresh();
+    for (const value of ["203.0.113.9, 10.0.0.5", "203.0.113.9,10.0.0.5", "not-an-ip, 203.0.113.9", "203.0.113.9,"]) {
+      expect(clientIpFrom(fakeRequest({ "CF-Connecting-IP": value }), "10.0.0.5", proxy)).toBe("10.0.0.5");
+    }
+  });
+
+  test("header forms that are not a bare IP literal fall back to the peer", async () => {
+    const proxy = createTrustedProxy({ host: "cloudflared", lookup: async () => ["10.0.0.5"] });
+    await proxy.refresh();
+    for (const value of ["[2001:db8::1]", "203.0.113.9:8080", "", "999.1.1.1"]) {
+      expect(clientIpFrom(fakeRequest({ "CF-Connecting-IP": value }), "10.0.0.5", proxy)).toBe("10.0.0.5");
+    }
+  });
+
+  test("an IPv6 trusted peer (any case, mapped or not) is matched", async () => {
+    const proxy = createTrustedProxy({ host: "cloudflared", lookup: async () => ["10.0.0.5", "2001:db8::5"] });
+    await proxy.refresh();
+    expect(proxy.isTrusted("2001:db8::5")).toBe(true);
+    expect(proxy.isTrusted("::FFFF:10.0.0.5")).toBe(true);
+    expect(proxy.isTrusted("2001:db8::6")).toBe(false);
+    const req = fakeRequest({ "CF-Connecting-IP": "2001:db8::1" });
+    expect(clientIpFrom(req, "2001:db8::5", proxy)).toBe("2001:db8::1");
   });
 
   test("no peer address at all falls back to \"unknown\"", async () => {
