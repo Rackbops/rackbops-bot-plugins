@@ -42,6 +42,29 @@ describe("initWowStore", () => {
     expect(wowState()).toEqual({ dmfAnnouncedFor: "existing" });
   });
 
+  test("a CORRUPT wow.json is moved aside and re-seeded from state.json, and the seed is written back (#200 wow-6)", async () => {
+    writeFileSync(join(dir, "wow.json"), "{ not json ");
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ dmfAnnouncedFor: "2026-9", realmStatus: "DOWN" }));
+    await initWowStore(makeFakeHost({ name: "wow", dataDir: dir }));
+    const expected: WowState = { dmfAnnouncedFor: "2026-9", realmStatus: "DOWN" }; // mutation: starting empty re-announces an open Faire
+    expect(wowState()).toEqual(expected);
+    expect(readJson("wow.json")).toEqual(expected);
+    expect(readdirSync(dir).some((f) => f.startsWith("wow.json.corrupt"))).toBe(true);
+  });
+
+  test("a corrupt wow.json beside an absent or corrupt state.json starts empty, writes wow.json and does not throw", async () => {
+    for (const state of [undefined, "{ not json "]) {
+      rmSync(join(dir, "wow.json"), { force: true });
+      rmSync(join(dir, "state.json"), { force: true });
+      writeFileSync(join(dir, "wow.json"), "{ not json ");
+      if (state !== undefined) writeFileSync(join(dir, "state.json"), state);
+      _resetWowStore();
+      await initWowStore(makeFakeHost({ name: "wow", dataDir: dir }));
+      expect(wowState()).toEqual({});
+      expect(readJson("wow.json")).toEqual({});
+    }
+  });
+
   test("seeds empty when state.json is absent (a fresh install)", async () => {
     await initWowStore(makeFakeHost({ name: "wow", dataDir: dir }));
     expect(wowState()).toEqual({});
