@@ -48,6 +48,7 @@ const pkg = (name: string, over: Record<string, unknown> = {}, files?: string[])
   name: `@rackbops/plugin-${name}`,
   version: "1.0.0",
   description: `The ${name} plugin`,
+  repository: { type: "git", url: "git+https://github.com/Rackbops/rackbops-bot-plugins.git", directory: `plugins/${name}` },
   ...(files !== undefined ? { files } : {}),
   botPlugin: { hostApiVersion: 1, commands: [name], env: [], ...over },
 });
@@ -55,6 +56,31 @@ const pkg = (name: string, over: Record<string, unknown> = {}, files?: string[])
 const changelog = (version = "1.0.0"): string => `# Changelog\n\n## [${version}] - 2026-01-02\n### Added\n- Initial release\n`;
 
 const fixedNow = (): Date => new Date("2026-09-04T00:00:00.000Z");
+
+describe("buildIndex publish identity", () => {
+  const build = (name: string, over: Record<string, unknown>) =>
+    withPlugins({ [name]: { pkg: { ...(pkg(name) as object), ...over }, changelog: changelog() } }, (dir) => buildIndex(dir, fixedNow));
+  const repo = (over: Record<string, unknown>) => ({ type: "git", url: "git+https://github.com/Rackbops/rackbops-bot-plugins.git", directory: "plugins/alpha", ...over });
+
+  test("a package name that is not @rackbops/plugin-<dir> is refused", async () => {
+    await expect(build("alpha", { name: "@rackbops/plugin-tracker" })).rejects.toThrow(/alpha: package\.json name must be "@rackbops\/plugin-alpha" \(got "@rackbops\/plugin-tracker"\)/);
+  });
+
+  test("a missing repository, a wrong repository.url and a wrong directory are refused", async () => {
+    await expect(build("alpha", { repository: undefined })).rejects.toThrow(/repository\.url must be/);
+    await expect(build("alpha", { repository: repo({ url: "git+https://github.com/someone/else.git" }) })).rejects.toThrow(/repository\.url must be/);
+    await expect(build("alpha", { repository: "Rackbops/rackbops-bot-plugins" })).rejects.toThrow(/\(got "Rackbops\/rackbops-bot-plugins"\)/);
+    await expect(build("alpha", { repository: repo({ directory: "plugins/tracker" }) })).rejects.toThrow(/repository\.directory must be "plugins\/alpha"/);
+    await expect(build("alpha", { repository: repo({ directory: undefined }) })).rejects.toThrow(/repository\.directory must be/);
+  });
+
+  test("the accepted url spellings are the ones npm writes", async () => {
+    for (const url of ["git+https://github.com/Rackbops/rackbops-bot-plugins.git", "https://github.com/Rackbops/rackbops-bot-plugins", "https://github.com/Rackbops/rackbops-bot-plugins.git"]) {
+      const index = await build("alpha", { repository: repo({ url }) });
+      expect(index.plugins[0]!.package).toBe("@rackbops/plugin-alpha");
+    }
+  });
+});
 
 describe("buildIndex", () => {
   test("extracts entries and sorts them by name", async () => {
@@ -299,6 +325,13 @@ describe("parseChangelogReleases", () => {
       url: "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/alpha-v1.2.0",
       notes: "### Added\n- Newest thing",
     });
+  });
+
+  test("an Unreleased section (and any other non-release heading) ends the release above it", () => {
+    const releases = parseChangelogReleases(body, "alpha", "1.2.0");
+    expect(releases[1]!.notes).toBe("### Fixed\n- A bug"); // not "...\n\n## [Unreleased]\n- ignored, no date"
+    const other = "## [1.0.0] - 2026-01-02\n- shipped\n\n## Notes\n- not a release note\n";
+    expect(parseChangelogReleases(other, "alpha", "1.0.0")[0]!.notes).toBe("- shipped");
   });
 
   test("caps at 10, keeping the newest", () => {

@@ -13,39 +13,60 @@ jobs:
       id-token: write # OIDC trusted publishing to npm (no NPM_TOKEN)
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the whole history, so the next step can tell whether the tagged commit is on main
+
+      # A tag can be pushed on any commit, including an unreviewed branch commit. This catches the honest
+      # mistake of tagging a commit that is not on main. It is NOT a security boundary: a tag runs the
+      # publish.yml of the commit it points at, so someone who can push a branch and a tag can edit this
+      # step away. The boundary is who may push `*-v*` tags and what npm's Trusted Publisher accepts
+      # (a tag ruleset, a GitHub environment) -- Epic #269 decision 2 / #178 -2.
+      - name: Verify the tagged commit is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Tagged commit $GITHUB_SHA is not reachable from main; tag a commit that has been merged to main." >&2
+            exit 1
+          fi
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
 
+      # The name and version come from the tag, which is attacker-shaped input: they go to the later
+      # steps as environment variables (never spliced into a script with ${{ }}), after being checked
+      # against the shapes a real tag has.
       - name: Resolve plugin name and version from the tag
-        id: tag
         run: |
           TAG="${GITHUB_REF_NAME}"
           NAME="${TAG%-v*}"
           VERSION="${TAG##*-v}"
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if ! [[ "$NAME" =~ ^[a-z][a-z0-9-]*$ ]] || ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]*)?$ ]]; then
+            echo "Tag $TAG is not <name>-v<semver>" >&2
+            exit 1
+          fi
+          echo "PLUGIN_NAME=$NAME" >> "$GITHUB_ENV"
+          echo "PLUGIN_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Verify the tag matches the package version
         run: |
-          PKG_VERSION=$(node -p "require('./plugins/${{ steps.tag.outputs.name }}/package.json').version")
-          if [ "$PKG_VERSION" != "${{ steps.tag.outputs.version }}" ]; then
-            echo "Tag version ${{ steps.tag.outputs.version }} != package.json version $PKG_VERSION" >&2
+          PKG_VERSION=$(node -p "require('./plugins/' + process.env.PLUGIN_NAME + '/package.json').version")
+          if [ "$PKG_VERSION" != "$PLUGIN_VERSION" ]; then
+            echo "Tag version $PLUGIN_VERSION != package.json version $PKG_VERSION" >&2
             exit 1
           fi
 
       - name: Verify the CHANGELOG has a section for this version
-        run: grep -qF "## [${{ steps.tag.outputs.version }}]" "plugins/${{ steps.tag.outputs.name }}/CHANGELOG.md"
+        run: grep -qF "## [$PLUGIN_VERSION]" "plugins/$PLUGIN_NAME/CHANGELOG.md"
 
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bun run build
 
       # Fail before npm publish if the tagged commit's plugins.json is out of sync with the plugin
-      # sources, instead of discovering it after the package is already live. `checks` on every PR
-      # already enforces this, so under branch protection a synced index is guaranteed on main before
-      # any tag; this is belt-and-suspenders for a tag pushed at an unexpected commit.
+      # sources, instead of discovering it after the package is already live. What enforces this on
+      # main is the generate-index CLI test in the required `test` job (`checks` is not a required
+      # check); this re-check is belt-and-suspenders for a tag pushed at an unexpected commit.
       - run: bun run generate-index -- --check
 
       # #28: generate-index's files-allowlist guard and build-plugins' non-empty-output assert both
@@ -57,15 +78,15 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: Ensure npm supports OIDC trusted publishing (>= 11.5.1)
-        run: npm install -g npm@latest
+        run: npm install -g "npm@^11.5.1"
 
       - name: Verify the published tarball will carry dist/admin.js (if this plugin declares one)
         run: |
-          cd "plugins/${{ steps.tag.outputs.name }}"
+          cd "plugins/$PLUGIN_NAME"
           HAS_ADMIN=$(node -p "require('./package.json').botPlugin?.adminApiVersion !== undefined")
           if [ "$HAS_ADMIN" = "true" ]; then
             if ! npm pack --dry-run 2>&1 | grep -qF "dist/admin.js"; then
-              echo "plugins/${{ steps.tag.outputs.name }}: declares adminApiVersion but the published tarball (npm pack --dry-run) does not list dist/admin.js" >&2
+              echo "plugins/$PLUGIN_NAME: declares adminApiVersion but the published tarball (npm pack --dry-run) does not list dist/admin.js" >&2
               exit 1
             fi
           fi
@@ -78,12 +99,12 @@ jobs:
       # + the npm upgrade already ran above, ahead of the pack-check step, so the same npm version
       # that verified the tarball is the one that publishes it.)
       - name: Publish to npm (OIDC trusted publishing)
-        run: cd "plugins/${{ steps.tag.outputs.name }}" && npm publish --access public
+        run: cd "plugins/$PLUGIN_NAME" && npm publish --access public
 
       - name: Extract the CHANGELOG section for the release body
         run: |
-          awk '/^## \[${{ steps.tag.outputs.version }}\]/{flag=1; next} /^## \[/{flag=0} flag' \
-            "plugins/${{ steps.tag.outputs.name }}/CHANGELOG.md" > release-notes.md
+          awk -v heading="## [$PLUGIN_VERSION]" 'index($0, heading) == 1 {flag=1; next} /^## / {flag=0} flag' \
+            "plugins/$PLUGIN_NAME/CHANGELOG.md" > release-notes.md
 
       - name: Create GitHub release
         run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file release-notes.md

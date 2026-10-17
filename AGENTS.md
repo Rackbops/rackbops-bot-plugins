@@ -118,7 +118,8 @@ Follows personal's **Code style** baseline. This repo's individuality:
   a different source (a local literal, or `plugins.json`'s own `hostApiVersion` field) -- not an
   `import` from this file.
 - **`scripts/generate-index.ts` extracts every `plugins/<name>` into `plugins.json`** (from each
-  `package.json` `botPlugin` block + `CHANGELOG.md`) and fails on a bad name, a missing
+  `package.json` `botPlugin` block + `CHANGELOG.md`) and fails on a bad name, a package name
+  or `repository` that isn't this plugin's own, a missing
   `hostApiVersion`, a current version with no CHANGELOG section, or a duplicate command name across
   plugins. See `CONTEXT.md` for the extractor's shape and the OIDC publishing path.
 - **`main` is governed by a repository ruleset** (Project Operations section 4, set 2026-10-04):
