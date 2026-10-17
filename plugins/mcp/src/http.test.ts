@@ -8,6 +8,7 @@ import { createRateLimiter, type RateLimiter } from "./auth.js";
 import { createDrainLock, createEditQueue, createUnpersistedOutcomes, type DrainLock, type EditQueue, type UnpersistedOutcomes } from "./drain.js";
 import { handleMcpHttp, type HttpDeps } from "./http.js";
 import { createRegistryStore, type RegistryStore } from "./registry.js";
+import type { StoredDelivery } from "./protocol.js";
 import { createDeliveryStore, type DeliveryStore } from "./store.js";
 
 const TOKEN = "a".repeat(43);
@@ -683,6 +684,82 @@ describe("handleMcpHttp: a throw from the initial state write does not strand th
     expect(delivery.calls.post).toHaveLength(1);
     expect((await store.get(REQUEST_ID))!.state).toBe("delivered");
   });
+});
+
+describe("handleMcpHttp: a drain that fails to persist or to run", () => {
+  test("a final write that throws is logged, the 202 stands, the lock is released and the outcome is held in memory", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "mcp", ...delivery });
+    const { log, calls } = makeLog();
+    const brokenStore: DeliveryStore = {
+      ...store,
+      set: async () => {
+        throw new Error("disk full");
+      },
+    };
+    const d = { ...deps(host, TOKEN), store: brokenStore, log };
+    const res = await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
+    expect(res.status).toBe(202);
+    await d.drainLock.settled(REQUEST_ID);
+    expect(delivery.calls.post).toHaveLength(1);
+    expect(calls.some((c) => c.level === "error" && c.message === `delivery ${REQUEST_ID} failed to persist`)).toBe(true); // mutation: no .catch -> unhandled rejection
+    expect(d.unpersisted.get(REQUEST_ID)?.state).toBe("delivered");
+    expect(d.drainLock.tryStart(REQUEST_ID)).toBe(true); // mutation: no .finally strands the lock
+    d.drainLock.finish(REQUEST_ID);
+  });
+
+  test("a registry read that throws mid-drain is logged and releases the lock, leaving the record pending", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "mcp", ...delivery });
+    const { log, calls } = makeLog();
+    const brokenRegistry: RegistryStore = {
+      ...registry,
+      generationOf: async () => {
+        throw new Error("registry unreadable");
+      },
+    };
+    const d = { ...deps(host, TOKEN), registry: brokenRegistry, log };
+    const body = { request_id: REQUEST_ID, kind: "dm", target: { user_id: USER_ID }, body: { content: "hi" } };
+    const res = await handleMcpHttp(post("/deliveries", body), INFO("/deliveries"), d);
+    expect(res.status).toBe(202);
+    await d.drainLock.settled(REQUEST_ID);
+    expect(delivery.calls.dm).toEqual([]);
+    expect(calls.some((c) => c.level === "error" && c.message === `delivery ${REQUEST_ID} failed to persist`)).toBe(true);
+    expect((await store.get(REQUEST_ID))?.state).toBe("pending");
+    expect(d.drainLock.tryStart(REQUEST_ID)).toBe(true);
+    d.drainLock.finish(REQUEST_ID);
+  });
+});
+
+describe("handleMcpHttp: retrying a legacy failed dm or edit record (#746 decision 5)", () => {
+  const legacyFailed = (kind: "dm" | "edit"): StoredDelivery => ({
+    state: "failed",
+    kind,
+    target: { guildId: GUILD, destination: "alerts" }, // a #742 record: the target was coerced to a PostTarget
+    body: { content: "hi" },
+    createdAt: new Date(NOW).toISOString(),
+    code: "CAPABILITY_UNAVAILABLE",
+  });
+
+  for (const [kind, code] of [["dm", "RECIPIENT_UNREACHABLE"], ["edit", "NOT_FOUND"]] as const) {
+    test(`a ${kind} record resets to pending, keeps its createdAt, and fails ${code} with no host call`, async () => {
+      const delivery = makeFakeDelivery();
+      const host = makeFakeHost({ name: "mcp", ...delivery });
+      await registry.register(USER_ID, "Ash", () => new Date(NOW)); // even a real registration cannot rescue the coerced target
+      await store.set(REQUEST_ID, legacyFailed(kind));
+      const d = deps(host, TOKEN);
+      const res = await handleMcpHttp(post("/deliveries", validDeliveryBody()), INFO("/deliveries"), d);
+      expect(res.status).toBe(202);
+      const answered = (await res.json()) as { state: { state: string; kind: string; created_at: string; target: unknown }; existing: boolean };
+      expect(answered.existing).toBe(true);
+      expect(answered.state).toMatchObject({ state: "pending", kind, created_at: new Date(NOW).toISOString(), target: { guild_id: GUILD, destination: "alerts" } });
+      await d.drainLock.settled(REQUEST_ID);
+      expect(await store.get(REQUEST_ID)).toMatchObject({ state: "failed", kind, code });
+      expect(delivery.calls.dm).toEqual([]);
+      expect(delivery.calls.edit).toEqual([]);
+      expect(delivery.calls.post).toEqual([]);
+    });
+  }
 });
 
 describe("handleMcpHttp: an outcome whose write failed after the send (#140)", () => {
