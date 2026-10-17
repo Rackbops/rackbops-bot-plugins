@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { PluginIndex } from "../packages/api/contract.js";
 import { buildIndex, filesAllowlistCoversAdminBundle, parseChangelogReleases, sameIgnoringGeneratedAt, sortByName } from "./generate-index.js";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -355,7 +356,7 @@ describe("sameIgnoringGeneratedAt", () => {
   });
 });
 
-// The CLI's --check path against the repo's own committed plugins.json.
+// The CLI's --check path: against the repo's own committed plugins.json, and against a throwaway stale one.
 // process.execPath, never bare "bun": Bun.spawn's ENOENT on a bare command name is Windows-specific and won't reproduce on Linux CI.
 describe("generate-index CLI --check", () => {
   async function run(args: string[]): Promise<{ exitCode: number; stdout: string }> {
@@ -372,6 +373,33 @@ describe("generate-index CLI --check", () => {
     const { exitCode, stdout } = await run(["--check"]);
     expect(exitCode).toBe(0);
     expect(stdout).toContain("up to date");
+  });
+
+  test("exits 1 and names the fix when plugins.json is stale", async () => {
+    // A throwaway repo root (the script resolves plugins/ and plugins.json from its own location):
+    // no plugins, but a plugins.json that lists one -- the committed file is never touched.
+    const root = await mkdtemp(join(tmpdir(), "gen-index-stale-"));
+    try {
+      await mkdir(join(root, "scripts"));
+      await mkdir(join(root, "plugins"));
+      await Bun.write(join(root, "scripts", "generate-index.ts"), Bun.file(new URL("./generate-index.ts", import.meta.url)));
+      const stale: PluginIndex = {
+        schemaVersion: 1,
+        generatedAt: "2026-01-01T00:00:00.000Z",
+        plugins: [{ name: "x", package: "@rackbops/plugin-x", version: "1.0.0", description: "d", hostApiVersion: 1, intents: [], commands: ["x"], env: [], releases: [] }],
+      };
+      await writeFile(join(root, "plugins.json"), JSON.stringify(stale));
+      const proc = Bun.spawn([process.execPath, "run", join(root, "scripts", "generate-index.ts"), "--check"], {
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+      expect(exitCode).toBe(1);
+      expect(stderr).toContain("out of date");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("committed plugins.json is a well-formed envelope", async () => {
