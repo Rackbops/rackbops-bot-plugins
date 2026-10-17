@@ -1,16 +1,27 @@
 name: publish
 
+# Two jobs (#178). `verify` runs everything that executes this repo's code -- bun install (lifecycle
+# scripts), tests, the build, npm pack -- with a read-only token and NO id-token, so that code cannot
+# use or leak the npm OIDC credential. It hands one packed tarball and the release notes to `publish`,
+# which runs none of this repo's code: it downloads them, publishes the tarball and cuts the GitHub
+# release. This does NOT make the tarball trustworthy: the code in `verify` still decides what is in
+# it, and it is built from whatever commit was tagged, so who may push `*-v*` tags remains the real
+# gate -- Epic #269 decision 2 / #178 -2.
+
 on:
   push:
     tags:
       - "*-v*.*.*"
 
 jobs:
-  publish:
+  verify:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # create the GitHub release
-      id-token: write # OIDC trusted publishing to npm (no NPM_TOKEN)
+      contents: read
+    outputs:
+      name: ${{ steps.tag.outputs.name }}
+      version: ${{ steps.tag.outputs.version }}
+      tarball: ${{ steps.pack.outputs.tarball }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -37,6 +48,7 @@ jobs:
       # steps as environment variables (never spliced into a script with ${{ }}), after being checked
       # against the shapes a real tag has.
       - name: Resolve plugin name and version from the tag
+        id: tag
         run: |
           TAG="${GITHUB_REF_NAME}"
           NAME="${TAG%-v*}"
@@ -47,6 +59,8 @@ jobs:
           fi
           echo "PLUGIN_NAME=$NAME" >> "$GITHUB_ENV"
           echo "PLUGIN_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Verify the tag matches the package version
         run: |
@@ -69,9 +83,65 @@ jobs:
       # check); this re-check is belt-and-suspenders for a tag pushed at an unexpected commit.
       - run: bun run generate-index -- --check
 
-      # #28: generate-index's files-allowlist guard and build-plugins' non-empty-output assert both
-      # run earlier in this same job (bun run build / generate-index --check above) -- this is the
-      # last line of defense, on the REAL tarball npm would actually publish, right before it does.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # #28: generate-index's files-allowlist guard and build-plugins' non-empty-output assert both run
+      # earlier in this job -- this is the last line of defense, on the REAL tarball that `publish` will
+      # upload to npm (packed here, published there unchanged).
+      - name: Pack the tarball and verify what it carries
+        id: pack
+        run: |
+          mkdir release
+          (cd "plugins/$PLUGIN_NAME" && npm pack --pack-destination "$GITHUB_WORKSPACE/release")
+          TARBALL=$(cd release && ls -- *.tgz)
+          if [ "$(printf '%s\n' "$TARBALL" | wc -l)" != "1" ]; then
+            echo "Expected exactly one tarball in release/, got: $TARBALL" >&2
+            exit 1
+          fi
+          HAS_ADMIN=$(node -p "require('./plugins/' + process.env.PLUGIN_NAME + '/package.json').botPlugin?.adminApiVersion !== undefined")
+          if [ "$HAS_ADMIN" = "true" ]; then
+            tar -tzf "release/$TARBALL" > tarball-files.txt
+            if ! grep -qx "package/dist/admin.js" tarball-files.txt; then
+              echo "plugins/$PLUGIN_NAME: declares adminApiVersion but the tarball does not carry dist/admin.js" >&2
+              exit 1
+            fi
+          fi
+          PACKED=$(tar -xzOf "release/$TARBALL" package/package.json | node -p "const p = JSON.parse(require('fs').readFileSync(0, 'utf8')); p.name + '@' + p.version")
+          if [ "$PACKED" != "@rackbops/plugin-$PLUGIN_NAME@$PLUGIN_VERSION" ]; then
+            echo "Tarball package.json is $PACKED, expected @rackbops/plugin-$PLUGIN_NAME@$PLUGIN_VERSION" >&2
+            exit 1
+          fi
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
+
+      - name: Extract the CHANGELOG section for the release body
+        run: |
+          awk -v heading="## [$PLUGIN_VERSION]" 'index($0, heading) == 1 {flag=1; next} /^## / || /^\[[^]]+\]:[ \t]*[^ \t]/ {flag=0} flag' \
+            "plugins/$PLUGIN_NAME/CHANGELOG.md" > release/release-notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # OIDC trusted publishing to npm (no NPM_TOKEN)
+    env:
+      PLUGIN_NAME: ${{ needs.verify.outputs.name }}
+      PLUGIN_VERSION: ${{ needs.verify.outputs.version }}
+      TARBALL: ${{ needs.verify.outputs.tarball }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
@@ -80,33 +150,27 @@ jobs:
       - name: Ensure npm supports OIDC trusted publishing (>= 11.5.1)
         run: npm install -g "npm@^11.5.1"
 
-      - name: Verify the published tarball will carry dist/admin.js (if this plugin declares one)
-        run: |
-          cd "plugins/$PLUGIN_NAME"
-          HAS_ADMIN=$(node -p "require('./package.json').botPlugin?.adminApiVersion !== undefined")
-          if [ "$HAS_ADMIN" = "true" ]; then
-            if ! npm pack --dry-run 2>&1 | grep -qF "dist/admin.js"; then
-              echo "plugins/$PLUGIN_NAME: declares adminApiVersion but the published tarball (npm pack --dry-run) does not list dist/admin.js" >&2
-              exit 1
-            fi
-          fi
-
       # Publishing uses OIDC trusted publishing, not a token: npm revoked classic tokens (2025-12-09)
       # and retired bypass-2FA CI tokens (2026-07-31). `bun publish` does not support OIDC
-      # (oven-sh/bun#22423), so the publish step runs `npm publish`; install/test/build stay on Bun
-      # above. A Trusted Publisher for each package must be configured on npmjs.com
-      # (GitHub Actions / Rackbops / rackbops-bot-plugins / publish.yml) — see README.md. (setup-node
-      # + the npm upgrade already ran above, ahead of the pack-check step, so the same npm version
-      # that verified the tarball is the one that publishes it.)
+      # (oven-sh/bun#22423), so the publish step runs `npm publish`; install/test/build stay on Bun in
+      # `verify`. A Trusted Publisher for each package must be configured on npmjs.com
+      # (GitHub Actions / Rackbops / rackbops-bot-plugins / publish.yml) — see README.md.
+      # `verify` already checked the tarball, but its code could have swapped the artifact afterwards, and
+      # re-reading name and version here needs no repo code (just tar and node).
       - name: Publish to npm (OIDC trusted publishing)
-        run: cd "plugins/$PLUGIN_NAME" && npm publish --access public
-
-      - name: Extract the CHANGELOG section for the release body
         run: |
-          awk -v heading="## [$PLUGIN_VERSION]" 'index($0, heading) == 1 {flag=1; next} /^## / {flag=0} flag' \
-            "plugins/$PLUGIN_NAME/CHANGELOG.md" > release-notes.md
+          if ! [[ "$TARBALL" =~ ^[A-Za-z0-9._+-]+\.tgz$ ]]; then
+            echo "Unexpected tarball name: $TARBALL" >&2
+            exit 1
+          fi
+          PACKED=$(tar -xzOf "release/$TARBALL" package/package.json | node -p "const p = JSON.parse(require('fs').readFileSync(0, 'utf8')); p.name + '@' + p.version")
+          if [ "$PACKED" != "@rackbops/plugin-$PLUGIN_NAME@$PLUGIN_VERSION" ]; then
+            echo "Tarball package.json is $PACKED, expected @rackbops/plugin-$PLUGIN_NAME@$PLUGIN_VERSION" >&2
+            exit 1
+          fi
+          npm publish "release/$TARBALL" --access public
 
       - name: Create GitHub release
-        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file release-notes.md
+        run: gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --verify-tag --title "${GITHUB_REF_NAME}" --notes-file release/release-notes.md
         env:
           GH_TOKEN: ${{ github.token }}

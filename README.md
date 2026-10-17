@@ -507,9 +507,15 @@ the tagged commit is reachable from `main` (a guard against tagging the wrong co
 boundary: a tag runs the workflow file of the commit it points at, so restricting who may push
 `*-v*` tags and what npm's Trusted Publisher accepts is what actually gates a publish) and the tag
 has the shape of a real one, verify the tag matches the package version and the CHANGELOG has a section for it, install/test/build (Bun), re-run
-`generate-index -- --check` to fail fast if the tagged commit's `plugins.json` is out of sync, then
-`npm publish` via **OIDC trusted publishing** and cut a GitHub release with the CHANGELOG section as
-the body. Publishing no longer writes `plugins.json`; its versions change in the PR that bumps the
+`generate-index -- --check` to fail fast if the tagged commit's `plugins.json` is out of sync, and pack the
+tarball (checking it carries `dist/admin.js` when the plugin declares an admin bundle, and that its own
+`package.json` is the right name and version). That is the `verify` job, which has a read-only token and
+no OIDC credential, so the repo's code (install scripts, tests, the build) cannot use or leak one. The
+`publish` job then runs none of this repo's code: it downloads the tarball, re-reads its name and
+version, `npm publish`es it unchanged via **OIDC trusted publishing**, and cuts a GitHub release with
+the CHANGELOG section as the body. The split does not make the tarball trustworthy (the code in
+`verify` still decides what is in it, and it is built from whatever commit was tagged), so who may push
+`*-v*` tags stays the real gate. Publishing no longer writes `plugins.json`; its versions change in the PR that bumps the
 plugin (which regenerates and commits the index, enforced by the required `test` job's `generate-index`
 CLI test) -- hand-edits are forbidden. `generate-index` also refuses a plugin whose package name is
 not `@rackbops/plugin-<dir>` or whose `repository` is not this repo with `directory: plugins/<dir>`.
