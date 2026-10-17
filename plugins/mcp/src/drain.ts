@@ -43,6 +43,44 @@ export interface EditQueue {
   run<T>(key: string, fn: () => Promise<T>): Promise<T>;
 }
 
+/** Outcomes of a settled attempt whose final `store.set` failed (#140). Held in memory so neither a
+ *  caller's GET/retry nor the tick's re-drive acts on the stale on-disk `pending` or `unknown`. For a
+ *  `delivered` outcome that is what stops the message being sent a second time; a held `failed` one is
+ *  still reset and re-driven by a caller's retry. The tick retries the write alone. Lost on a
+ *  restart: a crash between the send and the write can still double-post once. Entries are dropped on
+ *  the same 8-day rule as `store.prune` so a write that keeps failing cannot grow this without bound. */
+export interface UnpersistedOutcomes {
+  get(requestId: string): StoredDelivery | undefined;
+  set(requestId: string, outcome: StoredDelivery): void;
+  delete(requestId: string): void;
+  entries(): [string, StoredDelivery][];
+  /** Drops every entry whose record is 8+ days old; returns the dropped ids. */
+  prune(now: () => Date): string[];
+}
+
+const UNPERSISTED_MAX_AGE_MS = 8 * 24 * 60 * 60 * 1000;
+
+export function createUnpersistedOutcomes(): UnpersistedOutcomes {
+  const held = new Map<string, StoredDelivery>();
+  return {
+    get: (requestId) => held.get(requestId),
+    set: (requestId, outcome) => void held.set(requestId, outcome),
+    delete: (requestId) => void held.delete(requestId),
+    entries: () => [...held.entries()],
+    prune(now) {
+      const cutoff = now().getTime() - UNPERSISTED_MAX_AGE_MS;
+      const dropped: string[] = [];
+      for (const [requestId, outcome] of held) {
+        if (new Date(outcome.createdAt).getTime() <= cutoff) {
+          held.delete(requestId);
+          dropped.push(requestId);
+        }
+      }
+      return dropped;
+    },
+  };
+}
+
 export function createEditQueue(): EditQueue {
   const chains = new Map<string, Promise<unknown>>();
   return {
@@ -64,6 +102,7 @@ export interface DrainDeps {
   store: DeliveryStore;
   registry: RegistryStore;
   editQueue: EditQueue;
+  unpersisted: UnpersistedOutcomes;
   log: PluginLog;
 }
 
@@ -84,7 +123,8 @@ type DeliveredOriginal = Extract<StoredDelivery, { state: "delivered" }>;
  *    host, even to reapply the same content, once a higher one has already landed).
  * 5. Otherwise: call `host.edit(original.delivery, body)`, persist `lastEditSeq = seq` on the
  *    original's OWN record (`deps.store.recordEditSeq`, not this edit's own record -- see store.ts),
- *    and answer `delivered{applied:true}`. An equal `seq` re-applies (decision 3: only happens when a
+ *    and answer `delivered{applied:true}` -- also when that seq write fails (logged): the edit has landed, so it
+ *    is not reported failed, at the cost that a later, older edit may then not be recognised as superseded. An equal `seq` re-applies (decision 3: only happens when a
  *    re-drive repeats an edit that had already applied, with the same content).
  */
 async function attemptEdit(deps: DrainDeps, requestId: string, target: DeliveryTarget, body: DeliveryBody): Promise<DrainOutcome> {
@@ -119,7 +159,13 @@ async function attemptEdit(deps: DrainDeps, requestId: string, target: DeliveryT
       deps.log.error(`edit ${requestId} (of ${messageRef}) failed: ${describeError(err)}`);
       return { state: "failed", code: "UPSTREAM_UNAVAILABLE" };
     }
-    await deps.store.recordEditSeq(messageRef, seq);
+    try {
+      await deps.store.recordEditSeq(messageRef, seq);
+    } catch (err) {
+      // The edit already landed: the seq is only the guard against a later re-apply of an older edit, so a
+      // failed write must not turn a delivered edit into a failure that gets re-driven (#140).
+      deps.log.error(`recording edit seq ${seq} on ${messageRef} failed: ${describeError(err)}`);
+    }
     return { state: "delivered", messageRef: delivered.messageRef, url: delivered.url, delivery: delivered.delivery, applied: true };
   });
 }
@@ -269,7 +315,8 @@ export function createDrainLock(): DrainLock {
 }
 
 /**
- * Attempts delivery and persists the outcome via `deps.store.set`. Does NOT touch `DrainLock` itself
+ * Attempts delivery and persists the outcome via `deps.store.set`. If that write throws, the outcome is
+ * recorded in `deps.unpersisted` (and the error rethrown) so the tick can retry the write alone. Does NOT touch `DrainLock` itself
  * -- the caller must hold it for `requestId` already (`tryStart` returned `true`) and release it
  * (`finish`) once this settles, in a `finally`; that split is what lets the tick await this
  * sequentially while http.ts fires it without awaiting (the `202` goes out first, decision 5 of #742)
@@ -292,5 +339,13 @@ export async function drainAndPersist(
           ...(outcome.applied !== undefined ? { applied: outcome.applied } : {}),
         }
       : { ...entry, state: "failed", code: outcome.code };
-  await deps.store.set(requestId, next);
+  try {
+    await deps.store.set(requestId, next);
+  } catch (err) {
+    // Keep the settled outcome (for a delivered one, the send already happened) so nothing acts on the stale
+    // file; the tick retries the write alone.
+    deps.unpersisted.set(requestId, next);
+    throw err;
+  }
+  deps.unpersisted.delete(requestId);
 }

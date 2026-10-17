@@ -1,7 +1,7 @@
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { createRateLimiter } from "./auth.js";
 import { agentCommand } from "./commands.js";
-import { createDrainLock, createEditQueue, drainAndPersist } from "./drain.js";
+import { createDrainLock, createEditQueue, createUnpersistedOutcomes, drainAndPersist } from "./drain.js";
 import { handleMcpHttp, type HttpDeps } from "./http.js";
 import { createRegistryStore } from "./registry.js";
 import { createDeliveryStore } from "./store.js";
@@ -27,6 +27,8 @@ export function createPlugin(host: HostApi): Plugin {
   // drainLock above -- an HTTP-triggered edit and the tick's re-drive of an "unknown" edit must never
   // read-modify-write the same original's lastEditSeq concurrently.
   const editQueue = createEditQueue();
+  // Outcomes sent to Discord whose final write failed (#140); see drain.ts's UnpersistedOutcomes.
+  const unpersisted = createUnpersistedOutcomes();
   // Flipped by dispose() (decision 6): the tick's re-drive loop checks this between deliveries so a
   // shutdown stops it from starting another once the grace period is spent. HTTP-triggered drains
   // need no equivalent guard -- the host stops routing new requests to this plugin before dispose()
@@ -38,6 +40,7 @@ export function createPlugin(host: HostApi): Plugin {
     store,
     registry,
     editQueue,
+    unpersisted,
     // A cleared key (`MCP_BRIDGE_TOKEN=`) can reach the plugin as ""; treat it as unset, not as a token.
     token: host.env.MCP_BRIDGE_TOKEN?.trim() || undefined,
     limiter,
@@ -54,8 +57,9 @@ export function createPlugin(host: HostApi): Plugin {
     ticks: [
       {
         name: "redrive",
-        /** Decision 6: re-drives every `unknown` entry (a restart left it without a caller ever
-         *  retrying it) and prunes anything 8+ days old. Honours `signal`/`disposed` BETWEEN
+        /** Decision 6: first retries the write (only the write) for outcomes held in `unpersisted` and prunes
+         *  that map on the 8-day rule (#140), then re-drives every `unknown` entry not held there (a restart
+         *  left it without a caller ever retrying it) and prunes anything 8+ days old. Honours `signal`/`disposed` BETWEEN
          *  deliveries, not mid-attempt -- `attemptDelivery` itself takes no signal, the same way
          *  `host.post`/`host.announce` take none. Skips (rather than waits for) an id the drain
          *  lock says a caller's retry already claimed; that retry owns writing its outcome. Each
@@ -64,13 +68,33 @@ export function createPlugin(host: HostApi): Plugin {
          *  later id plus the prune pass that follows (review finding, Tooling#742) -- the same
          *  isolation `pluginTicks`/`activatePlugins` already apply per plugin, one level up. */
         async run(signal) {
+          // First retry the write for outcomes that already went out (#140): no Discord call is repeated.
+          for (const [requestId] of unpersisted.entries()) {
+            if (disposed || signal?.aborted === true) return;
+            if (!drainLock.tryStart(requestId)) continue;
+            try {
+              // Re-read under the lock: a caller's retry may have replaced or cleared it since the snapshot.
+              const held = unpersisted.get(requestId);
+              if (held === undefined) continue;
+              await store.set(requestId, held);
+              unpersisted.delete(requestId);
+            } catch (err) {
+              host.log.error(`persisting the outcome of delivery ${requestId} failed again`, err);
+            } finally {
+              drainLock.finish(requestId);
+            }
+          }
+          unpersisted.prune(() => new Date());
           for (const requestId of await store.list()) {
             if (disposed || signal?.aborted === true) return;
+            if (unpersisted.get(requestId) !== undefined) continue; // already sent; only the write is outstanding
             try {
               const current = await store.get(requestId);
               if (current === undefined || current.state !== "unknown") continue;
               if (!drainLock.tryStart(requestId)) continue;
               try {
+                // An HTTP drain may have settled, with its write failing, since the check above.
+                if (unpersisted.get(requestId) !== undefined) continue;
                 await drainAndPersist(httpDeps, requestId, current);
               } finally {
                 drainLock.finish(requestId);

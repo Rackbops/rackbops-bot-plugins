@@ -8,6 +8,7 @@ import {
   attemptDelivery,
   createDrainLock,
   createEditQueue,
+  createUnpersistedOutcomes,
   drainAndPersist,
   RECIPIENT_UNREACHABLE_MESSAGE,
   type DrainDeps,
@@ -52,7 +53,7 @@ afterEach(() => {
 });
 
 function deps(host: HostApi, overrides: Partial<DrainDeps> = {}): DrainDeps {
-  return { host, store, registry, editQueue: createEditQueue(), log: makeLog().log, ...overrides };
+  return { host, store, registry, editQueue: createEditQueue(), unpersisted: createUnpersistedOutcomes(), log: makeLog().log, ...overrides };
 }
 
 describe("attemptDelivery: kind post, with host.post", () => {
@@ -529,3 +530,70 @@ describe("drainAndPersist", () => {
     expect(lock.tryStart(REQUEST_ID)).toBe(true); // the lock was never touched by drainAndPersist
   });
 });
+
+describe("drainAndPersist: a write failure after a successful send (#140)", () => {
+  const entry = () => ({ kind: "post" as const, target: TARGET, body: { content: "hi" }, createdAt: NOW().toISOString() });
+
+  test("the delivered outcome is kept in memory when the final write throws, and cleared once a write lands", async () => {
+    const host = makeFakeHost({ name: "mcp", ...makeFakeDelivery() });
+    const unpersisted = createUnpersistedOutcomes();
+    let failing = true;
+    const flakyStore: DeliveryStore = {
+      ...store,
+      set: async (id, value) => {
+        if (failing) throw new Error("disk full");
+        return store.set(id, value);
+      },
+    };
+    const d = deps(host, { store: flakyStore, unpersisted });
+    await expect(drainAndPersist(d, REQUEST_ID, entry())).rejects.toThrow("disk full");
+    expect(unpersisted.get(REQUEST_ID)?.state).toBe("delivered");
+
+    failing = false;
+    await drainAndPersist(d, REQUEST_ID, entry());
+    expect(unpersisted.get(REQUEST_ID)).toBeUndefined();
+  });
+
+  test("a failing recordEditSeq after a landed edit still reports the edit as delivered", async () => {
+    const host = makeFakeHost({ name: "mcp", ...makeFakeDelivery() });
+    await drainAndPersist(deps(host), REQUEST_ID, entry());
+    const { log, calls } = makeLog();
+    const flakyStore: DeliveryStore = {
+      ...store,
+      recordEditSeq: async () => {
+        throw new Error("disk full");
+      },
+    };
+    const result = await attemptDelivery(deps(host, { store: flakyStore, log }), OTHER_REQUEST_ID, {
+      kind: "edit",
+      target: { messageRef: REQUEST_ID, seq: 1 },
+      body: { content: "v2" },
+      createdAt: NOW().toISOString(),
+    });
+    expect(result.state).toBe("delivered");
+    expect(calls.some((c) => c.level === "error" && c.message.includes("recording edit seq"))).toBe(true);
+  });
+});
+
+describe("createUnpersistedOutcomes", () => {
+  test("prune drops outcomes 8 or more days old, so a write that keeps failing cannot grow it without bound", () => {
+    const held = createUnpersistedOutcomes();
+    const delivered = (createdAt: string): StoredDelivery => ({
+      state: "delivered",
+      kind: "post",
+      target: TARGET,
+      body: { content: "hi" },
+      createdAt,
+      messageRef: null,
+      url: null,
+      delivery: null,
+    });
+    const now = new Date("2026-10-17T00:00:00.000Z");
+    held.set("old", delivered("2026-10-09T00:00:00.000Z")); // exactly 8 days
+    held.set("fresh", delivered("2026-10-09T00:00:01.000Z"));
+    expect(held.prune(() => now)).toEqual(["old"]);
+    expect(held.get("old")).toBeUndefined();
+    expect(held.get("fresh")).toBeDefined();
+  });
+});
+

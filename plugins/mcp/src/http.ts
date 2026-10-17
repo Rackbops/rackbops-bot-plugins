@@ -33,7 +33,7 @@ function json(status: number, body: unknown): Response {
  * off its delivery without awaiting it (the `202` goes out first, decision 5), releasing the lock
  * once the attempt settles either way -- INCLUDING if the initial write itself throws (a full disk,
  * a permissions error): that write is not load-bearing for the delivery attempt (drain works from
- * the in-memory `entry`, and drainAndPersist's own write corrects the file once the attempt settles),
+ * the in-memory `entry`, and drainAndPersist's own write corrects the file once the attempt settles -- or, if that write fails, holds the outcome in `unpersisted` for the tick to retry),
  * so a failure there is logged and the attempt proceeds anyway, rather than left to propagate
  * uncaught -- which used to skip past the `.finally()` below entirely and strand the lock for that
  * request_id forever (review finding, Tooling#742). Returns whether the claim succeeded -- on
@@ -46,6 +46,7 @@ function json(status: number, body: unknown): Response {
  */
 async function startDrain(deps: HttpDeps, requestId: string, entry: Extract<StoredDelivery, { state: "pending" }>): Promise<boolean> {
   if (!deps.drainLock.tryStart(requestId)) return false;
+  deps.unpersisted.delete(requestId); // a fresh attempt supersedes any outcome still waiting for its write (#140)
   try {
     await deps.store.set(requestId, entry);
   } catch (err) {
@@ -92,7 +93,10 @@ async function handleCreateDelivery(request: Request, deps: HttpDeps): Promise<R
     return json(202, { state: toWireState(value), existing });
   }
 
-  const { value, existing } = await deps.store.reserve(requestId, kind, target, body, deps.now);
+  const reserved = await deps.store.reserve(requestId, kind, target, body, deps.now);
+  const { existing } = reserved;
+  // An outcome whose Discord call already happened but whose write failed (#140) is newer than the file.
+  const value = (existing ? deps.unpersisted.get(requestId) : undefined) ?? reserved.value;
   if (!existing) {
     await startDrain(deps, requestId, value as Extract<StoredDelivery, { state: "pending" }>);
     return json(202, { state: toWireState(value), existing });
@@ -118,7 +122,7 @@ async function handleCreateDelivery(request: Request, deps: HttpDeps): Promise<R
 }
 
 async function handleGetDelivery(requestId: string, deps: HttpDeps): Promise<Response> {
-  const value = await deps.store.get(requestId);
+  const value = deps.unpersisted.get(requestId) ?? (await deps.store.get(requestId));
   if (value === undefined) return json(404, { error: "unknown request_id" });
   return json(200, toWireState(value));
 }
