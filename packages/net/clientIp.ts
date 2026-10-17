@@ -20,11 +20,18 @@ export interface TrustedProxy {
   refresh(): Promise<void>;
 }
 
-/** Re-resolution is capped at once per this window, triggered by a cache miss in `isTrusted`
+/** Re-resolution is capped at once per this window (shortened to EMPTY_RETRY_BACKOFF_MS while the
+ *  address set is empty after a failed lookup, below), triggered by a cache miss in `isTrusted`
  *  (never by a timer) -- compose can recreate the tunnel sidecar with a new address at any time,
  *  but a hot loop of misses (an attacker deliberately varying its own address) must not turn into a
  *  hot loop of DNS lookups either. */
 const REFRESH_THROTTLE_MS = 60_000;
+
+/** After a failed lookup that leaves the address set EMPTY (the bot can start before the tunnel
+ *  sidecar resolves), the next miss may retry after this much shorter window instead of the full
+ *  throttle -- otherwise every real request is untrusted for up to a minute. Still a floor, so a
+ *  hot loop of misses stays a bounded loop of lookups. */
+const EMPTY_RETRY_BACKOFF_MS = 5_000;
 
 async function defaultLookup(host: string): Promise<string[]> {
   const results = await dnsLookup(host, { all: true });
@@ -78,7 +85,9 @@ export function createTrustedProxy(opts: {
       try {
         addresses = new Set((await lookup(host)).map(canonicalAddress));
       } catch {
-        // Leave `addresses` as it was -- see the interface doc comment.
+        // Leave `addresses` as it was -- see the interface doc comment. With nothing cached yet,
+        // pull the throttle clock back so the next miss retries after EMPTY_RETRY_BACKOFF_MS.
+        if (addresses.size === 0) lastRefreshAt = now() - (REFRESH_THROTTLE_MS - EMPTY_RETRY_BACKOFF_MS);
       } finally {
         inFlight = undefined;
       }
@@ -107,17 +116,18 @@ export function createTrustedProxy(opts: {
  * `"unknown"` if the caller has no peer address to report (Bun's `requestIP` can return `null` for
  * a request over an already-closed socket).
  *
- * A repeated header collapses to one comma-joined string per the Fetch `Headers` contract; only
- * the FIRST value is honored, the same defensive convention as a standard `X-Forwarded-For` chain
- * -- Cloudflare's edge only ever sets this header once for a request that genuinely transited it,
- * so a second value can only be something a caller appended trying to look like an earlier hop.
+ * A repeated header collapses to one comma-joined string per the Fetch `Headers` contract.
+ * Cloudflare's edge sets this header to exactly one value, so a header containing a comma is not
+ * something Cloudflare produced: it is distrusted outright (fall back to `peerAddress`), never
+ * parsed for a "first" or "last" value.
  */
 export function clientIpFrom(req: Request, peerAddress: string | undefined, proxy: TrustedProxy): string {
   if (peerAddress !== undefined && proxy.isTrusted(peerAddress)) {
     const header = req.headers.get("CF-Connecting-IP");
     if (header !== null) {
-      const first = (header.split(",")[0] ?? "").trim();
-      if (isIP(first) !== 0) return first;
+      // `isIP` rejects any string containing a comma, so a multi-valued header never validates.
+      const value = header.trim();
+      if (isIP(value) !== 0) return value;
     }
   }
   return peerAddress ?? "unknown";
