@@ -9,11 +9,10 @@
 // Run (Bun, which resolves the client's TS + ".js"-specifier ESM imports natively):
 //   bun run plugins/wow/scripts/gen-realms.ts
 //
-// Inputs (both overridable by env, absolute paths only):
-//   BNET_SECRETS     Blizzard client creds JSON: { "ID": "...", "SECRET": "..." }
-//                    default R:/repos/secrets/BattleNetAPI-secrets.json
-//   BNET_CLIENT_DIR  the Rackbops/battlenet-api-research client/ checkout
-//                    default R:/repos/battlenet-api-research/client
+// Inputs (both required, absolute paths, from the environment -- the script has no defaults, so no
+// machine's file layout is committed to this public repo):
+//   BNET_SECRETS     path to the Blizzard client credentials JSON: { "ID": "...", "SECRET": "..." }
+//   BNET_CLIENT_DIR  path to the Rackbops/battlenet-api-research client/ checkout
 //
 // Writes plugins/wow/src/admin/realms.json: { generated, source, regions: { us:[{slug,name}], eu:[...] } }.
 
@@ -21,8 +20,14 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const SECRETS = process.env.BNET_SECRETS ?? "R:/repos/secrets/BattleNetAPI-secrets.json";
-const CLIENT_DIR = process.env.BNET_CLIENT_DIR ?? "R:/repos/battlenet-api-research/client";
+const SECRETS = process.env.BNET_SECRETS?.trim();
+const CLIENT_DIR = process.env.BNET_CLIENT_DIR?.trim();
+if (!SECRETS || !CLIENT_DIR) {
+  throw new Error(
+    "gen-realms needs both BNET_SECRETS (path to the Blizzard credentials JSON) and BNET_CLIENT_DIR " +
+      "(path to the battlenet-api-research client/ checkout) set in the environment",
+  );
+}
 const OUT = new URL("../src/admin/realms.json", import.meta.url);
 
 // Only "us"/"eu" — the two values the WOW_REGION format in package.json's botPlugin.env accepts, and the two the panel
