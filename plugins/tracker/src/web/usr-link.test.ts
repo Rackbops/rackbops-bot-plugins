@@ -194,7 +194,8 @@ describe("Link everyone to usr", () => {
     const gone = await call(w.plugin, "POST", "/forget", { jar: curly, form: { csrf: await csrfOf(w.plugin, curly), confirm: "yes", word: CONFIRM_WORD }, origin: ORIGIN });
     expect(gone.status).toBe(303);
     hold.release();
-    expect(await finished(w)).toContain("Linked 2 of 3 to usr.");
+    const page = await finished(w);
+    expect(page).toContain("Linked 2 of 3 to usr. Skipped 1: left the tracker or linked meanwhile.");
     expect(w.usr.calls.map((c) => c.discord_user_id)).toEqual([ADMIN, LARRY]);
   });
 
@@ -236,5 +237,137 @@ describe("Link everyone to usr", () => {
     const post = await call(off.plugin, "POST", "/admin/usr-link", { jar: admin, form: { csrf: await csrfOf(off.plugin, admin) }, origin: ORIGIN });
     expect(post.status).toBe(404);
     expect(w.usr.calls).toHaveLength(0);
+  });
+});
+
+describe("Refresh usr links (#170)", () => {
+  /** Links everyone with `ok(n)` (Admin sub(1), Larry sub(2), Curly sub(3)), then answers usr with `then`. */
+  async function linkedWorld(then: (body: Record<string, unknown>, n: number) => Answer | Promise<Answer>) {
+    let refreshing = false;
+    const w = await setup((b, n) => (refreshing ? then(b, n) : ok(n)));
+    await press(w);
+    expect(await finished(w)).toContain("Linked 3 of 3 to usr.");
+    refreshing = true;
+    w.usr.calls.length = 0;
+    return w;
+  }
+
+  function refresh(w: World, jar = w.admin, csrf = w.csrf) {
+    return call(w.plugin, "POST", "/admin/usr-refresh", { jar, form: { csrf }, origin: ORIGIN });
+  }
+
+  const moved = (n: number): Answer => ({ status: 200, body: { user_id: sub(n), created: false, roles: ["tracker:member"] } });
+
+  it("asks usr again for everyone linked, keeps the account usr has for each now, and counts what changed", async () => {
+    const w = await linkedWorld((b) => (b.discord_user_id === LARRY ? moved(9) : moved(b.discord_user_id === ADMIN ? 1 : 3)));
+    // Everyone is linked: the Link everyone paragraph and button go, the Refresh ones stay.
+    const before = await (await call(w.plugin, "GET", "/admin", { jar: w.admin })).text();
+    expect(before).toContain("for the 3 on the list who are linked");
+    expect(before).toContain("It changes usr: it puts the tracker's member role back");
+    expect(before).not.toContain("Link everyone to usr checks");
+    expect(before).not.toContain("Link everyone to usr</button>");
+    const res = await refresh(w);
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/tracker/admin");
+    expect(await finished(w)).toContain("Last run: Refreshed 3 of 3 usr links: 1 changed, 0 new usr accounts, 0 failed, 0 skipped.");
+    expect(w.usr.calls.map((c) => [c.discord_user_id, c.guild_id, c.invoker_discord_user_id, c.roles])).toEqual([
+      [ADMIN, GUILD, ADMIN, ["tracker:member"]],
+      [LARRY, GUILD, ADMIN, ["tracker:member"]],
+      [CURLY, GUILD, ADMIN, ["tracker:member"]],
+    ]);
+    expect(subjects(w.dbPath)).toEqual({ [ADMIN]: sub(1), [LARRY]: sub(9), [CURLY]: sub(3) });
+  });
+
+  it("lists one person's failure and goes on with the rest", async () => {
+    // Larry: a 400 about him. Curly: usr now names Larry's account, which is linked to Larry here.
+    const w = await linkedWorld((b) =>
+      b.discord_user_id === LARRY ? { status: 400, body: { error: "display_name is too long" } } : b.discord_user_id === CURLY ? moved(2) : moved(7),
+    );
+    await refresh(w);
+    const page = await finished(w);
+    expect(page).toContain("Refreshed 1 of 3 usr links: 1 changed, 0 new usr accounts, 2 failed, 0 skipped.");
+    expect(page).toContain("Not refreshed: Larry: usr answered HTTP 400: display_name is too long; user333: their usr account is already linked to someone else here.");
+    expect(w.usr.calls).toHaveLength(3);
+    expect(subjects(w.dbPath)).toEqual({ [ADMIN]: sub(7), [LARRY]: sub(2), [CURLY]: sub(3) });
+  });
+
+  it("never asks usr about someone forgotten while the run was going", async () => {
+    const hold = held();
+    const w = await linkedWorld(async (_b, n) => {
+      if (n === 1) await hold.gate;
+      return moved(n);
+    });
+    expect((await refresh(w)).status).toBe(303);
+    const curly = await signIn(w.plugin, CURLY);
+    const gone = await call(w.plugin, "POST", "/forget", { jar: curly, form: { csrf: await csrfOf(w.plugin, curly), confirm: "yes", word: CONFIRM_WORD }, origin: ORIGIN });
+    expect(gone.status).toBe(303);
+    hold.release();
+    expect(await finished(w)).toContain("Refreshed 2 of 3 usr links: 0 changed, 0 new usr accounts, 0 failed, 1 skipped.");
+    expect(w.usr.calls.map((c) => c.discord_user_id)).toEqual([ADMIN, LARRY]);
+  });
+
+  it("counts a new usr account apart from a moved one, so the admin sees usr made one", async () => {
+    // A usr admin removed Larry's Discord link: usr's allow makes him a new account (created: true).
+    const w = await linkedWorld((b) =>
+      b.discord_user_id === LARRY ? { status: 200, body: { user_id: sub(8), created: true, roles: ["tracker:member"] } } : moved(b.discord_user_id === ADMIN ? 1 : 3),
+    );
+    await refresh(w);
+    expect(await finished(w)).toContain("Last run: Refreshed 3 of 3 usr links: 0 changed, 1 new usr account, 0 failed, 0 skipped.");
+    expect(subjects(w.dbPath)).toEqual({ [ADMIN]: sub(1), [LARRY]: sub(8), [CURLY]: sub(3) });
+  });
+
+  it("keeps the counts so far when it stops", async () => {
+    const w = await linkedWorld((b) =>
+      b.discord_user_id === ADMIN ? moved(5) : { status: 403, body: { error: "the invoker is not linked to a usr account" } },
+    );
+    await refresh(w);
+    const page = await finished(w);
+    expect(page).toContain(
+      "Refreshing usr links stopped, since it would fail for everyone: usr answered HTTP 403: the invoker is not linked to a usr account. Refreshed 1 so far (1 changed, 0 new usr accounts, 0 failed, 0 skipped); fix that, then press again.",
+    );
+    expect(w.usr.calls).toHaveLength(2);
+  });
+
+  it("starts nothing while a Link everyone run holds the slot", async () => {
+    const hold = held();
+    const w = await setup(async (_b, n) => {
+      await hold.gate;
+      return ok(n);
+    });
+    expect((await press(w)).status).toBe(303);
+    const res = await refresh(w);
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("Already linking everyone to usr: 0 of 3 done.");
+    hold.release();
+    expect(await finished(w)).toContain("Last run: Linked 3 of 3 to usr.");
+    expect(w.usr.calls).toHaveLength(3);
+  });
+
+  it("has nothing to refresh before anyone is linked", async () => {
+    const w = await setup((_b, n) => ok(n));
+    const res = await refresh(w);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("No one on the list is linked to usr yet, so there is nothing to refresh.");
+    expect(text).toContain("Link everyone to usr checks");
+    expect(text).not.toContain("Refresh usr links asks");
+    expect(text).not.toContain("Refresh usr links</button>");
+    expect(w.usr.calls).toHaveLength(0);
+  });
+
+  it("is not there for a non-admin, nor with the usr link off", async () => {
+    const w = await linkedWorld((_b, n) => moved(n));
+    const larry = await signIn(w.plugin, LARRY);
+    expect((await refresh(w, larry, await csrfOf(w.plugin, larry))).status).toBe(404);
+    await usrLinkRunsSettled();
+    expect(w.usr.calls).toHaveLength(0);
+    expect(subjects(w.dbPath)).toEqual({ [ADMIN]: sub(1), [LARRY]: sub(2), [CURLY]: sub(3) });
+
+    const off = await world({ guild: true });
+    await people(off.plugin);
+    const admin = await signIn(off.plugin, ADMIN);
+    expect(await (await call(off.plugin, "GET", "/admin", { jar: admin })).text()).not.toContain("Refresh usr links");
+    const post = await call(off.plugin, "POST", "/admin/usr-refresh", { jar: admin, form: { csrf: await csrfOf(off.plugin, admin) }, origin: ORIGIN });
+    expect(post.status).toBe(404);
   });
 });

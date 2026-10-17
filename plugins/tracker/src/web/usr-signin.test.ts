@@ -2,8 +2,9 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import { NOT_MEMBER } from "../access.js";
 import { JWKS_RETRY_MS, JWKS_TTL_MS, UsrVerifier } from "../usr-identity.js";
+import { usrLinkRunsSettled } from "./admin.js";
 import { USR_COOKIE_DROPPED, USR_NO_COOKIE, USR_RECHECK_FAILED, USR_NOT_LINKED, USR_NOT_MEMBER } from "./app.js";
-import { api, call, csrfOf, cleanup, CURLY, type Jar, LARRY, makeToken, openLink, ORIGIN, people, SESSION, signIn, slash, tokenOf, type WebLookup, world } from "./harness.js";
+import { ADMIN, api, call, csrfOf, cleanup, CURLY, type Jar, LARRY, makeToken, openLink, ORIGIN, people, SESSION, signIn, slash, tokenOf, type WebLookup, world } from "./harness.js";
 
 /**
  * The web area's sign-in through usr's `nz_id` cookie (usr-identity.ts, app.ts `usrSignIn`): a fake
@@ -34,9 +35,20 @@ const identity = (o: Record<string, unknown> = {}) => ({ iss: "usr", sub: LARRY_
 /** A fake usr serving one JWKS; counts the fetches. */
 async function fakeUsr() {
   const k = await keyPair();
-  const state = { jwks: { keys: [{ ...k.jwk, kid: "k1" }] } as { keys: unknown[] }, fetches: 0, down: false, status: 200, hold: null as Promise<void> | null };
+  const state = {
+    jwks: { keys: [{ ...k.jwk, kid: "k1" }] } as { keys: unknown[] },
+    fetches: 0,
+    down: false,
+    status: 200,
+    hold: null as Promise<void> | null,
+    /** usr's answer to `/api/discord/allow` (the user id it has for the person), when a test asks it. */
+    allowed: null as string | null,
+  };
   const usrFetch = (async (input: string | URL | Request) => {
     const url = new URL(String(input));
+    if (url.pathname === "/api/discord/allow" && state.allowed !== null) {
+      return new Response(JSON.stringify({ user_id: state.allowed, created: false, roles: ["tracker:member"] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (url.pathname !== "/.well-known/jwks.json") throw new Error(`unexpected usr call ${url.pathname}`);
     state.fetches++;
     if (state.hold) await state.hold;
@@ -337,6 +349,23 @@ describe("web sign-in through usr", () => {
     } finally {
       db.close();
     }
+    expect((await call(w.plugin, "GET", "/settings", { jar })).headers.get("location")).toBe("/tracker/settings?usr=in");
+    expect(jar.has(SESSION)).toBe(true);
+  });
+
+  it("signs in someone usr moved at sign-up once an admin's Refresh usr links keeps the new account (#170)", async () => {
+    const w = await usrWorld({ guild: true, webMembership: async () => "member" });
+    linkLarry(w.dbPath);
+    const moved = "6f1c2a9e-0000-4000-8000-000000000099";
+    const jar: Jar = new Map([["nz_id", await sign(w.usr.pair.privateKey, identity({ sub: moved }))]]);
+    expect((await call(w.plugin, "GET", "/settings", { jar })).status).toBe(403);
+    // usr's allow, asked again, answers the account it moved Larry to.
+    w.usr.state.allowed = moved;
+    const admin = await signIn(w.plugin, ADMIN);
+    const res = await call(w.plugin, "POST", "/admin/usr-refresh", { jar: admin, form: { csrf: await csrfOf(w.plugin, admin) }, origin: ORIGIN });
+    expect(res.status).toBe(303);
+    await usrLinkRunsSettled();
+    expect(await (await call(w.plugin, "GET", "/admin", { jar: admin })).text()).toContain("Refreshed 1 of 1 usr links: 1 changed, 0 new usr accounts, 0 failed, 0 skipped.");
     expect((await call(w.plugin, "GET", "/settings", { jar })).headers.get("location")).toBe("/tracker/settings?usr=in");
     expect(jar.has(SESSION)).toBe(true);
   });
