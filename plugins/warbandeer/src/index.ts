@@ -13,7 +13,8 @@ import { setConnectorConfigured, startWarbandeerServer } from "./server.js";
  * in `activate()`, after the host's `takeOver()`.
  */
 export function createPlugin(host: HostApi): Plugin {
-  const portRaw = host.env.WARBANDEER_INGEST_PORT;
+  // A blank value is the documented "off" (and the .env.example default), same as unset.
+  const portRaw = host.env.WARBANDEER_INGEST_PORT?.trim() || undefined;
   let port: number | undefined;
   if (portRaw !== undefined) {
     const n = Number(portRaw);
@@ -70,7 +71,7 @@ export function createPlugin(host: HostApi): Plugin {
         // unset means CF-Connecting-IP is never trusted and every caller shares one rate-limit
         // budget, which is worth a startup line since it's easy to deploy behind a real tunnel and
         // forget to set it.
-        const proxyHost = host.env.TRUSTED_PROXY_HOST;
+        const proxyHost = host.env.TRUSTED_PROXY_HOST?.trim() || undefined;
         const proxy = createTrustedProxy({ host: proxyHost });
         if (proxyHost === undefined) {
           host.log.info(

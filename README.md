@@ -173,8 +173,11 @@ if (typeof host.post === "function") {
 a DM) that `edit` takes back in to find the message again. `message` (`HostMessage`) is
 `{ content, card?, links?, buttons? }`: `card` is an embed (`{ title, description?, url?, color?,
 fields?, footer? }`, built through discord.js's own `EmbedBuilder` so its validators run too);
-`links` renders up to 5 link-style buttons (`{ label, url }`); `buttons` (interactive components)
-is RESERVED and refused today.
+`links` renders up to 5 link-style buttons (`{ label, url }`); `buttons` are interactive
+components (`{ customId, label, style? }`) rendered as action rows of at most 5 -- `customId` must
+start with `<your-plugin-name>:`, and `post`/`dm`/`edit` refuse `buttons` unless the plugin
+declares `interactions`. A host from before #323 refuses them with "interactive buttons are not
+supported yet", so a plugin that must work on either host retries without `buttons`.
 
 Declare `destinations` in `package.json`'s `botPlugin` block (see the field's own entry above) --
 each `{ name, description }` is a place the operator can map to a channel per server in the admin
@@ -227,8 +230,9 @@ split of `customId` on the FIRST colon: whatever comes before it must equal this
 manifest `name` exactly (not a prefix of it -- `"wowie:x"` does not match a plugin named `"wow"`).
 Compose your own `customId`s as `<your-plugin-name>:<whatever you need>` (`:` is a legal separator
 in a Discord custom id, and nothing else in this scheme reserves it) -- e.g. `wow:realm:pick`.
-`report:` is reserved by the bot's own core `/report` modal; `generate-index` refuses to publish a
-plugin literally named `report` for exactly this reason.
+`report:` is reserved by the bot's own core `/report` modal. `generate-index` does not check for
+it (it enforces only the name pattern), so a plugin literally named `report` would index and
+publish -- but the bot skips it at boot, so never use that name or any other core command's name.
 
 **Reply obligations are yours.** The host calls your handler and otherwise gets out of the way --
 it does not defer or reply on your behalf. Discord requires a reply/defer within 3 seconds of the
@@ -325,7 +329,11 @@ export function createPlugin(host: HostApi): Plugin {
 - **A request is not a critical section.** A restart does not wait for it, so write through
   `host.storage` (its writes are atomic) and let the client retry.
 - **Read `clientIp`, never a forwarding header.** It is `CF-Connecting-IP` when the request came
-  through the deployment's own tunnel, falling back to the socket address, or `"unknown"`. Since
+  through the deployment's own tunnel, falling back to the socket address, or `"unknown"`. The host honours the header only from a peer
+  matching the bot's `TRUSTED_PROXY_HOST`; with that unset (the default) it is the socket peer,
+  which behind the tunnel is the sidecar's address for every caller, so a per-IP limiter degrades
+  to one shared bucket -- do not build a per-client lockout on it that one caller can trip for
+  everyone. Since
   rackbops-discord-bot#539 the host overwrites `CF-Connecting-IP` and `X-Forwarded-For` with it,
   removes `Forwarded`, `X-Real-IP`, `True-Client-IP` and `CF-Connecting-IPv6`, and sets
   `Content-Length` to the buffered body's length; an older host passes every header through as the
@@ -446,9 +454,11 @@ a bot the user runs themselves -- without ever handing that service a Discord to
    before honoring one of its own tokens. `generation` is exactly what step 5 changes, so this is
    what makes revocation actually work end to end.
 5. **`unregister` deletes the registration and every outstanding code in one write.** On its own
-   it mints no new generation, so a lone `unregister` only stops future pairing; it's `unregister`
-   **then** `register` again that invalidates every token issued under the old generation -- the
-   fresh generation supersedes it the moment the outside service next checks.
+   it mints no new generation, but it makes `GET /registration/{user_id}` answer `404`, so a
+   consumer that re-checks refuses the token while the user is unregistered; it's `unregister`
+   **then** `register` again that mints a new generation, so every token issued under the old one
+   stays refused after re-registration -- the fresh generation supersedes it the moment the
+   outside service next checks.
    [`Rackbops/discord-mcp`](https://github.com/Rackbops/discord-mcp) is the reference
    implementation of that check on the outside-service side: its README documents that
    unregistering makes an issued token stop working for a tool call within roughly 60 seconds --

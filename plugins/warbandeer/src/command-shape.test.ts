@@ -32,4 +32,11 @@ describe("command shape", () => {
     expect(() => createPlugin(makeFakeHost({ name: "warbandeer", env: { WARBANDEER_INGEST_PORT: "8787" } }))).not.toThrow();
     expect(() => createPlugin(makeFakeHost({ name: "warbandeer", env: {} }))).not.toThrow();
   });
+
+  test("createPlugin treats a blank or whitespace-only port as unset, not invalid (#156)", () => {
+    for (const blank of ["", "   "]) {
+      const plugin = createPlugin(makeFakeHost({ name: "warbandeer", env: { WARBANDEER_INGEST_PORT: blank } }));
+      expect(plugin.commands?.length).toBeGreaterThan(0);
+    }
+  });
 });
