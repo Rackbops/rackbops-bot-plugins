@@ -769,12 +769,15 @@ on its own. It passes over everyone already linked, so it does not fix a link us
 (`/allow` above); Refresh usr links does.
 
 **Refresh usr links** (#170, the admin page, with the usr link on). The same run, over everyone on the
-list already linked: usr's allow only ever adds, so asking again grants nothing new but answers with
-the account usr has for them now, and a link usr moved at sign-up is updated, so their usr sign-in
-works. It ends with how many were refreshed, how many changed and how many failed, naming each
-failure (not a member, a 400 about them, or the account usr names already linked to someone else
-here) while the rest go on; a failure that would fail everyone stops it, as above. Someone forgotten
-is never sent, and one run of either kind goes at a time.
+list already linked. usr answers each with the account it has for them now, and a link usr moved at
+sign-up is updated, so their usr sign-in works. It changes usr: it puts `tracker:member` back for
+everyone still linked and in the server, undoing a usr admin's removal of it, and someone whose usr
+link a usr admin removed gets a new usr account (an existing account's display name and who allowed
+it stay as they were). It ends with how many were refreshed, how many moved to another account, how
+many got a new usr account, how many failed and how many were skipped, naming each failure (not a
+member, a 400 about them, or the account usr names already linked to someone else here) while the
+rest go on; a failure that would fail everyone stops it, as above, with the counts so far. Someone
+forgotten is never sent, and one run of either kind goes at a time.
 
 **First admin and usr.** usr's `/api/discord/allow` needs the admin running `/allow` to be linked in
 usr already, so the first admin cannot be `/allow`ed by anyone. With the usr link on, a configured

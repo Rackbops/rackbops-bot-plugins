@@ -271,12 +271,16 @@ export async function usrLinkRunsSettled(): Promise<void> {
  * them (`personsOwn400`); any other refusal or failure (another 400, the admin's own usr roles, the
  * key, usr unreachable) would fail everyone the same way, so the run stops there.
  *
- * "Refresh usr links" (#170) is the same run over everyone already linked: usr's allow only ever
- * adds, so asking again changes nothing in usr but answers with the account usr has for them now.
- * usr moves a person's Discord link to a usr account they already had when they finish signing up
- * while signed in to it, and drops the one `/allow` made; the run keeps the new id, so their usr
- * sign-in works. A person's own failure (not a member, a 400 about them, their new account already
- * linked to someone else here) is listed and the run goes on, as above.
+ * "Refresh usr links" (#170) is the same run over everyone already linked, and it does change usr:
+ * usr's allow (usr src/server/lib/discord.ts `allow`) adds `<app>:member` back to the account their
+ * Discord id is linked to, undoing a usr admin's removal of it, for everyone still linked here and in
+ * the server; and for someone whose Discord link a usr admin removed, it makes a new usr account,
+ * counted as such in the result. Its answer is the account usr has for them now: usr moves a
+ * person's Discord link to a usr account they already had when they finish signing up while signed
+ * in to it, and drops the one `/allow` made; the run keeps the new id, so their usr sign-in works.
+ * (An existing account's display name and who allowed it are left as they were.) A person's own
+ * failure (not a member, a 400 about them, the account usr names already linked to someone else
+ * here) is listed and the run goes on, as above.
  */
 function startUsrRun(a: AdminWeb, usr: UsrLink, me: User, kind: UsrRunKind): Exclude<Result, null> | "started" {
   if (a.usrGuildId === null) {
@@ -321,20 +325,28 @@ function wanted(kind: UsrRunKind, subject: string | null): boolean {
 async function usrRun(a: AdminWeb, usr: UsrLink, invoker: string, by: string, guildId: string, ids: string[], run: UsrLinkRun): Promise<void> {
   const member = `${usr.app}:${MEMBER_ROLE}`;
   const words = RUN_WORDS[run.kind];
-  // Linked (link) or refreshed (refresh): usr answered and the link is kept. `changed`: refresh only.
+  // Linked (link) or refreshed (refresh): usr answered and the link is kept. Refresh only: `changed`,
+  // moved to an account usr already had; `created`, a new usr account usr made for them.
   let linked = 0;
   let changed = 0;
+  let created = 0;
+  // Forgotten, or (un)linked by someone else, before usr was asked: never sent.
+  let skipped = 0;
   const problems: string[] = [];
+  const counts = () =>
+    run.kind === "link" ? "" : ` (${changed} changed, ${created} new usr ${created === 1 ? "account" : "accounts"}, ${problems.length} failed, ${skipped} skipped)`;
+  const soFar = () => `${words.soFar} ${linked} so far${counts()}`;
   const end = (ok: boolean, stopped?: string) => {
     const tally =
       run.kind === "link"
         ? `Linked ${linked} of ${ids.length} to usr.`
-        : `Refreshed ${linked} of ${ids.length} usr links: ${changed} changed, ${problems.length} failed.`;
+        : `Refreshed ${linked} of ${ids.length} usr links: ${changed} changed, ${created} new usr ${created === 1 ? "account" : "accounts"}, ${problems.length} failed, ${skipped} skipped.`;
     const parts = [stopped ?? tally];
+    if (run.kind === "link" && skipped > 0) parts.push(`Skipped ${skipped}: left the tracker or linked meanwhile.`);
     if (problems.length > 0) parts.push(`${run.kind === "link" ? "Not linked" : "Not refreshed"}: ${problems.join("; ")}.`);
     run.result = { ok: ok && problems.length === 0, text: parts.join(" ") };
   };
-  const notAdmin = () => end(false, `${words.stopped}: ${by}, who started it, is no longer an admin here. ${words.soFar} ${linked} so far.`);
+  const notAdmin = () => end(false, `${words.stopped}: ${by}, who started it, is no longer an admin here. ${soFar()}.`);
   // Read in the queue: still on the list, with a Discord id, and still not linked (link) or still linked (refresh).
   const stillWaiting = (id: string) =>
     fresh(a, true, async () => {
@@ -346,6 +358,7 @@ async function usrRun(a: AdminWeb, usr: UsrLink, invoker: string, by: string, gu
     if (first === null) return notAdmin();
     if (first === "skip") {
       run.done++;
+      skipped++;
       continue;
     }
     const membership = await a.memberOf(first.discordId as string);
@@ -359,6 +372,7 @@ async function usrRun(a: AdminWeb, usr: UsrLink, invoker: string, by: string, gu
     if (p === null) return notAdmin();
     if (p === "skip") {
       run.done++;
+      skipped++;
       continue;
     }
     const answer = await usr.client
@@ -372,11 +386,11 @@ async function usrRun(a: AdminWeb, usr: UsrLink, invoker: string, by: string, gu
     if (answer instanceof Error) {
       if (!(answer instanceof UsrError)) a.d.log.error("usr allow failed", answer);
       const why = answer instanceof UsrError ? answer.message : "something went wrong";
-      return end(false, `${words.stopped}, since it would fail for everyone: ${why}. ${words.soFar} ${linked} so far; fix that, then press again.`);
+      return end(false, `${words.stopped}, since it would fail for everyone: ${why}. ${soFar()}; fix that, then press again.`);
     }
     const allowed = answer as AllowResult;
     if (!allowed.roles.includes(member)) {
-      return end(false, `${words.stopped}: usr did not give ${nameOf(p)} ${member}. Check that the tracker's usr key's Discord service is set to app ${usr.app} (TRACKER_USR_APP). ${words.soFar} ${linked} so far.`);
+      return end(false, `${words.stopped}: usr did not give ${nameOf(p)} ${member}. Check that the tracker's usr key's Discord service is set to app ${usr.app} (TRACKER_USR_APP). ${soFar()}.`);
     }
     const outcome = await fresh(a, true, async () => {
       try {
@@ -392,7 +406,10 @@ async function usrRun(a: AdminWeb, usr: UsrLink, invoker: string, by: string, gu
     if (outcome === "linked" || outcome === "relinked" || outcome === "unchanged") {
       linked++;
       // In a refresh, "linked" is someone whose link was forgotten meanwhile (usr's 403 to `/register`), now made again.
-      if (outcome !== "unchanged") changed++;
+      if (outcome !== "unchanged") {
+        if (allowed.created) created++;
+        else changed++;
+      }
     } else if (outcome === "taken") problems.push(`${nameOf(p)}: their usr account is already linked to someone else here`);
     else if (outcome === "gone") problems.push(`${nameOf(p)}: left the tracker meanwhile`);
     else problems.push(`${nameOf(p)}: something went wrong keeping their usr link`);

@@ -149,8 +149,17 @@ ${
     ? null
     : html`<section>
 <h2>usr links</h2>
-<p class="rb-muted">${o.usrUnlinked === 0 ? "Everyone on the list is linked to usr." : `${o.usrUnlinked} on the list ${o.usrUnlinked === 1 ? "is" : "are"} not linked to usr yet.`} Each one is checked as a member of the server and allowed in usr as a member, with you as the admin who allowed them, as <code>/allow</code> does in the server.</p>
-<p class="rb-muted">Refresh usr links asks usr again, the same way, for the ${String(o.usrLinked ?? 0)} on the list ${o.usrLinked === 1 ? "who is" : "who are"} linked, and keeps the account usr has for each of them now: someone linked before they finished signing up on usr with a usr account they already had is linked to the account usr dropped, and cannot sign in through usr until then.</p>
+<p class="rb-muted">${o.usrUnlinked === 0 ? "Everyone on the list is linked to usr." : `${o.usrUnlinked} on the list ${o.usrUnlinked === 1 ? "is" : "are"} not linked to usr yet.`}</p>
+${
+  o.usrUnlinked === 0 || o.usrRun?.running
+    ? null
+    : html`<p class="rb-muted">Link everyone to usr checks each one as a member of the server and allows them in usr as a member, with you as the admin who allowed them, as <code>/allow</code> does in the server.</p>`
+}
+${
+  !o.usrLinked || o.usrRun?.running
+    ? null
+    : html`<p class="rb-muted">Refresh usr links asks usr again, as <code>/allow</code> does, for the ${String(o.usrLinked)} on the list ${o.usrLinked === 1 ? "who is" : "who are"} linked, and keeps the account usr has for each now: someone linked before they finished signing up on usr with a usr account they already had is linked to the account usr dropped, and cannot sign in through usr until then. It changes usr: it puts the tracker's member role back for everyone still linked and in the server, undoing a usr admin's removal of it, and someone whose usr link a usr admin removed gets a new usr account.</p>`
+}
 ${
   o.usrRun?.running
     ? html`<p>${o.usrRun.kind === "link" ? "Linking everyone to usr" : "Refreshing usr links"}: ${String(o.usrRun.done)} of ${String(o.usrRun.total)} done. Reload this page to see how far it has got.</p>`

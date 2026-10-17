@@ -365,7 +365,7 @@ describe("web sign-in through usr", () => {
     const res = await call(w.plugin, "POST", "/admin/usr-refresh", { jar: admin, form: { csrf: await csrfOf(w.plugin, admin) }, origin: ORIGIN });
     expect(res.status).toBe(303);
     await usrLinkRunsSettled();
-    expect(await (await call(w.plugin, "GET", "/admin", { jar: admin })).text()).toContain("Refreshed 1 of 1 usr links: 1 changed, 0 failed.");
+    expect(await (await call(w.plugin, "GET", "/admin", { jar: admin })).text()).toContain("Refreshed 1 of 1 usr links: 1 changed, 0 new usr accounts, 0 failed, 0 skipped.");
     expect((await call(w.plugin, "GET", "/settings", { jar })).headers.get("location")).toBe("/tracker/settings?usr=in");
     expect(jar.has(SESSION)).toBe(true);
   });
