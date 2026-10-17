@@ -77,6 +77,28 @@ describe("SqliteStore beyond the contract", () => {
     }
   });
 
+  it("a watch that ends (done, or archived) loses its want_inbox rows; another watch's rows stay (#208)", async () => {
+    const at = "2026-03-02T12:00:00.000Z";
+    for (const end of ["done", "archived"] as const) {
+      const db = openDatabase(":memory:");
+      const store = new SqliteStore(db);
+      const owner = await store.createUser({ discordId: "111111111111111111", at });
+      const mk = () => store.createTask({ ownerId: owner.id, type: "reminder", title: "t", config: { text: "t" }, schedule: null, lane: "notify", capabilities: ["notify"], at });
+      const [a, b] = [await mk(), await mk()];
+      const ins = db.query("INSERT INTO want_inbox (task_id, key, listing, at) VALUES (?, ?, '{}', ?)");
+      ins.run(a.id, "ebay-a", at);
+      ins.run(a.id, "ebay-a", at);
+      ins.run(b.id, "ebay-b", at);
+      const count = (task: string) => (db.query("SELECT COUNT(*) AS n FROM want_inbox WHERE task_id = ?").get(task) as { n: number }).n;
+
+      await store.updateTask(a.id, { status: "paused", at });
+      expect(count(a.id)).toBe(2);
+      await store.updateTask(a.id, { status: end, at });
+      expect(count(a.id)).toBe(0);
+      expect(count(b.id)).toBe(1);
+    }
+  });
+
   it("an id of another kind, or not an id at all, finds nothing", async () => {
     const store = new SqliteStore(openDatabase(":memory:"));
     const u = await store.createUser({ discordId: "d1", at: "2026-03-02T12:00:00.000Z" });
