@@ -16,4 +16,10 @@ describe("clip", () => {
   test("takes an explicit limit", () => {
     expect(clip("abcdef", 4)).toBe("abc…");
   });
+
+  test("does not leave half of an emoji before the ellipsis", () => {
+    const out = clip("ab😀cd", 4); // the cut would fall between the two halves of the emoji
+    expect(out).toBe("ab…");
+    expect(out).not.toMatch(/[\ud800-\udbff]…/);
+  });
 });

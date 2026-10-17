@@ -1,4 +1,4 @@
-import { clip } from "./clip.js";
+import { clip, ITEM_NAME_LIMIT } from "./clip.js";
 import { config } from "./config.js";
 import { blizzardGet } from "./blizzard.js";
 import { realmExists, resolveCanonicalSlug } from "./realm.js";
@@ -255,7 +255,7 @@ export function formatTransmogReply(character: string, realm: string, r: OutfitR
     );
   } else {
     lines.push(`**Captured ${r.named.length} slot${r.named.length === 1 ? "" : "s"}:** ` +
-      r.named.map((n) => `${SLOT_LABEL[n.slot] ?? n.slot} — ${n.name}`).join(" · "));
+      r.named.map((n) => `${SLOT_LABEL[n.slot] ?? n.slot} — ${clip(n.name, ITEM_NAME_LIMIT)}`).join(" · "));
   }
 
   // Only an EQUIPPED slot with no transmog leaves a gap. An empty slot — a two-hander's off hand,
@@ -273,7 +273,7 @@ export function formatTransmogReply(character: string, realm: string, r: OutfitR
       "reports what they wore last session.",
   );
   if (r.unknown.length > 0) {
-    lines.push(`⚠️ Unrecognised equipment slots: ${r.unknown.join(", ")} — please report this.`);
+    lines.push(`⚠️ Unrecognised equipment slots: ${r.unknown.map((t) => clip(t, ITEM_NAME_LIMIT)).join(", ")} — please report this.`);
   }
   return lines.join("\n");
 }

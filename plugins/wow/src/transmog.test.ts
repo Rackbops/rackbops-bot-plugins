@@ -359,6 +359,22 @@ describe("fetchTransmog — realm-index retry (#32)", () => {
     expect(result.code.startsWith("/customset v1 ")).toBe(true);
   });
 
+  test("a lookup message about an oversized character name stays short (#200 wow-7)", async () => {
+    const long = "c".repeat(5000);
+    for (const routes of [
+      // the realm exists, so the 404 is about the character
+      [TOKEN_ROUTE, { match: "/equipment", status: 404 }, { match: "/data/wow/search/connected-realm", body: { results: [{}] } }],
+      [TOKEN_ROUTE, { match: "/equipment", status: 500 }],
+    ] as Route[][]) {
+      _resetBlizzardToken();
+      _resetRealmIndex();
+      mockFetch(routes);
+      const err = await fetchTransmog(long, "Argent Dawn").catch((e: Error) => e);
+      expect(err).toBeInstanceOf(TransmogLookupError);
+      expect((err as Error).message.length).toBeLessThan(500); // mutation: dropping the clips in fetchTransmog passes 5000+ characters
+    }
+  });
+
   test("still reports no realm when the index has no match for it (regression guard)", async () => {
     mockFetch([
       TOKEN_ROUTE,
@@ -429,6 +445,13 @@ describe("echoed values are clipped", () => {
   test("an unrecognised realm name is clipped in its hint", () => {
     const r = slugOrReason("-".repeat(5000));
     expect("reason" in r && r.reason.length).toBeLessThan(400);
+  });
+
+  test("a reply with a full set of absurdly long item names stays under Discord's 2000 characters", () => {
+    const slots = ["HEAD", "SHOULDER", "BACK", "CHEST", "WRIST", "HANDS", "WAIST", "LEGS", "FEET", "MAIN_HAND", "OFF_HAND", "TABARD", "SHIRT"];
+    const r = buildCustomSet({ equipped_items: slots.map((s, i) => mog(s, 100 + i, "n".repeat(500))) });
+    expect(r.named.length).toBeGreaterThan(8); // mutation: dropping the item-name clip makes this thousands of characters
+    expect(formatTransmogReply("Testchar", "argent-dawn", r).length).toBeLessThan(2000);
   });
 
   test("the character and realm in the reply heading are clipped", () => {
