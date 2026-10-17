@@ -46,8 +46,9 @@ function flash(result: { ok: boolean; text: string } | null): Html | null {
 
 export type Result = { ok: boolean; text: string } | null;
 
-/** Where "Link everyone to usr" has got to (admin.ts `UsrLinkRun`). */
+/** Where "Link everyone to usr" or "Refresh usr links" has got to (admin.ts `UsrLinkRun`). */
 export interface UsrLinkRunView {
+  kind: "link" | "refresh";
   running: boolean;
   done: number;
   total: number;
@@ -97,7 +98,7 @@ export interface AdminData {
 }
 
 /** `/admin`: everyone on the list, the decline blocks in force, and the allow form. */
-export function adminPage(v: Viewer, data: AdminData, o: { result?: Result; allow?: string; unlimited?: boolean; usrUnlinked?: number | null; usrRun?: UsrLinkRunView } = {}): string {
+export function adminPage(v: Viewer, data: AdminData, o: { result?: Result; allow?: string; unlimited?: boolean; usrUnlinked?: number | null; usrLinked?: number | null; usrRun?: UsrLinkRunView } = {}): string {
   const names = new Map(data.people.map((p) => [p.id, nameOf(p)]));
   const rows = data.people.map(
     (p) => html`<tr>
@@ -147,16 +148,18 @@ ${
   o.usrUnlinked === undefined || o.usrUnlinked === null
     ? null
     : html`<section>
-<h2>Link everyone to usr</h2>
-<p class="rb-muted">${o.usrUnlinked === 0 ? "Everyone on the list is linked to usr." : `${o.usrUnlinked} on the list ${o.usrUnlinked === 1 ? "is" : "are"} not linked to usr yet.`} Each one is checked as a member of the server and allowed in usr as a member, with you as the admin who allowed them, as <code>/allow</code> does in the server. Someone linked before they finished signing up on usr with a usr account they already had is linked to the account usr dropped, and cannot sign in through usr: run <code>/allow</code> for them again.</p>
+<h2>usr links</h2>
+<p class="rb-muted">${o.usrUnlinked === 0 ? "Everyone on the list is linked to usr." : `${o.usrUnlinked} on the list ${o.usrUnlinked === 1 ? "is" : "are"} not linked to usr yet.`} Each one is checked as a member of the server and allowed in usr as a member, with you as the admin who allowed them, as <code>/allow</code> does in the server.</p>
+<p class="rb-muted">Refresh usr links asks usr again, the same way, for the ${String(o.usrLinked ?? 0)} on the list ${o.usrLinked === 1 ? "who is" : "who are"} linked, and keeps the account usr has for each of them now: someone linked before they finished signing up on usr with a usr account they already had is linked to the account usr dropped, and cannot sign in through usr until then.</p>
 ${
   o.usrRun?.running
-    ? html`<p>Linking everyone to usr: ${String(o.usrRun.done)} of ${String(o.usrRun.total)} done. Reload this page to see how far it has got.</p>`
+    ? html`<p>${o.usrRun.kind === "link" ? "Linking everyone to usr" : "Refreshing usr links"}: ${String(o.usrRun.done)} of ${String(o.usrRun.total)} done. Reload this page to see how far it has got.</p>`
     : o.usrRun?.result
       ? html`<div class="rb-alert ${o.usrRun.result.ok ? "rb-alert--success" : "rb-alert--warning"}" role="status"><p>Last run: ${o.usrRun.result.text}</p></div>`
       : null
 }
 ${o.usrUnlinked === 0 || o.usrRun?.running ? null : html`<form method="post" action="${v.base}/admin/usr-link">${hidden(v)}<button class="rb-btn rb-btn--primary" type="submit">Link everyone to usr</button></form>`}
+${!o.usrLinked || o.usrRun?.running ? null : html`<form method="post" action="${v.base}/admin/usr-refresh">${hidden(v)}<button class="rb-btn rb-btn--ghost" type="submit">Refresh usr links</button></form>`}
 </section>`
 }
 <section>
