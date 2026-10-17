@@ -399,6 +399,16 @@ describe("toWireState", () => {
     expect(toWireState(edit).target).toEqual({ message_ref: VALID_ID, seq: 2 });
   });
 
+  test("a legacy record's target is wired by its own shape, whatever its kind says (#746 decision 5)", () => {
+    const post = { guildId: "111111111111111111", destination: "alerts" };
+    const legacy = (kind: "dm" | "edit"): StoredDelivery => ({ state: "pending", kind, target: post, body: { content: "x" }, createdAt: "2026-09-25T00:00:00.000Z" });
+    // mutation: keying wireTarget on `kind` would emit user_id / message_ref (undefined) here
+    expect(toWireState(legacy("dm"))).toMatchObject({ kind: "dm", target: { guild_id: "111111111111111111", destination: "alerts" } });
+    expect(toWireState(legacy("edit"))).toMatchObject({ kind: "edit", target: { guild_id: "111111111111111111", destination: "alerts" } });
+    const dmShaped: StoredDelivery = { state: "pending", kind: "post", target: { userId: "123456789012345678" }, body: {}, createdAt: "2026-09-25T00:00:00.000Z" };
+    expect(toWireState(dmShaped).target).toEqual({ user_id: "123456789012345678" });
+  });
+
   test("applied appears only on a delivered edit record, never on post/dm or a non-delivered edit", () => {
     const deliveredEdit: StoredDelivery = {
       state: "delivered",

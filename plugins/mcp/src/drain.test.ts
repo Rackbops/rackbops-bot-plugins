@@ -576,6 +576,58 @@ describe("drainAndPersist: a write failure after a successful send (#140)", () =
   });
 });
 
+describe("attemptDelivery: a registry read that throws", () => {
+  const throwingRegistry = (): RegistryStore => ({
+    ...registry,
+    generationOf: async () => {
+      throw new Error("registry unreadable");
+    },
+  });
+
+  test("a dm propagates the throw with no host call, rather than reporting the recipient unreachable", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "mcp", ...delivery });
+    await expect(
+      attemptDelivery(deps(host, { registry: throwingRegistry() }), REQUEST_ID, { kind: "dm", target: { userId: USER }, body: { content: "hi" }, createdAt: NOW().toISOString() }),
+    ).rejects.toThrow("registry unreadable");
+    expect(delivery.calls.dm).toEqual([]);
+  });
+
+  test("an edit of a dm propagates the throw with no host.edit call", async () => {
+    const delivery = makeFakeDelivery();
+    const host = makeFakeHost({ name: "mcp", ...delivery });
+    await store.set(REQUEST_ID, {
+      state: "delivered",
+      kind: "dm",
+      target: { userId: USER },
+      body: { content: "v1" },
+      createdAt: NOW().toISOString(),
+      messageRef: REQUEST_ID,
+      url: "https://discord.com/channels/@me/2/3",
+      delivery: { guildId: null, channelId: "2", messageId: "3" },
+    });
+    await expect(
+      attemptDelivery(deps(host, { registry: throwingRegistry() }), OTHER_REQUEST_ID, {
+        kind: "edit",
+        target: { messageRef: REQUEST_ID, seq: 1 },
+        body: { content: "v2" },
+        createdAt: NOW().toISOString(),
+      }),
+    ).rejects.toThrow("registry unreadable");
+    expect(delivery.calls.edit).toEqual([]);
+  });
+
+  test("drainAndPersist leaves nothing in memory and writes nothing when the attempt itself throws", async () => {
+    const host = makeFakeHost({ name: "mcp", ...makeFakeDelivery() });
+    const unpersisted = createUnpersistedOutcomes();
+    await expect(
+      drainAndPersist(deps(host, { registry: throwingRegistry(), unpersisted }), REQUEST_ID, { kind: "dm", target: { userId: USER }, body: {}, createdAt: NOW().toISOString() }),
+    ).rejects.toThrow("registry unreadable");
+    expect(unpersisted.get(REQUEST_ID)).toBeUndefined();
+    expect(await store.get(REQUEST_ID)).toBeUndefined();
+  });
+});
+
 describe("createUnpersistedOutcomes", () => {
   test("prune drops outcomes 8 or more days old, so a write that keeps failing cannot grow it without bound", () => {
     const held = createUnpersistedOutcomes();
