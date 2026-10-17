@@ -1,3 +1,4 @@
+import { clip, ITEM_NAME_LIMIT } from "./clip.js";
 import { config } from "./config.js";
 import { blizzardGet } from "./blizzard.js";
 import { realmExists, resolveCanonicalSlug } from "./realm.js";
@@ -198,7 +199,7 @@ export function slugOrReason(realmInput: string): { slug: string } | { reason: s
   const slug = realmSlug(realmInput);
   if (/^-*$/.test(slug)) {
     return {
-      reason: `Realm **${realmInput}** isn't recognised — use the English realm name as shown on the character-select screen.`,
+      reason: `Realm **${clip(realmInput)}** isn't recognised — use the English realm name as shown on the character-select screen.`,
     };
   }
   return { slug };
@@ -241,7 +242,7 @@ const SLOT_LABEL: Record<string, string> = {
 export function formatTransmogReply(character: string, realm: string, r: OutfitResult): string {
   const fence = "```";
   const lines: string[] = [
-    `**${character}** — ${realm}`,
+    `**${clip(character)}** — ${clip(realm)}`,
     `${fence}\n${r.code}\n${fence}`,
     "Paste into `/collected outfit import`.",
     "",
@@ -254,7 +255,7 @@ export function formatTransmogReply(character: string, realm: string, r: OutfitR
     );
   } else {
     lines.push(`**Captured ${r.named.length} slot${r.named.length === 1 ? "" : "s"}:** ` +
-      r.named.map((n) => `${SLOT_LABEL[n.slot] ?? n.slot} — ${n.name}`).join(" · "));
+      r.named.map((n) => `${SLOT_LABEL[n.slot] ?? n.slot} — ${clip(n.name, ITEM_NAME_LIMIT)}`).join(" · "));
   }
 
   // Only an EQUIPPED slot with no transmog leaves a gap. An empty slot — a two-hander's off hand,
@@ -272,7 +273,7 @@ export function formatTransmogReply(character: string, realm: string, r: OutfitR
       "reports what they wore last session.",
   );
   if (r.unknown.length > 0) {
-    lines.push(`⚠️ Unrecognised equipment slots: ${r.unknown.join(", ")} — please report this.`);
+    lines.push(`⚠️ Unrecognised equipment slots: ${r.unknown.map((t) => clip(t, ITEM_NAME_LIMIT)).join(", ")} — please report this.`);
   }
   return lines.join("\n");
 }
@@ -319,7 +320,7 @@ export async function fetchTransmog(character: string, realm: string): Promise<O
       const retrySlug = pickRetrySlug(await resolveCanonicalSlug(realm, config.region), slug);
       if (retrySlug) return fetchTransmog(character, retrySlug);
       throw new TransmogLookupError(
-        `No realm **${slug}** in ${config.region.toUpperCase()}. ` +
+        `No realm **${clip(slug)}** in ${config.region.toUpperCase()}. ` +
           `Check the realm name — it's the realm the character is *on*, spelled as in game ` +
           `(e.g. \`Argent Dawn\`).`,
         404,
@@ -328,7 +329,7 @@ export async function fetchTransmog(character: string, realm: string): Promise<O
     // The realm checked out, so this is about the character — but "never logged in" and "no such
     // character" really are indistinguishable here, so both are named rather than guessed between.
     throw new TransmogLookupError(
-      `No character **${character}** on **${slug}** (${config.region.toUpperCase()}). ` +
+      `No character **${clip(character)}** on **${clip(slug)}** (${config.region.toUpperCase()}). ` +
         `Check the spelling — a character who has never logged in since the profile API last ` +
         `indexed them also 404s.`,
       404,
@@ -336,7 +337,7 @@ export async function fetchTransmog(character: string, realm: string): Promise<O
   }
   if (!res.ok) {
     throw new TransmogLookupError(
-      `Blizzard returned ${res.status} for **${character}-${slug}**.`,
+      `Blizzard returned ${res.status} for **${clip(character)}-${clip(slug)}**.`,
       res.status,
     );
   }

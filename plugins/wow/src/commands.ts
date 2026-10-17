@@ -1,11 +1,17 @@
 import { MessageFlags, type ChatInputCommandInteraction } from "discord.js";
 import type { PluginCommand } from "../../../packages/api/contract.js";
+import { clip } from "./clip.js";
 import { config } from "./config.js";
 import { currentOrNextDmf } from "./dmf.js";
 import { nextDailyReset, nextWeeklyReset } from "./reset.js";
 import { realmStatus, realmWatchConfigured } from "./realm.js";
 import { blizzardConfigured } from "./blizzard.js";
 import { fetchTransmog, formatTransmogReply, realmSlug, TransmogLookupError } from "./transmog.js";
+
+// Option length limits (Epic #268 decision 2): a WoW character name is at most 12 characters, a realm name at
+// most 32; 24 and 40 leave room for a typed slug or a name with spaces, and keep any echoed value short.
+const CHARACTER_MAX = 24;
+const REALM_MAX = 40;
 
 // Discord timestamp markers — the same `ts`/`when` helpers the bot's commands.ts used (src/commands.ts:37-38).
 const ts = (d: Date, style: "F" | "R" = "F") => `<t:${Math.floor(d.getTime() / 1000)}:${style}>`;
@@ -45,7 +51,7 @@ async function handleStatus(interaction: ChatInputCommandInteraction): Promise<v
       status === "UP" ? `🟢 **${config.realmSlug}** is up.` : `🔴 **${config.realmSlug}** is down.`,
     );
   } catch (err) {
-    await interaction.editReply(`⚠️ Could not query realm status: ${(err as Error).message}`);
+    await interaction.editReply(`⚠️ Could not query realm status: ${clip((err as Error).message)}`);
   }
 }
 
@@ -70,8 +76,8 @@ async function handleTransmog(interaction: ChatInputCommandInteraction): Promise
     // anything else is ours and gets the generic shape.
     await interaction.editReply(
       err instanceof TransmogLookupError
-        ? `⚠️ ${err.message}`
-        : `⚠️ Transmog lookup failed: ${(err as Error).message}`,
+        ? `⚠️ ${clip(err.message)}`
+        : `⚠️ Transmog lookup failed: ${clip((err as Error).message)}`,
     );
   }
 }
@@ -103,8 +109,8 @@ export function wowCommands(): PluginCommand[] {
       build: (b) =>
         b
           .setDescription("Get a /customset import string for a character's transmog")
-          .addStringOption((o) => o.setName("character").setDescription("Character name").setRequired(true))
-          .addStringOption((o) => o.setName("realm").setDescription('Realm, e.g. "Argent Dawn"').setRequired(true)),
+          .addStringOption((o) => o.setName("character").setDescription("Character name").setMaxLength(CHARACTER_MAX).setRequired(true))
+          .addStringOption((o) => o.setName("realm").setDescription('Realm, e.g. "Argent Dawn"').setMaxLength(REALM_MAX).setRequired(true)),
       handle: handleTransmog,
     },
   ];

@@ -1,3 +1,4 @@
+import { clip } from "./clip.js";
 import { config } from "./config.js";
 
 // Shared Blizzard API access: the client-credentials token, cached until just before it expires.
@@ -33,7 +34,7 @@ export async function blizzardToken(signal?: AbortSignal): Promise<string> {
     body: "grant_type=client_credentials",
     signal: requestSignal(signal),
   });
-  if (!res.ok) throw new Error(`Blizzard OAuth failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(`Blizzard OAuth failed: ${res.status} ${clip(await res.text())}`);
   const data = (await res.json()) as { access_token: string; expires_in: number };
   // Expire a minute early so a request can't set off mid-flight with a token about to lapse.
   token = { value: data.access_token, expiresAt: Date.now() + (data.expires_in - 60) * 1000 };
