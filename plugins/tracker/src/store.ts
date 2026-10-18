@@ -238,6 +238,50 @@ function toDelivery(r: Row): Delivery {
   };
 }
 
+/** The newest `limit` rows a read matches, oldest first, and how many it matches in all. */
+export interface Tail<T> {
+  rows: T[];
+  total: number;
+}
+
+export interface RunsTail extends Tail<Occurrence> {
+  /** The first run still to come, or null. */
+  next: Occurrence | null;
+}
+
+export interface ChangesTail extends Tail<TaskEvent> {
+  /** For a recipient: the latest pause or resume they are shown before `rows`, or null. */
+  before: TaskEvent | null;
+}
+
+/**
+ * docket's history kinds about one recipient (authz.ts `ABOUT_A_RECIPIENT`, not exported): a
+ * recipient sees only their own, those whose `detail` is their id or starts with it and a space.
+ */
+const ABOUT_A_RECIPIENT = ["recipient_invited", "recipient_accepted", "recipient_declined", "recipient_opted_out", "recipient_removed", "blocked", "block_lifted"];
+
+/**
+ * The task events a recipient is shown, as a `shown` CTE of `seq`s: docket's `visibleHistory`
+ * filter, then history.ts `changesForRecipient`'s choice of pauses and resumes -- which it shows,
+ * not what they say. That scan's state before a row is only whether the row before it that pauses
+ * or resumes pauses (`prev`): a resume is shown after a pause, and a pause unless it is another
+ * recipient's (`isRecipientPause` and not `pauseNames`) while the task already shows paused.
+ * history.test.ts checks it against the two for every kind and many orders.
+ */
+function recipientShown(taskId: string, viewerId: string): [string, unknown[]] {
+  const about = ABOUT_A_RECIPIENT.map((k) => `'${k}'`).join(", ");
+  const sql = `WITH p AS (
+      SELECT seq, kind, detail, LAG(kind) OVER (ORDER BY seq) AS prev FROM task_events WHERE task_id = ? AND kind IN ('paused', 'resumed')
+    ), shown AS (
+      SELECT seq FROM task_events WHERE task_id = ? AND kind NOT IN ('paused', 'resumed')
+        AND (kind NOT IN (${about}) OR detail = ? OR instr(detail, ?) = 1)
+      UNION ALL
+      SELECT seq FROM p WHERE (kind = 'resumed' AND prev = 'paused')
+        OR (kind = 'paused' AND NOT (prev IS 'paused' AND instr(detail, 'delivery to ') = 1 AND instr(detail, ?) <> 1))
+    )`;
+  return [sql, [taskId, taskId, viewerId, `${viewerId} `, `delivery to {${viewerId}} paused:`]];
+}
+
 /**
  * Forget-me's delete of one person's delivery rows, as one statement: `SqliteStore.deleteDeliveries`
  * runs it, and so does roster.ts's erasure inside its own transaction (a `bun:sqlite` transaction
@@ -622,6 +666,42 @@ export class SqliteStore implements Store {
 
   async listReplies(taskId: string): Promise<Reply[]> {
     return this.all("SELECT * FROM replies WHERE task_id = ? ORDER BY seq", taskId).map(toReply);
+  }
+
+  // --- history's bounded reads (history.ts `HistoryReads`, #265) -------------------------------
+
+  async runsTail(taskId: string, now: string, limit: number): Promise<RunsTail> {
+    // Still to come: queued and due after `now`, compared as text like `listOccurrences`' `dueBefore`
+    // (every `dueAt` is a `toISOString()`).
+    const past = "task_id = ? AND NOT (status = 'queued' AND due_at > ?)";
+    const total = Number(this.one(`SELECT COUNT(*) AS n FROM occurrences WHERE ${past}`, taskId, now)?.n ?? 0);
+    // listOccurrences' order, newest first, then turned back.
+    const rows = this.all(`SELECT * FROM occurrences WHERE ${past} ORDER BY due_at DESC, created_at DESC, seq DESC LIMIT ?`, taskId, now, limit);
+    const next = this.one("SELECT * FROM occurrences WHERE task_id = ? AND status = 'queued' AND due_at > ? ORDER BY due_at, created_at, seq LIMIT 1", taskId, now);
+    return { rows: rows.reverse().map(toOccurrence), total, next: next ? toOccurrence(next) : null };
+  }
+
+  async repliesTo(taskId: string, occurrenceIds: readonly string[], userId: string | null): Promise<Reply[]> {
+    if (occurrenceIds.length === 0) return [];
+    const ids = `occurrence_id IN (${occurrenceIds.map(() => "?").join(", ")})`;
+    const own = userId === null ? "" : " AND user_id = ?";
+    return this.all(`SELECT * FROM replies WHERE task_id = ? AND ${ids}${own} ORDER BY seq`, taskId, ...occurrenceIds, ...(userId === null ? [] : [userId])).map(toReply);
+  }
+
+  async changesTail(taskId: string, viewerId: string | null, limit: number): Promise<ChangesTail> {
+    const [shown, params] = viewerId === null ? ["WITH shown AS (SELECT seq FROM task_events WHERE task_id = ?)", [taskId]] : recipientShown(taskId, viewerId);
+    const total = Number(this.one(`${shown} SELECT COUNT(*) AS n FROM shown`, ...params)?.n ?? 0);
+    const rows = this.all(`${shown} SELECT e.* FROM task_events e JOIN shown s ON s.seq = e.seq ORDER BY e.seq DESC LIMIT ?`, ...params, limit).reverse();
+    const first = rows[0];
+    const before =
+      viewerId === null || first === undefined
+        ? null
+        : this.one(
+            `${shown} SELECT e.* FROM task_events e JOIN shown s ON s.seq = e.seq WHERE e.kind IN ('paused', 'resumed') AND e.seq < ? ORDER BY e.seq DESC LIMIT 1`,
+            ...params,
+            Number(first.seq),
+          );
+    return { rows: rows.map(toTaskEvent), total, before: before ? toTaskEvent(before) : null };
   }
 
   async addSeriesPoint(p: NewSeriesPoint): Promise<SeriesPoint> {
