@@ -228,6 +228,9 @@ async function submitReplyLocked(d: TrackerDeps, user: User, occurrenceId: strin
  * membership and registration gates, so someone who left the server or never registered can always
  * stop the messages. Admission is not checked either: docket's `replyForRef` already requires the
  * presser to be the invited or accepted recipient, and only a person in the store can be one.
+ * `consentRefusal` runs before that presser check, so a refused accept or decline reveals to anyone
+ * pressing it only that the task ended (deleted or done); for a missing task docket already says
+ * "That task no longer exists." to anyone.
  */
 export function reducesContact(ref: string): boolean {
   const kind = decodeReplyRef(ref)?.kind;

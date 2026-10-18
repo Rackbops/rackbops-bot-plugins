@@ -77,6 +77,12 @@ describe("accept and decline on a task that has ended", () => {
     }
   });
 
+  it("a decline on a paused task still goes through", async () => {
+    const s = await setup("paused");
+    expect(await press(s.d, s.friend, `x.t.${s.task.id}`)).toEqual({ ok: true, status: "Declined. You will not get this task's results.", keepReplyFor: null });
+    expect((await recorded(s)).recipients).toEqual(["declined"]);
+  });
+
   it("an opt-out on a done or deleted task still works", async () => {
     for (const status of ["done", "archived"] as const) {
       const s = await setup(status, "accepted");
