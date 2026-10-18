@@ -559,6 +559,11 @@ It is served under `/tracker/api/v1/` on the same origin as the web area, and on
 `TRACKER_WEB_URL` is set. Every write goes through the same functions as the web editor and the
 slash commands -- the same fields, defaults, limits, caps and messages -- in the same write queue.
 
+The Claude in Chrome route (#125) is one such program: this repo's `clerk-browser-search` skill
+(`.claude/skills/clerk-browser-search/SKILL.md`) searches eBay and BoardGameGeek in the owner's own
+Chrome, looking only, and sends listings to inbox watches and pages to research requests through
+`scripts/clerk-browser.ts`, which reads the Access service token and the tracker token from files.
+
 **Tokens.** Make one on the web area's `/tokens` page (linked from Settings): a name, and an expiry
 of 30, 90 (the default) or 365 days -- every token expires. The token -- `trk_` and 43 characters --
 is sent to you once, by Discord DM from the bot; it never appears in any web page or response, and
