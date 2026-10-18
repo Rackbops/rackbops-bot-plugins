@@ -555,6 +555,10 @@ eBay's saved-search alerts reach eBay watches by mail (0.25.0), while `TRACKER_M
 
 A JSON API over your own tasks, for a program that acts as you -- a script, or the plain-language
 intake agent the plan defers (E10, item 31), which would end its dialogue by posting a task here.
+The Claude in Chrome route (#125) is one such program: this repo's `clerk-browser-search` skill
+(`.claude/skills/clerk-browser-search/SKILL.md`) searches eBay and BoardGameGeek in the owner's own
+Chrome, looking only, and sends listings to inbox watches and pages to research requests through
+`scripts/clerk-browser.ts`, which reads the Access service token and the tracker token from files.
 It is served under `/tracker/api/v1/` on the same origin as the web area, and only when
 `TRACKER_WEB_URL` is set. Every write goes through the same functions as the web editor and the
 slash commands -- the same fields, defaults, limits, caps and messages -- in the same write queue.
