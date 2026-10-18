@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Accept or Decline on a deleted or done task now replies "That task was deleted." or "That task is done." and records nothing, also for invitations left open on tasks that ended before 0.31.1 (#348).
+
 ## [0.31.1] - 2026-10-17
 
 ### Fixed
