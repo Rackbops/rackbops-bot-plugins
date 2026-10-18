@@ -57,7 +57,8 @@ It prints a JSON list. Each item is one of:
   pages its run could not open (`{site, url?, why}`), and those come first.
 
 Paused watches and requests are left out on purpose (a paused watch would hold listings without
-telling anyone); if the owner expected one, say it is paused. Empty list: tell the owner there is
+telling anyone); if the owner expected one that is not listed, say it may be paused or finished
+(`/task` shows which). Empty list: tell the owner there is
 nothing waiting, and stop. If the owner named one task, do only
 that one.
 
