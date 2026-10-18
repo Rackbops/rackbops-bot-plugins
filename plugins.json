@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-18T00:33:41.301Z",
+  "generatedAt": "2026-10-18T01:22:36.565Z",
   "plugins": [
     {
       "name": "mcp",
@@ -194,7 +194,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.31.2",
+      "version": "0.31.3",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
@@ -328,6 +328,12 @@
       ],
       "releases": [
         {
+          "version": "0.31.3",
+          "publishedAt": "2026-10-18T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.31.3",
+          "notes": "### Changed\n\n- On docket 0.11.0. When the web read of a page is refused, web research and its reviewer read it through Firecrawl's plain fetch instead (basic proxy only, never eBay). They answer with the best source's own categories: for board games, BoardGameGeek's eight, with \"none yet\" for an empty one. This needs docket-runner 0.0.6 with a Firecrawl key; runner 0.0.5 refuses these Jobs."
+        },
+        {
           "version": "0.31.2",
           "publishedAt": "2026-10-18T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.31.2",
@@ -380,12 +386,6 @@
           "publishedAt": "2026-10-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.25.0",
           "notes": "### Added\n\n- **eBay's saved-search alert emails reach eBay watches** (#83, Rod's \"build the email route\"),\n  while `TRACKER_MAIL_DOMAIN` and `TRACKER_MAIL_KEY` are set. Each person gets one private alert\n  address at the domain (`m-` and 24 random hex digits), shown by `/want source: ebay` and on the\n  web settings page. Cloudflare Email Routing hands the domain's mail to the Email Worker in\n  `mail-worker/worker.js`, which posts each message as it came to the new\n  `POST /tracker/mail/inbound` (its own bearer, `TRACKER_MAIL_KEY`). An eBay alert's matches -- never\n  its \"You might also like\" suggestions -- go into the inbox of each of the person's live eBay\n  watches with the saved search's words, as listings sent through the task API do; Gmail's\n  forwarding confirmation code is DMed; an alert no watch searches for gets a DM saying so each time it comes; anything\n  else is dropped, and no message is stored or logged. The reader was built from the first real\n  alert (2026-10-13), kept, with its tracking and account names taken out, as a test fixture.\n  Forget-me deletes the address.\n\n### Schema\n\n- Migration 10: a new `mail_addresses` table, purely additive. A database at 10 is refused by\n  0.24.0 and older."
-        },
-        {
-          "version": "0.24.0",
-          "publishedAt": "2026-10-13T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.24.0",
-          "notes": "The fixes from the 2026-10-07 code review (epics #265 and #266).\n\n### Added\n\n- **Resume DMs on the web** (#168, #288): a person whose DMs are paused sees a banner on every\n  signed-in page with a Resume DMs button (`POST /resume-dms`). It resumes them as their next\n  command would, and My tasks then says so.\n\n### Fixed\n\n- A paused person's DM is held by pausing every task that still DMs them (#168, #279).\n- A delivered DM is kept when its failure count cannot be cleared (#169, #278).\n- A recipient's delivery pause shows only to them, the task's owner and admins (#167, #275).\n- A recipient's reply is kept and shown as one plain line (#205, #289).\n- `/tasks` fits in one message by whole lines and keeps the paused tasks; a pressed button keeps\n  its status (#161, #274).\n- The daily digest fits in one message (#211, #280).\n- `/task history` for a want watch sends its findings as a second message, up to a run's worth\n  (#166, #281).\n- A near price ends at its last digit, so \"19.99,\" reads as 19.99 (#164, #271).\n- A page's tags are read at the right offsets whatever its letters, and up to 200 JSON-LD blocks\n  are kept (#163, #277).\n- A refused route is named, an unreachable city-hall is logged, Jobs are pruned by key, and a bad\n  redirect is refused (#214, #282).\n- The execute lane starts on every host tick, a failed start is closed, and dispose waits for\n  running ticks (#203, #284).\n\n### Changed\n\n- Docs and comments say what is true: `/price` may track an eBay page and only the want-list\n  watcher refuses eBay (#165, #270); the queue, the membership gate and the task API (#204, #283);\n  city-hall's requeue cap as how a `usage_limit` reaches docket (#213, #285); the core's comments,\n  with the unused `localIdentity` dropped (#202, #290).\n- The 48 h hold's comment and tests say that city-hall's requeue cap fails a Job inside it at the\n  runner's hourly pace, and which paths let the hold end first (#287, #293).\n- Tests pin the Reply path's membership and registration gates (#162, #272), and close what each\n  opened before removing its temp directory, so the suite passes on Windows (#232, #276).\n\n### Schema\n\n- No change."
         }
       ]
     },

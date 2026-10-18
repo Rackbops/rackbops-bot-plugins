@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.31.3] - 2026-10-18
+
+### Changed
+
+- On docket 0.11.0. When the web read of a page is refused, web research and its reviewer read it through Firecrawl's plain fetch instead (basic proxy only, never eBay). They answer with the best source's own categories: for board games, BoardGameGeek's eight, with "none yet" for an empty one. This needs docket-runner 0.0.6 with a Firecrawl key; runner 0.0.5 refuses these Jobs.
+
 ## [0.31.2] - 2026-10-18
 
 0.31.1 was prepared but never published, so its two fixes (the last two below) ship here.
