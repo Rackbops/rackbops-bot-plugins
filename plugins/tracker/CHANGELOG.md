@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.31.4] - 2026-10-18
+
+### Fixed
+
+- A research answer the reviewer approves now reaches you even when the reviewer doesn't copy the answer back. On docket 0.11.1, an approve without a copied answer sends the draft, where before it was refused as malformed and you got "The reviewer run could not check the answer, so it is not sent". A failed or rejected review still sends nothing.
+
 ## [0.31.3] - 2026-10-18
 
 ### Changed
