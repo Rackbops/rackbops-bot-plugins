@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.31.3] - 2026-10-18
+
+### Changed
+
+- On docket 0.11.0. When a page refuses the web read, web research and its reviewer read it with Firecrawl's scrape instead, and may also use Firecrawl's search. The prompt keeps Firecrawl on its basic proxy and keeps eBay out of every tool; permission rules can't check either.
+- Every research run answers with the best source's own categories: for board games, BoardGameGeek's eight, with "none yet" for an empty one.
+- Needs docket-runner 0.0.6. It uses Firecrawl only when it has a Firecrawl key, and otherwise reads with WebFetch alone. Runner 0.0.5 refuses these Jobs.
+
 ## [0.31.2] - 2026-10-18
 
 0.31.1 was prepared but never published, so its two fixes (the last two below) ship here.
