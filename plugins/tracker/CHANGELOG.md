@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.31.2] - 2026-10-18
+
+0.31.1 was prepared but never published, so its two fixes (the last two below) ship here.
 
 ### Changed
 
@@ -8,9 +10,13 @@
 
 ### Fixed
 
-- Accept or Decline on a deleted or done task now replies "That task was deleted." or "That task is done." and records nothing, also for invitations left open on tasks that ended before 0.31.1 (#348).
+- Accept or Decline on a deleted or done task now replies "That task was deleted." or "That task is done." and records nothing, including invitations still open on tasks that ended before this release (#348).
+- Deleting a task, or it finishing, withdraws the invitations nobody has answered yet, so a late Accept or Decline confirms nothing and writes no block against the owner (from 0.31.1: #205, #343).
+- Deleting or finishing an inbox watch now deletes its stored inbox rows, which nothing could read again (from 0.31.1: #208, #346).
 
 ## [0.31.1] - 2026-10-17
+
+Prepared but never published (no `tracker-v0.31.1` tag); these fixes ship in 0.31.2, where #348 changes the late-press reply below to "That task was deleted." or "That task is done."
 
 ### Fixed
 
