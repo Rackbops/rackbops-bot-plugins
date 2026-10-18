@@ -1378,8 +1378,9 @@ describe("an owner's delete withdraws the task's open invitations (#205)", () =>
     ]);
     expect(recipients(w.dbPath, "t1")).toEqual([["u4", "accepted"]]);
 
-    expect(await press(w.plugin, "tracker:a.t.t1", CURLY)).toEqual(["That is not yours to answer."]);
-    expect(await press(w.plugin, "tracker:x.t.t1", CURLY)).toEqual(["That is not yours to answer."]);
+    // The press says why (decision 6's refusal, press.ts `consentRefusal`) before docket finds no invitation.
+    expect(await press(w.plugin, "tracker:a.t.t1", CURLY)).toEqual(["That task was deleted."]);
+    expect(await press(w.plugin, "tracker:x.t.t1", CURLY)).toEqual(["That task was deleted."]);
     expect(blocks(w.dbPath)).toBe(0);
     expect(events(w.dbPath, "t1").some((e) => e.startsWith("recipient_declined") || e.startsWith("blocked"))).toBe(false);
   });
