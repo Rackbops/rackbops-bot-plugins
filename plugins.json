@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-18T00:31:04.927Z",
+  "generatedAt": "2026-10-18T00:33:41.301Z",
   "plugins": [
     {
       "name": "mcp",
@@ -337,7 +337,7 @@
           "version": "0.31.1",
           "publishedAt": "2026-10-17T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.31.1",
-          "notes": "Prepared but never published (no `tracker-v0.31.1` tag); these fixes ship in 0.31.2.\n\n### Fixed\n\n- Deleting a task, or it finishing, withdraws the invitations nobody has answered yet. After a delete, a late Accept or Decline from one of those invitees is refused (\"That is not yours to answer.\") and writes no block against the owner; invitees who already accepted or declined are left alone (Rackbops/rackbops-bot-plugins#205, #343).\n- Deleting or finishing an inbox watch now deletes its stored inbox rows, which nothing could read again (#208, #346)."
+          "notes": "Prepared but never published (no `tracker-v0.31.1` tag); these fixes ship in 0.31.2, where #348 changes the late-press reply below to \"That task was deleted.\" or \"That task is done.\"\n\n### Fixed\n\n- Deleting a task, or it finishing, withdraws the invitations nobody has answered yet. After a delete, a late Accept or Decline from one of those invitees is refused (\"That is not yours to answer.\") and writes no block against the owner; invitees who already accepted or declined are left alone (Rackbops/rackbops-bot-plugins#205, #343).\n- Deleting or finishing an inbox watch now deletes its stored inbox rows, which nothing could read again (#208, #346)."
         },
         {
           "version": "0.31.0",

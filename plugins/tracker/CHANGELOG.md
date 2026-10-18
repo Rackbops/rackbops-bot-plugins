@@ -16,7 +16,7 @@
 
 ## [0.31.1] - 2026-10-17
 
-Prepared but never published (no `tracker-v0.31.1` tag); these fixes ship in 0.31.2.
+Prepared but never published (no `tracker-v0.31.1` tag); these fixes ship in 0.31.2, where #348 changes the late-press reply below to "That task was deleted." or "That task is done."
 
 ### Fixed
 
