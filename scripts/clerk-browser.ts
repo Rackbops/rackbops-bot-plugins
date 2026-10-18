@@ -188,15 +188,37 @@ export function pagesProblems(body: unknown): string[] {
   return problems;
 }
 
+/** Cuts each page's text to the API's 12,000 characters, never inside a surrogate pair. */
 export function trimPages(body: { pages: { text?: unknown }[] }): void {
-  for (const p of body.pages) if (typeof p.text === "string" && p.text.length > MAX_PAGE_CHARS) p.text = p.text.slice(0, MAX_PAGE_CHARS);
+  for (const p of body.pages) {
+    if (!p || typeof p.text !== "string" || p.text.length <= MAX_PAGE_CHARS) continue;
+    const cut = p.text.charCodeAt(MAX_PAGE_CHARS - 1);
+    p.text = p.text.slice(0, cut >= 0xd800 && cut <= 0xdbff ? MAX_PAGE_CHARS - 1 : MAX_PAGE_CHARS);
+  }
+}
+
+/** The API's base: `CLERK_API_URL` or the default, https only (http for localhost), so no secret goes out in clear text. */
+export function apiBase(env: Record<string, string | undefined>): string | null {
+  const base = (env.CLERK_API_URL?.trim() || DEFAULT_BASE).replace(/\/+$/, "");
+  try {
+    const u = new URL(base);
+    if (u.protocol === "https:") return base;
+    if (u.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)) return base;
+  } catch {
+    // not a URL
+  }
+  return null;
 }
 
 const ID = /^[A-Za-z0-9_-]{1,40}$/;
 
 /** One call; prints the JSON answer, or says plainly who refused it. Returns the exit code. */
 async function call(d: Deps, s: Secrets, method: string, path: string, body?: unknown): Promise<{ code: number; json?: unknown }> {
-  const base = (d.env.CLERK_API_URL?.trim() || DEFAULT_BASE).replace(/\/+$/, "");
+  const base = apiBase(d.env);
+  if (!base) {
+    d.err("CLERK_API_URL must be an https:// address (http:// only for localhost), or unset");
+    return { code: 64 };
+  }
   let res: Response;
   try {
     res = await d.fetch(`${base}${path}`, {
@@ -219,7 +241,13 @@ async function call(d: Deps, s: Secrets, method: string, path: string, body?: un
     d.err(`${res.status}: the answer is not the tracker's JSON (${type || "no content type"}); Cloudflare Access or the tunnel answered instead${res.status === 403 ? " -- Access refused the service token" : ""}`);
     return { code: 2 };
   }
-  const json = await res.json();
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    d.err(`${res.status}: the answer says it is JSON but is not; the tracker or the tunnel cut it short`);
+    return { code: 2 };
+  }
   if (!res.ok) {
     d.err(`${res.status} ${JSON.stringify(json)}`);
     if (res.status === 429) d.err(`rate limited; wait ${res.headers.get("retry-after") ?? "a few"} seconds`);
@@ -239,18 +267,19 @@ export async function main(argv: string[], d: Deps): Promise<number> {
   }
   let body: unknown;
   if (cmd === "listings" || cmd === "sources") {
+    // Never echo the parser's message: it quotes what it choked on, which could be a secret.
     try {
       body = JSON.parse(await d.readFile(file as string));
-    } catch (e) {
-      d.err(`cannot read ${file} as JSON: ${e instanceof Error ? e.message : String(e)}`);
+    } catch {
+      d.err(`cannot read ${file} as JSON`);
       return 64;
     }
+    if (cmd === "sources" && Array.isArray((body as { pages?: unknown })?.pages)) trimPages(body as { pages: { text?: unknown }[] });
     const problems = cmd === "listings" ? listingsProblems(body) : pagesProblems(body);
     if (problems.length > 0) {
       for (const p of problems) d.err(p);
       return 64;
     }
-    if (cmd === "sources") trimPages(body as { pages: { text?: unknown }[] });
   }
   let s: Secrets;
   try {

@@ -51,12 +51,14 @@ It prints a JSON list. Each item is one of:
 - `{"kind": "listings", "id", "title", "site", "search", "game", "max", "currency"}` -- an active
   inbox watch: `site` is `ebay` or `bgg`, `search` the words to look for, `game` a BGG game id when
   one was named, `max` and `currency` its top price.
-- `{"kind": "research", "id", "question", "context", "deadline", "fullerPass", "pages", "blocked"}`
+- `{"kind": "research", "id", "title", "question", "context", "deadline", "fullerPass", "pages", "blocked"}`
   -- a research request waiting for pages. `fullerPass: false` is a `sources: browser` request: it
   answers only from what you send. `fullerPass: true` already had a first answer; `blocked` lists the
   pages its run could not open (`{site, url?, why}`), and those come first.
 
-Empty list: tell the owner there is nothing waiting, and stop. If the owner named one task, do only
+Paused watches and requests are left out on purpose (a paused watch would hold listings without
+telling anyone); if the owner expected one, say it is paused. Empty list: tell the owner there is
+nothing waiting, and stop. If the owner named one task, do only
 that one.
 
 ## 3a. A watch: search and send listings
@@ -66,14 +68,16 @@ For each `listings` item:
 1. Search the site in Chrome:
    - **eBay:** `https://www.ebay.com/sch/i.html?_nkw=<search, URL-encoded>`, adding `&_udhi=<max>`
      when `max` is set. Read the first results page only.
-   - **BGG:** with a `game` id, its marketplace at
-     `https://boardgamegeek.com/geekmarket/browse?objecttype=thing&objectid=<game>`; without one,
-     search BGG for the words, open the matching game, and then its marketplace. First page only.
+   - **BGG:** with a `game` id, open `https://boardgamegeek.com/boardgame/<game>` and follow its
+     Marketplace link; without one, search BGG for the words, open the matching game, and then its
+     Marketplace link. First page of listings only.
 2. From what the page shows, write each listing as
    `{"title", "url", "price", "currency", "condition", "seller"}`. `title` and `url` are required;
    `url` is the listing's own address on the watch's site (an eBay item `https://www.ebay.com/itm/<n>`,
    or a `boardgamegeek.com` address), never a tracking or redirect link. Leave out a field the page
-   does not show rather than guessing it. Skip sponsored or unrelated results that plainly do not
+   does not show rather than guessing it -- but a listing without a `price` is never DMed by a
+   watch that has a `max`. `price` is a number or text such as `"$30.00"`; `currency` is a
+   three-letter code (`USD`), never a bare symbol. Skip sponsored or unrelated results that plainly do not
    match the search. At most 40.
 3. Write `{"listings": [...]}` to a JSON file in the system temp folder (not in the repo), send it,
    then delete the file:
@@ -86,11 +90,14 @@ For each `listings` item:
 
 For each `research` item:
 
-1. Pick at most **10** pages that answer the question, read in Chrome:
+1. Pick at most **10 minus `pages`** pages (a request holds 10 in all; a page sent again at an
+   address it already holds replaces that page instead of adding one), read in Chrome:
    - For a fuller pass, the `blocked` pages first (their `url`, or the `site` searched for what `why`
      says was missing).
    - For a question about BoardGameGeek's rankings or "best" games by category, BGG's own category
-     searches for the year, best rated first, one page per category -- Strategy (familyids 5497),
+     searches for the year the question names (else the current year), best rated first, one page
+     per category (the family ids were seen on the site, not documented by BGG; if one shows the
+     wrong category, use BGG's own browse page for it instead) -- Strategy (familyids 5497),
      Family (5499), Thematic (5496), Party (5498), Abstract (4666), Customizable (4667),
      Children's (4665), Wargames (4664):
      `https://boardgamegeek.com/search/boardgame?sort=bggrating&advsearch=1&range[yearpublished][min]=<year>&range[yearpublished][max]=<year>&range[numvoters][min]=30&nosubtypes[0]=boardgameexpansion&familyids[0]=<id>`
@@ -112,8 +119,10 @@ For each `research` item:
    ```
    bun scripts/clerk-browser.ts ready <id>
    ```
-   The answer arrives by DM a few minutes later. A `409 busy` means the model runner has the task
-   right now: wait a minute and send `ready` again once.
+   The answer arrives by DM a few minutes later.
+
+   A `409` from `sources` or `ready` is reported to the owner as printed, not retried -- except
+   `busy` (the model runner has the task right now): wait a minute and send the same call once more.
 
 ## 4. Tell the owner
 
@@ -132,4 +141,5 @@ The helper reads two files from `$TOOLING_SECRETS_DIR` (default `R:\repos\secret
   `/tokens` page and sent by the bot's DM.
 
 `CLERK_API_URL` overrides the API's address (default `https://clerk.rackbops.com/tracker/api/v1`).
-Research with `sources: browser` and the `sources` routes need tracker 0.28.0 or later on Clerk.
+Research with `sources: browser` and the `sources` routes need tracker 0.28.0 or later on Clerk;
+a fuller pass (`fullerPass: true`) needs 0.29.0.

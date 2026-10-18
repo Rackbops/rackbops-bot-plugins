@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Plugin } from "../packages/api/contract.js";
 import { cleanup as cleanupWorlds, LARRY, makeToken, people, signIn, world } from "../plugins/tracker/src/web/harness.js";
-import { ACCESS_FILE, type Deps, headers, listingsProblems, main, pagesProblems, parseAccessToken, parseBearer, pendingJobs, TOKEN_FILE } from "./clerk-browser.js";
+import { ACCESS_FILE, apiBase, type Deps, headers, listingsProblems, main, pagesProblems, parseAccessToken, parseBearer, pendingJobs, TOKEN_FILE } from "./clerk-browser.js";
 
 /**
  * The clerk-browser-search skill's helper (#125): its secrets are read from files and sent only as
@@ -107,6 +107,16 @@ describe("batches are checked before they are sent", () => {
     expect(pagesProblems({ pages: [{ url: "javascript:alert(1)", text: " " }] })).toEqual(["page 1 has no absolute http(s) url", "page 1 has no text"]);
   });
 
+  it("long pages are cut before the 1 MiB check, so ten of them still go", async () => {
+    const pages = Array.from({ length: 10 }, (_, i) => ({ url: `https://boardgamegeek.com/boardgame/${i}`, title: "t", text: "x".repeat(150_000) }));
+    const { d } = deps("/nowhere", (async () => new Response("{}")) as unknown as typeof fetch, { "p.json": JSON.stringify({ pages }) });
+    // Past the batch checks, it stops at the missing secrets: no "over 1 MiB" refusal.
+    const errs: string[] = [];
+    d.err = (l) => errs.push(l);
+    expect(await main(["sources", "t1", "p.json"], d)).toBe(2);
+    expect(errs[0]).toStartWith("cannot read ");
+  });
+
   it("a bad batch spends no request and needs no secrets", async () => {
     let calls = 0;
     const { d, err } = deps("/nowhere", (async () => {
@@ -116,6 +126,22 @@ describe("batches are checked before they are sent", () => {
     expect(await main(["listings", "t1", "batch.json"], d)).toBe(64);
     expect(calls).toBe(0);
     expect(err).toEqual(["no listings"]);
+  });
+});
+
+describe("never leaks a secret", () => {
+  it("a secret file passed as a batch is refused without echoing what it holds", async () => {
+    const token = `trk_${"S".repeat(43)}`;
+    const { d, err } = deps("/nowhere", (async () => new Response("{}")) as unknown as typeof fetch, { "token.txt": token });
+    expect(await main(["sources", "t1", "token.txt"], d)).toBe(64);
+    expect(err).toEqual(["cannot read token.txt as JSON"]);
+  });
+
+  it("sends secrets over https only, http for localhost alone", () => {
+    expect(apiBase({})).toBe("https://clerk.rackbops.com/tracker/api/v1");
+    expect(apiBase({ CLERK_API_URL: "http://clerk.rackbops.com/tracker/api/v1" })).toBeNull();
+    expect(apiBase({ CLERK_API_URL: "http://localhost:3000/tracker/api/v1/" })).toBe("http://localhost:3000/tracker/api/v1");
+    expect(apiBase({ CLERK_API_URL: "not a url" })).toBeNull();
   });
 });
 
