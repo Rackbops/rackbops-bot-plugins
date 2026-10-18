@@ -260,26 +260,28 @@ export interface ChangesTail extends Tail<TaskEvent> {
  */
 const ABOUT_A_RECIPIENT = ["recipient_invited", "recipient_accepted", "recipient_declined", "recipient_opted_out", "recipient_removed", "blocked", "block_lifted"];
 
+/** The kind of the pause or resume row before `e`'s on its task, or NULL: an index walk back from it. */
+const PREV_PAUSE_OR_RESUME =
+  "(SELECT x.kind FROM task_events x WHERE x.task_id = e.task_id AND x.kind IN ('paused', 'resumed') AND x.seq < e.seq ORDER BY x.seq DESC LIMIT 1)";
+
 /**
- * The task events a recipient is shown, as a `shown` CTE of `seq`s: docket's `visibleHistory`
+ * The task events a recipient is shown, as a `WHERE` on `task_events e`: docket's `visibleHistory`
  * filter, then history.ts `changesForRecipient`'s choice of pauses and resumes -- which it shows,
  * not what they say. That scan's state before a row is only whether the row before it that pauses
- * or resumes pauses (`prev`): a resume is shown after a pause, and a pause unless it is another
- * recipient's (`isRecipientPause` and not `pauseNames`) while the task already shows paused.
- * history.test.ts checks it against the two for every kind and many orders.
+ * or resumes pauses (`PREV_PAUSE_OR_RESUME`): a resume is shown after a pause, and a pause unless it
+ * is another recipient's (`isRecipientPause` and not `pauseNames`) while the task already shows
+ * paused. Each row is decided on its own, so a read of the newest shown rows walks back only as far
+ * as it needs to; only the count reads them all. history.test.ts checks it against the two for
+ * every kind and many orders.
  */
 function recipientShown(taskId: string, viewerId: string): [string, unknown[]] {
   const about = ABOUT_A_RECIPIENT.map((k) => `'${k}'`).join(", ");
-  const sql = `WITH p AS (
-      SELECT seq, kind, detail, LAG(kind) OVER (ORDER BY seq) AS prev FROM task_events WHERE task_id = ? AND kind IN ('paused', 'resumed')
-    ), shown AS (
-      SELECT seq FROM task_events WHERE task_id = ? AND kind NOT IN ('paused', 'resumed')
-        AND (kind NOT IN (${about}) OR detail = ? OR instr(detail, ?) = 1)
-      UNION ALL
-      SELECT seq FROM p WHERE (kind = 'resumed' AND prev = 'paused')
-        OR (kind = 'paused' AND NOT (prev IS 'paused' AND instr(detail, 'delivery to ') = 1 AND instr(detail, ?) <> 1))
+  const sql = `e.task_id = ? AND (
+      (e.kind NOT IN ('paused', 'resumed') AND (e.kind NOT IN (${about}) OR e.detail = ? OR instr(e.detail, ?) = 1))
+      OR (e.kind = 'resumed' AND ${PREV_PAUSE_OR_RESUME} = 'paused')
+      OR (e.kind = 'paused' AND NOT (${PREV_PAUSE_OR_RESUME} IS 'paused' AND instr(e.detail, 'delivery to ') = 1 AND instr(e.detail, ?) <> 1))
     )`;
-  return [sql, [taskId, taskId, viewerId, `${viewerId} `, `delivery to {${viewerId}} paused:`]];
+  return [sql, [taskId, viewerId, `${viewerId} `, `delivery to {${viewerId}} paused:`]];
 }
 
 /**
@@ -689,18 +691,18 @@ export class SqliteStore implements Store {
   }
 
   async changesTail(taskId: string, viewerId: string | null, limit: number): Promise<ChangesTail> {
-    const [shown, params] = viewerId === null ? ["WITH shown AS (SELECT seq FROM task_events WHERE task_id = ?)", [taskId]] : recipientShown(taskId, viewerId);
-    const total = Number(this.one(`${shown} SELECT COUNT(*) AS n FROM shown`, ...params)?.n ?? 0);
-    const rows = this.all(`${shown} SELECT e.* FROM task_events e JOIN shown s ON s.seq = e.seq ORDER BY e.seq DESC LIMIT ?`, ...params, limit).reverse();
+    if (viewerId === null) {
+      const total = Number(this.one("SELECT COUNT(*) AS n FROM task_events WHERE task_id = ?", taskId)?.n ?? 0);
+      const rows = this.all("SELECT * FROM task_events WHERE task_id = ? ORDER BY seq DESC LIMIT ?", taskId, limit).reverse();
+      return { rows: rows.map(toTaskEvent), total, before: null };
+    }
+    const [shown, params] = recipientShown(taskId, viewerId);
+    const total = Number(this.one(`SELECT COUNT(*) AS n FROM task_events e WHERE ${shown}`, ...params)?.n ?? 0);
+    const rows = this.all(`SELECT e.* FROM task_events e WHERE ${shown} ORDER BY e.seq DESC LIMIT ?`, ...params, limit).reverse();
     const first = rows[0];
-    const before =
-      viewerId === null || first === undefined
-        ? null
-        : this.one(
-            `${shown} SELECT e.* FROM task_events e JOIN shown s ON s.seq = e.seq WHERE e.kind IN ('paused', 'resumed') AND e.seq < ? ORDER BY e.seq DESC LIMIT 1`,
-            ...params,
-            Number(first.seq),
-          );
+    const before = first
+      ? this.one(`SELECT e.* FROM task_events e WHERE ${shown} AND e.kind IN ('paused', 'resumed') AND e.seq < ? ORDER BY e.seq DESC LIMIT 1`, ...params, Number(first.seq))
+      : null;
     return { rows: rows.map(toTaskEvent), total, before: before ? toTaskEvent(before) : null };
   }
 

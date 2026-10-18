@@ -273,6 +273,18 @@ describe("loadHistory reads only what it shows (#265, decision 7)", () => {
     }
   });
 
+  it("a run due at this very instant is history, not the next run", async () => {
+    const b = await built(11, 0, 0);
+    const later = new Date(Date.parse(HNOW) + 3_600_000).toISOString();
+    for (const [i, dueAt] of [HNOW, later].entries()) await b.d.store.createOccurrence({ taskId: b.taskId, lane: "notify", dueAt, dedupeKey: `now${i}`, at: HNOW });
+    for (const viewer of Object.values(b.viewers)) {
+      const view = await loadHistory(b.d, viewer, b.taskId);
+      expect(view).toEqual(await wholeHistory(b.d, viewer, b.taskId));
+      expect(view?.runs.map((r) => r.status)).toEqual(["queued"]);
+      expect(view?.next).toBe(formatInstant(later, viewer.timeZone, new Date(HNOW)));
+    }
+  });
+
   it("the rows it reads do not grow with the history", async () => {
     const long = await built(7, 500, 300);
     const short = await built(7, 40, 30);

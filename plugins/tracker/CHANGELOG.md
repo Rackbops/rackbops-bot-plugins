@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `/task history`, the web task page and `GET /api/v1/tasks/<id>` load only the runs and changes they show; SQLite counts the older ones (#265, #349).
+
 ### Fixed
 
 - Accept or Decline on a deleted or done task now replies "That task was deleted." or "That task is done." and records nothing, also for invitations left open on tasks that ended before 0.31.1 (#348).

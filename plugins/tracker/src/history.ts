@@ -223,10 +223,12 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
   const task = await visibleTask(d.store, actor, taskId.trim());
   if (!task) return null;
   const now = d.clock.now();
-  const runs = await d.store.runsTail(task.id, now.toISOString(), HISTORY_RUNS);
-  const next = runs.next;
-  // A recipient sees their own replies only, and every run, as docket's reads give them.
   const seesEveryone = user.admin || task.ownerId === user.id;
+  const tailed = await d.store.runsTail(task.id, now.toISOString(), HISTORY_RUNS);
+  // A recipient sees every run without its `record`, the owner's (docket's `visibleOccurrences`),
+  // and only their own replies (`visibleReplies`).
+  const runs = seesEveryone ? tailed : { ...tailed, rows: tailed.rows.map((o) => ({ ...o, record: null })) };
+  const next = runs.next;
   const replies = await d.store.repliesTo(task.id, runs.rows.map((o) => o.id), seesEveryone ? null : user.id);
   // A pause for a recipient is shown only to them, the owner and admins (#167; delivery-health.ts
   // `isRecipientPause`): docket's `visibleHistory` hides a recipient's own rows from the others, but
