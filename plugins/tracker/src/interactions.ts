@@ -53,7 +53,8 @@ export function createInteractionHandler(c: SurfaceContext): PluginInteractionHa
     const membership = gated ? await membershipOf(interaction) : "not-checked";
     const result = await c.queue(async () => {
       if (!gated) {
-        // Declining and opting out always work (press.ts `reducesContact`); docket checks the rest.
+        // Declining and opting out skip the gates (press.ts `reducesContact`): opting out always works, and
+        // declining does too unless the task was deleted or is done (`consentRefusal`); docket checks the rest.
         const person = await d.store.findUserByDiscordId(interaction.user.id);
         if (!person) return { notice: null, pressed: { ok: false as const, error: "That is not yours to answer." } };
         return { notice: null, pressed: await press(d, person, ref) };

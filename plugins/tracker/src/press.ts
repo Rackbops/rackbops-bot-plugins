@@ -137,7 +137,28 @@ export async function press(d: TrackerDeps, user: User, ref: string): Promise<Pr
   return taskId === null ? pressLocked(d, user, ref) : d.locks.turn(taskId, () => pressLocked(d, user, ref), () => ({ ok: false, error: TASK_BUSY }));
 }
 
+/**
+ * Why an accept or decline cannot be answered on this task any more, or null when it can (#205, Epic
+ * #265 decision 6): a task that is gone or deleted (`archived`) or `done` takes no consent, so the
+ * presser is told so and nothing is recorded -- no accept confirmed, no decline block written. A
+ * `paused` task can resume, so its invitation stands. Withdrawing the open invitations when a task
+ * ends (`SqliteStore.updateTask`) covers the same case for tasks that ended after it landed; this
+ * also covers an invitation left open on a task that ended before, and says why. Opting out is never
+ * refused here: it only reduces contact.
+ */
+async function consentRefusal(d: TrackerDeps, ref: string): Promise<string | null> {
+  const decoded = decodeReplyRef(ref);
+  if (decoded?.kind !== "accept" && decoded?.kind !== "decline") return null;
+  const taskId = await taskOfRef(d, ref);
+  const task = taskId === null ? null : await d.store.getTask(taskId);
+  if (!task || task.status === "archived") return "That task was deleted.";
+  if (task.status === "done") return "That task is done.";
+  return null;
+}
+
 async function pressLocked(d: TrackerDeps, user: User, ref: string): Promise<PressResult> {
+  const refused = await consentRefusal(d, ref);
+  if (refused) return { ok: false, error: refused };
   const verdict = await replyForRef(d.store, ref, user.id);
   if (!verdict.ok) return { ok: false, error: verdict.error };
   const { input } = verdict;
@@ -207,6 +228,9 @@ async function submitReplyLocked(d: TrackerDeps, user: User, occurrenceId: strin
  * membership and registration gates, so someone who left the server or never registered can always
  * stop the messages. Admission is not checked either: docket's `replyForRef` already requires the
  * presser to be the invited or accepted recipient, and only a person in the store can be one.
+ * `consentRefusal` runs before that presser check, so a refused accept or decline reveals to anyone
+ * pressing it only that the task ended (deleted or done); for a missing task docket already says
+ * "That task no longer exists." to anyone.
  */
 export function reducesContact(ref: string): boolean {
   const kind = decodeReplyRef(ref)?.kind;
