@@ -1,9 +1,6 @@
 import {
   describeSchedule,
   formatInstant,
-  visibleHistory,
-  visibleOccurrences,
-  visibleReplies,
   visibleFindings,
   visibleTask,
   type Occurrence,
@@ -16,11 +13,12 @@ import {
 import { clip, NO_SUCH_TASK, oneLine, pagesNote, type TrackerDeps } from "./actions.js";
 import { isRecipientPause, PERSON_REF, pauseNames } from "./delivery-health.js";
 import { errorNamesOther } from "./roster.js";
+import type { ChangesTail, RunsTail } from "./store.js";
 
 /**
  * `/task history` (plan 1.3 "History", 5.10): a task's newest runs -- when each was due, how it went,
- * how the owner answered it, what anyone replied -- and its newest changes, older ones counted, read
- * through docket's authorized reads (owner, accepted recipient, or an admin), newest last.
+ * how the owner answered it, what anyone replied -- and its newest changes, older ones counted, newest
+ * last, for whoever docket's authorized read lets see the task (owner, accepted recipient, or an admin).
  */
 
 /** Runs and changes shown; older ones are summarized by count. */
@@ -195,27 +193,52 @@ export interface HistoryView {
 }
 
 /**
- * Reads a task's history through docket's authorized reads (owner, accepted recipient, or an
- * admin); null when the task does not exist or the viewer may not see it -- the two are one answer.
+ * The reads `loadHistory` makes past docket's Store port (store.ts), so it reads only what it shows
+ * and counts the rest in SQL (#265, decision 7): a task's runs and history are kept, however long.
+ */
+export interface HistoryReads {
+  /**
+   * The task's runs but those still to come (queued, due after `now`), the newest `limit` in
+   * `listOccurrences`' order, how many there are, and the first still to come.
+   */
+  runsTail(taskId: string, now: string, limit: number): Promise<RunsTail>;
+  /** The task's replies to these runs, in the order made; with `userId`, only theirs. */
+  repliesTo(taskId: string, occurrenceIds: readonly string[], userId: string | null): Promise<Reply[]>;
+  /**
+   * The task's newest `limit` changes and how many there are: every one with no `viewerId`, else the
+   * ones that recipient is shown (docket's `visibleHistory`, then `changesForRecipient`'s choice).
+   */
+  changesTail(taskId: string, viewerId: string | null, limit: number): Promise<ChangesTail>;
+}
+
+/**
+ * Reads a task's history: the task through docket's authorized read (owner, accepted recipient, or
+ * an admin), then its runs, replies and changes by `HistoryReads`, by the same rules as docket's
+ * `visibleOccurrences`, `visibleReplies` and `visibleHistory`; null when the task does not exist or
+ * the viewer may not see it -- the two are one answer. Only the runs and changes shown are read,
+ * with their replies and people, and the older ones are counted.
  */
 export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user: User, taskId: string): Promise<HistoryView | null> {
   const actor = { userId: user.id, admin: user.admin };
   const task = await visibleTask(d.store, actor, taskId.trim());
   if (!task) return null;
   const now = d.clock.now();
-  const all = (await visibleOccurrences(d.store, actor, task.id)) ?? [];
-  const upcoming = (o: Occurrence) => o.status === "queued" && Date.parse(o.dueAt) > now.getTime();
-  const runs = all.filter((o) => !upcoming(o));
-  const next = all.find(upcoming);
-  const replies = (await visibleReplies(d.store, actor, task.id)) ?? [];
+  const seesEveryone = user.admin || task.ownerId === user.id;
+  const tailed = await d.store.runsTail(task.id, now.toISOString(), HISTORY_RUNS);
+  // A recipient sees every run without its `record`, the owner's (docket's `visibleOccurrences`),
+  // and only their own replies (`visibleReplies`).
+  const runs = seesEveryone ? tailed : { ...tailed, rows: tailed.rows.map((o) => ({ ...o, record: null })) };
+  const next = runs.next;
+  const replies = await d.store.repliesTo(task.id, runs.rows.map((o) => o.id), seesEveryone ? null : user.id);
   // A pause for a recipient is shown only to them, the owner and admins (#167; delivery-health.ts
   // `isRecipientPause`): docket's `visibleHistory` hides a recipient's own rows from the others, but
   // not this one. Anyone else reads it, and the resume after it, as the task's own (#273,
-  // `changesForRecipient`). Done here, before the slice and the "(N earlier)" count, so Discord, the
-  // web and the API agree.
-  const seesEveryone = user.admin || task.ownerId === user.id;
-  const visible = (await visibleHistory(d.store, actor, task.id)) ?? [];
-  const changes = seesEveryone ? visible : changesForRecipient(visible, user.id);
+  // `changesForRecipient`). Chosen before the newest are taken and the "(N earlier)" count, so
+  // Discord, the web and the API agree; what a resume says hangs on the pause shown above it, so
+  // that one is read too while the task shows paused there.
+  const tail = await d.store.changesTail(task.id, seesEveryone ? null : user.id, HISTORY_CHANGES);
+  const lead = tail.before?.kind === "paused" ? [tail.before] : [];
+  const changes = seesEveryone ? tail.rows : changesForRecipient([...lead, ...tail.rows], user.id).slice(lead.length);
   const people = new Map<string, User>();
   for (const r of replies) {
     if (!people.has(r.userId)) {
@@ -238,10 +261,10 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
     task,
     cadence: task.schedule && owner ? describeSchedule(task.schedule, owner, user.timeZone, now) : "no schedule",
     next: next ? formatInstant(next.dueAt, user.timeZone, now) : null,
-    runs: runs.slice(-HISTORY_RUNS).map((o) => runView(o, replies, people, user, now, seesEveryone)),
-    earlierRuns: Math.max(0, runs.length - HISTORY_RUNS),
-    changes: changes.slice(-HISTORY_CHANGES).map((e) => changeView(e, user, now, names)),
-    earlierChanges: Math.max(0, changes.length - HISTORY_CHANGES),
+    runs: runs.rows.map((o) => runView(o, replies, people, user, now, seesEveryone)),
+    earlierRuns: Math.max(0, runs.total - HISTORY_RUNS),
+    changes: changes.map((e) => changeView(e, user, now, names)),
+    earlierChanges: Math.max(0, tail.total - HISTORY_CHANGES),
     findings: findings.map((f) => findingView(f, user, now)),
   };
 }
