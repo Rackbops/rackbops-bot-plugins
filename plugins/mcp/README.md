@@ -4,7 +4,8 @@ The bridge plugin for the Discord delivery MCP ([`Rackbops/discord-mcp`](https:/
 [Rackbops/Tooling#742](https://github.com/Rackbops/Tooling/issues/742)). It implements the service
 side of that repo's `docs/bridge-protocol.md` under `/mcp/` on the bot's own HTTP listener
 (rackbops-discord-bot's host-owned router, ADR-0007) -- `GET /capabilities`,
-`POST /deliveries`, `GET /deliveries/{request_id}` and `GET /recipients` -- so the MCP service can
+`POST /deliveries`, `GET /deliveries/{request_id}`, `GET /recipients` and
+`GET /recipients/{user_id}` -- so the MCP service can
 hand it a message and get one Discord post, DM or edit out of it: a retry of a request that is
 delivered or in flight never delivers again (a retry of a failed or unknown one, and the restart
 re-drive, deliver at least once -- see below). It also owns Discord-side agent identity ([Rackbops/Tooling#743](https://github.com/Rackbops/Tooling/issues/743)):
@@ -88,6 +89,17 @@ most 100, each `display_name` truncated to 100 characters (same bearer auth; any
 ```
 200: {"items":[{"user_id":"123456789012345678","display_name":"Roshne"}]}
 200: {"items":[]}
+```
+
+`GET /recipients/{user_id}` -- one registered user, in the same shape as a `GET /recipients` item
+and with the same display-name truncation, but with no cap: a user registered after the first 100
+still finds their own entry here. `user_id` must be a snowflake (`[1-9][0-9]{16,19}`); a malformed
+one falls through to the generic `404 {"error":"not found"}`. Same bearer auth; any other method is
+`405`:
+
+```
+200: {"user_id":"123456789012345678","display_name":"Roshne"}
+404: {"error":"not registered"}
 ```
 
 `GET /capabilities` now reflects the host's real `dm`/`edit` support:

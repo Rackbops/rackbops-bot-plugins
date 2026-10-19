@@ -287,7 +287,12 @@ export function toWireState(stored: StoredDelivery): Record<string, unknown> {
  *  `RECIPIENTS_MAX`, each `displayName` truncated to `DISPLAY_NAME_MAX` characters. */
 export function recipientsResponse(entries: { userId: string; displayName: string; registeredAt: string }[]): Record<string, unknown> {
   const sorted = [...entries].sort((a, b) => a.registeredAt.localeCompare(b.registeredAt) || a.userId.localeCompare(b.userId));
-  return {
-    items: sorted.slice(0, RECIPIENTS_MAX).map((e) => ({ user_id: e.userId, display_name: e.displayName.slice(0, DISPLAY_NAME_MAX) })),
-  };
+  return { items: sorted.slice(0, RECIPIENTS_MAX).map(recipientResponse) };
+}
+
+/** `GET /recipients/{user_id}` (#354): one registered user, in the same shape and with the same
+ *  `displayName` truncation as one `GET /recipients` item. No cap applies -- this is how a user
+ *  registered past the first `RECIPIENTS_MAX` finds their own entry. */
+export function recipientResponse(entry: { userId: string; displayName: string }): { user_id: string; display_name: string } {
+  return { user_id: entry.userId, display_name: entry.displayName.slice(0, DISPLAY_NAME_MAX) };
 }

@@ -13,7 +13,7 @@
     },
     "plugins/mcp": {
       "name": "@rackbops/plugin-mcp",
-      "version": "0.3.3",
+      "version": "0.4.0",
       "peerDependencies": {
         "discord.js": "^14.27.0",
       },

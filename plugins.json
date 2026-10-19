@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-18T16:39:10.060Z",
+  "generatedAt": "2026-10-19T14:15:38.235Z",
   "plugins": [
     {
       "name": "mcp",
       "package": "@rackbops/plugin-mcp",
-      "version": "0.3.3",
+      "version": "0.4.0",
       "description": "Bridge plugin for the Discord delivery MCP (Rackbops/discord-mcp): the service side of docs/bridge-protocol.md, plus /agent registration and pairing",
       "hostApiVersion": 1,
       "intents": [],
@@ -40,6 +40,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "0.4.0",
+          "publishedAt": "2026-10-19T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/mcp-v0.4.0",
+          "notes": "### Added\n\n- `GET /recipients/{user_id}` answers one registered user (`{user_id, display_name}`, the display name truncated as in the list), or `404 {\"error\":\"not registered\"}`. It has no cap, so a user registered after the first 100 can find their own entry, which `GET /recipients` leaves out. `GET /recipients` is unchanged (Rackbops/rackbops-bot-plugins#354, for Rackbops/discord-mcp#181)."
+        },
         {
           "version": "0.3.3",
           "publishedAt": "2026-10-17T00:00:00.000Z",
