@@ -90,6 +90,17 @@ most 100, each `display_name` truncated to 100 characters (same bearer auth; any
 200: {"items":[]}
 ```
 
+`GET /recipients/{user_id}` -- one registered user, in the same shape as a `GET /recipients` item
+and with the same display-name truncation, but with no cap: a user registered after the first 100
+still finds their own entry here. `user_id` must be a snowflake (`[1-9][0-9]{16,19}`); a malformed
+one falls through to the generic `404 {"error":"not found"}`. Same bearer auth; any other method is
+`405`:
+
+```
+200: {"user_id":"123456789012345678","display_name":"Roshne"}
+404: {"error":"not registered"}
+```
+
 `GET /capabilities` now reflects the host's real `dm`/`edit` support:
 
 ```

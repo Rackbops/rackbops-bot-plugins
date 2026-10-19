@@ -199,6 +199,9 @@ export interface RegistryStore {
    *  capping is `protocol.ts`'s `recipientsResponse`'s job, matching `generationOf`'s own split
    *  between a plain store read and the wire-shaping done elsewhere. */
   listRecipients(): Promise<RecipientEntry[]>;
+  /** One registered user (#354, `GET /recipients/{user_id}`), or `undefined` when `userId` is not
+   *  registered. A plain read, like `listRecipients`. */
+  recipientOf(userId: string): Promise<RecipientEntry | undefined>;
 }
 
 function registryPath(dataDir: string): string {
@@ -274,6 +277,12 @@ export function createRegistryStore(dataDir: string, storage: HostStorage): Regi
         const entry = current.users[userId]!;
         return { userId, displayName: entry.displayName, registeredAt: entry.registeredAt };
       });
+    },
+    async recipientOf(userId) {
+      const current = normalizeRegistry(await storage.readJsonOrFresh<Registry>(path, freshRegistry, "mcp-registry"));
+      const entry = entryOf(current, userId);
+      if (entry === undefined) return undefined;
+      return { userId, displayName: entry.displayName, registeredAt: entry.registeredAt };
     },
   };
 }

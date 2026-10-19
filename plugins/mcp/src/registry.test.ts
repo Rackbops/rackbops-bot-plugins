@@ -350,6 +350,20 @@ describe("createRegistryStore: concurrency, over real storage", () => {
     expect((await store.listRecipients()).map((r) => r.displayName)).toEqual(["New Name"]);
   });
 
+  test("recipientOf: a registered user's entry, undefined for anyone else", async () => {
+    const now = () => new Date("2026-09-25T00:00:00.000Z");
+    await store.register(USER, NAME, now);
+    expect(await store.recipientOf(USER)).toEqual({ userId: USER, displayName: NAME, registeredAt: now().toISOString() });
+    expect(await store.recipientOf(OTHER_USER)).toBeUndefined();
+  });
+
+  test("recipientOf: undefined once unregistered", async () => {
+    const now = () => new Date();
+    await store.register(USER, NAME, now);
+    await store.unregister(USER, now);
+    expect(await store.recipientOf(USER)).toBeUndefined();
+  });
+
   test("listRecipients: an unregistered user disappears", async () => {
     const now = () => new Date();
     await store.register(USER, NAME, now);

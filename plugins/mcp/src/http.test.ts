@@ -627,6 +627,82 @@ describe("handleMcpHttp: GET /recipients", () => {
   });
 });
 
+describe("handleMcpHttp: GET /recipients/{user_id}", () => {
+  test("a registered user's entry, matching the literal wire shape", async () => {
+    await registry.register(USER_ID, "Roshne", () => new Date(NOW));
+    const host = makeFakeHost({ name: "mcp" });
+    const path = `/recipients/${USER_ID}`;
+    const res = await handleMcpHttp(get(path), INFO(path), deps(host, TOKEN));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ user_id: USER_ID, display_name: "Roshne" });
+  });
+
+  test("a user registered 101st -- missing from GET /recipients, found here", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    for (let i = 0; i < 101; i++) {
+      await registry.register(String(100000000000000000n + BigInt(i)), `user-${i}`, () => new Date(NOW + i * 1000));
+    }
+    const last = String(100000000000000000n + 100n);
+    const list = (await (await handleMcpHttp(get("/recipients"), INFO("/recipients"), deps(host, TOKEN))).json()) as { items: { user_id: string }[] };
+    expect(list.items.some((e) => e.user_id === last)).toBe(false);
+    const path = `/recipients/${last}`;
+    const res = await handleMcpHttp(get(path), INFO(path), deps(host, TOKEN));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ user_id: last, display_name: "user-100" });
+  });
+
+  test("a display name over 100 characters is truncated to 100, as in the list", async () => {
+    await registry.register(USER_ID, "x".repeat(150), () => new Date(NOW));
+    const host = makeFakeHost({ name: "mcp" });
+    const path = `/recipients/${USER_ID}`;
+    const body = (await (await handleMcpHttp(get(path), INFO(path), deps(host, TOKEN))).json()) as { display_name: string };
+    expect(body.display_name).toBe("x".repeat(100));
+  });
+
+  test("a valid-shaped but unregistered user_id is 404 not registered", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const path = `/recipients/${USER_ID}`;
+    const res = await handleMcpHttp(get(path), INFO(path), deps(host, TOKEN));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "not registered" });
+  });
+
+  test("an unregistered user is 404 after unregister", async () => {
+    await registry.register(USER_ID, "Roshne", () => new Date(NOW));
+    await registry.unregister(USER_ID, () => new Date(NOW));
+    const host = makeFakeHost({ name: "mcp" });
+    const path = `/recipients/${USER_ID}`;
+    const res = await handleMcpHttp(get(path), INFO(path), deps(host, TOKEN));
+    expect(res.status).toBe(404);
+  });
+
+  test("a malformed user_id falls through to the generic catch-all 404", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const d = deps(host, TOKEN);
+    for (const badId of ["42", `0${"1".repeat(17)}`, "1".repeat(21)]) {
+      const path = `/recipients/${badId}`;
+      const res = await handleMcpHttp(get(path), INFO(path), d);
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "not found" });
+    }
+  });
+
+  test("a non-GET method on a valid-shaped path is 405", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const path = `/recipients/${USER_ID}`;
+    const res = await handleMcpHttp(post(path), INFO(path), deps(host, TOKEN));
+    expect(res.status).toBe(405);
+  });
+
+  test("a bad bearer is 401 before any lookup", async () => {
+    const host = makeFakeHost({ name: "mcp" });
+    const path = `/recipients/${USER_ID}`;
+    const req = new Request(`http://bridge.local${path}`, { headers: { authorization: "Bearer wrong" } });
+    const res = await handleMcpHttp(req, INFO(path), deps(host, TOKEN));
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("handleMcpHttp: routing", () => {
   test("an entirely unknown path is 404", async () => {
     const host = makeFakeHost({ name: "mcp" });
