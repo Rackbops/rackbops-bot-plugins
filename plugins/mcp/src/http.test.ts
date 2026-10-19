@@ -679,7 +679,7 @@ describe("handleMcpHttp: GET /recipients/{user_id}", () => {
   test("a malformed user_id falls through to the generic catch-all 404", async () => {
     const host = makeFakeHost({ name: "mcp" });
     const d = deps(host, TOKEN);
-    for (const badId of ["42", `0${"1".repeat(17)}`, "1".repeat(21)]) {
+    for (const badId of ["42", `0${"1".repeat(17)}`, "1".repeat(21), `${USER_ID}/`, `%31${USER_ID.slice(1)}`]) {
       const path = `/recipients/${badId}`;
       const res = await handleMcpHttp(get(path), INFO(path), d);
       expect(res.status).toBe(404);

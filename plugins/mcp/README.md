@@ -4,7 +4,8 @@ The bridge plugin for the Discord delivery MCP ([`Rackbops/discord-mcp`](https:/
 [Rackbops/Tooling#742](https://github.com/Rackbops/Tooling/issues/742)). It implements the service
 side of that repo's `docs/bridge-protocol.md` under `/mcp/` on the bot's own HTTP listener
 (rackbops-discord-bot's host-owned router, ADR-0007) -- `GET /capabilities`,
-`POST /deliveries`, `GET /deliveries/{request_id}` and `GET /recipients` -- so the MCP service can
+`POST /deliveries`, `GET /deliveries/{request_id}`, `GET /recipients` and
+`GET /recipients/{user_id}` -- so the MCP service can
 hand it a message and get one Discord post, DM or edit out of it: a retry of a request that is
 delivered or in flight never delivers again (a retry of a failed or unknown one, and the restart
 re-drive, deliver at least once -- see below). It also owns Discord-side agent identity ([Rackbops/Tooling#743](https://github.com/Rackbops/Tooling/issues/743)):
