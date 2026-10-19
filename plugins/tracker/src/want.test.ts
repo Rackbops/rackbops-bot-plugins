@@ -391,6 +391,21 @@ describe("/want", () => {
     expect((await capped.json()).error.code).toBe("limit_reached");
   });
 
+  it("over the task API: a Shopify watch is made with its words, and a PATCH under a day is refused", async () => {
+    const empty = (async () => new Response(JSON.stringify({ data: { alexandria: [{ data: { products: [] } }] } }), { status: 200 })) as unknown as typeof fetch;
+    const w = await world({ fetch: shop([]).fetch, env: { TRACKER_FIRECRAWL_KEY: "fc-key" }, firecrawlFetch: empty });
+    await people(w.plugin);
+    const jar = await signIn(w.plugin, LARRY);
+    const token = await makeToken(w, jar);
+    const made = await api(w.plugin, "POST", "/tasks", { token, body: { type: "wantlist", name: "Oceania", source: "shopify", target: "Wingspan Oceania", max: 35 } });
+    expect(made.status).toBe(201);
+    expect((await made.json()).task).toMatchObject({ source: "shopify", target: "Wingspan Oceania", settings: { max: 35, hours: 24 } });
+    const fast = await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { hours: 6 } });
+    expect(fast.status).toBe(400);
+    expect(JSON.stringify(await fast.json())).toContain("from 24 to 168");
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { hours: 48 } })).status).toBe(200);
+  });
+
   it("caps live watches per person", async () => {
     const w = await world({ fetch: shop([OCEANIA]).fetch });
     await people(w.plugin);

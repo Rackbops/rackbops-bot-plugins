@@ -5,7 +5,7 @@ import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
 import { MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "../scout.js";
 import { MAX_FOR_CHARS, MAX_SCOUT_NOTES } from "@rackbops/docket-types";
-import { DEFAULT_BGG_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS } from "../want.js";
+import { DEFAULT_BGG_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, MIN_SHOPIFY_HOURS } from "../want.js";
 import { MAX_EVERY, MAX_LEAD_DAYS } from "../tracked.js";
 import { html, type Html } from "./html.js";
 import { framed, type Viewer } from "./pages.js";
@@ -115,7 +115,7 @@ const JUDGE_OPTIONS = [["yes", "yes: the model checks each new listing and its s
 const wantLimits = (mode: Mode, surface: Surface): readonly Field[] => [
   { name: "max", label: "Top price", kind: "text", decimal: true, help: "Only listings at or under it, and so only listings that show a price. Leave it empty for any price." },
   { name: "currency", label: "Currency", kind: "text", maxlength: CURRENCY_LENGTH, help: "Only listings in it, such as USD. Leave it empty for any." },
-  { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}. ${empty(mode, `When empty, ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG, ${DEFAULT_INBOX_HOURS} for eBay (or BGG, when this bot has no BGG access), whose listings are sent in, and ${DEFAULT_SHOPIFY_HOURS} for Shopify, never fewer: each Shopify look is a paid Firecrawl search.`, surface)}` },
+  { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}, and at least ${MIN_SHOPIFY_HOURS} for Shopify, since each Shopify look is a paid Firecrawl search. ${empty(mode, `When empty, ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG, ${DEFAULT_INBOX_HOURS} for eBay (or BGG, when this bot has no BGG access), whose listings are sent in, and ${DEFAULT_SHOPIFY_HOURS} for Shopify.`, surface)}` },
 ];
 
 /**

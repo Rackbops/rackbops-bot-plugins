@@ -404,7 +404,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
                 { name: "a listing page you paste", value: "page" },
                 { name: "BoardGameGeek's marketplace", value: "bgg" },
                 { name: "eBay (from listings you send in; the watch never opens eBay)", value: "ebay" },
-                { name: "Shopify stores (new copies in stock, searched once a day)", value: "shopify" },
+                { name: "Shopify stores (new copies in stock, at most once a day)", value: "shopify" },
               ),
           )
           .addStringOption((o) =>

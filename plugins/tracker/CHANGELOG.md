@@ -6,6 +6,10 @@
 
 - `/want source: shopify` watches Shopify stores for new copies in stock, at or under your top price, and DMs the new ones like any watch. `target` is the words to search for (the name when empty), and a product counts only when its title has every word. It looks once a day by default and never more often, since each look is one Firecrawl search (5 credits). It needs `TRACKER_FIRECRAWL_KEY`; without it, `source: shopify` is refused. The web editor and the task API take `shopify` as a source too. On docket 0.12.0.
 
+### Schema
+
+- No change. Still at 11.
+
 ## [0.31.4] - 2026-10-18
 
 ### Fixed
