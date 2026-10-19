@@ -24,8 +24,8 @@ precisely to make that disagreement loud instead of silent.
 ## Environment
 
 No machine-specific paths. `bun` is pinned (the exact version) via `package.json`'s `packageManager` field;
-`oven-sh/setup-bun@v2` in CI reads that same field (`bun-version-file: package.json`), so the
-pin only needs to change in one place.
+`oven-sh/setup-bun` in CI (pinned to a v2 commit) reads that same field (`bun-version-file: package.json`),
+so the pin only needs to change in one place.
 
 ---
 

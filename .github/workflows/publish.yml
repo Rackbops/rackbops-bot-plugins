@@ -23,7 +23,7 @@ jobs:
       version: ${{ steps.tag.outputs.version }}
       tarball: ${{ steps.pack.outputs.tarball }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # the whole history, so the next step can tell whether the tagged commit is on main
 
@@ -40,7 +40,7 @@ jobs:
             exit 1
           fi
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
 
@@ -83,7 +83,7 @@ jobs:
       # check); this re-check is belt-and-suspenders for a tag pushed at an unexpected commit.
       - run: bun run generate-index -- --check
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
@@ -120,7 +120,7 @@ jobs:
           awk -v heading="## [$PLUGIN_VERSION]" 'index($0, heading) == 1 {flag=1; next} /^## / || /^\[[^]]+\]:[ \t]*[^ \t]/ {flag=0} flag' \
             "plugins/$PLUGIN_NAME/CHANGELOG.md" > release/release-notes.md
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release
           path: release/
@@ -137,12 +137,12 @@ jobs:
       PLUGIN_VERSION: ${{ needs.verify.outputs.version }}
       TARBALL: ${{ needs.verify.outputs.tarball }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release
           path: release
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
