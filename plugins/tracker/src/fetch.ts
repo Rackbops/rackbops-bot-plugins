@@ -201,7 +201,7 @@ async function checkHost(url: URL, resolve: Resolve, signal: AbortSignal, neverE
 }
 
 /** Reads at most `max` bytes of the body, then stops the download. */
-async function readCapped(response: Response, max: number): Promise<string> {
+export async function readCapped(response: Response, max: number): Promise<string> {
   if (!response.body) return "";
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];

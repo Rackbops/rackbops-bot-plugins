@@ -2,7 +2,8 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
-import { bggSource, inboxSource, pageSource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
+import { bggSource, inboxSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
+import { createFirecrawlScrape, parseFirecrawlKey } from "./firecrawl.js";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds, parseGuildRoles } from "./access.js";
 import type { TickGate, TrackerDeps } from "./actions.js";
@@ -54,7 +55,7 @@ import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_ID
  * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID`, `TRACKER_GUILD_ROLES`,
  * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts), the `TRACKER_USR_*` settings (usr.ts: a
  * half-set link refuses to load), `TRACKER_BUDGET_UNLIMITED` (usage.ts) and the `TRACKER_MAIL_*` settings (mail.ts),
- * reads `TRACKER_BGG_TOKEN`, and nothing else. The database is opened in `activate()` and closed in `dispose()`.
+ * reads `TRACKER_BGG_TOKEN` and `TRACKER_FIRECRAWL_KEY`, and nothing else. The database is opened in `activate()` and closed in `dispose()`.
  */
 
 /** The tracker's database: `<dataDir>/tracker/tracker.sqlite`, a directory of its own (mcp's convention). */
@@ -127,6 +128,10 @@ export interface TrackerOptions {
   executor?: Executor;
   /** Test seam: a BGG source in place of the token's (docket-types' `bggSource`), as if `TRACKER_BGG_TOKEN` were set. */
   bgg?: Source;
+  /** Test seam: a Shopify source in place of the key's (docket-types' `shopifySource`), as if `TRACKER_FIRECRAWL_KEY` were set. */
+  shopify?: Source;
+  /** Test seam for the key's Firecrawl calls (firecrawl.ts). */
+  firecrawlFetch?: typeof fetch;
   /** Test seam for the token's BGG reads: the name lookup and HTTP under `createBggFetch`, which still decides raw and redirects. */
   bggNetwork?: Pick<PageFetchOptions, "resolve" | "fetchImpl">;
   /** Test seam: each execute tick's background work as it starts, so a test can await it. */
@@ -183,6 +188,10 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const bggToken = parseBggToken(host.env.TRACKER_BGG_TOKEN);
   // BGG's answers are XML, read by docket-types' own bounded BGG parser: the raw body, fenced like every read.
   const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createBggFetch(options.bggNetwork ?? {}) }) : null);
+  // Shopify's store search for want-list watches (firecrawl.ts), only with a Firecrawl key.
+  const firecrawlKey = parseFirecrawlKey(host.env.TRACKER_FIRECRAWL_KEY);
+  const shopify =
+    options.shopify ?? (firecrawlKey ? shopifySource(createFirecrawlScrape({ key: firecrawlKey, ...(options.firecrawlFetch ? { fetchImpl: options.firecrawlFetch } : {}) })) : null);
   // The want-list inboxes (inbox.ts) live in the database `activate()` opens; until then, and after
   // `dispose()`, an inbox reads as empty (no tick runs then anyway). An eBay watch, and a BGG one
   // made while the bot has no BGG token, get their listings only this way: the want-list watcher
@@ -198,7 +207,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const types = options.types ?? {
     ...TRACKER_TYPES,
     research: researchType(webOrigin ? { readSources } : {}) as TaskType<unknown>,
-    ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}) }),
+    ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}), ...(shopify ? { shopify } : {}) }),
   };
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
@@ -447,6 +456,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           webEditor: webOrigin !== null,
           research: executeOn,
           bgg: bgg !== null,
+          shopify: shopify !== null,
           inbox: openedInbox,
           sources: openedSources,
           mail: mailConfig ? new MailAddresses(opened, mailConfig.domain) : null,

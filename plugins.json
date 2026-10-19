@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-18T16:39:10.060Z",
+  "generatedAt": "2026-10-19T14:32:18.345Z",
   "plugins": [
     {
       "name": "mcp",
@@ -194,8 +194,8 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.31.4",
-      "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
+      "version": "0.32.0",
+      "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
       "commands": [
@@ -284,6 +284,13 @@
           "secret": true
         },
         {
+          "key": "TRACKER_FIRECRAWL_KEY",
+          "format": "^[!-~]+$",
+          "description": "A Firecrawl API key for the want-list watcher's Shopify search (Firecrawl's Alexandria, shopify catalog/search_catalog, 5 credits a look). Set = /want source: shopify watches Shopify stores for new copies in stock, once a day by default and never more often; unset = /want source: shopify says it is not available. Sent only to api.firecrawl.dev. Never logged.",
+          "required": false,
+          "secret": true
+        },
+        {
           "key": "TRACKER_BGG_TOKEN",
           "format": "^[!-~]+$",
           "description": "BoardGameGeek's XML API Bearer token for the tracker's registered application (boardgamegeek.com/using_the_xml_api). Set = /want source: bgg watches a game's BGG marketplace listings through BGG's API; unset = /want source: bgg makes a watch whose listings are sent in through the task API instead, as for eBay. Never logged.",
@@ -327,6 +334,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "0.32.0",
+          "publishedAt": "2026-10-19T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.32.0",
+          "notes": "### Added\n\n- `/want source: shopify` watches Shopify stores for new copies in stock, at or under your top price, and DMs the new ones like any watch. `target` is the words to search for (the name when empty), and a product counts only when its title has every word. It looks once a day by default and never more often, since each look is one Firecrawl search (5 credits). It needs `TRACKER_FIRECRAWL_KEY`; without it, `source: shopify` is refused. The web editor and the task API take `shopify` as a source too. On docket 0.12.0."
+        },
         {
           "version": "0.31.4",
           "publishedAt": "2026-10-18T00:00:00.000Z",
@@ -380,12 +393,6 @@
           "publishedAt": "2026-10-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.27.0",
           "notes": "### Fixed\n\n- **Gmail's forwarding confirmation, again** (#83). 0.26.0 also left the re-sent one unread: from\n  `forwarding-noreply@google.com`, plain text, forwarding named, but no code where it looked. The\n  code is now a run of 6 to 12 digits standing alone in the subject (never digits inside an\n  address), or one shortly after the word \"code\" in the body (never inside an address); and\n  Gmail's verify link (an https `/mail/vf-` address on `mail.google.com`,\n  `mail-settings.google.com` or a subdomain of either; never its `/mail/uf-` cancel link or any\n  other) is DMed too, or alone when there is no code.\n- An unread message from one of Google's no-reply senders now also logs its subject's shape\n  (letters `a`, digits `9`, each address `<addr>`), its body's length (plain text, else the\n  HTML's text), how many digit runs and https links it has, and whether it says \"code\" -- still\n  never its words.\n\n### Schema\n\n- No change. Still at 10."
-        },
-        {
-          "version": "0.26.0",
-          "publishedAt": "2026-10-13T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.26.0",
-          "notes": "### Fixed\n\n- **Gmail's forwarding confirmation reaches its owner** (#83). The first real one, sent to Rod's\n  alert address on 2026-10-13, was logged as ignored and its code never DMed. It is now read\n  loosely: any sender at Google, forwarding named in the subject or body, and the code as\n  `#<digits>` in the subject or after \"confirmation code\" in the plain or HTML body -- or, in any\n  language, a Google subject that starts `(#<digits>)`. A quoted-printable soft line break with\n  white space before it is now taken as one.\n- A message that does nothing is logged with why -- the owner is not registered, or its sender's\n  domain (a Google no-reply sender whole), which bodies it had, and whether its subject names forwarding --\n  never its words or a stranger's name. The answer to the Worker is unchanged.\n\n### Schema\n\n- No change. Still at 10."
         }
       ]
     },

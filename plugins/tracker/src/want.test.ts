@@ -10,7 +10,8 @@ import { SqliteStore } from "./store.js";
 import { ADMIN, api, call, cleanup, CURLY, csrfOf, LARRY, makeToken, ORIGIN, people, press, type Said, signIn, slash, world } from "./web/harness.js";
 import { parseMarketplace, type Source, SourceUnavailableError } from "@rackbops/docket-types";
 import { BGG_THING, shopSearch } from "./want-fixtures.js";
-import { EBAY_PAGE, MAX_WANT_TASKS } from "./want.js";
+import { EBAY_PAGE, MAX_WANT_TASKS, SHOPIFY_OFF } from "./want.js";
+import { FIRECRAWL_SCRAPE_URL } from "./firecrawl.js";
 
 afterEach(cleanup);
 
@@ -297,6 +298,65 @@ describe("/want", () => {
     // The read went to BGG's API once, and the 302 came back as it was: nothing went to the login page.
     expect(urls.length).toBeGreaterThan(0);
     expect(urls.every((u) => u.startsWith("https://boardgamegeek.com/xmlapi2/"))).toBe(true);
+  });
+
+  it("watches Shopify stores daily with TRACKER_FIRECRAWL_KEY, sending only the search to Firecrawl with the key", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const variant = (id: string, amount: number, shop: string, url: string) => ({
+      id,
+      title: "Wingspan: Oceania Expansion",
+      url: `${url}?variant=1&_gsid=abc&utm_source=shopify`,
+      price: { amount, currency: "USD" },
+      availability: { available: true },
+      seller: { name: shop },
+      condition: ["new"],
+    });
+    const firecrawlFetch = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      const products = [
+        { title: "Wingspan: Oceania Expansion", variants: [variant("gid://v/1", 3200, "Stonemaier Games", "https://store.stonemaiergames.com/products/oceania")] },
+        { title: "Wingspan (base game)", variants: [variant("gid://v/2", 2000, "Elsewhere", "https://shop.example/base")] },
+      ];
+      return new Response(JSON.stringify({ success: true, data: { alexandria: [{ data: { products } }] } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const w = await world({ fetch: shop([]).fetch, env: { TRACKER_FIRECRAWL_KEY: "fc-key" }, firecrawlFetch });
+    await people(w.plugin);
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "shopify", target: "Wingspan Oceania" }, ints: { hours: 6 } })).toContain("`hours` is a whole number from 24 to 168");
+    const made = await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan Oceania expansion", source: "shopify" }, numbers: { max: 35 } });
+    expect(made).toContain("Watching `t1`: Wingspan Oceania expansion.");
+    expect(made).toContain(`Shopify stores' search for "Wingspan Oceania expansion" every 24 hours`);
+    expect(made).toContain("5 credits");
+    await pollTick(w.plugin);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe(FIRECRAWL_SCRAPE_URL);
+    expect(calls[0]?.init.method).toBe("POST");
+    expect((calls[0]?.init.headers as Record<string, string>).authorization).toBe("Bearer fc-key");
+    const body = JSON.parse(String(calls[0]?.init.body));
+    expect(body.alexandria).toMatchObject({ provider: "shopify", capability: "catalog/search_catalog", options: { query: "Wingspan Oceania expansion", filters: { available: true, price: { max: 3500 } } } });
+    expect(content(w.sent, 0)).toContain("Wingspan Oceania expansion: a new listing.");
+    expect(content(w.sent, 0)).toContain("- Wingspan: Oceania Expansion -- 32.00 USD -- new -- sold by Stonemaier Games <https://store.stonemaiergames.com/products/oceania?variant=1> (via Shopify)");
+    expect(content(w.sent, 0)).not.toContain("base game");
+    // Not again before the day is out; the next day, nothing new is nothing said.
+    w.clock.advance(6 * 3600_000);
+    await pollTick(w.plugin);
+    expect(calls).toHaveLength(1);
+    w.clock.advance(18 * 3600_000);
+    await pollTick(w.plugin);
+    expect(calls).toHaveLength(2);
+    expect(w.sent).toHaveLength(1);
+  });
+
+  it("refuses a Shopify watch without TRACKER_FIRECRAWL_KEY, and tells the owner at once when the key is refused", async () => {
+    const w = await world({ fetch: shop([]).fetch });
+    await people(w.plugin);
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "shopify" } })).toBe(SHOPIFY_OFF);
+    const refused = (async () => new Response("{}", { status: 401 })) as unknown as typeof fetch;
+    const k = await world({ fetch: shop([]).fetch, env: { TRACKER_FIRECRAWL_KEY: "bad" }, firecrawlFetch: refused });
+    await people(k.plugin);
+    await slash(k.plugin, "want", LARRY, { strings: { name: "Oceania", source: "shopify" } });
+    await pollTick(k.plugin);
+    expect(content(k.sent, 0)).toContain("Oceania: I could read no listings from Shopify's store search just now (Firecrawl refused the key).");
+    expect(content(k.sent, 0)).not.toContain("bad");
   });
 
   it("tells the owner once when BGG cannot be read at all, not again at the third miss", async () => {

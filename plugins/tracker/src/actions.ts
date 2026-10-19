@@ -87,6 +87,8 @@ export interface TrackerDeps {
   research?: boolean;
   /** Whether the want-list watcher may read BoardGameGeek: `TRACKER_BGG_TOKEN` is set (docket-types' `bggSource`). */
   bgg?: boolean;
+  /** Whether the want-list watcher may search Shopify stores: `TRACKER_FIRECRAWL_KEY` is set (docket-types' `shopifySource`). */
+  shopify?: boolean;
   /** The want-list inboxes: the listings sent in for a watch (inbox.ts); the task API's listings route writes them. */
   inbox?: WantInbox;
   /** The pages gathered for browser research requests (research-sources.ts); the task API's sources route writes them. */

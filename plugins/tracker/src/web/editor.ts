@@ -227,6 +227,7 @@ function wantWhere(c: WatchConfig): string {
     const what = c.game !== undefined ? `BGG game ${c.game}` : `"${c.search ?? ""}"`;
     return `${site === "ebay" ? "the eBay listings" : "the BoardGameGeek listings"} you send in for ${what}`;
   }
+  if (c.source === "shopify") return `Shopify stores' search for "${c.target}"`;
   return c.source === "bgg" ? `BoardGameGeek game ${c.target}` : c.target;
 }
 

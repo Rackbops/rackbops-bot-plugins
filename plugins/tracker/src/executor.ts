@@ -126,8 +126,7 @@ export const PAUSED_LOG_EVERY_MS = 60 * 60 * 1000;
  * 11th `usage_limit` outcome is posted (`CITY_HALL_MAX_REQUEUES`, default 10 requeues), about ten
  * hours in, and a failed Job is answered before this hold is checked, so its `usage_limit` result
  * reaches docket and docket's own pause applies. Parseable resets that add up to more than 48 h,
- * a runner that stops claiming (down, or paused on a dead credential), or the rollback queue
- * Rackbops/job-queue (`JOB_QUEUE_MAX_REQUEUES`, default 50) let the hold end first: the run is then
+ * or a runner that stops claiming (down, or paused on a dead credential) let the hold end first: the run is then
  * given up and the Job, if it later runs, is collected by no one: the gap #287 records.
  */
 export const PAUSED_CAP_MS = 48 * 60 * 60 * 1000;
