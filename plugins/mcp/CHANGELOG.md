@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.0] - 2026-10-19
+
+### Added
+
+- `GET /recipients/{user_id}` answers one registered user (`{user_id, display_name}`, the display name truncated as in the list), or `404 {"error":"not registered"}`. It has no cap, so a user registered after the first 100 can find their own entry, which `GET /recipients` leaves out. `GET /recipients` is unchanged (Rackbops/rackbops-bot-plugins#354, for Rackbops/discord-mcp#181).
+
 ## [0.3.3] - 2026-10-17
 
 ### Fixed

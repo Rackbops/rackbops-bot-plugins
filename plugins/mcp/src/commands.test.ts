@@ -32,8 +32,9 @@ function fakeStore(overrides: Partial<RegistryStore> = {}): { store: RegistrySto
     redeem: overrides.redeem ?? unexpected("redeem"),
     generationOf: overrides.generationOf ?? unexpected("generationOf"),
     listRecipients: overrides.listRecipients ?? unexpected("listRecipients"),
+    recipientOf: overrides.recipientOf ?? unexpected("recipientOf"),
   };
-  for (const method of ["register", "pair", "unregister", "redeem", "generationOf", "listRecipients"] as const) {
+  for (const method of ["register", "pair", "unregister", "redeem", "generationOf", "listRecipients", "recipientOf"] as const) {
     const original = store[method] as (...args: unknown[]) => unknown;
     (store as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => {
       calls.push(method);

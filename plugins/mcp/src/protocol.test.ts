@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { capabilitiesResponse, CONTENT_MAX, recipientsResponse, toWireState, validateCreateRequest, type StoredDelivery } from "./protocol.js";
+import { capabilitiesResponse, CONTENT_MAX, recipientResponse, recipientsResponse, toWireState, validateCreateRequest, type StoredDelivery } from "./protocol.js";
 
 const VALID_ID = "a".repeat(64);
 const OTHER_ID = "b".repeat(64);
@@ -491,5 +491,15 @@ describe("recipientsResponse", () => {
     const items = result.items as { display_name: string }[];
     expect(items[0]!.display_name).toHaveLength(100);
     expect(items[0]!.display_name).toBe("x".repeat(100));
+  });
+});
+
+describe("recipientResponse", () => {
+  test("matches the literal wire shape, registeredAt dropped", () => {
+    expect(recipientResponse({ userId: USER, displayName: "Roshne" })).toEqual({ user_id: USER, display_name: "Roshne" });
+  });
+
+  test("a display name over 100 characters is truncated to 100", () => {
+    expect(recipientResponse({ userId: USER, displayName: "x".repeat(150) }).display_name).toBe("x".repeat(100));
   });
 });

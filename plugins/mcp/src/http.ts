@@ -7,6 +7,7 @@ import { drainAndPersist, type DrainDeps, type DrainLock } from "./drain.js";
 import {
   capabilitiesResponse,
   MAX_BODY_BYTES,
+  recipientResponse,
   recipientsResponse,
   toWireState,
   validateCreateRequest,
@@ -181,6 +182,16 @@ async function handleGetRecipients(deps: HttpDeps): Promise<Response> {
   return json(200, recipientsResponse(entries));
 }
 
+/** `GET /recipients/{user_id}` (#354): one registered user, uncapped, so a user registered past
+ *  the list's first 100 can still find their own entry. 404 "not registered" for a valid-shaped
+ *  id that is not registered, matching `GET /registration/{user_id}`; a malformed id never reaches
+ *  this handler (`RECIPIENT_ID_RE`). */
+async function handleGetRecipient(userId: string, deps: HttpDeps): Promise<Response> {
+  const entry = await deps.registry.recipientOf(userId);
+  if (entry === undefined) return json(404, { error: "not registered" });
+  return json(200, recipientResponse(entry));
+}
+
 const DELIVERY_ID_RE = /^\/deliveries\/([0-9a-f]{64})$/;
 // This path's own id-shape, independently declared -- matches DELIVERY_ID_RE's own precedent right
 // above (also its own literal copy of the character class, not composed from protocol.ts's
@@ -189,6 +200,8 @@ const DELIVERY_ID_RE = /^\/deliveries\/([0-9a-f]{64})$/;
 // (`^/registration/(${re.source})$`) produces un-satisfiable inner anchors and silently 404s every
 // path (caught only by the test suite, not by tsc -- tried and reverted while building this route).
 const REGISTRATION_ID_RE = /^\/registration\/([1-9][0-9]{16,19})$/;
+// Same id shape as REGISTRATION_ID_RE, its own literal for the same reason.
+const RECIPIENT_ID_RE = /^\/recipients\/([1-9][0-9]{16,19})$/;
 
 export async function handleMcpHttp(request: Request, info: PluginHttpInfo, deps: HttpDeps): Promise<Response> {
   // Decision 3: unset token is 503, checked BEFORE auth.
@@ -228,6 +241,11 @@ export async function handleMcpHttp(request: Request, info: PluginHttpInfo, deps
   if (info.path === "/recipients") {
     if (request.method !== "GET") return json(405, { error: "method not allowed" });
     return handleGetRecipients(deps);
+  }
+  const recipientMatch = RECIPIENT_ID_RE.exec(info.path);
+  if (recipientMatch) {
+    if (request.method !== "GET") return json(405, { error: "method not allowed" });
+    return handleGetRecipient(recipientMatch[1]!, deps);
   }
   return json(404, { error: "not found" });
 }

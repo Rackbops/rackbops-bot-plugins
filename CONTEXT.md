@@ -24,8 +24,8 @@ precisely to make that disagreement loud instead of silent.
 ## Environment
 
 No machine-specific paths. `bun` is pinned (the exact version) via `package.json`'s `packageManager` field;
-`oven-sh/setup-bun@v2` in CI reads that same field (`bun-version-file: package.json`), so the
-pin only needs to change in one place.
+`oven-sh/setup-bun` in CI (pinned to a v2 commit) reads that same field (`bun-version-file: package.json`),
+so the pin only needs to change in one place.
 
 ---
 
@@ -185,8 +185,8 @@ pin only needs to change in one place.
   `just lint` then `just typecheck`, `test` runs `just test`, and `checks` (build, index freshness,
   contract drift) is extra and not a required check. Jobs call Justfile recipes, never re-implement
   them. `rackbops-discord-bot`'s own `ci.yml` uses a single `checks` job; don't use that file as a
-  reference for job structure, only for its action-version pins (`actions/checkout@v7`,
-  `oven-sh/setup-bun@v2`).
+  reference for job structure, only for its action versions (`actions/checkout` v7,
+  `oven-sh/setup-bun` v2).
 - **`rackbops-discord-bot`'s own `ci.yml` triggers on `pull_request` only, not push to `main`.**
   This repo's `ci.yml` triggers on both, deliberately diverging from that file to match the
   documented `/audit` CI-workflow standard instead. If you're ever tempted to "match the bot
