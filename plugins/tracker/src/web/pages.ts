@@ -1,3 +1,4 @@
+import { isEbayApiWatch } from "../series.js";
 import { ADMIN_DISCLOSURE, describeSchedule, formatInstant, type TaskListEntry, type User } from "@rackbops/docket-core";
 import type { PausedTask } from "../actions.js";
 import { PAUSE_AFTER } from "../delivery-health.js";
@@ -173,7 +174,7 @@ function findingsSection(h: HistoryView): Html | null {
   return html`<section>
 <h2>Findings</h2>
 ${earlier > 0 ? html`<p class="rb-muted">${earlier} earlier finding(s) not shown.</p>` : null}
-${shown.length === 0 ? html`<p class="rb-muted">${EMPTY_FINDINGS[h.task.type] ?? EMPTY_FINDINGS.research}</p>` : html`<ul>${shown.map(findingRow)}</ul>`}
+${shown.length === 0 ? html`<p class="rb-muted">${isEbayApiWatch(h.task) ? "None kept: an eBay watch's listings are in its DMs only, since eBay's terms allow keeping them only briefly." : (EMPTY_FINDINGS[h.task.type] ?? EMPTY_FINDINGS.research)}</p>` : html`<ul>${shown.map(findingRow)}</ul>`}
 </section>`;
 }
 

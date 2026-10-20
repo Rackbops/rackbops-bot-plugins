@@ -92,7 +92,7 @@ export async function listingsAnswer(w: Writer, user: User, id: string, body: Re
     }
     const config = task.config as WatchConfig;
     if (config.source !== "inbox") {
-      return problem(409, "conflict", "That watch reads its listings itself (a page, BoardGameGeek's API, Shopify, or eBay's own API): listings are sent in only to an inbox watch, an eBay one made without this bot's eBay keys or a BGG one made without BGG access.");
+      return problem(409, "conflict", "That watch reads its listings itself (a page, BoardGameGeek's API, Shopify, or eBay's own API): listings are sent in only to an inbox watch: an eBay one made without this bot's eBay keys, or a BGG one made without BGG access.");
     }
     if (!inbox) return problem(503, "unavailable", "This bot cannot take listings just now; try again later.");
     // Only the watch's own site: its DMs link each listing, so an address elsewhere is never passed on (#229).

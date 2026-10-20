@@ -276,11 +276,20 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     const { ran, failed } = outcome.result;
     if (failed > 0) host.log.warn(`${kind === "poll" ? "poll" : "notify"} lane: ${ran} ran, ${failed} failed`);
     // eBay API watches' DMs are not kept past six hours (ebay-forget.ts).
-    if (kind === "notify" && db) forgetEbayMessages(db, clock.now());
+    if (kind === "notify" && db) forgetEbay(db, false);
     // The daily digest (plan 5.5, digest.ts), after the runs due now: a reminder never waits on it.
     if (kind === "notify" && options.digest !== false && deps && store) {
       const r = await runDigests({ store, notifier: deps.notifier, log: host.log, ...(delivery ? { health: delivery } : {}) }, clock.now(), signal);
       if (r.failed > 0) host.log.warn(`digest: ${r.sent} sent, ${r.failed} failed`);
+    }
+  }
+
+  /** ebay-forget.ts, never in the way of the digest or a tick: a failure is logged. */
+  function forgetEbay(on: Database, sweepAll: boolean): void {
+    try {
+      forgetEbayMessages(on, clock.now(), sweepAll);
+    } catch (err) {
+      host.log.warn(`ebay: clearing old eBay DMs failed (${err instanceof Error ? err.name : "error"})`);
     }
   }
 
@@ -489,6 +498,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         const activatedAt = clock.now();
         // Nothing from here on can throw.
         db = opened;
+        // Every eBay watch run past six hours, once, whatever its age (ebay-forget.ts); the ticks then take the newest.
+        forgetEbay(opened, true);
         store = openedStore;
         inbox = openedInbox;
         sources = openedSources;

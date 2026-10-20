@@ -148,7 +148,7 @@ export function fieldsFor(type: NewType, mode: Mode, surface: Surface = "web"): 
             label: "Check listings with the model",
             kind: "select",
             options: JUDGE_OPTIONS,
-            help: "Each check counts against your daily model budget. Needs the model runner; fixed once the watch is made.",
+            help: "Each check counts against your daily model budget. Needs the model runner; fixed once the watch is made. An eBay watch that searches eBay itself is never checked, whatever this says.",
           } as const,
         ]
         : []),

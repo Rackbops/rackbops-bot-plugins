@@ -52,7 +52,8 @@ import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
  *
  * A watch is judged (docket-types' `wantjudge`: the model looks at each new listing before it is DMed)
  * whenever the model runner is set up (`d.research`), unless the owner says `judge: false`; without
- * the runner it is a plain watch, and `judge: true` is refused. Which it is stays fixed once made,
+ * the runner it is a plain watch, and `judge: true` is refused. An eBay API watch is never judged (see
+ * `startWant`). Which it is stays fixed once made,
  * since a task's type is: to change it, make a new watch.
  */
 
@@ -76,7 +77,6 @@ export const INBOX_OFF =
   "Watching eBay or BoardGameGeek needs this bot's web area: listings are sent in through its task API, and this bot has no web area set up. A listing page (`source: page`) works now.";
 export const SHOPIFY_OFF = "Searching Shopify stores needs a Firecrawl key, and this bot has none set up. A listing page (`source: page`) works now.";
 export const JUDGE_OFF = "Checking listings with the model needs the model runner, which this bot does not have set up. Leave `judge` out for a plain watch.";
-export const EBAY_JUDGE = "An eBay watch that searches eBay itself is not checked by the model: eBay's listings are not kept or passed on. Leave `judge` out.";
 export const EBAY_USD = "eBay's search here is eBay US, which prices in USD: leave `currency` out, or make it USD.";
 export const WANT_TYPES: ReadonlySet<string> = new Set(["wantlist", "wantjudge"]);
 export const EBAY_PAGE = "A want-list watch never opens eBay's pages. Use `source: ebay` instead: it searches eBay through eBay's own API when this bot has eBay keys, and otherwise makes a watch that the eBay listings you send in reach; either way I DM you the new ones.";
@@ -249,8 +249,8 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   if (!planned.ok) return planned;
   const { limits } = planned;
   if (source === "ebay" && d.ebay === true && limits.currency && limits.currency !== "USD") return { ok: false, error: EBAY_USD };
-  // An eBay API watch keeps no eBay data (ebay-forget.ts), and a judged one hands its listings to city-hall's queue.
-  if (searched && source === "ebay" && input.judge === true) return { ok: false, error: EBAY_JUDGE };
+  // An eBay API watch keeps no eBay data (ebay-forget.ts), and a judged one would hand its listings to
+  // city-hall's queue: it is never judged, whatever `judge` says (the web form always sends one).
   const judged = searched && source === "ebay" ? ({ ok: true, judge: false } as const) : judgePlan(d, input.judge);
   if (!judged.ok) return judged;
   const target = (input.target ?? "").trim();
@@ -359,7 +359,7 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
           ? ["Shopify's search finds new copies at Shopify stores only (not eBay or used copies), and I keep a product only when its title has every word you are watching for. Each look is a Firecrawl search (5 credits)."]
           : []),
         ...(c.source === "ebay"
-          ? ["I search eBay US through eBay's own API, newest listings first, new and used, an auction at its current bid (or its Buy It Now price), and keep a listing only when its title has every word you are watching for. I never open an eBay page, and I keep no eBay listings: they are in the DM only, and my copy of it goes after 6 hours."]
+          ? ["I search eBay US through eBay's own API, newest listings first, new and used, an auction at its current bid (or its Buy It Now price), and count a listing only when its title has every word you are watching for. I never open an eBay page, and the model does not check these listings. eBay's terms let me keep its listings only briefly, so they are in the DM alone, and my own copy of it is cleared after 6 hours."]
           : []),
       ].join("\n"),
     ),

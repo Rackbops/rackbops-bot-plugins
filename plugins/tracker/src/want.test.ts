@@ -11,8 +11,7 @@ import { SqliteStore } from "./store.js";
 import { ADMIN, api, call, cleanup, CURLY, csrfOf, LARRY, makeToken, ORIGIN, people, press, type Said, signIn, slash, world } from "./web/harness.js";
 import { parseMarketplace, type Source, SourceUnavailableError } from "@rackbops/docket-types";
 import { BGG_THING, shopSearch } from "./want-fixtures.js";
-import { FORGOTTEN } from "./ebay-forget.js";
-import { EBAY_JUDGE, EBAY_PAGE, EBAY_USD, MAX_WANT_TASKS, SHOPIFY_OFF } from "./want.js";
+import { EBAY_PAGE, EBAY_USD, MAX_WANT_TASKS, SHOPIFY_OFF } from "./want.js";
 import { FIRECRAWL_SCRAPE_URL } from "./firecrawl.js";
 
 afterEach(cleanup);
@@ -386,8 +385,8 @@ describe("/want", () => {
     expect(made).toContain(`eBay's search for "Wingspan Oceania expansion" every 1 hour`);
     expect(made).toContain("I never open an eBay page");
     expect(made).not.toContain("POST /tasks/");
-    expect(made).toContain("my copy of it goes after 6 hours");
-    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "ebay" }, booleans: { judge: true } })).toBe(EBAY_JUDGE);
+    expect(made).toContain("my own copy of it is cleared after 6 hours");
+    expect(made).toContain("the model does not check these listings");
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "ebay", currency: "GBP" } })).toBe(EBAY_USD);
     await pollTick(w.plugin);
     expect(calls.map((c) => new URL(c.url).origin)).toEqual(["https://api.ebay.com", "https://api.ebay.com"]);
@@ -406,11 +405,13 @@ describe("/want", () => {
     try {
       expect(db.query("SELECT COUNT(*) AS n FROM findings").get()).toEqual({ n: 0 });
       const texts = () => (db.query("SELECT json_extract(record, '$.outcome.notify.text') AS t FROM occurrences WHERE record IS NOT NULL").all() as { t: string | null }[]).map((r) => r.t).filter((t) => t !== null);
+      w.clock.advance(5 * 3600_000 - 60_000);
+      await notifyTick(w.plugin);
       expect(texts().some((t) => t.includes("boardgame_bin"))).toBe(true);
-      w.clock.advance(5 * 3600_000);
+      w.clock.advance(120_000);
       await notifyTick(w.plugin);
       expect(texts().some((t) => t.includes("boardgame_bin"))).toBe(false);
-      expect(texts()).toContain(FORGOTTEN);
+      expect(texts().some((t) => t.startsWith("Wingspan Oceania expansion: a new listing.\neBay's listings are not kept here past 6 hours"))).toBe(true);
     } finally {
       db.close();
     }
