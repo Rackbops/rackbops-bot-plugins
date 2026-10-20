@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-20T00:31:38.408Z",
+  "generatedAt": "2026-10-20T00:38:58.366Z",
   "plugins": [
     {
       "name": "mcp",
@@ -352,7 +352,7 @@
           "version": "0.33.0",
           "publishedAt": "2026-10-20T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.33.0",
-          "notes": "### Added\n\n- `/want source: ebay` searches eBay through eBay's own Browse API when `TRACKER_EBAY_CLIENT_ID` and `TRACKER_EBAY_CLIENT_SECRET` are set (an eBay developer Production keyset's App ID and Cert ID). Each look is one search of eBay US, the newest fifty listings, at or under your top price, and a listing counts only when its title has every word you are watching for. The DM shows the price (an auction's current bid), the condition and the seller's name, feedback percentage and score. It looks every hour by default. No eBay page is ever opened, and a judged eBay watch opens none either. Without the keys, `source: ebay` is an inbox watch as before, and a watch made before the keys were set stays one. On docket 0.13.0.\n\n### Schema\n\n- No change. Still at 11."
+          "notes": "### Added\n\n- `/want source: ebay` searches eBay through eBay's own Browse API when `TRACKER_EBAY_CLIENT_ID` and `TRACKER_EBAY_CLIENT_SECRET` are set (an eBay developer Production keyset's App ID and Cert ID). Each look is one search of eBay US, the newest fifty listings, at or under your top price, and a listing counts only when its title has every word you are watching for. The DM shows the price (an auction's current bid, or its Buy It Now price when it has one), the condition and the seller's name, feedback percentage and score. It looks every hour by default. eBay US prices in USD, so such a watch takes no other `currency`. No eBay page is ever opened, and a judged eBay watch opens none either. Without the keys, `source: ebay` is an inbox watch as before, and a watch made before the keys were set stays one. On docket 0.13.0.\n\n### Schema\n\n- No change. Still at 11."
         },
         {
           "version": "0.32.0",
