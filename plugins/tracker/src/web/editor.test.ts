@@ -760,10 +760,13 @@ describe("another recipient learns nothing of a recipient from the history (#273
     return w;
   }
 
-  /** `who`'s /task history line for the first run, and their page. */
+  /**
+   * `who`'s /task history line for the first run, and their page with its CSRF tokens blanked: a
+   * token is 43 random base64url characters, so about one page in a hundred holds "u3" by chance.
+   */
   async function firstRun(w: Awaited<ReturnType<typeof setup>>, who: string) {
     const history = await slash(w.plugin, "task", who, { sub: "history", strings: { task: "t1" } });
-    const page = await (await call(w.plugin, "GET", "/tasks/t1", { jar: await signIn(w.plugin, who) })).text();
+    const page = (await (await call(w.plugin, "GET", "/tasks/t1", { jar: await signIn(w.plugin, who) })).text()).replace(/name="csrf" value="[^"]*"/g, 'name="csrf" value=""');
     return { line: history.split("\n").find((l) => l.includes("Thu Oct 1, 9:00")), page };
   }
 
