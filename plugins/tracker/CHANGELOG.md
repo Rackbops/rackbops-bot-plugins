@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.33.1] - 2026-10-20
+
+### Fixed
+
+- A test of the history page could fail by chance, about one run in a hundred, when the page's random sign-out token happened to hold the id it checks is absent; the page itself named no one. 0.33.0 was tagged but never published because of it, so this is the first release with the eBay and Shopify watches of 0.32.0 and 0.33.0. On docket 0.13.0.
+
+### Schema
+
+- No change. Still at 11.
+
 ## [0.33.0] - 2026-10-20
 
 ### Added
@@ -15,7 +25,7 @@
 
 ### Added
 
-- `/want source: shopify` watches Shopify stores for new copies in stock, at or under your top price, and DMs the new ones like any watch. `target` is the words to search for (the name when empty), and a product counts only when its title has every word. It looks once a day by default and never more often, since each look is one Firecrawl search (5 credits). It needs `TRACKER_FIRECRAWL_KEY`; without it, `source: shopify` is refused. The web editor and the task API take `shopify` as a source too. On docket 0.12.0.
+- `/want source: shopify` watches Shopify stores for new copies in stock, at or under your top price, and DMs the new ones like any watch. `target` is the words to search for (the name when empty), and a product counts only when its title has every word. It looks once a day by default and never more often, since each look is one Firecrawl search (5 credits). It needs `TRACKER_FIRECRAWL_KEY`; without it, `source: shopify` is refused. The web editor and the task API take `shopify` as a source too. Not published on its own: it ships in 0.33.1, on docket 0.13.0.
 
 ### Schema
 
