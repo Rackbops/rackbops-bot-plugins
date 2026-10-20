@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../packages/api/contract.js";
@@ -10,7 +11,8 @@ import { SqliteStore } from "./store.js";
 import { ADMIN, api, call, cleanup, CURLY, csrfOf, LARRY, makeToken, ORIGIN, people, press, type Said, signIn, slash, world } from "./web/harness.js";
 import { parseMarketplace, type Source, SourceUnavailableError } from "@rackbops/docket-types";
 import { BGG_THING, shopSearch } from "./want-fixtures.js";
-import { EBAY_PAGE, MAX_WANT_TASKS } from "./want.js";
+import { EBAY_PAGE, EBAY_USD, MAX_WANT_TASKS, SHOPIFY_OFF } from "./want.js";
+import { FIRECRAWL_SCRAPE_URL } from "./firecrawl.js";
 
 afterEach(cleanup);
 
@@ -299,6 +301,135 @@ describe("/want", () => {
     expect(urls.every((u) => u.startsWith("https://boardgamegeek.com/xmlapi2/"))).toBe(true);
   });
 
+  it("watches Shopify stores daily with TRACKER_FIRECRAWL_KEY, sending only the search to Firecrawl with the key", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const variant = (id: string, amount: number, shop: string, url: string) => ({
+      id,
+      title: "Wingspan: Oceania Expansion",
+      url: `${url}?variant=1&_gsid=abc&utm_source=shopify`,
+      price: { amount, currency: "USD" },
+      availability: { available: true },
+      seller: { name: shop },
+      condition: ["new"],
+    });
+    const firecrawlFetch = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      const products = [
+        { title: "Wingspan: Oceania Expansion", variants: [variant("gid://v/1", 3200, "Stonemaier Games", "https://store.stonemaiergames.com/products/oceania")] },
+        { title: "Wingspan (base game)", variants: [variant("gid://v/2", 2000, "Elsewhere", "https://shop.example/base")] },
+      ];
+      return new Response(JSON.stringify({ success: true, data: { alexandria: [{ data: { products } }] } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const w = await world({ fetch: shop([]).fetch, env: { TRACKER_FIRECRAWL_KEY: "fc-key" }, firecrawlFetch });
+    await people(w.plugin);
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "shopify", target: "Wingspan Oceania" }, ints: { hours: 6 } })).toContain("`hours` is a whole number from 24 to 168");
+    const made = await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan Oceania expansion", source: "shopify" }, numbers: { max: 35 } });
+    expect(made).toContain("Watching `t1`: Wingspan Oceania expansion.");
+    expect(made).toContain(`Shopify stores' search for "Wingspan Oceania expansion" every 24 hours`);
+    expect(made).toContain("5 credits");
+    await pollTick(w.plugin);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe(FIRECRAWL_SCRAPE_URL);
+    expect(calls[0]?.init.method).toBe("POST");
+    expect((calls[0]?.init.headers as Record<string, string>).authorization).toBe("Bearer fc-key");
+    const body = JSON.parse(String(calls[0]?.init.body));
+    expect(body.alexandria).toMatchObject({ provider: "shopify", capability: "catalog/search_catalog", options: { query: "Wingspan Oceania expansion", filters: { available: true, price: { max: 3500 } } } });
+    expect(content(w.sent, 0)).toContain("Wingspan Oceania expansion: a new listing.");
+    expect(content(w.sent, 0)).toContain("- Wingspan: Oceania Expansion -- 32.00 USD -- new -- sold by Stonemaier Games <https://store.stonemaiergames.com/products/oceania?variant=1> (via Shopify)");
+    expect(content(w.sent, 0)).not.toContain("base game");
+    // Not again before the day is out; the next day, nothing new is nothing said.
+    w.clock.advance(6 * 3600_000);
+    await pollTick(w.plugin);
+    expect(calls).toHaveLength(1);
+    w.clock.advance(18 * 3600_000);
+    await pollTick(w.plugin);
+    expect(calls).toHaveLength(2);
+    expect(w.sent).toHaveLength(1);
+  });
+
+  it("refuses a Shopify watch without TRACKER_FIRECRAWL_KEY, and tells the owner at once when the key is refused", async () => {
+    const w = await world({ fetch: shop([]).fetch });
+    await people(w.plugin);
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "shopify" } })).toBe(SHOPIFY_OFF);
+    const refused = (async () => new Response("{}", { status: 401 })) as unknown as typeof fetch;
+    const k = await world({ fetch: shop([]).fetch, env: { TRACKER_FIRECRAWL_KEY: "bad" }, firecrawlFetch: refused });
+    await people(k.plugin);
+    await slash(k.plugin, "want", LARRY, { strings: { name: "Oceania", source: "shopify" } });
+    await pollTick(k.plugin);
+    expect(content(k.sent, 0)).toContain("Oceania: I could read no listings from Shopify's store search just now (Firecrawl refused the key).");
+    expect(content(k.sent, 0)).not.toContain("bad");
+  });
+
+  it("watches eBay through eBay's own API with the eBay keys, hourly, opening no eBay page", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const item = (id: string, title: string, value: string, seller: string) => ({
+      itemId: `v1|${id}|0`,
+      title,
+      price: { value, currency: "USD" },
+      condition: "New",
+      itemWebUrl: `https://www.ebay.com/itm/${id}?hash=item1:g:x`,
+      seller: { username: seller, feedbackPercentage: "99.6", feedbackScore: 4821 },
+      buyingOptions: ["FIXED_PRICE"],
+    });
+    const ebayFetch = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/identity/v1/oauth2/token")) return new Response(JSON.stringify({ access_token: "app-token", expires_in: 7200 }), { status: 200 });
+      const itemSummaries = [item("123456789012", "Wingspan Oceania Expansion New Sealed", "29.99", "boardgame_bin"), item("223456789012", "Wingspan base game", "20.00", "elsewhere")];
+      return new Response(JSON.stringify({ total: 2, itemSummaries }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const { s: page, fetch: pageFetch } = shop([]);
+    const w = await world({ fetch: pageFetch, env: { TRACKER_EBAY_CLIENT_ID: "app-id", TRACKER_EBAY_CLIENT_SECRET: "cert-id" }, ebayFetch });
+    await people(w.plugin);
+    const made = await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan Oceania expansion", source: "ebay" }, numbers: { max: 35 } });
+    expect(made).toContain("Watching `t1`: Wingspan Oceania expansion.");
+    expect(made).toContain(`eBay's search for "Wingspan Oceania expansion" every 1 hour`);
+    expect(made).toContain("I never open an eBay page");
+    expect(made).not.toContain("POST /tasks/");
+    expect(made).toContain("my own copy of it is cleared after 6 hours");
+    expect(made).toContain("the model does not check these listings");
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "ebay", currency: "GBP" } })).toBe(EBAY_USD);
+    await pollTick(w.plugin);
+    expect(calls.map((c) => new URL(c.url).origin)).toEqual(["https://api.ebay.com", "https://api.ebay.com"]);
+    expect(new URL(calls[1]?.url ?? "").searchParams.get("filter")).toBe("price:[..35.00],priceCurrency:USD");
+    expect((calls[1]?.init.headers as Record<string, string>).authorization).toBe("Bearer app-token");
+    expect(page.reads).toEqual([]);
+    expect(content(w.sent, 0)).toContain("- Wingspan Oceania Expansion New Sealed -- 29.99 USD -- New -- sold by boardgame_bin, 99.6% positive, 4821 feedback <https://www.ebay.com/itm/123456789012> (via eBay)");
+    expect(content(w.sent, 0)).not.toContain("base game");
+    w.clock.advance(3600_000);
+    await pollTick(w.plugin);
+    // The token is kept: one more search, no second minting, and nothing new is nothing said.
+    expect(calls).toHaveLength(3);
+    expect(w.sent).toHaveLength(1);
+    // No finding is kept, and six hours on, the run's stored DM holds no listing.
+    const db = new Database(w.dbPath);
+    try {
+      expect(db.query("SELECT COUNT(*) AS n FROM findings").get()).toEqual({ n: 0 });
+      const texts = () => (db.query("SELECT json_extract(record, '$.outcome.notify.text') AS t FROM occurrences WHERE record IS NOT NULL").all() as { t: string | null }[]).map((r) => r.t).filter((t) => t !== null);
+      w.clock.advance(5 * 3600_000 - 60_000);
+      await notifyTick(w.plugin);
+      expect(texts().some((t) => t.includes("boardgame_bin"))).toBe(true);
+      w.clock.advance(120_000);
+      await notifyTick(w.plugin);
+      expect(texts().some((t) => t.includes("boardgame_bin"))).toBe(false);
+      expect(texts().some((t) => t.startsWith("Wingspan Oceania expansion: a new listing.\neBay's listings are not kept here past 6 hours"))).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("keeps eBay an inbox watch without the keys, and tells the owner at once when eBay refuses them", async () => {
+    const w = await world({ fetch: shop([]).fetch });
+    await people(w.plugin);
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "ebay" } })).toContain("This watch never opens eBay itself.");
+    const refused = (async () => new Response(JSON.stringify({ error: "invalid_client" }), { status: 401 })) as unknown as typeof fetch;
+    const k = await world({ fetch: shop([]).fetch, env: { TRACKER_EBAY_CLIENT_ID: "app-id", TRACKER_EBAY_CLIENT_SECRET: "bad-cert" }, ebayFetch: refused });
+    await people(k.plugin);
+    await slash(k.plugin, "want", LARRY, { strings: { name: "Oceania", source: "ebay" } });
+    await pollTick(k.plugin);
+    expect(content(k.sent, 0)).toContain("Oceania: I could read no listings from eBay's search just now (eBay refused the app's keys).");
+    expect(content(k.sent, 0)).not.toContain("bad-cert");
+  });
+
   it("tells the owner once when BGG cannot be read at all, not again at the third miss", async () => {
     const bgg: Source = { id: "bgg", async search() { throw new SourceUnavailableError("BGG rejected the token"); } };
     const w = await world({ fetch: shop([]).fetch, bgg });
@@ -329,6 +460,21 @@ describe("/want", () => {
     const capped = await post({ type: "wantlist", name: "More", source: "page", target: SHOP });
     expect(capped.status).toBe(409);
     expect((await capped.json()).error.code).toBe("limit_reached");
+  });
+
+  it("over the task API: a Shopify watch is made with its words, and a PATCH under a day is refused", async () => {
+    const empty = (async () => new Response(JSON.stringify({ data: { alexandria: [{ data: { products: [] } }] } }), { status: 200 })) as unknown as typeof fetch;
+    const w = await world({ fetch: shop([]).fetch, env: { TRACKER_FIRECRAWL_KEY: "fc-key" }, firecrawlFetch: empty });
+    await people(w.plugin);
+    const jar = await signIn(w.plugin, LARRY);
+    const token = await makeToken(w, jar);
+    const made = await api(w.plugin, "POST", "/tasks", { token, body: { type: "wantlist", name: "Oceania", source: "shopify", target: "Wingspan Oceania", max: 35 } });
+    expect(made.status).toBe(201);
+    expect((await made.json()).task).toMatchObject({ source: "shopify", target: "Wingspan Oceania", settings: { max: 35, hours: 24 } });
+    const fast = await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { hours: 6 } });
+    expect(fast.status).toBe(400);
+    expect(JSON.stringify(await fast.json())).toContain("from 24 to 168");
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { hours: 48 } })).status).toBe(200);
   });
 
   it("caps live watches per person", async () => {

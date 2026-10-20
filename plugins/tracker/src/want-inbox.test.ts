@@ -266,7 +266,7 @@ describe("POST /tasks/<id>/listings", () => {
     expect((await curly.json()).error.message).toBe("No such task.");
     const page = await post("t3");
     expect(page.status).toBe(409);
-    expect((await page.json()).error.message).toContain("listings are sent in only to an eBay watch");
+    expect((await page.json()).error.message).toContain("listings are sent in only to an inbox watch");
     expect((await post("t4")).status).toBe(404);
     expect((await post("t99")).status).toBe(404);
     // Paused: still taken, read once it is resumed. Deleted: gone.

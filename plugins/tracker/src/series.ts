@@ -48,13 +48,19 @@ export async function seriesLines(d: Pick<TrackerDeps, "store" | "clock">, user:
   return lines;
 }
 
+/** An eBay watch that searches eBay's API (want.ts): it keeps no findings (ebay-forget.ts). */
+export function isEbayApiWatch(task: Task): boolean {
+  return isWant(task) && (task.config as { source?: unknown } | null)?.source === "ebay";
+}
+export const NO_EBAY_FINDINGS = "none kept: eBay's listings are in the DMs only";
+
 /** A want-list watch, judged or not: its findings go in a message of their own (`wantFindings`, #166). */
 function isWant(task: Task): boolean {
   return task.type === "wantlist" || task.type === "wantjudge";
 }
 
 /** A task whose history counts its findings (docket 0.5.0): a research request, a scout or a want-list watch. */
-function keepsFindings(task: Task): boolean {
+function countsFindings(task: Task): boolean {
   return task.type === "research" || task.type === "scout" || isWant(task);
 }
 
@@ -68,7 +74,7 @@ function findingLine(f: StoredFinding): string {
  * The count, then a research request's or a scout's newest `SERIES_SHOWN`; a want-list watch's are not listed here but in `wantFindings`.
  */
 function findingLines(task: Task, findings: readonly StoredFinding[]): string[] {
-  if (findings.length === 0) return ["Findings: none yet"];
+  if (findings.length === 0) return [isEbayApiWatch(task) ? `Findings: ${NO_EBAY_FINDINGS}` : "Findings: none yet"];
   const lines = [`Findings: ${findings.length}`];
   if (isWant(task)) return lines;
   for (const f of findings.slice(-SERIES_SHOWN)) lines.push(findingLine(f));
@@ -109,7 +115,7 @@ export async function historyWithSeries(d: TrackerDeps, user: User, taskId: stri
   const actor = { userId: user.id, admin: user.admin };
   const task = await visibleTask(d.store, actor, taskId.trim());
   if (!task) return history;
-  const findings = keepsFindings(task) ? ((await visibleFindings(d.store, actor, task.id)) ?? []) : null;
+  const findings = countsFindings(task) ? ((await visibleFindings(d.store, actor, task.id)) ?? []) : null;
   const series = findings === null ? await seriesLines(d, user, task) : findingLines(task, findings);
   if (series.length === 0) return history;
   const lines = history.split("\n");

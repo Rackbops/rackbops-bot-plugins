@@ -71,6 +71,10 @@ export async function world(
     executeStarted?: (work: Promise<void>) => void;
     /** A BGG source, as if `TRACKER_BGG_TOKEN` were set (docket-types' `bggSource`). */
     bgg?: Source;
+    /** Firecrawl's HTTP, with `TRACKER_FIRECRAWL_KEY` in `env` (firecrawl.ts). */
+    firecrawlFetch?: typeof fetch;
+    /** eBay's HTTP, with `TRACKER_EBAY_CLIENT_*` in `env` (ebay.ts). */
+    ebayFetch?: typeof fetch;
     /** The token's BGG reads' name lookup and HTTP, with `TRACKER_BGG_TOKEN` in `env` (index.ts `bggNetwork`). */
     bggNetwork?: Pick<PageFetchOptions, "resolve" | "fetchImpl">;
     /** usr's HTTP, with `TRACKER_USR_*` in `env` (usr.ts, usr-identity.ts). */
@@ -129,6 +133,8 @@ export async function world(
       ...(opts.executeStarted ? { executeStarted: opts.executeStarted } : {}),
       ...(opts.bgg ? { bgg: opts.bgg } : {}),
       ...(opts.bggNetwork ? { bggNetwork: opts.bggNetwork } : {}),
+      ...(opts.firecrawlFetch ? { firecrawlFetch: opts.firecrawlFetch } : {}),
+      ...(opts.ebayFetch ? { ebayFetch: opts.ebayFetch } : {}),
       ...(opts.usrFetch ? { usrFetch: opts.usrFetch } : {}),
       ...(opts.tickWaitMs !== undefined ? { tickWaitMs: opts.tickWaitMs } : {}),
     },

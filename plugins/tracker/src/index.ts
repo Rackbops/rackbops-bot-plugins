@@ -2,7 +2,10 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
-import { bggSource, inboxSource, pageSource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
+import { bggSource, ebaySource, inboxSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
+import { createEbayBrowse, parseEbayKeys } from "./ebay.js";
+import { forgetEbayMessages } from "./ebay-forget.js";
+import { createFirecrawlScrape, parseFirecrawlKey } from "./firecrawl.js";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds, parseGuildRoles } from "./access.js";
 import type { TickGate, TrackerDeps } from "./actions.js";
@@ -54,7 +57,8 @@ import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_ID
  * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID`, `TRACKER_GUILD_ROLES`,
  * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts), the `TRACKER_USR_*` settings (usr.ts: a
  * half-set link refuses to load), `TRACKER_BUDGET_UNLIMITED` (usage.ts) and the `TRACKER_MAIL_*` settings (mail.ts),
- * reads `TRACKER_BGG_TOKEN`, and nothing else. The database is opened in `activate()` and closed in `dispose()`.
+ * reads `TRACKER_BGG_TOKEN`, `TRACKER_FIRECRAWL_KEY` and the `TRACKER_EBAY_CLIENT_*` pair (ebay.ts: a half-set pair
+ * refuses to load), and nothing else. The database is opened in `activate()` and closed in `dispose()`.
  */
 
 /** The tracker's database: `<dataDir>/tracker/tracker.sqlite`, a directory of its own (mcp's convention). */
@@ -127,6 +131,14 @@ export interface TrackerOptions {
   executor?: Executor;
   /** Test seam: a BGG source in place of the token's (docket-types' `bggSource`), as if `TRACKER_BGG_TOKEN` were set. */
   bgg?: Source;
+  /** Test seam: a Shopify source in place of the key's (docket-types' `shopifySource`), as if `TRACKER_FIRECRAWL_KEY` were set. */
+  shopify?: Source;
+  /** Test seam for the key's Firecrawl calls (firecrawl.ts). */
+  firecrawlFetch?: typeof fetch;
+  /** Test seam: an eBay source in place of the keys' (docket-types' `ebaySource`), as if `TRACKER_EBAY_CLIENT_*` were set. */
+  ebay?: Source;
+  /** Test seam for the keys' eBay calls (ebay.ts). */
+  ebayFetch?: typeof fetch;
   /** Test seam for the token's BGG reads: the name lookup and HTTP under `createBggFetch`, which still decides raw and redirects. */
   bggNetwork?: Pick<PageFetchOptions, "resolve" | "fetchImpl">;
   /** Test seam: each execute tick's background work as it starts, so a test can await it. */
@@ -183,6 +195,13 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const bggToken = parseBggToken(host.env.TRACKER_BGG_TOKEN);
   // BGG's answers are XML, read by docket-types' own bounded BGG parser: the raw body, fenced like every read.
   const bgg = options.bgg ?? (bggToken ? bggSource({ token: bggToken, fetch: createBggFetch(options.bggNetwork ?? {}) }) : null);
+  // Shopify's store search for want-list watches (firecrawl.ts), only with a Firecrawl key.
+  const firecrawlKey = parseFirecrawlKey(host.env.TRACKER_FIRECRAWL_KEY);
+  const shopify =
+    options.shopify ?? (firecrawlKey ? shopifySource(createFirecrawlScrape({ key: firecrawlKey, ...(options.firecrawlFetch ? { fetchImpl: options.firecrawlFetch } : {}) })) : null);
+  // eBay's own Browse API for want-list watches (ebay.ts), only with the eBay keys: the one way the tracker reads eBay.
+  const ebayKeys = parseEbayKeys(host.env);
+  const ebay = options.ebay ?? (ebayKeys ? ebaySource(createEbayBrowse({ keys: ebayKeys, ...(options.ebayFetch ? { fetchImpl: options.ebayFetch } : {}) })) : null);
   // The want-list inboxes (inbox.ts) live in the database `activate()` opens; until then, and after
   // `dispose()`, an inbox reads as empty (no tick runs then anyway). An eBay watch, and a BGG one
   // made while the bot has no BGG token, get their listings only this way: the want-list watcher
@@ -198,7 +217,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const types = options.types ?? {
     ...TRACKER_TYPES,
     research: researchType(webOrigin ? { readSources } : {}) as TaskType<unknown>,
-    ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}) }),
+    ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}), ...(shopify ? { shopify } : {}), ...(ebay ? { ebay } : {}) }),
   };
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
@@ -256,10 +275,21 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     if (kind === "notify") health.lastTickAt = clock.now();
     const { ran, failed } = outcome.result;
     if (failed > 0) host.log.warn(`${kind === "poll" ? "poll" : "notify"} lane: ${ran} ran, ${failed} failed`);
+    // eBay API watches' DMs are not kept past six hours (ebay-forget.ts).
+    if (kind === "notify" && db) forgetEbay(db, false);
     // The daily digest (plan 5.5, digest.ts), after the runs due now: a reminder never waits on it.
     if (kind === "notify" && options.digest !== false && deps && store) {
       const r = await runDigests({ store, notifier: deps.notifier, log: host.log, ...(delivery ? { health: delivery } : {}) }, clock.now(), signal);
       if (r.failed > 0) host.log.warn(`digest: ${r.sent} sent, ${r.failed} failed`);
+    }
+  }
+
+  /** ebay-forget.ts, never in the way of the digest or a tick: a failure is logged. */
+  function forgetEbay(on: Database, sweepAll: boolean): void {
+    try {
+      forgetEbayMessages(on, clock.now(), sweepAll);
+    } catch (err) {
+      host.log.warn(`ebay: clearing old eBay DMs failed (${err instanceof Error ? err.name : "error"})`);
     }
   }
 
@@ -447,6 +477,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           webEditor: webOrigin !== null,
           research: executeOn,
           bgg: bgg !== null,
+          shopify: shopify !== null,
+          ebay: ebay !== null,
           inbox: openedInbox,
           sources: openedSources,
           mail: mailConfig ? new MailAddresses(opened, mailConfig.domain) : null,
@@ -466,6 +498,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         const activatedAt = clock.now();
         // Nothing from here on can throw.
         db = opened;
+        // Every eBay watch run past six hours, once, whatever its age (ebay-forget.ts); the ticks then take the newest.
+        forgetEbay(opened, true);
         store = openedStore;
         inbox = openedInbox;
         sources = openedSources;

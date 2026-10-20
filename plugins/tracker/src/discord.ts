@@ -18,7 +18,7 @@ import { resumeTask } from "./manage.js";
 import { CURRENCY_LENGTH, DATE_LENGTH, MAX_AMOUNT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
 import { remind, type Repeat } from "./reminders.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./research.js";
-import { DEFAULT_BGG_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
+import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
 import { createScout, DEFAULT_SCOUT_EVERY, editScout, MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "./scout.js";
 import { type BaselineRule, MAX_FOR_CHARS, MAX_SCOUT_NOTES, type RenewalDecision } from "@rackbops/docket-types";
 import {
@@ -403,18 +403,19 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .addChoices(
                 { name: "a listing page you paste", value: "page" },
                 { name: "BoardGameGeek's marketplace", value: "bgg" },
-                { name: "eBay (from listings you send in; the watch never opens eBay)", value: "ebay" },
+                { name: "eBay (through eBay's own API when set up, else from listings you send in)", value: "ebay" },
+                { name: "Shopify stores (new copies in stock, at most once a day)", value: "shopify" },
               ),
           )
           .addStringOption((o) =>
-            o.setName("target").setDescription("The page's address, or the BGG game's address or id; for eBay, the words to search").setMaxLength(MAX_URL),
+            o.setName("target").setDescription("The page's address, or the BGG game's address or id; for eBay or Shopify, the words to search").setMaxLength(MAX_URL),
           )
           .addNumberOption((o) => o.setName("max").setDescription("Only listings at or under this price").setMinValue(0.01))
           .addStringOption((o) => o.setName("currency").setDescription("Only listings in this currency, e.g. USD").setMinLength(CURRENCY_LENGTH).setMaxLength(CURRENCY_LENGTH))
           .addIntegerOption((o) =>
             o
               .setName("hours")
-              .setDescription(`Hours between looks (default ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG's API, ${DEFAULT_INBOX_HOURS} for eBay or BGG without it)`)
+              .setDescription(`Hours between looks (default: page ${DEFAULT_PAGE_HOURS}, BGG API ${DEFAULT_BGG_HOURS}, eBay ${DEFAULT_EBAY_HOURS}, BGG without it ${DEFAULT_INBOX_HOURS}, Shopify ${DEFAULT_SHOPIFY_HOURS})`)
               .setMinValue(1)
               .setMaxValue(MAX_WANT_HOURS),
           )

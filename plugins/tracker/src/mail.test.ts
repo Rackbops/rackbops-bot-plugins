@@ -381,6 +381,22 @@ describe("POST /mail/inbound", () => {
     expect(codeAndLink).toContain(`The confirmation code is 123456789: enter it in Gmail's Settings, under Forwarding and POP/IMAP. Or open Gmail's confirmation link: <${vf}>`);
   });
 
+  it("leaves an alert quietly when an eBay API watch already searches for its words", async () => {
+    const ebayFetch = (async () => new Response(JSON.stringify({ total: 0 }), { status: 200 })) as unknown as typeof fetch;
+    const w = await world({ env: { ...MAIL_ENV, TRACKER_EBAY_CLIENT_ID: "app-id", TRACKER_EBAY_CLIENT_SECRET: "cert-id" }, ebayFetch });
+    await people(w.plugin);
+    const made = await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "ebay", target: "Wingspan Oceania Expansion" } });
+    expect(made).toContain(`eBay's search for "Wingspan Oceania Expansion"`);
+    expect(made).not.toContain("alert emails");
+    const page = await (await call(w.plugin, "GET", "/settings", { jar: await signIn(w.plugin, LARRY) })).text();
+    const address = ADDRESS.exec(page)?.[1];
+    if (!address) throw new Error("no alert address on the settings page");
+    const before = w.sent.length;
+    expect(await (await inbound(w.plugin, address, FIXTURE)).json()).toEqual({ result: "unmatched" });
+    expect(w.sent.length).toBe(before);
+    expect(query(w.dbPath, "SELECT * FROM want_inbox")).toEqual([]);
+  });
+
   it("feeds every live eBay watch with the words, paused ones too, and never a BGG or page watch", async () => {
     const w = await setup();
     const { address } = await watching(w);

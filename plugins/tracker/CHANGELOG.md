@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.33.0] - 2026-10-20
+
+### Added
+
+- `/want source: ebay` searches eBay through eBay's own Browse API when `TRACKER_EBAY_CLIENT_ID` and `TRACKER_EBAY_CLIENT_SECRET` are set (an eBay developer Production keyset's App ID and Cert ID). Each look is one search of eBay US, the newest fifty listings, at or under your top price, and a listing counts only when its title has every word you are watching for. The DM shows the price (an auction's current bid, or its Buy It Now price when it has one), the condition and the seller's name, feedback percentage and score. It looks every hour by default. eBay US prices in USD, so such a watch takes no other `currency`.
+- Such a watch keeps no eBay data: no listing is stored in its history, the stored copy of each DM is cleared six hours after the run, and it is never checked by the model, whatever `judge` says. A DM still owed after six hours keeps its first line and links eBay's own search instead of the listings. That lets the eBay keyset opt out of eBay's account-deletion notices, which eBay allows only for apps that keep no eBay data. No eBay page is ever opened, and a judged inbox eBay watch opens none either. Without the keys, `source: ebay` is an inbox watch as before, and a watch made before the keys were set stays one. On docket 0.13.0.
+
+### Schema
+
+- No change. Still at 11.
+
+## [0.32.0] - 2026-10-19
+
+### Added
+
+- `/want source: shopify` watches Shopify stores for new copies in stock, at or under your top price, and DMs the new ones like any watch. `target` is the words to search for (the name when empty), and a product counts only when its title has every word. It looks once a day by default and never more often, since each look is one Firecrawl search (5 credits). It needs `TRACKER_FIRECRAWL_KEY`; without it, `source: shopify` is refused. The web editor and the task API take `shopify` as a source too. On docket 0.12.0.
+
+### Schema
+
+- No change. Still at 11.
+
 ## [0.31.4] - 2026-10-18
 
 ### Fixed
