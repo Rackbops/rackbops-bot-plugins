@@ -16,7 +16,13 @@ import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
  *   the task is made only when it does.
  * - `bgg`: a BoardGameGeek game, read through BGG's API while `TRACKER_BGG_TOKEN` is set (`d.bgg`);
  *   without it (BGG declined the application), an inbox watch for BGG, as for eBay below.
- * - `ebay`: an inbox watch (docket-types' `inbox` source, inbox.ts). The want-list watcher never
+ * - `ebay`, with the bot's eBay keys (`TRACKER_EBAY_CLIENT_*`, `d.ebay`; Rod, 2026-10-20, "Build it"):
+ *   one search a look through eBay's own Browse API (docket-types' `ebaySource`, ebay.ts), the only
+ *   way the tracker reads eBay -- it still never opens an eBay page. `target` is the words to search
+ *   for, the name when none are given; a listing counts only when its title has every word. A look is
+ *   one of the app's 5,000 Browse calls a day, so it looks every hour by default (`DEFAULT_EBAY_HOURS`).
+ *   A watch made before the keys were set stays an inbox watch.
+ * - `ebay` without the keys: an inbox watch (docket-types' `inbox` source, inbox.ts). The want-list watcher never
  *   opens eBay, and an inbox watch opens neither eBay nor BGG: Rod's rule, 2026-10-05; scoped to
  *   the watcher by roshne, 2026-10-11 (#165). The listings reach the watch when someone
  *   sends them in -- the owner's own browser, Claude in Chrome searching eBay for them, through
@@ -56,6 +62,8 @@ export const DEFAULT_BGG_HOURS = 24;
 export const DEFAULT_INBOX_HOURS = 1;
 /** A Shopify watch's default and its floor: each look is a paid Firecrawl search (5 credits). */
 export const DEFAULT_SHOPIFY_HOURS = 24;
+/** An eBay API watch's default: one Browse call a look, of the app's 5,000 a day. */
+export const DEFAULT_EBAY_HOURS = 1;
 export const MIN_SHOPIFY_HOURS = 24;
 export const MAX_WANT_HOURS = 168;
 export const MAX_WANT_PRICE = 10_000_000;
@@ -139,6 +147,7 @@ export function ebaySearchUrl(words: string, max?: number): string {
 /** The default hours between looks for a watch of `source` (`inbox` for both eBay and BGG without its API). */
 export function defaultWantHours(source: string): number {
   if (source === "shopify") return DEFAULT_SHOPIFY_HOURS;
+  if (source === "ebay") return DEFAULT_EBAY_HOURS;
   return source === "inbox" ? DEFAULT_INBOX_HOURS : source === "bgg" ? DEFAULT_BGG_HOURS : DEFAULT_PAGE_HOURS;
 }
 
@@ -159,6 +168,7 @@ export function watchWhere(c: WantConfig): string {
   if (site === "bgg") return "what you send in from BoardGameGeek";
   if (c.source === "inbox") return "what is sent in";
   if (c.source === "shopify") return `Shopify stores' search for "${c.target}"`;
+  if (c.source === "ebay") return `eBay's search for "${c.target}"`;
   return c.source === "bgg" ? "BoardGameGeek's marketplace" : "that page";
 }
 
@@ -228,8 +238,10 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   const source = input.source.trim().toLowerCase();
   if (!(WANT_SOURCES as readonly string[]).includes(source)) return { ok: false, error: "`source` is page, bgg, ebay or shopify." };
   if (source === "shopify" && !d.shopify) return { ok: false, error: SHOPIFY_OFF };
-  // eBay always, and BGG while the bot has no BGG API access, are inbox watches.
-  const site: InboxSite | null = source === "ebay" ? "ebay" : source === "bgg" && !d.bgg ? "bgg" : null;
+  // eBay without the eBay keys, and BGG while the bot has no BGG API access, are inbox watches.
+  const site: InboxSite | null = source === "ebay" && !d.ebay ? "ebay" : source === "bgg" && !d.bgg ? "bgg" : null;
+  // Searched by its words: Shopify's catalog, and eBay through its API.
+  const searched = source === "shopify" || (source === "ebay" && d.ebay === true);
   const planned = limitsPlan(input, defaultWantHours(site ? "inbox" : source), minWantHours(source));
   if (!planned.ok) return planned;
   const { limits } = planned;
@@ -238,11 +250,11 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   const target = (input.target ?? "").trim();
   let inbox: { search: string; game: number | null } | null = null;
   let words: string | null = null;
-  if (source === "shopify") {
+  if (searched) {
     // The words to search for, the name when none are given.
     words = (target || limits.name).replace(/\s+/g, " ");
     if (words.length > MAX_TITLE) return { ok: false, error: `The words to search for are longer than ${MAX_TITLE} characters.` };
-    if (!/[\p{L}\p{N}]/u.test(words)) return { ok: false, error: "Give the words to search Shopify for, such as `Wingspan Oceania expansion`." };
+    if (!/[\p{L}\p{N}]/u.test(words)) return { ok: false, error: `Give the words to search ${source === "ebay" ? "eBay" : "Shopify"} for, such as \`Wingspan Oceania expansion\`.` };
   } else if (site) {
     if (!d.webEditor || !d.inbox) return { ok: false, error: INBOX_OFF };
     // For BGG, a game named by its address or id is kept as the game; any other text is the words.
@@ -267,7 +279,7 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   if (capped) return { ok: false, error: capped };
   const where: WatchConfig =
     words !== null
-      ? { source: "shopify", target: words }
+      ? { source: source === "ebay" ? "ebay" : "shopify", target: words }
       : site && inbox
         ? { source: "inbox", target: newInboxKey(site), search: inbox.search, ...(inbox.game !== null ? { game: String(inbox.game) } : {}) }
         : { source: source as SourceId, target: source === "bgg" ? String(parseBggThingId(target)) : target };
@@ -323,7 +335,9 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
   ];
   const where = watchWhere(c);
   const inbox = c.source === "inbox";
-  const shows = inbox ? "what the listing says about the seller" : "what its page shows about the seller";
+  // The judge opens no page for an inbox, Shopify or eBay watch (docket-types' wantjudge).
+  const closed = inbox || c.source === "shopify" || c.source === "ebay";
+  const shows = closed ? "what the listing says about the seller" : "what its page shows about the seller";
   const first = inbox ? "the first look is within a minute, and finds nothing until listings are sent in" : "the first look, within a minute, DMs what is there now";
   return {
     ok: true,
@@ -337,6 +351,9 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
         ...inboxNote(c, task.id, d.mail && watchSite(c) === "ebay" ? d.mail.addressFor(user.id, now) : null),
         ...(c.source === "shopify"
           ? ["Shopify's search finds new copies at Shopify stores only (not eBay or used copies), and I keep a product only when its title has every word you are watching for. Each look is a Firecrawl search (5 credits)."]
+          : []),
+        ...(c.source === "ebay"
+          ? ["I search eBay US through eBay's own API, newest listings first, new and used, auctions at their current bid, and keep a listing only when its title has every word you are watching for. I never open an eBay page."]
           : []),
       ].join("\n"),
     ),

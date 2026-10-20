@@ -89,6 +89,8 @@ export interface TrackerDeps {
   bgg?: boolean;
   /** Whether the want-list watcher may search Shopify stores: `TRACKER_FIRECRAWL_KEY` is set (docket-types' `shopifySource`). */
   shopify?: boolean;
+  /** Whether the want-list watcher may search eBay through eBay's own API: `TRACKER_EBAY_CLIENT_ID` and `TRACKER_EBAY_CLIENT_SECRET` are set (docket-types' `ebaySource`). */
+  ebay?: boolean;
   /** The want-list inboxes: the listings sent in for a watch (inbox.ts); the task API's listings route writes them. */
   inbox?: WantInbox;
   /** The pages gathered for browser research requests (research-sources.ts); the task API's sources route writes them. */

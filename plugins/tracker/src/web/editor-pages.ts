@@ -5,7 +5,7 @@ import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
 import { MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "../scout.js";
 import { MAX_FOR_CHARS, MAX_SCOUT_NOTES } from "@rackbops/docket-types";
-import { DEFAULT_BGG_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, MIN_SHOPIFY_HOURS } from "../want.js";
+import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, MIN_SHOPIFY_HOURS } from "../want.js";
 import { MAX_EVERY, MAX_LEAD_DAYS } from "../tracked.js";
 import { html, type Html } from "./html.js";
 import { framed, type Viewer } from "./pages.js";
@@ -108,14 +108,14 @@ const scoutFields = (mode: Mode, surface: Surface): readonly Field[] => [
   { name: "every", label: "Days between runs", kind: "number", min: 1, max: MAX_SCOUT_EVERY, help: `1 to ${MAX_SCOUT_EVERY}. ${empty(mode, "1 when empty.", surface)} Each run is at your preferred hour.` },
 ];
 
-const SOURCE_OPTIONS = [["page", "a listing page I paste"], ["bgg", "BoardGameGeek's marketplace"], ["ebay", "eBay, from listings I send in"], ["shopify", "Shopify stores: new copies in stock"]] as const;
+const SOURCE_OPTIONS = [["page", "a listing page I paste"], ["bgg", "BoardGameGeek's marketplace"], ["ebay", "eBay: its own API, or listings I send in"], ["shopify", "Shopify stores: new copies in stock"]] as const;
 const JUDGE_OPTIONS = [["yes", "yes: the model checks each new listing and its seller first"], ["no", "no: DM me every new listing"]] as const;
 
 /** `/want`'s limits, the same on an edit (but for what an empty number means): where it looks is fixed once made. */
 const wantLimits = (mode: Mode, surface: Surface): readonly Field[] => [
   { name: "max", label: "Top price", kind: "text", decimal: true, help: "Only listings at or under it, and so only listings that show a price. Leave it empty for any price." },
   { name: "currency", label: "Currency", kind: "text", maxlength: CURRENCY_LENGTH, help: "Only listings in it, such as USD. Leave it empty for any." },
-  { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}, and at least ${MIN_SHOPIFY_HOURS} for Shopify, since each Shopify look is a paid Firecrawl search. ${empty(mode, `When empty, ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG, ${DEFAULT_INBOX_HOURS} for eBay (or BGG, when this bot has no BGG access), whose listings are sent in, and ${DEFAULT_SHOPIFY_HOURS} for Shopify.`, surface)}` },
+  { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}, and at least ${MIN_SHOPIFY_HOURS} for Shopify, since each Shopify look is a paid Firecrawl search. ${empty(mode, `When empty, ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG, ${DEFAULT_EBAY_HOURS} for eBay, ${DEFAULT_INBOX_HOURS} for BGG when this bot has no BGG access, whose listings are sent in, and ${DEFAULT_SHOPIFY_HOURS} for Shopify.`, surface)}` },
 ];
 
 /**
@@ -141,7 +141,7 @@ export function fieldsFor(type: NewType, mode: Mode, surface: Surface = "web"): 
             kind: "text",
             maxlength: MAX_URL,
             help:
-              "A shop's listing or search page, or a BGG game's address or id. For eBay, the words to search for (the name when empty): a watch never opens eBay, so its listings reach the watch when you send them in through the task API, such as from Claude in Chrome in your own browser. BGG works the same way while this bot has no BGG access. For Shopify, the words to search Shopify stores for (the name when empty): a product counts only when its title has every word.",
+              "A shop's listing or search page, or a BGG game's address or id. For eBay, the words to search for (the name when empty): with this bot's eBay keys, each look is one search through eBay's own API, and a listing counts only when its title has every word; without them, a watch never opens eBay, so its listings reach the watch when you send them in through the task API, such as from Claude in Chrome in your own browser. BGG works the same way while this bot has no BGG access. For Shopify, the words to search Shopify stores for (the name when empty): a product counts only when its title has every word.",
           } as const,
           {
             name: "judge",

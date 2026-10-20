@@ -359,6 +359,58 @@ describe("/want", () => {
     expect(content(k.sent, 0)).not.toContain("bad");
   });
 
+  it("watches eBay through eBay's own API with the eBay keys, hourly, opening no eBay page", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const item = (id: string, title: string, value: string, seller: string) => ({
+      itemId: `v1|${id}|0`,
+      title,
+      price: { value, currency: "USD" },
+      condition: "New",
+      itemWebUrl: `https://www.ebay.com/itm/${id}?hash=item1:g:x`,
+      seller: { username: seller, feedbackPercentage: "99.6", feedbackScore: 4821 },
+      buyingOptions: ["FIXED_PRICE"],
+    });
+    const ebayFetch = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/identity/v1/oauth2/token")) return new Response(JSON.stringify({ access_token: "app-token", expires_in: 7200 }), { status: 200 });
+      const itemSummaries = [item("123456789012", "Wingspan Oceania Expansion New Sealed", "29.99", "boardgame_bin"), item("223456789012", "Wingspan base game", "20.00", "elsewhere")];
+      return new Response(JSON.stringify({ total: 2, itemSummaries }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const { s: page, fetch: pageFetch } = shop([]);
+    const w = await world({ fetch: pageFetch, env: { TRACKER_EBAY_CLIENT_ID: "app-id", TRACKER_EBAY_CLIENT_SECRET: "cert-id" }, ebayFetch });
+    await people(w.plugin);
+    const made = await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan Oceania expansion", source: "ebay" }, numbers: { max: 35 } });
+    expect(made).toContain("Watching `t1`: Wingspan Oceania expansion.");
+    expect(made).toContain(`eBay's search for "Wingspan Oceania expansion" every 1 hour`);
+    expect(made).toContain("I never open an eBay page");
+    expect(made).not.toContain("POST /tasks/");
+    await pollTick(w.plugin);
+    expect(calls.map((c) => new URL(c.url).origin)).toEqual(["https://api.ebay.com", "https://api.ebay.com"]);
+    expect(new URL(calls[1]?.url ?? "").searchParams.get("filter")).toBe("price:[..35.00],priceCurrency:USD");
+    expect((calls[1]?.init.headers as Record<string, string>).authorization).toBe("Bearer app-token");
+    expect(page.reads).toEqual([]);
+    expect(content(w.sent, 0)).toContain("- Wingspan Oceania Expansion New Sealed -- 29.99 USD -- New -- sold by boardgame_bin, 99.6% positive, 4821 feedback <https://www.ebay.com/itm/123456789012> (via eBay)");
+    expect(content(w.sent, 0)).not.toContain("base game");
+    w.clock.advance(3600_000);
+    await pollTick(w.plugin);
+    // The token is kept: one more search, no second minting, and nothing new is nothing said.
+    expect(calls).toHaveLength(3);
+    expect(w.sent).toHaveLength(1);
+  });
+
+  it("keeps eBay an inbox watch without the keys, and tells the owner at once when eBay refuses them", async () => {
+    const w = await world({ fetch: shop([]).fetch });
+    await people(w.plugin);
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "ebay" } })).toContain("This watch never opens eBay itself.");
+    const refused = (async () => new Response(JSON.stringify({ error: "invalid_client" }), { status: 401 })) as unknown as typeof fetch;
+    const k = await world({ fetch: shop([]).fetch, env: { TRACKER_EBAY_CLIENT_ID: "app-id", TRACKER_EBAY_CLIENT_SECRET: "bad-cert" }, ebayFetch: refused });
+    await people(k.plugin);
+    await slash(k.plugin, "want", LARRY, { strings: { name: "Oceania", source: "ebay" } });
+    await pollTick(k.plugin);
+    expect(content(k.sent, 0)).toContain("Oceania: I could read no listings from eBay's search just now (eBay refused the app's keys).");
+    expect(content(k.sent, 0)).not.toContain("bad-cert");
+  });
+
   it("tells the owner once when BGG cannot be read at all, not again at the third miss", async () => {
     const bgg: Source = { id: "bgg", async search() { throw new SourceUnavailableError("BGG rejected the token"); } };
     const w = await world({ fetch: shop([]).fetch, bgg });

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.33.0] - 2026-10-20
+
+### Added
+
+- `/want source: ebay` searches eBay through eBay's own Browse API when `TRACKER_EBAY_CLIENT_ID` and `TRACKER_EBAY_CLIENT_SECRET` are set (an eBay developer Production keyset's App ID and Cert ID). Each look is one search of eBay US, the newest fifty listings, at or under your top price, and a listing counts only when its title has every word you are watching for. The DM shows the price (an auction's current bid), the condition and the seller's name, feedback percentage and score. It looks every hour by default. No eBay page is ever opened, and a judged eBay watch opens none either. Without the keys, `source: ebay` is an inbox watch as before, and a watch made before the keys were set stays one. On docket 0.13.0.
+
+### Schema
+
+- No change. Still at 11.
+
 ## [0.32.0] - 2026-10-19
 
 ### Added

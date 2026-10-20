@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-19T14:39:17.356Z",
+  "generatedAt": "2026-10-20T00:31:38.408Z",
   "plugins": [
     {
       "name": "mcp",
@@ -194,8 +194,8 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.32.0",
-      "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
+      "version": "0.33.0",
+      "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, eBay through eBay's own Browse API once its keys are set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
       "hostApiVersion": 1,
       "intents": [],
       "commands": [
@@ -291,6 +291,20 @@
           "secret": true
         },
         {
+          "key": "TRACKER_EBAY_CLIENT_ID",
+          "format": "^[!-~]+$",
+          "description": "The App ID (client id) of an eBay developer Production keyset, for the want-list watcher's eBay search through eBay's own Browse API. Goes with TRACKER_EBAY_CLIENT_SECRET: both set = /want source: ebay searches eBay US through the API, every hour by default; both unset = /want source: ebay is an inbox watch; one without the other refuses to load. Sent only to api.ebay.com. Never logged.",
+          "required": false,
+          "secret": true
+        },
+        {
+          "key": "TRACKER_EBAY_CLIENT_SECRET",
+          "format": "^[!-~]+$",
+          "description": "The Cert ID (client secret) of the same eBay keyset as TRACKER_EBAY_CLIENT_ID. The tracker mints an application token from the pair (client credentials, scope https://api.ebay.com/oauth/api_scope) and keeps it in memory only. Sent only to api.ebay.com. Never logged.",
+          "required": false,
+          "secret": true
+        },
+        {
           "key": "TRACKER_BGG_TOKEN",
           "format": "^[!-~]+$",
           "description": "BoardGameGeek's XML API Bearer token for the tracker's registered application (boardgamegeek.com/using_the_xml_api). Set = /want source: bgg watches a game's BGG marketplace listings through BGG's API; unset = /want source: bgg makes a watch whose listings are sent in through the task API instead, as for eBay. Never logged.",
@@ -334,6 +348,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "0.33.0",
+          "publishedAt": "2026-10-20T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.33.0",
+          "notes": "### Added\n\n- `/want source: ebay` searches eBay through eBay's own Browse API when `TRACKER_EBAY_CLIENT_ID` and `TRACKER_EBAY_CLIENT_SECRET` are set (an eBay developer Production keyset's App ID and Cert ID). Each look is one search of eBay US, the newest fifty listings, at or under your top price, and a listing counts only when its title has every word you are watching for. The DM shows the price (an auction's current bid), the condition and the seller's name, feedback percentage and score. It looks every hour by default. No eBay page is ever opened, and a judged eBay watch opens none either. Without the keys, `source: ebay` is an inbox watch as before, and a watch made before the keys were set stays one. On docket 0.13.0.\n\n### Schema\n\n- No change. Still at 11."
+        },
         {
           "version": "0.32.0",
           "publishedAt": "2026-10-19T00:00:00.000Z",
@@ -387,12 +407,6 @@
           "publishedAt": "2026-10-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.28.0",
           "notes": "### Added\n\n- **Research on pages your own browser gathered** (#125, docket-types 0.8.0's `sources: \"sent\"`).\n  BoardGameGeek refuses the runner's reads and declined API access, and the tracker never opens\n  eBay, so `/research sources: browser` (and `sources` on the web form and `POST /tasks`) makes a\n  request that waits for pages instead of searching for them: ask Claude in Chrome, in your own\n  browser, to gather them, and it sends each page's address, title and text to the new\n  `POST /api/v1/tasks/<id>/sources` (up to 10 a request, and 10 pages and 99,800 characters of\n  page text per request in all -- what docket's 100,000-character budget uses whole -- each cleaned\n  by docket-types' `gatheredPages`; the same address sent again replaces its page; a page past the\n  text budget is left out whole and counted apart as `overBudget`), then\n  `POST /api/v1/tasks/<id>/sources/ready`, which moves the queued run to now. The research run and\n  its reviewer both read the pages into their prompts and may not fetch BoardGameGeek or eBay.\n  Until then the run waits 14 days out, or 10 minutes before the deadline when that is sooner (a\n  run started past the deadline makes no call; the margin makes that unlikely on an idle lane, not\n  impossible, and a deadline less than 20 minutes away is refused); a request whose `ready` never comes runs then on\n  whatever pages are in, and with none makes no model call, DMs you that no pages were gathered,\n  and ends it.\n- Only the token owner's own live browser request still waiting takes pages or `ready`: anyone\n  else's is the API's 404, a web request or one already started a 409 (started includes a run put\n  back unsent, so the pages a run read are the ones its next try reads), and `ready` with no page in\n  a 409. Both routes take the task's lock: while the model runner has the task, a 409 `busy`.\n  `at` is refused with `sources: browser`, and so is the option on a bot without the web area,\n  where the task API lives.\n- `/tasks`, `/task history` and the task API show a browser request's pages: `(sources: browser,\n  N pages in; waiting for pages)` on its line (a paused one's too), and `sources: \"browser\"`,\n  `pages` and `waitingForPages` in its JSON (`settings.sources` is `web` or `browser` for every\n  research request). A request's pages go once it ends, at the execute tick's housekeeping, so only\n  while the execute lane is configured; forget-me always erases them with the person's tasks.\n\n### Changed\n\n- docket-core and docket-types go to 0.8.0.\n- Every secret setting's format is spelled `^[!-~]+$` (printable ASCII, no spaces) instead of\n  `^\\S+$`, which POSIX ERE leaves undefined: glibc read it as non-space, a BSD regcomp as a literal\n  `S` (#202, #307). What a valid value is does not change.\n- A person's digest never comes twice within 20 hours: one whose due hour is less than 20 hours\n  after the last one claimed is passed over for that local day, so a move east sends nothing more\n  until the next day's hour (#211, #308). Ordinary days across a clock change are unaffected.\n\n### Schema\n\n- Migration 11: a new `research_sources` table and its index, purely additive. A database at 11 is\n  refused by 0.27.0 and older."
-        },
-        {
-          "version": "0.27.0",
-          "publishedAt": "2026-10-13T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.27.0",
-          "notes": "### Fixed\n\n- **Gmail's forwarding confirmation, again** (#83). 0.26.0 also left the re-sent one unread: from\n  `forwarding-noreply@google.com`, plain text, forwarding named, but no code where it looked. The\n  code is now a run of 6 to 12 digits standing alone in the subject (never digits inside an\n  address), or one shortly after the word \"code\" in the body (never inside an address); and\n  Gmail's verify link (an https `/mail/vf-` address on `mail.google.com`,\n  `mail-settings.google.com` or a subdomain of either; never its `/mail/uf-` cancel link or any\n  other) is DMed too, or alone when there is no code.\n- An unread message from one of Google's no-reply senders now also logs its subject's shape\n  (letters `a`, digits `9`, each address `<addr>`), its body's length (plain text, else the\n  HTML's text), how many digit runs and https links it has, and whether it says \"code\" -- still\n  never its words.\n\n### Schema\n\n- No change. Still at 10."
         }
       ]
     },

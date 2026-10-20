@@ -2,7 +2,8 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
-import { bggSource, inboxSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
+import { bggSource, ebaySource, inboxSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
+import { createEbayBrowse, parseEbayKeys } from "./ebay.js";
 import { createFirecrawlScrape, parseFirecrawlKey } from "./firecrawl.js";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds, parseGuildRoles } from "./access.js";
@@ -55,7 +56,8 @@ import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_ID
  * `createPlugin` is pure: it validates `TRACKER_ADMIN_DISCORD_IDS`, `TRACKER_GUILD_ID`, `TRACKER_GUILD_ROLES`,
  * `TRACKER_WEB_URL`, the `TRACKER_CITY_HALL_*` settings (executor.ts), the `TRACKER_USR_*` settings (usr.ts: a
  * half-set link refuses to load), `TRACKER_BUDGET_UNLIMITED` (usage.ts) and the `TRACKER_MAIL_*` settings (mail.ts),
- * reads `TRACKER_BGG_TOKEN` and `TRACKER_FIRECRAWL_KEY`, and nothing else. The database is opened in `activate()` and closed in `dispose()`.
+ * reads `TRACKER_BGG_TOKEN`, `TRACKER_FIRECRAWL_KEY` and the `TRACKER_EBAY_CLIENT_*` pair (ebay.ts: a half-set pair
+ * refuses to load), and nothing else. The database is opened in `activate()` and closed in `dispose()`.
  */
 
 /** The tracker's database: `<dataDir>/tracker/tracker.sqlite`, a directory of its own (mcp's convention). */
@@ -132,6 +134,10 @@ export interface TrackerOptions {
   shopify?: Source;
   /** Test seam for the key's Firecrawl calls (firecrawl.ts). */
   firecrawlFetch?: typeof fetch;
+  /** Test seam: an eBay source in place of the keys' (docket-types' `ebaySource`), as if `TRACKER_EBAY_CLIENT_*` were set. */
+  ebay?: Source;
+  /** Test seam for the keys' eBay calls (ebay.ts). */
+  ebayFetch?: typeof fetch;
   /** Test seam for the token's BGG reads: the name lookup and HTTP under `createBggFetch`, which still decides raw and redirects. */
   bggNetwork?: Pick<PageFetchOptions, "resolve" | "fetchImpl">;
   /** Test seam: each execute tick's background work as it starts, so a test can await it. */
@@ -192,6 +198,9 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const firecrawlKey = parseFirecrawlKey(host.env.TRACKER_FIRECRAWL_KEY);
   const shopify =
     options.shopify ?? (firecrawlKey ? shopifySource(createFirecrawlScrape({ key: firecrawlKey, ...(options.firecrawlFetch ? { fetchImpl: options.firecrawlFetch } : {}) })) : null);
+  // eBay's own Browse API for want-list watches (ebay.ts), only with the eBay keys: the one way the tracker reads eBay.
+  const ebayKeys = parseEbayKeys(host.env);
+  const ebay = options.ebay ?? (ebayKeys ? ebaySource(createEbayBrowse({ keys: ebayKeys, ...(options.ebayFetch ? { fetchImpl: options.ebayFetch } : {}) })) : null);
   // The want-list inboxes (inbox.ts) live in the database `activate()` opens; until then, and after
   // `dispose()`, an inbox reads as empty (no tick runs then anyway). An eBay watch, and a BGG one
   // made while the bot has no BGG token, get their listings only this way: the want-list watcher
@@ -207,7 +216,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const types = options.types ?? {
     ...TRACKER_TYPES,
     research: researchType(webOrigin ? { readSources } : {}) as TaskType<unknown>,
-    ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}), ...(shopify ? { shopify } : {}) }),
+    ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}), ...(shopify ? { shopify } : {}), ...(ebay ? { ebay } : {}) }),
   };
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
@@ -457,6 +466,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           research: executeOn,
           bgg: bgg !== null,
           shopify: shopify !== null,
+          ebay: ebay !== null,
           inbox: openedInbox,
           sources: openedSources,
           mail: mailConfig ? new MailAddresses(opened, mailConfig.domain) : null,
