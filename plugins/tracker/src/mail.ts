@@ -218,18 +218,23 @@ export type MailOutcome =
   | { kind: "unmatched" }
   | { kind: "ignored"; why: string };
 
-/** The person's live eBay inbox watches searching for `search`. */
+/**
+ * The person's live eBay inbox watches searching for `search`, and whether an eBay API watch (one
+ * that searches eBay itself, want.ts) searches for it: such a watch needs no alert.
+ */
 async function watchesFor(d: TrackerDeps, user: User, search: string) {
   const out = [];
+  let searched = false;
   for (const type of WANT_TYPES) {
     for (const status of ["active", "paused"] as const) {
       for (const task of await d.store.listTasks({ ownerId: user.id, status, type })) {
         const c = task.config as WatchConfig;
         if (watchSite(c) === "ebay" && sameSearch(c.search ?? task.title, search)) out.push({ task, key: c.target });
+        else if (c.source === "ebay" && sameSearch(c.target, search)) searched = true;
       }
     }
   }
-  return out;
+  return { watches: out, searched };
 }
 
 /** DMs `text`, logging a failure rather than failing the mail: eBay mails again tomorrow. */
@@ -264,10 +269,11 @@ export async function deliverMail(d: TrackerDeps, userId: string, mail: MailMess
     const l = acceptListing(raw);
     if (l) listings.push(l);
   }
-  const watches = await watchesFor(d, user, alert.search);
+  const { watches, searched } = await watchesFor(d, user, alert.search);
   if (watches.length === 0 || listings.length === 0) {
     const words = quoted(alert.search);
-    if (watches.length === 0 && words) {
+    // An eBay API watch for those words finds the same listings itself: the alert is left, quietly.
+    if (watches.length === 0 && words && !searched) {
       await tell(d, user.id, `An eBay alert for "${words}" reached me, but none of your eBay watches searches for those words, so I left it. To watch it: \`/want name: ${words} source: ebay target: ${words}\`.`);
     }
     return { kind: "unmatched" };

@@ -21,7 +21,8 @@ import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
  *   way the tracker reads eBay -- it still never opens an eBay page. `target` is the words to search
  *   for, the name when none are given; a listing counts only when its title has every word. A look is
  *   one of the app's 5,000 Browse calls a day, so it looks every hour by default (`DEFAULT_EBAY_HOURS`).
- *   A watch made before the keys were set stays an inbox watch.
+ *   A watch made before the keys were set stays an inbox watch. One made with them keeps searching
+ *   the API if the keys are later removed, and so fails each look (its owner is told once).
  * - `ebay` without the keys: an inbox watch (docket-types' `inbox` source, inbox.ts). The want-list watcher never
  *   opens eBay, and an inbox watch opens neither eBay nor BGG: Rod's rule, 2026-10-05; scoped to
  *   the watcher by roshne, 2026-10-11 (#165). The listings reach the watch when someone
@@ -77,7 +78,7 @@ export const SHOPIFY_OFF = "Searching Shopify stores needs a Firecrawl key, and 
 export const JUDGE_OFF = "Checking listings with the model needs the model runner, which this bot does not have set up. Leave `judge` out for a plain watch.";
 export const EBAY_USD = "eBay's search here is eBay US, which prices in USD: leave `currency` out, or make it USD.";
 export const WANT_TYPES: ReadonlySet<string> = new Set(["wantlist", "wantjudge"]);
-export const EBAY_PAGE = "A want-list watch never opens eBay's pages. Use `source: ebay` instead: it makes a watch that the eBay listings you send in reach, and I DM you the new ones.";
+export const EBAY_PAGE = "A want-list watch never opens eBay's pages. Use `source: ebay` instead: it searches eBay through eBay's own API when this bot has eBay keys, and otherwise makes a watch that the eBay listings you send in reach; either way I DM you the new ones.";
 
 /** A watch's config as the host keeps it: docket's, plus an inbox watch's words and BGG game (see above). */
 export type WatchConfig = WantConfig & {
