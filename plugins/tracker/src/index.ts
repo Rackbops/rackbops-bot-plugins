@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
 import { bggSource, ebaySource, inboxSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
 import { createEbayBrowse, parseEbayKeys } from "./ebay.js";
+import { forgetEbayMessages } from "./ebay-forget.js";
 import { createFirecrawlScrape, parseFirecrawlKey } from "./firecrawl.js";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds, parseGuildRoles } from "./access.js";
@@ -274,6 +275,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     if (kind === "notify") health.lastTickAt = clock.now();
     const { ran, failed } = outcome.result;
     if (failed > 0) host.log.warn(`${kind === "poll" ? "poll" : "notify"} lane: ${ran} ran, ${failed} failed`);
+    // eBay API watches' DMs are not kept past six hours (ebay-forget.ts).
+    if (kind === "notify" && db) forgetEbayMessages(db, clock.now());
     // The daily digest (plan 5.5, digest.ts), after the runs due now: a reminder never waits on it.
     if (kind === "notify" && options.digest !== false && deps && store) {
       const r = await runDigests({ store, notifier: deps.notifier, log: host.log, ...(delivery ? { health: delivery } : {}) }, clock.now(), signal);

@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../packages/api/contract.js";
@@ -10,7 +11,8 @@ import { SqliteStore } from "./store.js";
 import { ADMIN, api, call, cleanup, CURLY, csrfOf, LARRY, makeToken, ORIGIN, people, press, type Said, signIn, slash, world } from "./web/harness.js";
 import { parseMarketplace, type Source, SourceUnavailableError } from "@rackbops/docket-types";
 import { BGG_THING, shopSearch } from "./want-fixtures.js";
-import { EBAY_PAGE, EBAY_USD, MAX_WANT_TASKS, SHOPIFY_OFF } from "./want.js";
+import { FORGOTTEN } from "./ebay-forget.js";
+import { EBAY_JUDGE, EBAY_PAGE, EBAY_USD, MAX_WANT_TASKS, SHOPIFY_OFF } from "./want.js";
 import { FIRECRAWL_SCRAPE_URL } from "./firecrawl.js";
 
 afterEach(cleanup);
@@ -384,6 +386,8 @@ describe("/want", () => {
     expect(made).toContain(`eBay's search for "Wingspan Oceania expansion" every 1 hour`);
     expect(made).toContain("I never open an eBay page");
     expect(made).not.toContain("POST /tasks/");
+    expect(made).toContain("my copy of it goes after 6 hours");
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "ebay" }, booleans: { judge: true } })).toBe(EBAY_JUDGE);
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "ebay", currency: "GBP" } })).toBe(EBAY_USD);
     await pollTick(w.plugin);
     expect(calls.map((c) => new URL(c.url).origin)).toEqual(["https://api.ebay.com", "https://api.ebay.com"]);
@@ -397,6 +401,19 @@ describe("/want", () => {
     // The token is kept: one more search, no second minting, and nothing new is nothing said.
     expect(calls).toHaveLength(3);
     expect(w.sent).toHaveLength(1);
+    // No finding is kept, and six hours on, the run's stored DM holds no listing.
+    const db = new Database(w.dbPath);
+    try {
+      expect(db.query("SELECT COUNT(*) AS n FROM findings").get()).toEqual({ n: 0 });
+      const texts = () => (db.query("SELECT json_extract(record, '$.outcome.notify.text') AS t FROM occurrences WHERE record IS NOT NULL").all() as { t: string | null }[]).map((r) => r.t).filter((t) => t !== null);
+      expect(texts().some((t) => t.includes("boardgame_bin"))).toBe(true);
+      w.clock.advance(5 * 3600_000);
+      await notifyTick(w.plugin);
+      expect(texts().some((t) => t.includes("boardgame_bin"))).toBe(false);
+      expect(texts()).toContain(FORGOTTEN);
+    } finally {
+      db.close();
+    }
   });
 
   it("keeps eBay an inbox watch without the keys, and tells the owner at once when eBay refuses them", async () => {
