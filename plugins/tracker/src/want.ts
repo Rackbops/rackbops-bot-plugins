@@ -75,6 +75,7 @@ export const INBOX_OFF =
   "Watching eBay or BoardGameGeek needs this bot's web area: listings are sent in through its task API, and this bot has no web area set up. A listing page (`source: page`) works now.";
 export const SHOPIFY_OFF = "Searching Shopify stores needs a Firecrawl key, and this bot has none set up. A listing page (`source: page`) works now.";
 export const JUDGE_OFF = "Checking listings with the model needs the model runner, which this bot does not have set up. Leave `judge` out for a plain watch.";
+export const EBAY_USD = "eBay's search here is eBay US, which prices in USD: leave `currency` out, or make it USD.";
 export const WANT_TYPES: ReadonlySet<string> = new Set(["wantlist", "wantjudge"]);
 export const EBAY_PAGE = "A want-list watch never opens eBay's pages. Use `source: ebay` instead: it makes a watch that the eBay listings you send in reach, and I DM you the new ones.";
 
@@ -245,6 +246,7 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   const planned = limitsPlan(input, defaultWantHours(site ? "inbox" : source), minWantHours(source));
   if (!planned.ok) return planned;
   const { limits } = planned;
+  if (source === "ebay" && d.ebay === true && limits.currency && limits.currency !== "USD") return { ok: false, error: EBAY_USD };
   const judged = judgePlan(d, input.judge);
   if (!judged.ok) return judged;
   const target = (input.target ?? "").trim();
@@ -353,7 +355,7 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
           ? ["Shopify's search finds new copies at Shopify stores only (not eBay or used copies), and I keep a product only when its title has every word you are watching for. Each look is a Firecrawl search (5 credits)."]
           : []),
         ...(c.source === "ebay"
-          ? ["I search eBay US through eBay's own API, newest listings first, new and used, auctions at their current bid, and keep a listing only when its title has every word you are watching for. I never open an eBay page."]
+          ? ["I search eBay US through eBay's own API, newest listings first, new and used, an auction at its current bid (or its Buy It Now price), and keep a listing only when its title has every word you are watching for. I never open an eBay page."]
           : []),
       ].join("\n"),
     ),
@@ -393,6 +395,7 @@ async function editWantLocked(d: TrackerDeps, user: User, taskId: string, input:
   );
   if (!planned.ok) return planned;
   const { limits } = planned;
+  if (config.source === "ebay" && limits.currency && limits.currency !== "USD") return { ok: false, error: EBAY_USD };
   // Where it looks stays: the source, the target (an inbox watch's key) and an inbox watch's words and game.
   const nextConfig: WatchConfig = {
     source: config.source,

@@ -112,9 +112,10 @@ export function createEbayBrowse(o: EbayOptions): EbayBrowse {
     return value;
   }
 
-  /** The token in hand, or one minted now; looks that start together share one minting. */
-  async function current(fresh: boolean): Promise<string> {
-    if (!fresh && token && now() < token.until) return token.value;
+  /** The token in hand, or one minted now; looks that start together share one minting. `stale` is one eBay refused: never handed back. */
+  async function current(stale?: string): Promise<string> {
+    if (token && now() < token.until && token.value !== stale) return token.value;
+    if (minting) return minting;
     token = null;
     minting ??= mint().finally(() => {
       minting = null;
@@ -133,7 +134,7 @@ export function createEbayBrowse(o: EbayOptions): EbayBrowse {
   return async (request: EbayRequest) => {
     let value: string;
     try {
-      value = await current(false);
+      value = await current();
     } catch (err) {
       // Keys eBay refuses read as eBay's own 401, so docket tells the owner at once.
       if (err instanceof EbayKeysRefused) return { status: 401, body: null };
@@ -143,7 +144,7 @@ export function createEbayBrowse(o: EbayOptions): EbayBrowse {
     if (first.status !== 401) return first;
     // A token eBay no longer takes (ended early, or revoked): one fresh one, then its answer stands.
     try {
-      value = await current(true);
+      value = await current(value);
     } catch (err) {
       if (err instanceof EbayKeysRefused) return { status: 401, body: null };
       throw err;

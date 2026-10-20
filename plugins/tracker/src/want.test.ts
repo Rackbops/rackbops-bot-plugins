@@ -10,7 +10,7 @@ import { SqliteStore } from "./store.js";
 import { ADMIN, api, call, cleanup, CURLY, csrfOf, LARRY, makeToken, ORIGIN, people, press, type Said, signIn, slash, world } from "./web/harness.js";
 import { parseMarketplace, type Source, SourceUnavailableError } from "@rackbops/docket-types";
 import { BGG_THING, shopSearch } from "./want-fixtures.js";
-import { EBAY_PAGE, MAX_WANT_TASKS, SHOPIFY_OFF } from "./want.js";
+import { EBAY_PAGE, EBAY_USD, MAX_WANT_TASKS, SHOPIFY_OFF } from "./want.js";
 import { FIRECRAWL_SCRAPE_URL } from "./firecrawl.js";
 
 afterEach(cleanup);
@@ -384,6 +384,7 @@ describe("/want", () => {
     expect(made).toContain(`eBay's search for "Wingspan Oceania expansion" every 1 hour`);
     expect(made).toContain("I never open an eBay page");
     expect(made).not.toContain("POST /tasks/");
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "ebay", currency: "GBP" } })).toBe(EBAY_USD);
     await pollTick(w.plugin);
     expect(calls.map((c) => new URL(c.url).origin)).toEqual(["https://api.ebay.com", "https://api.ebay.com"]);
     expect(new URL(calls[1]?.url ?? "").searchParams.get("filter")).toBe("price:[..35.00],priceCurrency:USD");
