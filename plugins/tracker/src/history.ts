@@ -78,7 +78,7 @@ export function changeView(e: TaskEvent, viewer: User, now: Date, names: Readonl
   const detail =
     e.kind === "paused" || e.kind === "resumed"
       ? e.detail.replace(PERSON_REF, (_, id: string) => names.get(id) ?? "someone no longer on the tracker")
-      : e.kind === "created" && e.detail.endsWith(CREATED_IN_CONVERSATION)
+      : (e.kind === "created" || e.kind === "edited") && e.detail.endsWith(CREATED_IN_CONVERSATION)
         ? CREATED_IN_CONVERSATION.trim()
         : null;
   return { at: formatInstant(e.at, viewer.timeZone, now), kind: e.kind.replaceAll("_", " "), detail };

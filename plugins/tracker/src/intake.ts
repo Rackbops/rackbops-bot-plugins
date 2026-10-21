@@ -9,7 +9,7 @@ import {
   type JobSpec,
   type User,
 } from "@rackbops/docket-core";
-import { type IntakeAnswer, type IntakeDraft, intakeJob, type IntakeLine, type IntakeType, MAX_LINE_CHARS, readIntake } from "@rackbops/docket-types";
+import { type IntakeAnswer, type IntakeDraft, intakeJob, type IntakeLine, type IntakeTask, type IntakeType, MAX_LINE_CHARS, readIntake } from "@rackbops/docket-types";
 import type { MessageComponentInteraction } from "discord.js";
 import type { HostButton, PluginDirectMessage, PluginLog } from "../../../packages/api/contract.js";
 import type { Membership } from "./access.js";
@@ -19,14 +19,14 @@ import { EPHEMERAL, FAILED, NO_MENTIONS, type Queue, STARTING } from "./discord-
 import { isCapability, type JobIdRecords, requeuedAfter, startedByRunner } from "./executor.js";
 import type { Conversation, IntakeConversations } from "./intake-store.js";
 import { executeBudget } from "./usage.js";
-import { createAnswer, intakeTypes } from "./web/api-tasks.js";
+import { createAnswer, editAnswer, intakeTypes } from "./web/api-tasks.js";
 import type { Writer } from "./web/editor.js";
 
 /**
  * The plain-language intake (plan 1.4, E10; Rod's "Go", 2026-10-21): a person DMs Clerk what they
  * want in their own words, Clerk asks one question at a time, and shows a draft with Save, Change and
- * Cancel; only Save makes a task, through the very call the task API's `POST /tasks` makes, as the
- * person who pressed it (the tier rule: the agent proposes, the owner confirms, plain code acts).
+ * Cancel; only Save makes a task, or changes one of the person's own, through the very call the task
+ * API's `POST /tasks` (or `PATCH /tasks/<id>`) makes, as the person who pressed it (the tier rule: the agent proposes, the owner confirms, plain code acts).
  *
  * Each turn is a one-shot `claude -p` Job with no tools (docket-types' `intakeJob`), sent whole with
  * the transcript the tracker keeps (intake-store.ts; Rod, 2026-10-19, "Clerk keeps it"), through
@@ -163,9 +163,13 @@ export function localNow(timeZone: string, now: Date): string {
 }
 
 /** The draft as the person reads it on the card: its type, then each field and value on a line. */
-export function draftText(draft: IntakeDraft): string {
+export function draftText(draft: IntakeDraft, tasks: readonly IntakeTask[] = []): string {
   // Whole values, never clipped: Save stores what the card shows (`turn` refuses a card that does not fit).
   const fields = Object.entries(draft.fields).map(([name, value]) => `- ${name}: ${value === null ? "(cleared)" : oneLine(String(value))}`);
+  if (draft.action === "edit") {
+    const task = tasks.find((t) => t.id === draft.taskId);
+    return [`Here is the change I would save to ${draft.taskId}${task ? ` (${oneLine(task.title)})` : ""}:`, ...fields].join("\n");
+  }
   return ["Here is what I would save:", `- type: ${draft.type}`, ...fields].join("\n");
 }
 
@@ -188,6 +192,16 @@ type Ran = { kind: "result"; result: JobResult; charged: boolean } | { kind: "la
 type Thought = { kind: "answer"; answer: IntakeAnswer } | { kind: "late" } | { kind: "failed"; usageLimit: boolean };
 
 const uncharged = (detail: string): Ran => ({ kind: "result", result: { kind: "error", detail, durationMs: 0 }, charged: false });
+
+/** Tasks offered to the model for an edit, newest last; past this many, the oldest are left out. */
+export const INTAKE_TASKS_SHOWN = 30;
+
+/** The person's own live tasks of a type the intake may edit (title and id only, docket-types' `IntakeTask`). */
+export async function editableTasks(d: TrackerDeps, user: User, types: readonly IntakeType[]): Promise<IntakeTask[]> {
+  const editable = new Set(types.filter((t) => t.editable).map((t) => t.type));
+  const own = (await d.store.listTasks({ ownerId: user.id })).filter((t) => t.status !== "archived" && editable.has(t.type));
+  return own.slice(-INTAKE_TASKS_SHOWN).map((t) => ({ id: t.id, type: t.type, title: t.title }));
+}
 
 export function createIntake(w: IntakeWiring): Intake {
   const sleep = w.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -243,10 +257,10 @@ export function createIntake(w: IntakeWiring): Intake {
   }
 
   /** The model's answer to the transcript, asking once more when its answer can be fixed (`readIntake`'s `retry`). */
-  async function think(d: TrackerDeps, convs: IntakeConversations, executor: Executor, user: User, conv: Conversation, transcript: IntakeLine[], types: IntakeType[], typing: () => Promise<void>): Promise<Thought> {
+  async function think(d: TrackerDeps, convs: IntakeConversations, executor: Executor, user: User, conv: Conversation, transcript: IntakeLine[], types: IntakeType[], tasks: IntakeTask[], typing: () => Promise<void>): Promise<Thought> {
     let problem: string | null = null;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const spec = intakeJob({ now: localNow(user.timeZone, d.clock.now()), types, transcript, ...(problem !== null ? { problem } : {}) });
+      const spec = intakeJob({ now: localNow(user.timeZone, d.clock.now()), types, transcript, ...(tasks.length > 0 ? { tasks } : {}), ...(problem !== null ? { problem } : {}) });
       const key = `intake:${conv.id}:${conv.turns + attempt + 1}`;
       convs.countTurn(conv.id, d.clock.now());
       const ran = await run(executor, spec, conv.id, key, typing);
@@ -260,7 +274,7 @@ export function createIntake(w: IntakeWiring): Intake {
       }
       const { result } = ran;
       if (ran.charged) await chargeIfKnown(d, user, key, result.totalCostUsd ?? null);
-      const read = readIntake(result, types);
+      const read = readIntake(result, types, tasks);
       if (read.ok) return { kind: "answer", answer: read.answer };
       if (!read.retry) return { kind: "failed", usageLimit: result.kind === "usage_limit" };
       // A retry is one more model call: never past the conversation's limit.
@@ -283,7 +297,9 @@ export function createIntake(w: IntakeWiring): Intake {
     if (hold) return send(budgetPersonMessage(hold).text);
     // The person's line is kept only with an answer: a turn that fails leaves the transcript as it was.
     const transcript: IntakeLine[] = [...conv.transcript, { from: "person", text: text.slice(0, MAX_LINE_CHARS) }];
-    const thought = await think(d, convs, executor, user, conv, transcript, intakeTypes(d), m.typing);
+    const types = intakeTypes(d);
+    const tasks = await editableTasks(d, user, types);
+    const thought = await think(d, convs, executor, user, conv, transcript, types, tasks, m.typing);
     // Forget-me erased the person while the turn was out: nothing is kept and nothing said.
     if (!(await d.store.getUser(user.id))) return;
     if (thought.kind === "late") return send(TOO_SLOW);
@@ -292,7 +308,7 @@ export function createIntake(w: IntakeWiring): Intake {
     const said: IntakeLine[] = [...transcript, { from: "bot", text: answer.reply }];
     const at = d.clock.now();
     if (answer.state === "ready" && answer.draft) {
-      const card = `${answer.reply}\n\n${draftText(answer.draft)}`;
+      const card = `${answer.reply}\n\n${draftText(answer.draft, tasks)}`;
       // The person confirms exactly what Save stores, so a draft too long to show whole is not offered.
       if (card.length > MAX_ANSWER) {
         convs.saveTurn(conv.id, [...transcript, { from: "bot", text: TOO_BIG_FOR_CARD }], null, at);
@@ -398,19 +414,23 @@ export function createIntake(w: IntakeWiring): Intake {
         convs.saveTurn(conv.id, [...conv.transcript, { from: "bot", text: CHANGE_ASK }], null, now);
         return settle(CHANGE_ASK);
       }
-      // Only a new task is made by conversation so far; an edit draft is never offered (no tasks are shown to the model).
-      if (draft.action !== "create") return settle(STALE);
       const writer: Writer = { d, queue: w.queue, reading, userId: user.id, arrived: performance.now() };
-      const answer = await createAnswer(writer, user, { type: draft.type, ...draft.fields }, "");
+      const editing = draft.action === "edit";
+      if (editing && typeof draft.taskId !== "string") return settle(STALE);
+      // The very calls the task API's POST /tasks and PATCH /tasks/<id> make, as the person who pressed.
+      const answer = editing
+        ? await editAnswer(writer, user, draft.taskId as string, draft.fields, "")
+        : await createAnswer(writer, user, { type: draft.type, ...draft.fields }, "");
       const body = answer.body as { task?: { id?: unknown }; message?: unknown; error?: { message?: unknown } };
       const taskId = typeof body.task?.id === "string" ? body.task.id : null;
       const at = d.clock.now();
-      if (answer.status === 201 && taskId !== null) {
+      if (answer.status === (editing ? 200 : 201) && taskId !== null) {
         const saved = `Saved. ${typeof body.message === "string" ? body.message : ""}`.trim();
         // The task exists now: a later step that fails must not tell the person it did not, or they make it again.
         try {
           convs.end(conv.id, "saved", at, taskId);
-          convs.markCreatedInConversation(taskId);
+          if (editing) convs.markEditedInConversation(taskId);
+          else convs.markCreatedInConversation(taskId);
           await settle(saved);
         } catch (err) {
           w.log.error(`intake: ${taskId} was saved, but its conversation could not be closed (${err instanceof Error ? err.name : "error"})`);

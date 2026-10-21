@@ -110,6 +110,23 @@ describe("IntakeConversations", () => {
   });
 });
 
+describe("markEditedInConversation", () => {
+  it("marks the task's newest edited row once, and nothing else", () => {
+    const db = openDatabase(":memory:");
+    db.exec(`INSERT INTO task_events (task_id, actor_id, kind, detail, at) VALUES
+      ('t1', 'u1', 'created', 'reminder', '${START}'), ('t1', 'u1', 'edited', 'text', '${START}'), ('t1', 'u1', 'edited', 'when', '${START}'), ('t2', 'u1', 'edited', 'text', '${START}')`);
+    const convs = new IntakeConversations(db);
+    convs.markEditedInConversation("t1");
+    convs.markEditedInConversation("t1");
+    expect(db.query("SELECT task_id, kind, detail FROM task_events ORDER BY seq").all()).toEqual([
+      { task_id: "t1", kind: "created", detail: "reminder" },
+      { task_id: "t1", kind: "edited", detail: "text" },
+      { task_id: "t1", kind: "edited", detail: `when${CREATED_IN_CONVERSATION}` },
+      { task_id: "t2", kind: "edited", detail: "text" },
+    ]);
+  });
+});
+
 describe("forget-me", () => {
   it("erases the person's intake conversations, transcripts and all", async () => {
     const city = fakeCityHall();

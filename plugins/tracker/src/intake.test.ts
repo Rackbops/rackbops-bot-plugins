@@ -226,6 +226,40 @@ describe("a conversation", () => {
     expect(query(w.dbPath, "SELECT 1 FROM tasks")).toEqual([]);
   });
 
+  it("edits one of the person's own tasks by conversation: the model sees their tasks, Save changes it, history says so", async () => {
+    const w = await setup({ env: { TRACKER_INTAKE: "everyone" } });
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "call Anne", when: "in 1 hour" } });
+    await slash(w.plugin, "remind", CURLY, { strings: { text: "feed the cat", when: "in 1 hour" } });
+    w.script.push(
+      // First the model names Curly's task, which Larry may not change: sent back, unseen.
+      success({ reply: "Changed.", state: "ready", draft: { action: "edit", type: "reminder", taskId: "t2", fields: { text: "x" } } }, 0.01),
+      success({ reply: "I'll rename it.", state: "ready", draft: { action: "edit", type: "reminder", taskId: "t1", fields: { text: "Call Anne back" } } }, 0.01),
+    );
+    await w.dm(LARRY, "change my Anne reminder to say call Anne back");
+    const prompt = (w.city.byKey("intake:c1:1")?.spec as { prompt: string }).prompt;
+    expect(prompt).toContain("- t1 (reminder): call Anne");
+    expect(prompt).not.toContain("feed the cat");
+    const card = w.lastTo(LARRY);
+    expect(card?.content).toBe("I'll rename it.\n\nHere is the change I would save to t1 (call Anne):\n- text: Call Anne back");
+    expect((await press(w.plugin, intakeButtonId("save", "c1", 1), LARRY)).at(-1)).toStartWith("the message\n\n-- Saved.");
+    expect(query<{ title: string }>(w.dbPath, "SELECT title FROM tasks WHERE seq = 1")).toEqual([{ title: "Call Anne back" }]);
+    expect(w.conversations()[0]).toMatchObject({ status: "saved", task_id: "t1" });
+    expect(await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" } })).toContain("edited: in conversation");
+    expect(query<{ kind: string }>(w.dbPath, "SELECT kind FROM task_events WHERE task_id = 't1' AND detail LIKE '% in conversation'")).toEqual([{ kind: "edited" }]);
+  });
+
+  it("an edit whose task went away meanwhile is not saved, and says why", async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", ADMIN, { strings: { text: "call Anne", when: "in 1 hour" } });
+    w.script.push(success({ reply: "Done.", state: "ready", draft: { action: "edit", type: "reminder", taskId: "t1", fields: { text: "Call Anne back" } } }, 0.01));
+    await w.dm(ADMIN, "rename my Anne reminder");
+    const db = new Database(w.dbPath);
+    db.exec("UPDATE tasks SET status = 'archived' WHERE seq = 1");
+    db.close();
+    expect((await press(w.plugin, intakeButtonId("save", "c1", 1), ADMIN)).at(-1)).toContain("-- Not saved: ");
+    expect(w.conversations()[0]).toMatchObject({ status: "open", draft: null });
+  });
+
   it("only the conversation's own person can press its card", async () => {
     const w = await setup({ env: { TRACKER_INTAKE: "everyone" }, script: [ready("A reminder.", "reminder", { text: "Call Anne" })] });
     await w.dm(LARRY, "remind me to call Anne");

@@ -14,7 +14,7 @@ export const INTAKE_IDLE_MS = 24 * 60 * 60 * 1000;
 /** How long an ended conversation's transcript is kept. */
 export const INTAKE_KEPT_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** What a `created` history row's detail ends with when a conversation made the task. */
+/** What a `created` or `edited` history row's detail ends with when a conversation made the task or the change. */
 export const CREATED_IN_CONVERSATION = " in conversation";
 
 export type IntakeStatus = "open" | "saved" | "cancelled" | "closed";
@@ -161,6 +161,16 @@ export class IntakeConversations {
   markCreatedInConversation(taskId: string): void {
     this.db
       .query("UPDATE task_events SET detail = detail || ? WHERE task_id = ? AND kind = 'created' AND substr(detail, -length(?)) != ?")
+      .run(CREATED_IN_CONVERSATION, taskId, CREATED_IN_CONVERSATION, CREATED_IN_CONVERSATION);
+  }
+
+  /** Marks the task's newest `edited` history row as made in conversation, as `markCreatedInConversation` does its `created` row (edit.ts writes the changed fields' names as its detail). */
+  markEditedInConversation(taskId: string): void {
+    this.db
+      .query(
+        `UPDATE task_events SET detail = detail || ? WHERE seq = (SELECT max(seq) FROM task_events WHERE task_id = ? AND kind = 'edited')
+         AND substr(detail, -length(?)) != ?`,
+      )
       .run(CREATED_IN_CONVERSATION, taskId, CREATED_IN_CONVERSATION, CREATED_IN_CONVERSATION);
   }
 
