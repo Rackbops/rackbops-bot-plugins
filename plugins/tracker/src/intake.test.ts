@@ -291,12 +291,25 @@ describe("a conversation", () => {
     expect(query(w.dbPath, "SELECT 1 FROM notices")).toEqual([]);
   });
 
-  it("a turn not answered in time is dropped, the person told to send it again, and its Job charged as one call", async () => {
+  it("a turn not answered in time is dropped and the person told to send it again; uncharged while its Job was still queued", async () => {
     const w = await setup({ script: [HOLD], waitMs: 0 });
     await w.dm(ADMIN, "remind me to call Anne");
     expect(w.lastTo(ADMIN)?.content).toBe(TOO_SLOW);
     expect(w.transcriptOf("c1")).toEqual([]);
+    expect(query(w.dbPath, "SELECT 1 FROM usage")).toEqual([]);
+  });
+
+  it("a turn given up on after a runner started its Job is charged as one call", async () => {
+    const w = await setup({ script: [(job: ScriptedJob) => void (job.status = "running")], waitMs: 50 });
+    await w.dm(ADMIN, "remind me to call Anne");
+    expect(w.lastTo(ADMIN)?.content).toBe(TOO_SLOW);
     expect(query(w.dbPath, "SELECT calls, key FROM usage")).toEqual([{ calls: 1, key: "intake:c1:1" }]);
+  });
+
+  it("a Job put back after a lost lease is waited for, and its answer used", async () => {
+    const w = await setup({ script: [(job: ScriptedJob) => void (job.lastOutcome = "lease_expired"), asking("What time?")], waitMs: 1000 });
+    await w.dm(ADMIN, "remind me to call Anne");
+    expect(w.lastTo(ADMIN)?.content).toBe("What time?");
   });
 
   it("a person erased by forget-me while their turn is out is neither charged nor answered", async () => {

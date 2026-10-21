@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-21T04:24:09.518Z",
+  "generatedAt": "2026-10-21T04:27:29.158Z",
   "plugins": [
     {
       "name": "mcp",
@@ -374,7 +374,7 @@
           "version": "0.34.0",
           "publishedAt": "2026-10-21T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.34.0",
-          "notes": "### Added\n\n- The plain-language intake (plan E10). With `TRACKER_INTAKE` set to `admins` (or `everyone`), a person DMs Clerk what they want in their own words; Clerk asks one question at a time, then shows a draft with Save, Change and Cancel. Only Save makes the task, through the task API's own create, as that person and under the same rules; its history reads `created: in conversation`. The card shows every value whole, and only one press acts on it. When the runner is out of model time, the person is told at once that the assistant is busy, and nothing is charged. Each turn is a `claude -p` Job with no tools through city-hall, on `TRACKER_INTAKE_CAPABILITY`'s tag when set. The conversation is kept in the tracker, deleted seven days after it ends and at once by forget-me. Off by default. Needs a bot host with the DM seam (rackbops-discord-bot#620), and declares the `DirectMessages` intent. On docket 0.14.0.\n- `GET /types` marks the one field an edit clears with `null` (a watch's `max`) with `\"nullable\": true`.\n\n### Schema\n\n- 12: adds `intake_conversations`, purely additive. A database at 12 is refused by 0.33.1 and older, so going back to 0.33.1 needs the database backup taken before the upgrade."
+          "notes": "### Added\n\n- The plain-language intake (plan E10). With `TRACKER_INTAKE` set to `admins` (or `everyone`), a person DMs Clerk what they want in their own words; Clerk asks one question at a time, then shows a draft with Save, Change and Cancel. Only Save makes the task, through the task API's own create, as that person and under the same rules; its history reads `created: in conversation`. The card shows every value whole, and only one press acts on it. A turn whose Job hits a usage limit or a refused credential tells the person at once that the assistant is busy, uncharged. Each turn is a `claude -p` Job with no tools through city-hall, on `TRACKER_INTAKE_CAPABILITY`'s tag when set. The conversation is kept in the tracker, deleted seven days after it ends and at once by forget-me. Off by default. Needs a bot host with the DM seam (rackbops-discord-bot#620), and declares the `DirectMessages` intent. On docket 0.14.0.\n- `GET /types` marks the one field an edit clears with `null` (a watch's `max`) with `\"nullable\": true`.\n\n### Schema\n\n- 12: adds `intake_conversations`, purely additive. A database at 12 is refused by 0.33.1 and older, so going back to 0.33.1 needs the database backup taken before the upgrade."
         },
         {
           "version": "0.33.1",

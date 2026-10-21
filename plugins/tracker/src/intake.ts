@@ -16,7 +16,7 @@ import type { Membership } from "./access.js";
 import { clip, enter, MAX_ANSWER, oneLine, type TrackerDeps } from "./actions.js";
 import { intakeButtonId, parseIntakeId } from "./buttons.js";
 import { EPHEMERAL, FAILED, NO_MENTIONS, type Queue, STARTING } from "./discord-common.js";
-import { isCapability, type JobIdRecords } from "./executor.js";
+import { isCapability, type JobIdRecords, requeuedAfter, startedByRunner } from "./executor.js";
 import type { Conversation, IntakeConversations } from "./intake-store.js";
 import { executeBudget } from "./usage.js";
 import { createAnswer, intakeTypes } from "./web/api-tasks.js";
@@ -63,7 +63,7 @@ export function parseIntakeCapability(raw: string | undefined): string | null {
   return value;
 }
 
-/** Model turns one conversation may take, retries included; past them it closes. */
+/** Model calls (turn Jobs) one conversation may take, retries included; past them it closes. */
 export const INTAKE_TURN_LIMIT = 20;
 /** How long a turn's answer is waited for, queue included. */
 export const INTAKE_WAIT_MS = 5 * 60 * 1000;
@@ -77,14 +77,14 @@ export const NO_MODEL = "I can't take requests by DM on this tracker: its assist
 export const STILL_WORKING = "I'm still working on your last message; send this again once I've answered.";
 export const TEXT_ONLY = "I can only read text: tell me in words what you would like to set up.";
 export const TOO_SLOW = "That took too long, so I've dropped it. Send your message again in a few minutes.";
-export const MODEL_BUSY = "I can't think right now: the assistant's model time is used up. Try again later.";
+export const MODEL_BUSY = "I can't think right now: the assistant is out of model time or unavailable. Try again later.";
 export const NOT_UNDERSTOOD = "Something went wrong working that out, so I've dropped it. Try saying it again, perhaps differently.";
 export const CHANGE_ASK = "What should change?";
 export const STALE = "That draft is no longer open: the conversation moved on or ended.";
 export const NOTHING_SAVED = "Cancelled; nothing was saved.";
 export const TOO_BIG_FOR_CARD = "That is too long for me to show you whole before saving. Could you make it shorter?";
 export function tooLong(webEditor: boolean): string {
-  return `This conversation has gone on for ${INTAKE_TURN_LIMIT} turns, so I've closed it. Send a new message to start again${webEditor ? ", or use the web editor (`/web`)" : ""}.`;
+  return `This conversation has gone on too long (${INTAKE_TURN_LIMIT} model calls), so I've closed it. Send a new message to start again${webEditor ? ", or use the web editor (`/web`)" : ""}.`;
 }
 
 /**
@@ -179,11 +179,11 @@ export function draftButtons(conversationId: string, draftSeq: number): HostButt
 
 /**
  * A turn's run: its result and whether it is charged (docket's rule: not a usage limit, a refused
- * credential or an executor failure); `late` when `waitMs` passed, `submitted` when city-hall had
- * taken the Job by then; `paused` when city-hall put the Job back after its runner stopped (a usage
- * limit, a refused credential or a lost lease, `REQUEUED_OUTCOMES`).
+ * credential or an executor failure); `late` when `waitMs` passed, `claimed` when a runner had
+ * started its Job by then; `paused` when city-hall put the Job back after a usage limit or a refused
+ * credential.
  */
-type Ran = { kind: "result"; result: JobResult; charged: boolean } | { kind: "late"; submitted: boolean } | { kind: "paused" };
+type Ran = { kind: "result"; result: JobResult; charged: boolean } | { kind: "late"; claimed: boolean } | { kind: "paused" };
 
 type Thought = { kind: "answer"; answer: IntakeAnswer } | { kind: "late" } | { kind: "failed"; usageLimit: boolean };
 
@@ -202,6 +202,8 @@ export function createIntake(w: IntakeWiring): Intake {
   async function run(executor: Executor, spec: JobSpec, conversationId: string, key: string, typing: () => Promise<void>): Promise<Ran> {
     const until = performance.now() + waitMs;
     let lastTyping = Number.NEGATIVE_INFINITY;
+    // Whether a runner has started the Job: the city-hall Executor's pending answer names its status (executor.ts, answerFor).
+    let claimed = false;
     try {
       for (;;) {
         if (performance.now() - lastTyping >= TYPING_EVERY_MS) {
@@ -217,13 +219,16 @@ export function createIntake(w: IntakeWiring): Intake {
           if (!(err instanceof JobPendingError) && !(err instanceof ExecutorUnavailableError)) {
             return uncharged(`the executor failed: ${err instanceof Error ? err.name : "error"}`);
           }
+          if (startedByRunner(err)) claimed = true;
+          // A Job city-hall put back after a usage limit or a refused credential: the runner stops
+          // claiming until it is fixed, so the person hears so now rather than in five minutes. The Job
+          // stays in city-hall's queue (it has no cancel) and runs once a runner takes it again; its
+          // answer is then dropped, and it is not charged, as docket charges no usage limit. A lost
+          // lease (a runner restarting) is waited out: another claim usually follows within seconds.
+          const after = requeuedAfter(err);
+          if (after === "usage_limit" || after === "auth_failed") return { kind: "paused" };
         }
-        // The city-hall Executor records a requeued Job as paused (executor.ts, pausedOrAnswer): the
-        // runner is out of model time or locked out, so the person hears so now rather than in five
-        // minutes. The Job stays in city-hall's queue (it has no cancel) and runs once a runner takes it
-        // again; its answer is then dropped, and it is not charged, as docket charges no usage limit.
-        if (w.ids.pausedAt(key) !== null) return { kind: "paused" };
-        if (performance.now() >= until) return { kind: "late", submitted: w.ids.get(key) !== null };
+        if (performance.now() >= until) return { kind: "late", claimed };
         await sleep(pollMs);
       }
     } finally {
@@ -247,8 +252,10 @@ export function createIntake(w: IntakeWiring): Intake {
       const ran = await run(executor, spec, conv.id, key, typing);
       if (ran.kind === "paused") return { kind: "failed", usageLimit: true };
       if (ran.kind === "late") {
-        // A Job city-hall took still runs after the turn gives up on it: one call, as docket charges a late result.
-        if (ran.submitted) await chargeIfKnown(d, user, key, null);
+        // A Job a runner started still runs after the turn gives up on it: one call, as docket charges a
+        // late result. One still queued (a runner busy, or paused until its usage window resets, which
+        // city-hall cannot show) is not charged; it may still run later, unseen.
+        if (ran.claimed) await chargeIfKnown(d, user, key, null);
         return { kind: "late" };
       }
       const { result } = ran;
@@ -346,6 +353,8 @@ export function createIntake(w: IntakeWiring): Intake {
       // The error's name only, as a turn's.
       w.log.error(`intake: a ${parsed.action} press failed (${err instanceof Error ? err.name : "error"})`);
       try {
+        // The card's buttons go: its draft may already be taken, so a press would only say it is gone.
+        await interaction.editReply({ components: [], ...NO_MENTIONS });
         await interaction.followUp({ content: FAILED, ...EPHEMERAL });
       } catch {
         // The interaction is gone; the log has it.

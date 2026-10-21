@@ -560,8 +560,8 @@ eBay's saved-search alerts reach eBay watches by mail (0.25.0), while `TRACKER_M
 one short question at a time and then shows a draft: the task's type and each field, with **Save**,
 **Change** and **Cancel**. Only Save makes the task, through the same create as the task API's
 `POST /tasks` and the web editor, as the person who pressed it and under the same rules (not the API's per-token rate limit);
-its history then reads `created: in conversation`. The card shows every value whole, so
-the person confirms exactly what Save stores; a draft too long to show whole is not offered, and
+its history then reads `created: in conversation`. The card shows every value whole (line
+breaks as spaces), so the person confirms what Save stores; a draft too long to show whole is not offered, and
 the person is asked to shorten it. Change takes the draft away and asks what should change; Cancel
 ends the conversation with nothing saved. Only one press acts on a card, and none while a turn or a
 Save of the person's is out. A refused Save says why, and the
@@ -584,14 +584,18 @@ confirms, plain code acts). Editing an existing task this way is not built yet.
   so a runner of its own can take turns and none waits behind research; else the execute lane's tag.
 - **Limits.** One turn at a time per person (a DM while one is out is turned away). A draft that
   does not fit the type's fields goes back to the model once, unseen. Each model call is one call
-  against the person's daily budget (unless `TRACKER_BUDGET_UNLIMITED`), charged as any Job is, a
-  turn given up after 5 minutes included (its Job still runs). When city-hall puts a turn's Job
-  back in its queue because the runner is out of model time or locked out, the person is told at
-  once that the assistant is busy, nothing is charged and nothing is kept; city-hall has no cancel,
-  so that Job still runs once a runner takes it again, and its answer is dropped. Without
-  `TRACKER_INTAKE_CAPABILITY`, turns queue behind research Jobs on the one runner. The intake sends
-  the admins no notices of its own (each turn is a new Job, so they would come once per DM); the
-  execute lane's tell them. A conversation closes after 20 model calls (a retry counts) or a day
+  against the person's daily budget (unless `TRACKER_BUDGET_UNLIMITED`), charged as any Job is; a
+  turn given up after 5 minutes is charged one call when a runner had started its Job (which still
+  runs), and nothing when it was still queued. When city-hall puts a turn's Job back in its queue
+  after a usage limit or a refused credential, the person is told at once that the assistant is
+  busy, nothing is charged and nothing is kept. Only that turn is told so: the runner then stops
+  claiming until its usage window resets, and city-hall cannot show that, so a later turn waits the
+  5 minutes and is told it took too long, uncharged. A Job put back after a lost lease (a runner
+  restarting) is waited for as usual. city-hall has no cancel, so a Job given up on still runs once
+  a runner takes it, and its answer is dropped. Without `TRACKER_INTAKE_CAPABILITY`, turns queue
+  behind research Jobs on the one runner. The intake sends the admins no notices (each turn is a new
+  Job, so they would come once per DM); its executor logs a paused runner. The admins hear of a
+  pause only through the execute lane's own Jobs, so not of a pause on an intake runner of its own. A conversation closes after 20 model calls (a retry counts) or a day
   idle; the next DM starts a new one.
 - **Privacy.** The transcript lives in the tracker's store (`intake_conversations`, schema 12),
   deleted seven days after the conversation ends and at once by forget-me. city-hall keeps each
