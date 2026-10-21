@@ -248,6 +248,25 @@ describe("a conversation", () => {
     expect(query<{ kind: string }>(w.dbPath, "SELECT kind FROM task_events WHERE task_id = 't1' AND detail LIKE '% in conversation'")).toEqual([{ kind: "edited" }]);
   });
 
+  it("moving a reminder's time by conversation marks its reschedule, not an older edit; finished tasks are not offered", async () => {
+    const w = await setup();
+    await slash(w.plugin, "remind", ADMIN, { strings: { text: "call Anne", when: "in 1 hour" } });
+    await slash(w.plugin, "remind", ADMIN, { strings: { text: "old one", when: "in 1 hour" } });
+    const db = new Database(w.dbPath);
+    db.exec("UPDATE tasks SET status = 'done' WHERE seq = 2");
+    // An earlier edit made elsewhere, which must keep its own history.
+    db.exec(`INSERT INTO task_events (task_id, actor_id, kind, detail, at) VALUES ('t1', 'u1', 'edited', 'text', '${START}')`);
+    db.close();
+    w.script.push(success({ reply: "Moved.", state: "ready", draft: { action: "edit", type: "reminder", taskId: "t1", fields: { when: "tomorrow 10am" } } }, 0.01));
+    await w.dm(ADMIN, "move my Anne reminder to 10am tomorrow");
+    const prompt = (w.city.byKey("intake:c1:1")?.spec as { prompt: string }).prompt;
+    expect(prompt).toContain("- t1 (reminder): call Anne");
+    expect(prompt).not.toContain("old one");
+    expect((await press(w.plugin, intakeButtonId("save", "c1", 1), ADMIN)).at(-1)).toStartWith("the message\n\n-- Saved.");
+    expect(query<{ kind: string }>(w.dbPath, "SELECT kind FROM task_events WHERE task_id = 't1' AND detail LIKE '% in conversation'")).toEqual([{ kind: "schedule_changed" }]);
+    expect(await slash(w.plugin, "task", ADMIN, { sub: "history", strings: { task: "t1" } })).toContain("schedule changed: in conversation");
+  });
+
   it("an edit whose task went away meanwhile is not saved, and says why", async () => {
     const w = await setup();
     await slash(w.plugin, "remind", ADMIN, { strings: { text: "call Anne", when: "in 1 hour" } });

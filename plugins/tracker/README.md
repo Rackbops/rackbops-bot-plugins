@@ -569,11 +569,13 @@ conversation goes on. The model never writes anything (the tier rule: the agent 
 confirms, plain code acts).
 
 A person can change one of their own tasks the same way ("move my Anne reminder to 10am"). Each
-turn shows the model the id, type and title of their newest 30 live tasks of a type the web editor
-can change (a research request cannot be); the card names the task and the fields that change, and
-Save makes the change through the task API's `PATCH /tasks/<id>`, as that person. Its history then
-reads `edited: in conversation`. A change to a task that is not theirs, or that went away
-meanwhile, is never saved.
+turn shows the model the id, type and title of their newest 30 active or paused tasks of a type
+the intake can make (so not a research request, nor a judged watch, which the web editor can still
+change); the card names the task by id and title and lists the fields that change, and Save makes
+the change through the task API's `PATCH /tasks/<id>`, as that person. The history rows that Save
+writes then read `edited: in conversation` (a renamed text, a changed price) or `schedule changed:
+in conversation` (a new time). A change to a task that is not theirs, or that finished or went
+away meanwhile, is never saved.
 
 - **Who.** `off` (the default: DMs are not read at all), `admins` (Rod's "I'll test it first",
   2026-10-19: anyone else registered is told it is not open yet), or `everyone` registered. While

@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
-import { CREATED_IN_CONVERSATION, INTAKE_IDLE_MS, INTAKE_KEPT_MS, IntakeConversations } from "./intake-store.js";
+import { IN_CONVERSATION, INTAKE_IDLE_MS, INTAKE_KEPT_MS, IntakeConversations } from "./intake-store.js";
 import { MIGRATIONS, migrate, openDatabase } from "./schema.js";
 import { CONFIRM_WORD } from "./web/admin-pages.js";
 import { CITY_HALL, fakeCityHall, query, success } from "./web/execute-harness.js";
@@ -103,26 +103,33 @@ describe("IntakeConversations", () => {
     convs.markCreatedInConversation("t1");
     convs.markCreatedInConversation("t1");
     expect(db.query("SELECT task_id, kind, detail FROM task_events ORDER BY seq").all()).toEqual([
-      { task_id: "t1", kind: "created", detail: `reminder${CREATED_IN_CONVERSATION}` },
+      { task_id: "t1", kind: "created", detail: `reminder${IN_CONVERSATION}` },
       { task_id: "t1", kind: "edited", detail: "reminder" },
       { task_id: "t2", kind: "created", detail: "reminder" },
     ]);
   });
 });
 
-describe("markEditedInConversation", () => {
-  it("marks the task's newest edited row once, and nothing else", () => {
+describe("markChangedInConversation", () => {
+  it("marks only the person's edited and schedule_changed rows after the noted one, once", () => {
     const db = openDatabase(":memory:");
     db.exec(`INSERT INTO task_events (task_id, actor_id, kind, detail, at) VALUES
-      ('t1', 'u1', 'created', 'reminder', '${START}'), ('t1', 'u1', 'edited', 'text', '${START}'), ('t1', 'u1', 'edited', 'when', '${START}'), ('t2', 'u1', 'edited', 'text', '${START}')`);
+      ('t1', 'u1', 'created', 'reminder', '${START}'), ('t1', 'u1', 'edited', 'text', '${START}'), ('t2', 'u1', 'edited', 'text', '${START}')`);
     const convs = new IntakeConversations(db);
-    convs.markEditedInConversation("t1");
-    convs.markEditedInConversation("t1");
-    expect(db.query("SELECT task_id, kind, detail FROM task_events ORDER BY seq").all()).toEqual([
-      { task_id: "t1", kind: "created", detail: "reminder" },
-      { task_id: "t1", kind: "edited", detail: "text" },
-      { task_id: "t1", kind: "edited", detail: `when${CREATED_IN_CONVERSATION}` },
-      { task_id: "t2", kind: "edited", detail: "text" },
+    const before = convs.lastEventSeq("t1");
+    expect(before).toBe(2);
+    expect(convs.lastEventSeq("t9")).toBe(0);
+    db.exec(`INSERT INTO task_events (task_id, actor_id, kind, detail, at) VALUES
+      ('t1', 'u1', 'schedule_changed', '{}', '${START}'), ('t1', 'u2', 'edited', 'text', '${START}'), ('t1', 'u1', 'paused', 'x', '${START}')`);
+    convs.markChangedInConversation("t1", "u1", before);
+    convs.markChangedInConversation("t1", "u1", before);
+    expect(db.query("SELECT task_id, actor_id, kind, detail FROM task_events ORDER BY seq").all()).toEqual([
+      { task_id: "t1", actor_id: "u1", kind: "created", detail: "reminder" },
+      { task_id: "t1", actor_id: "u1", kind: "edited", detail: "text" },
+      { task_id: "t2", actor_id: "u1", kind: "edited", detail: "text" },
+      { task_id: "t1", actor_id: "u1", kind: "schedule_changed", detail: `{}${IN_CONVERSATION}` },
+      { task_id: "t1", actor_id: "u2", kind: "edited", detail: "text" },
+      { task_id: "t1", actor_id: "u1", kind: "paused", detail: "x" },
     ]);
   });
 });

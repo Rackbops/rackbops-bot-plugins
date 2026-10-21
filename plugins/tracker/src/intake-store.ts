@@ -14,8 +14,8 @@ export const INTAKE_IDLE_MS = 24 * 60 * 60 * 1000;
 /** How long an ended conversation's transcript is kept. */
 export const INTAKE_KEPT_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** What a `created` or `edited` history row's detail ends with when a conversation made the task or the change. */
-export const CREATED_IN_CONVERSATION = " in conversation";
+/** What a `created`, `edited` or `schedule_changed` history row's detail ends with when a conversation made the task or the change. */
+export const IN_CONVERSATION = " in conversation";
 
 export type IntakeStatus = "open" | "saved" | "cancelled" | "closed";
 
@@ -155,23 +155,33 @@ export class IntakeConversations {
   }
 
   /**
-   * Marks the task's `created` history row as made in conversation (`CREATED_IN_CONVERSATION`, which
+   * Marks the task's `created` history row as made in conversation (`IN_CONVERSATION`, which
    * history.ts shows): docket writes that row with the type's id as its detail, and nothing reads it.
    */
   markCreatedInConversation(taskId: string): void {
     this.db
       .query("UPDATE task_events SET detail = detail || ? WHERE task_id = ? AND kind = 'created' AND substr(detail, -length(?)) != ?")
-      .run(CREATED_IN_CONVERSATION, taskId, CREATED_IN_CONVERSATION, CREATED_IN_CONVERSATION);
+      .run(IN_CONVERSATION, taskId, IN_CONVERSATION, IN_CONVERSATION);
   }
 
-  /** Marks the task's newest `edited` history row as made in conversation, as `markCreatedInConversation` does its `created` row (edit.ts writes the changed fields' names as its detail). */
-  markEditedInConversation(taskId: string): void {
+  /** The task's newest history row number, 0 when it has none: noted before a Save, for `markChangedInConversation`. */
+  lastEventSeq(taskId: string): number {
+    return (this.db.query("SELECT coalesce(max(seq), 0) AS seq FROM task_events WHERE task_id = ?").get(taskId) as { seq: number }).seq;
+  }
+
+  /**
+   * Marks the `edited` and `schedule_changed` history rows a Save wrote -- the person's, after
+   * `afterSeq` -- as made in conversation (`IN_CONVERSATION`, which history.ts shows). edit.ts writes
+   * the changed fields' names as an `edited` row's detail, and docket the new schedule's JSON as a
+   * reschedule's; nothing reads either detail but history.ts, and that only for the marker.
+   */
+  markChangedInConversation(taskId: string, actorId: string, afterSeq: number): void {
     this.db
       .query(
-        `UPDATE task_events SET detail = detail || ? WHERE seq = (SELECT max(seq) FROM task_events WHERE task_id = ? AND kind = 'edited')
+        `UPDATE task_events SET detail = detail || ? WHERE task_id = ? AND actor_id = ? AND seq > ? AND kind IN ('edited', 'schedule_changed')
          AND substr(detail, -length(?)) != ?`,
       )
-      .run(CREATED_IN_CONVERSATION, taskId, CREATED_IN_CONVERSATION, CREATED_IN_CONVERSATION);
+      .run(IN_CONVERSATION, taskId, actorId, afterSeq, IN_CONVERSATION, IN_CONVERSATION);
   }
 
   /** Closes every conversation idle past `INTAKE_IDLE_MS` and deletes every one ended over `INTAKE_KEPT_MS` ago. Returns how many went. */

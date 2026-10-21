@@ -5,7 +5,7 @@
 ### Added
 
 - The plain-language intake (plan E10). With `TRACKER_INTAKE` set to `admins` (or `everyone`), a person DMs Clerk what they want in their own words; Clerk asks one question at a time, then shows a draft with Save, Change and Cancel. Only Save makes the task, through the task API's own create, as that person and under the same rules; its history reads `created: in conversation`. The card shows every value whole, and only one press acts on it. A turn whose Job hits a usage limit or a refused credential tells the person at once that the assistant is busy, uncharged. Each turn is a `claude -p` Job with no tools through city-hall, on `TRACKER_INTAKE_CAPABILITY`'s tag when set. The conversation is kept in the tracker, deleted seven days after it ends and at once by forget-me. Off by default. Needs a bot host with the DM seam (rackbops-discord-bot#620), and declares the `DirectMessages` intent. On docket 0.14.0.
-- A person can change one of their own tasks the same way: Clerk is shown their tasks' ids, types and titles, the card names the task and what changes, and Save goes through the task API's own edit; the history reads `edited: in conversation`.
+- A person can change one of their own tasks the same way: Clerk is shown the ids, types and titles of their newest 30 active or paused tasks it could make (not research, not judged watches), the card names the task and what changes, and Save goes through the task API's own edit; the history rows it writes read `edited: in conversation` or `schedule changed: in conversation`.
 - `GET /types` marks the one field an edit clears with `null` (a watch's `max`) with `"nullable": true`.
 
 ### Schema

@@ -12,7 +12,7 @@ import {
 } from "@rackbops/docket-core";
 import { clip, NO_SUCH_TASK, oneLine, pagesNote, type TrackerDeps } from "./actions.js";
 import { isRecipientPause, PERSON_REF, pauseNames } from "./delivery-health.js";
-import { CREATED_IN_CONVERSATION } from "./intake-store.js";
+import { IN_CONVERSATION } from "./intake-store.js";
 import { errorNamesOther } from "./roster.js";
 import type { ChangesTail, RunsTail } from "./store.js";
 
@@ -78,8 +78,8 @@ export function changeView(e: TaskEvent, viewer: User, now: Date, names: Readonl
   const detail =
     e.kind === "paused" || e.kind === "resumed"
       ? e.detail.replace(PERSON_REF, (_, id: string) => names.get(id) ?? "someone no longer on the tracker")
-      : (e.kind === "created" || e.kind === "edited") && e.detail.endsWith(CREATED_IN_CONVERSATION)
-        ? CREATED_IN_CONVERSATION.trim()
+      : (e.kind === "created" || e.kind === "edited" || e.kind === "schedule_changed") && e.detail.endsWith(IN_CONVERSATION)
+        ? IN_CONVERSATION.trim()
         : null;
   return { at: formatInstant(e.at, viewer.timeZone, now), kind: e.kind.replaceAll("_", " "), detail };
 }

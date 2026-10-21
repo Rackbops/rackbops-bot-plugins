@@ -196,10 +196,11 @@ const uncharged = (detail: string): Ran => ({ kind: "result", result: { kind: "e
 /** Tasks offered to the model for an edit, newest last; past this many, the oldest are left out. */
 export const INTAKE_TASKS_SHOWN = 30;
 
-/** The person's own live tasks of a type the intake may edit (title and id only, docket-types' `IntakeTask`). */
+/** The person's own active or paused tasks of a type the intake may edit (title and id only, docket-types' `IntakeTask`). */
 export async function editableTasks(d: TrackerDeps, user: User, types: readonly IntakeType[]): Promise<IntakeTask[]> {
   const editable = new Set(types.filter((t) => t.editable).map((t) => t.type));
-  const own = (await d.store.listTasks({ ownerId: user.id })).filter((t) => t.status !== "archived" && editable.has(t.type));
+  // Active or paused: a finished one is refused at Save (edit.ts, `owned`).
+  const own = (await d.store.listTasks({ ownerId: user.id })).filter((t) => (t.status === "active" || t.status === "paused") && editable.has(t.type));
   return own.slice(-INTAKE_TASKS_SHOWN).map((t) => ({ id: t.id, type: t.type, title: t.title }));
 }
 
@@ -417,6 +418,8 @@ export function createIntake(w: IntakeWiring): Intake {
       const writer: Writer = { d, queue: w.queue, reading, userId: user.id, arrived: performance.now() };
       const editing = draft.action === "edit";
       if (editing && typeof draft.taskId !== "string") return settle(STALE);
+      // The edit's own history rows come after this one (`markChangedInConversation`).
+      const before = editing ? convs.lastEventSeq(draft.taskId as string) : 0;
       // The very calls the task API's POST /tasks and PATCH /tasks/<id> make, as the person who pressed.
       const answer = editing
         ? await editAnswer(writer, user, draft.taskId as string, draft.fields, "")
@@ -429,7 +432,7 @@ export function createIntake(w: IntakeWiring): Intake {
         // The task exists now: a later step that fails must not tell the person it did not, or they make it again.
         try {
           convs.end(conv.id, "saved", at, taskId);
-          if (editing) convs.markEditedInConversation(taskId);
+          if (editing) convs.markChangedInConversation(taskId, user.id, before);
           else convs.markCreatedInConversation(taskId);
           await settle(saved);
         } catch (err) {
