@@ -589,7 +589,7 @@ confirms, plain code acts). Editing an existing task this way is not built yet.
   runs), and nothing when it was still queued. When city-hall puts a turn's Job back in its queue
   after a usage limit or a refused credential, the person is told at once that the assistant is
   busy, nothing is charged and nothing is kept. Only that turn is told so: the runner then stops
-  claiming until its usage window resets, and city-hall cannot show that, so a later turn waits the
+  claiming until its usage window resets or its credential works again, and city-hall cannot show that, so a later turn waits the
   5 minutes and is told it took too long, uncharged. A Job put back after a lost lease (a runner
   restarting) is waited for as usual. city-hall has no cancel, so a Job given up on still runs once
   a runner takes it, and its answer is dropped. Without `TRACKER_INTAKE_CAPABILITY`, turns queue

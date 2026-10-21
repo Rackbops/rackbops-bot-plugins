@@ -383,11 +383,6 @@ export function readJob(body: unknown): RemoteJob | null {
   };
 }
 
-/**
- * The outcome that put a queued job back, or null: city-hall requeues a job whose claim ended in
- * `usage_limit` or `auth_failed`, or whose lease expired, and it then reads `queued` like a job no
- * runner has claimed yet. Such a job waits on the runner, not on its turn.
- */
 /** The requeue outcome a city-hall Executor's `ExecutorUnavailableError` names (`pausedOrAnswer`), or null. */
 export function requeuedAfter(err: unknown): string | null {
   if (!(err instanceof ExecutorUnavailableError)) return null;
@@ -395,10 +390,22 @@ export function requeuedAfter(err: unknown): string | null {
   return m?.[1] ?? null;
 }
 
-/** Whether a city-hall Executor's `JobPendingError` says a runner has started the Job (`answerFor`). */
+/**
+ * Whether a city-hall Executor's pending or unavailable error says a runner is running the Job
+ * (`answerFor`, and `pausedOrAnswer` for one claimed again after a requeue).
+ */
 export function startedByRunner(err: unknown): boolean {
-  return err instanceof JobPendingError && err.message.startsWith("city-hall job is running");
+  return (
+    (err instanceof JobPendingError && err.message.startsWith("city-hall job is running")) ||
+    (err instanceof ExecutorUnavailableError && err.message === "city-hall job is running after a paused runner")
+  );
 }
+
+/**
+ * The outcome that put a queued job back, or null: city-hall requeues a job whose claim ended in
+ * `usage_limit` or `auth_failed`, or whose lease expired, and it then reads `queued` like a job no
+ * runner has claimed yet. Such a job waits on the runner, not on its turn.
+ */
 
 export function requeuedBy(job: RemoteJob): string | null {
   if (job.status !== "queued" || job.lastOutcome === null || !REQUEUED_OUTCOMES.has(job.lastOutcome)) return null;

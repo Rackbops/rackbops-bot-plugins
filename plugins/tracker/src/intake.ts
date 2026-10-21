@@ -406,9 +406,17 @@ export function createIntake(w: IntakeWiring): Intake {
       const taskId = typeof body.task?.id === "string" ? body.task.id : null;
       const at = d.clock.now();
       if (answer.status === 201 && taskId !== null) {
-        convs.end(conv.id, "saved", at, taskId);
-        convs.markCreatedInConversation(taskId);
-        return settle(`Saved. ${typeof body.message === "string" ? body.message : ""}`.trim());
+        const saved = `Saved. ${typeof body.message === "string" ? body.message : ""}`.trim();
+        // The task exists now: a later step that fails must not tell the person it did not, or they make it again.
+        try {
+          convs.end(conv.id, "saved", at, taskId);
+          convs.markCreatedInConversation(taskId);
+          await settle(saved);
+        } catch (err) {
+          w.log.error(`intake: ${taskId} was saved, but its conversation could not be closed (${err instanceof Error ? err.name : "error"})`);
+          await refuse(saved);
+        }
+        return;
       }
       // Refused by the editor's own rules: the person hears why, and the model does at the next turn.
       const why = typeof body.error?.message === "string" ? body.error.message : "it could not be saved.";
