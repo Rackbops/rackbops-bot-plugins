@@ -1,5 +1,5 @@
 import { describeSchedule, hasFired, type Task, type User } from "@rackbops/docket-core";
-import type { PriceConfig, ResearchConfig } from "@rackbops/docket-types";
+import type { IntakeType, PriceConfig, ResearchConfig } from "@rackbops/docket-types";
 import { NO_LONGER_LISTED, NO_SUCH_TASK, ownTask, type TrackerDeps } from "../actions.js";
 import { loadHistory } from "../history.js";
 import { TASK_BUSY } from "../locks.js";
@@ -58,6 +58,11 @@ export const NOT_EDITABLE = "A research request cannot be edited. Delete it and 
  * only while it is available.
  */
 export function typesAnswer(d: Pick<TrackerDeps, "research">): ApiAnswer {
+  return { status: 200, body: { types: intakeTypes(d) } };
+}
+
+/** `GET /types`'s list, as the intake (intake.ts) hands it to the model: the same fields, the same checks. */
+export function intakeTypes(d: Pick<TrackerDeps, "research">): IntakeType[] {
   const describe = (type: NewType, fields: readonly Field[], mode: "new" | "edit") =>
     fields.map((f) => ({
       name: f.name,
@@ -69,18 +74,15 @@ export function typesAnswer(d: Pick<TrackerDeps, "research">): ApiAnswer {
       ...(f.min !== undefined ? { minimum: f.min } : {}),
       ...(f.max !== undefined ? { maximum: f.max } : {}),
       ...(f.options ? { enum: f.options.map(([value]) => value) } : {}),
+      // The one field an edit clears with `null` says so in data too (docket-types 0.14.0's `IntakeField.nullable`).
+      ...(clearsWithNull(type, mode, f.name) ? { nullable: true } : {}),
     }));
-  return {
-    status: 200,
-    body: {
-      types: offeredTypes(d).map((type) => ({
-        type,
-        editable: type !== "research",
-        create: describe(type, fieldsFor(type, "new", "api"), "new"),
-        edit: describe(type, fieldsFor(type, "edit", "api"), "edit"),
-      })),
-    },
-  };
+  return offeredTypes(d).map((type) => ({
+    type,
+    editable: type !== "research",
+    create: describe(type, fieldsFor(type, "new", "api"), "new"),
+    edit: describe(type, fieldsFor(type, "edit", "api"), "edit"),
+  }));
 }
 
 /** The one field `null` is a value of: a watch's top price in an edit, which it clears (`GET /types` says so). */

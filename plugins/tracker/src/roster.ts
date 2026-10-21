@@ -107,6 +107,7 @@ export const ERASED_TABLES = [
   "notices",
   "ceiling_changes",
   "mail_addresses",
+  "intake_conversations",
   "users",
 ] as const;
 
@@ -330,7 +331,7 @@ export class Roster {
    * `deleteDeliveries`, by the very statement `SqliteStore.deleteDeliveries` runs: the port's
    * `await` cannot sit inside this synchronous transaction), and their pauses; every decline block
    * they are either side of; their admission, delivery health, web sessions, sign-in links, API
-   * tokens, charges, budget and digest notices and ceiling changes; and their person row. Where another person's row keeps an audit column that named them (who
+   * tokens, charges, budget and digest notices, ceiling changes and intake conversations; and their person row. Where another person's row keeps an audit column that named them (who
    * admitted someone, who lifted a block, who changed someone's ceiling), it is set to `FORGOTTEN`; where another person's run
    * error (or its error event) carries their id in a phrase the notifier writes, the id is redacted.
    * Text is matched only in the forms the code writes ids into (`historyNames`, `eventNames`,
@@ -446,6 +447,8 @@ export class Roster {
       this.db.query("UPDATE ceiling_changes SET set_by = ? WHERE set_by = ?").run(FORGOTTEN, userId);
       // Their alert address (mail.ts, schema migration 10): mail sent to it after this finds no one.
       del("mail_addresses", "user_id = ?", userId);
+      // Their DM conversations with the intake (intake-store.ts, schema migration 12), transcripts and all.
+      del("intake_conversations", "user_id = ?", userId);
       del("users", "seq = ?", Number(seq));
 
       const held = this.db.query("SELECT 1 FROM delivery_pauses WHERE task_id = ? LIMIT 1");

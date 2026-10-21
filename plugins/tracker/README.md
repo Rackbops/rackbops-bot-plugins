@@ -439,8 +439,8 @@ in one SQLite transaction in the write queue, **deleted, not archived**:
   of DMs to them (docket's `deleteDeliveries`), charges made for them, and their pause rows;
 - the budget notices kept for them (`budget:person:<id>:...`) and the changes to their ceiling;
 - every decline block they are either side of;
-- their admission, delivery health, web sessions, unused sign-in links and API tokens, and their
-  person row.
+- their admission, delivery health, web sessions, unused sign-in links and API tokens, their DM
+  conversations with the intake (transcripts and all), and their person row.
 
 What stays, and why: another person's task that they received stays that owner's; one paused only
 because DMs to them failed goes back on (one that cannot finish, on a store error, is named in an
@@ -467,7 +467,9 @@ forget-me never calls usr, so it stays until it is removed there. **city-hall
 keeps its own copy of a research Job** -- the spec (the question and context are in its prompt) and
 the result -- under city-hall's retention, not the tracker's (Nazu, plan 5.8): forget-me deletes the
 tracker's `executor_jobs` rows for the erased runs (no tombstone is kept; the keys name only the
-database and a run id), but cannot reach city-hall's job.
+database and a run id), but cannot reach city-hall's job. The same holds for each turn of a DM
+conversation with the intake (below): city-hall keeps that turn's Job, whose prompt carries the
+conversation so far.
 
 Bytes: the database runs with `secure_delete` on, so a deleted row is overwritten, and the first
 start of 0.6.0 on an existing database runs one `VACUUM`, so pages freed before that are rewritten
@@ -550,6 +552,65 @@ eBay's saved-search alerts reach eBay watches by mail (0.25.0), while `TRACKER_M
 - **The format** was read from the first real alert (2026-10-13, one match), kept with its
   tracking parameters and account names taken out as `src/fixtures/ebay-saved-search-alert.eml`.
   An alert with several matches is read the same way, which is inferred until one arrives.
+
+## Talking to Clerk (the plain-language intake)
+
+0.34.0, plan E10. With `TRACKER_INTAKE` on, a person DMs Clerk what they want in their own words
+("remind me to call Anne on Friday", "watch eBay for Wingspan Oceania under 40 dollars"). Clerk asks
+one short question at a time and then shows a draft: the task's type and each field, with **Save**,
+**Change** and **Cancel**. Only Save makes the task, through the same create as the task API's
+`POST /tasks` and the web editor, as the person who pressed it and under the same rules (not the API's per-token rate limit);
+its history then reads `created: in conversation`. The card shows every value whole (line
+breaks as spaces), so the person confirms what Save stores; a draft too long to show whole is not offered, and
+the person is asked to shorten it. Change takes the draft away and asks what should change; Cancel
+ends the conversation with nothing saved. Only one press acts on a card, and none while a turn or a
+Save of the person's is out. A refused Save says why, and the
+conversation goes on. The model never writes anything (the tier rule: the agent proposes, the owner
+confirms, plain code acts).
+
+A person can change one of their own tasks the same way ("move my Anne reminder to 10am"). Each
+turn shows the model the id, type and title of their newest 30 active or paused tasks of a type
+the intake can make (so not a research request, nor a judged watch, which the web editor can still
+change); the card names the task by id and title and lists the fields that change, and Save makes
+the change through the task API's `PATCH /tasks/<id>`, as that person. The history rows that Save
+writes then read `edited: in conversation` (a renamed text, a changed price) or `schedule changed:
+in conversation` (a new time). A change to a task that is not theirs, or that finished or went
+away meanwhile, is never saved.
+
+- **Who.** `off` (the default: DMs are not read at all), `admins` (Rod's "I'll test it first",
+  2026-10-19: anyone else registered is told it is not open yet), or `everyone` registered. While
+  it is on, every DM to the bot is answered: one from someone not admitted or not registered gets
+  the same answer a command would. The same gates as a command first: membership of `TRACKER_GUILD_ID` with its role, then being on
+  the list and registered. Membership is checked through the Discord client of the last interaction
+  the plugin handled, so right after a start, with a gate set, a DM is answered "could not check"
+  until someone has used a command or button.
+- **Each turn** is one `claude -p` Job with no tools, at most 3 model turns, 0.10 USD and 60 s
+  (docket-types' `intakeJob`), through city-hall to the runner on the subscription, never an API
+  key. The tracker keeps the conversation and sends it whole each turn, so no turn keeps a session
+  on the runner (Rod, 2026-10-19, "Clerk keeps it"). A turn is submitted when the DM arrives and
+  asked about every 2 s, beside the execute lane rather than through it, for at most 5 minutes;
+  past that the person is told to send it again. It names `TRACKER_INTAKE_CAPABILITY` when set,
+  so a runner of its own can take turns and none waits behind research; else the execute lane's tag.
+- **Limits.** One turn at a time per person (a DM while one is out is turned away). A draft that
+  does not fit the type's fields goes back to the model once, unseen. Each model call is one call
+  against the person's daily budget (unless `TRACKER_BUDGET_UNLIMITED`), charged as any Job is; a
+  turn given up after 5 minutes is charged one call when a runner had started its Job (which still
+  runs), and nothing when it was still queued. When city-hall puts a turn's Job back in its queue
+  after a usage limit or a refused credential, the person is told at once that the assistant is
+  busy, nothing is charged and nothing is kept. Only that turn is told so: the runner then stops
+  claiming until its usage window resets or its credential works again, and city-hall cannot show that, so a later turn waits the
+  5 minutes and is told it took too long, uncharged. A Job put back after a lost lease (a runner
+  restarting) is waited for as usual. city-hall has no cancel, so a Job given up on still runs once
+  a runner takes it, and its answer is dropped. Without `TRACKER_INTAKE_CAPABILITY`, turns queue
+  behind research Jobs on the one runner. The intake sends the admins no notices (each turn is a new
+  Job, so they would come once per DM); its executor logs a paused runner. The admins hear of a
+  pause only through the execute lane's own Jobs, so not of a pause on an intake runner of its own. A conversation closes after 20 model calls (a retry counts) or a day
+  idle; the next DM starts a new one.
+- **Privacy.** The transcript lives in the tracker's store (`intake_conversations`, schema 12),
+  deleted seven days after the conversation ends and at once by forget-me. city-hall keeps each
+  turn's Job, which carries the conversation so far, under its own retention (Forget me, above).
+  The bot host needs the DM seam (rackbops-discord-bot#620); the plugin declares the
+  `DirectMessages` intent (4096), which is not privileged.
 
 ## Task API
 
@@ -706,10 +767,11 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 
 | Piece | File | Notes |
 |---|---|---|
-| Store | `src/store.ts`, `src/schema.ts` | docket's `Store` port on `bun:sqlite`, in `<dataDir>/tracker/tracker.sqlite` (WAL). A Discord id belongs to at most one user. Schema versioned by `PRAGMA user_version`; a shipped migration is never edited. Schema 5 (0.9.0) is docket 0.4.0's: a run's `record`, a series point's `key`, `deliveries` (from `delivery_claims`), `usage` and `notices`. Schema 6 (0.11.0) is docket 0.5.0's, all additive: `findings`, a charge's `usage.key`, and the Executor's `executor_jobs`. Forget-me erases a person's findings and their runs' Job records too. Schema 8 (0.19.0) adds `want_inbox`, the listings sent in for an inbox watch. Schema 9 (0.20.0) adds `users.usr_subject`, a person's usr user id, null until linked, unique when set. Schema 10 (0.25.0) adds `mail_addresses`. Schema 11 (0.28.0) adds `research_sources`, the pages a browser sent in for a research request (at most 10 per request, one per address, 99,800 characters of text in all), dropped once the request ends (by the execute tick's housekeeping, so only while the execute lane is configured) and always erased by forget-me. `store.test.ts` runs docket's `STORE_CONTRACT` against it. |
+| Store | `src/store.ts`, `src/schema.ts` | docket's `Store` port on `bun:sqlite`, in `<dataDir>/tracker/tracker.sqlite` (WAL). A Discord id belongs to at most one user. Schema versioned by `PRAGMA user_version`; a shipped migration is never edited. Schema 5 (0.9.0) is docket 0.4.0's: a run's `record`, a series point's `key`, `deliveries` (from `delivery_claims`), `usage` and `notices`. Schema 6 (0.11.0) is docket 0.5.0's, all additive: `findings`, a charge's `usage.key`, and the Executor's `executor_jobs`. Forget-me erases a person's findings and their runs' Job records too. Schema 8 (0.19.0) adds `want_inbox`, the listings sent in for an inbox watch. Schema 9 (0.20.0) adds `users.usr_subject`, a person's usr user id, null until linked, unique when set. Schema 10 (0.25.0) adds `mail_addresses`. Schema 11 (0.28.0) adds `research_sources`, the pages a browser sent in for a research request (at most 10 per request, one per address, 99,800 characters of text in all), dropped once the request ends (by the execute tick's housekeeping, so only while the execute lane is configured) and always erased by forget-me. Schema 12 (0.34.0) adds `intake_conversations`, the intake's DM conversations. `store.test.ts` runs docket's `STORE_CONTRACT` against it. |
 | Notify lane | `src/notify-lane.ts` | docket's `Lanes.tickNotify` on two host ticks, every 60 s, one pass per task with work (a due run, a run in flight, a DM owed or claimed), each under that task's lock through a view of the store limited to that task: `notify` runs every type but the page readers, `poll` runs only them (`price`, `wantlist`) with the Fetch port, so a slow page never holds up a reminder. A task the execute tick holds is left for the next notify tick, never waited on. Registers `reminder`, `renewal`, `price`, `research`, `scout`, `wantlist` and `wantjudge`. |
 | Want-list watcher | `src/want.ts`, `src/inbox.ts`, `src/web/api-listings.ts`; the types and sources are `@rackbops/docket-types`' (0.7.0: `wantlist`, `wantjudge`, `pageSource`, `bggSource`, `inboxSource`) | `/want`'s rules; the `wantlist` type over a `Source` port; the `inbox` source over the `want_inbox` table (schema 8, 0.19.0: the listings sent in per watch, keyed `ebay-` or `bgg-` and 24 random hex digits, the newest 100 kept, as many as one look reads; a watch's rows go when it is deleted or finishes (#208), and forget-me erases them with the person's tasks), filled by the task API's listings route; the `page` source (JSON-LD listings through the fenced Fetch port, no HTML guessing) and the `bgg` source (BGG's XML API with the Bearer token, on `boardgamegeek.com`, never `www.`, at least 5 s between requests (a read due sooner is put back for the next tick, never waited on), read by a bounded `indexOf` parser, never a pattern over the whole body; a 401 or 403 is the token refused, a 202, 429 or 5xx a miss). The BGG fixture is hand-written to BGG's documented shape: BGG declined the application, so there is no token to capture a real response with. The judged watch (`wantjudge`) is an execute-lane type: its `prepare` reads the source in plain code (an uncharged `NoJob` when nothing is new), keeps new listings in the task's state as `pending` and asks for a follow-up, whose `prepare` makes the judge Job; `finish` maps the verdicts back by number, so a Job collected after a restart still has its listings. On this lane a BGG read due too soon waits out the spacing once. |
 | Execute lane | `src/execute-lane.ts`, `src/executor.ts`, `src/research.ts`, `src/research-sources.ts`, `src/web/api-sources.ts`, `src/scout.ts` (the `scout` and `research` types are docket-types'; `research` over `researchType({ readSources })`, 0.8.0, reading a browser request's pages from `research_sources`, and since 0.29.0 a fuller pass's, given only with the web area) | Only when the city-hall Executor is configured: a third host tick, `execute`, that starts docket's `Lanes.tickExecute` in the background (one at a time, at most once per host tick, about a minute) over every task with a due execute-lane run, reserving those tasks and then holding their locks in id order, through one docket `Lanes` kept while the plugin is active (docket keeps its usage-limit pause on it). The Executor is city-hall#18's source pair (above), its I/O injected; `executor_jobs` keeps each Job key's city-hall id. `/research`'s and `/scout`'s rules, and the scout type. |
+| Intake | `src/intake.ts`, `src/intake-store.ts`; the turn is docket-types' (0.14.0: `intakeJob`, `readIntake`, `checkDraft`) | The DM hook, the turn loop on its own poll with its own city-hall Executor (Job ids in memory only), the draft card's buttons and Save through `web/api-tasks.ts`'s create; the conversations table. |
 | Budgets, usage | `src/ceilings.ts`, `src/usage.ts`; `src/web/ceiling-pages.ts`, `src/web/usage-pages.ts` | The execute lane's `BudgetPolicy` (docket's defaults plus each person's raise, or no ceiling at all while `TRACKER_BUDGET_UNLIMITED` is on), the ceiling changes, and the pure usage report `/admin/usage` renders from docket's `usage` table. |
 | Page reads | `src/fetch.ts` | docket's `Fetch` port for `price` and the want-list's `page` source: http or https on the default port, no credentials, every resolved address public (no loopback, private, link-local, CGNAT, multicast or reserved range, IPv4 or IPv6), redirects followed by hand and re-checked (at most 5; a redirect to something that is not a web address is refused), 15 s including the name lookup, at most 3 MB kept. The body is then rebuilt in linear time (`src/page.ts`) to just what extraction reads -- at most 200 JSON-LD blocks and 300 meta tags, the first ones in page order (room for a shop search page with one JSON-LD block per product beside its other blocks; the `page` source keeps at most 100 listings a page, docket-types' `MAX_LISTINGS`, and a look takes at most 20 new ones, the rest on the next look), and the page with every `<` blanked, so `near` still reads text, attributes and script data -- because docket's extraction patterns take quadratic time on a page of unclosed tags. Tag names are matched with only `A`-`Z` folded to lower case, so a letter that changes length when lower-cased (the Turkish `İ`) does not shift the tags after it out of reach. A read the tick's abort cuts short requeues its run instead of counting a miss. A DNS answer that changes between the check and the read is not caught here. A refusal says why -- the name did not resolve, or it is not on the public internet -- so anyone who may make a price tracker or page watch (a command, the web editor or the task API) can learn which names the bot host's resolver maps to private addresses; one read at a time per person and the API's rate limit slow that, they do not stop it. A want-list page read (docket-types' `page` source) carries `NEVER_EBAY` and is refused on any hop to eBay; a price read is not. |
 | Renewals, prices | `src/tracked.ts`, `src/price.ts`, `src/series.ts`, `src/page.ts` | `/renewal`, `/price` and `/task decide`; the series lines of `/task history`. The series (docket's `series` table, schema 1) holds a renewal's paid amounts and a price's readings. |
@@ -738,6 +800,8 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 | `TRACKER_CITY_HALL_KEY` | yes | The source bearer key city-hall checks on `/api/execute/jobs` (its `CITY_HALL_API_KEY`, city-hall#18). Visible ASCII only: a value with whitespace inside it or any other character outside visible ASCII refuses to load (whitespace at either end is trimmed), naming the variable. Never logged. Kept in the instance's own env, never in a repo. |
 | `TRACKER_CITY_HALL_CAPABILITY` | no | The capability tag every Job names, one only docket-runner carries (plan item 71), e.g. `claude-cli:subscription`. No default: a guessed tag could send the tracker's Jobs to another agent. |
 | `TRACKER_CITY_HALL_ACCESS_CLIENT_ID`, `TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET` | yes | A Cloudflare Access service token for city-hall's edge (`CF-Access-Client-Id` / `-Secret`), when one is in front. Both or neither, each visible ASCII only, as for the key. |
+| `TRACKER_INTAKE` | no | The plain-language intake (above): `off`, `admins` or `everyone`, any case. Unset or empty = off; anything else refuses to load. On with the execute lane off, a DM is answered that the assistant is not set up. |
+| `TRACKER_INTAKE_CAPABILITY` | no | The capability tag the intake's turn Jobs name, e.g. `claude-cli:intake`, for a runner that takes only those. Unset = `TRACKER_CITY_HALL_CAPABILITY`; one that is not a tag refuses to load. |
 | `TRACKER_FIRECRAWL_KEY` | yes | A Firecrawl API key for `/want source: shopify` (0.32.0): each look is one Shopify catalog search through Firecrawl's Alexandria (`shopify` / `catalog/search_catalog`, 5 credits), sent only to `https://api.firecrawl.dev/v2/scrape` with no redirect followed. Unset or empty = `source: shopify` is refused. Never logged. The runner's Firecrawl key can be used here too, in which case both draw on that one account's credits. |
 | `TRACKER_EBAY_CLIENT_ID` | yes | The App ID (client id) of an eBay developer Production keyset, for `/want source: ebay` through eBay's own Browse API (0.33.0). Goes with `TRACKER_EBAY_CLIENT_SECRET`: both set = `source: ebay` searches eBay US through the API; both unset or empty = `source: ebay` is an inbox watch; one without the other refuses to load. Sent only to `https://api.ebay.com`, with no redirect followed. Never logged. eBay's Dev ID is not needed. |
 | `TRACKER_EBAY_CLIENT_SECRET` | yes | The Cert ID (client secret) of that keyset. The tracker mints an application token from the pair (client credentials, scope `https://api.ebay.com/oauth/api_scope`), keeps it in memory only, and mints again a minute before it ends or once when a search answers 401. A look is one of the keyset's Browse calls (5,000 a day). eBay US prices in USD, so an API eBay watch takes no other `currency`. Never logged. |

@@ -418,6 +418,32 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX research_sources_task ON research_sources (task_id, seq);
   `,
+  // 12 (0.34.0; the plain-language intake, plan E10, Rod's "Go" of 2026-10-21): purely additive, one
+  // new table and its index; no existing table or row is touched.
+  // - `intake_conversations`: each DM conversation that turns a person's own words into a task
+  //   (intake.ts), its public id `c` + `seq`. `transcript` is the JSON of docket-types' `IntakeLine`s,
+  //   the person's lines and the bot's, which the tracker keeps and sends whole each turn (Rod,
+  //   2026-10-19, "Clerk keeps it"); `draft` the draft shown with Save, Change and Cancel, `draft_seq`
+  //   its number, so a press on an older card is refused. `status` is open, saved, cancelled or
+  //   closed; one open conversation per person. An open one idle for a day closes, an ended one goes
+  //   seven days after it ended, and forget-me deletes a person's at once (roster.ts). A database at
+  //   12 is refused by 0.33.1 and older.
+  `
+  CREATE TABLE intake_conversations (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    transcript TEXT NOT NULL,
+    draft TEXT,
+    draft_seq INTEGER NOT NULL DEFAULT 0,
+    turns INTEGER NOT NULL DEFAULT 0,
+    task_id TEXT,
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    ended_at TEXT
+  );
+  CREATE UNIQUE INDEX intake_conversations_open ON intake_conversations (user_id) WHERE status = 'open';
+  `,
 ];
 
 /** How long a statement waits on another connection's lock before SQLITE_BUSY. */

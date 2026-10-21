@@ -73,6 +73,11 @@ export const CAPABILITY_FORMAT = "^[a-z0-9]+([-:][a-z0-9]+)*$";
 const CAPABILITY = new RegExp(CAPABILITY_FORMAT);
 const MAX_CAPABILITY = 100;
 
+/** Whether `tag` is a capability tag `TRACKER_CITY_HALL_CAPABILITY` (or the intake's own, intake.ts) may name. */
+export function isCapability(tag: string): boolean {
+  return tag.length <= MAX_CAPABILITY && CAPABILITY.test(tag);
+}
+
 /** An https origin, as `TRACKER_WEB_URL` takes it. */
 export const CITY_HALL_URL_FORMAT = "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$";
 
@@ -198,7 +203,7 @@ export function parseCityHallConfig(env: Readonly<Record<string, string | undefi
     }
     origin = parsed.origin;
   }
-  if (capability !== undefined && (capability.length > MAX_CAPABILITY || !CAPABILITY.test(capability))) {
+  if (capability !== undefined && !isCapability(capability)) {
     throw new Error(`${ENV.capability}: "${capability}" is not a capability tag (lowercase words joined by ":" or "-", e.g. claude-cli:subscription)`);
   }
   // Each goes out as a header value. One outside visible ASCII (the manifest's `^[!-~]+$`,
@@ -224,6 +229,9 @@ export function parseCityHallConfig(env: Readonly<Record<string, string | undefi
     },
   };
 }
+
+/** What the Executor keeps per Job key: city-hall's job id, and when the Job was first seen paused. */
+export type JobIdRecords = Pick<JobRecords, "get" | "put" | "pausedAt" | "markPaused">;
 
 /** The tracker's record of its Jobs at city-hall: docket's Job key -> city-hall's job id (`executor_jobs`, migration 6). */
 export class JobRecords {
@@ -375,11 +383,30 @@ export function readJob(body: unknown): RemoteJob | null {
   };
 }
 
+/** The requeue outcome a city-hall Executor's `ExecutorUnavailableError` names (`pausedOrAnswer`), or null. */
+export function requeuedAfter(err: unknown): string | null {
+  if (!(err instanceof ExecutorUnavailableError)) return null;
+  const m = /^city-hall requeued the job after ([a-z_]+)$/.exec(err.message);
+  return m?.[1] ?? null;
+}
+
+/**
+ * Whether a city-hall Executor's pending or unavailable error says a runner is running the Job
+ * (`answerFor`, and `pausedOrAnswer` for one claimed again after a requeue).
+ */
+export function startedByRunner(err: unknown): boolean {
+  return (
+    (err instanceof JobPendingError && err.message.startsWith("city-hall job is running")) ||
+    (err instanceof ExecutorUnavailableError && err.message === "city-hall job is running after a paused runner")
+  );
+}
+
 /**
  * The outcome that put a queued job back, or null: city-hall requeues a job whose claim ended in
  * `usage_limit` or `auth_failed`, or whose lease expired, and it then reads `queued` like a job no
  * runner has claimed yet. Such a job waits on the runner, not on its turn.
  */
+
 export function requeuedBy(job: RemoteJob): string | null {
   if (job.status !== "queued" || job.lastOutcome === null || !REQUEUED_OUTCOMES.has(job.lastOutcome)) return null;
   if (job.attempts !== null && job.attempts < 1) return null;
@@ -399,7 +426,8 @@ export function answerFor(job: RemoteJob): JobResult {
 
 export interface CityHallExecutorOptions {
   config: CityHallConfig;
-  records: JobRecords;
+  /** Where the Job ids are kept: `JobRecords` for the execute lane; the intake keeps its own in memory (intake.ts). */
+  records: JobIdRecords;
   log: PluginLog;
   now: () => Date;
   /**
