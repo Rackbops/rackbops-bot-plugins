@@ -81,6 +81,10 @@ export async function world(
     usrFetch?: typeof fetch;
     /** Forget-me's wait for a running tick, in ms (admin.ts `TICK_WAIT_MS` by default). */
     tickWaitMs?: number;
+    /** The intake's wait on a turn (intake.ts): its sleep, poll interval and limit. */
+    intakeSleep?: (ms: number) => Promise<void>;
+    intakePollMs?: number;
+    intakeWaitMs?: number;
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "tracker-web-"));
@@ -137,6 +141,9 @@ export async function world(
       ...(opts.ebayFetch ? { ebayFetch: opts.ebayFetch } : {}),
       ...(opts.usrFetch ? { usrFetch: opts.usrFetch } : {}),
       ...(opts.tickWaitMs !== undefined ? { tickWaitMs: opts.tickWaitMs } : {}),
+      ...(opts.intakeSleep ? { intakeSleep: opts.intakeSleep } : {}),
+      ...(opts.intakePollMs !== undefined ? { intakePollMs: opts.intakePollMs } : {}),
+      ...(opts.intakeWaitMs !== undefined ? { intakeWaitMs: opts.intakeWaitMs } : {}),
     },
   );
   plugins.push(plugin);

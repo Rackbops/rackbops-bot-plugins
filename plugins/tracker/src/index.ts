@@ -20,6 +20,9 @@ import { type Interactionish, lookupMembership, type RoleGate, serial } from "./
 import { createSurface, type SurfaceWiring } from "./discord.js";
 import { decideHealth, type HealthState, healthResponse } from "./health.js";
 import { WantInbox } from "./inbox.js";
+import { createIntake, INTAKE_CAPABILITY_KEY, INTAKE_KEY, IntakeJobIds, parseIntakeCapability, parseIntakeMode } from "./intake.js";
+import { IntakeConversations } from "./intake-store.js";
+import { parseIntakeId } from "./buttons.js";
 import { ResearchSources } from "./research-sources.js";
 import { TaskLocks } from "./locks.js";
 import { createDmNotifier } from "./notifier.js";
@@ -149,6 +152,12 @@ export interface TrackerOptions {
   usrFetch?: typeof fetch;
   /** Test seam: forget-me's wait for a running tick, in ms (admin.ts `TICK_WAIT_MS` by default). */
   tickWaitMs?: number;
+  /** Test seam: an Executor for the intake's turns (intake.ts) in place of the city-hall one; `executor` otherwise. */
+  intakeExecutor?: Executor;
+  /** Test seams for the intake's wait on a turn: its sleep, its poll interval and its limit, in ms. */
+  intakeSleep?: (ms: number) => Promise<void>;
+  intakePollMs?: number;
+  intakeWaitMs?: number;
 }
 
 /**
@@ -189,6 +198,10 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   // Budgets off for the alpha (roshne, 2026-10-02): no daily ceiling holds a run; usage is still recorded.
   const budgetUnlimited = parseBudgetUnlimited(host.env[BUDGET_UNLIMITED_KEY]);
   const cityHallConfig: CityHallConfig | null = cityHall.config;
+  // The plain-language intake (intake.ts): who may DM Clerk a request, and the tag its turns name.
+  const intakeMode = parseIntakeMode(host.env[INTAKE_KEY]);
+  const intakeCapability = parseIntakeCapability(host.env[INTAKE_CAPABILITY_KEY]);
+  const intakeIds = new IntakeJobIds();
   // The execute lane runs only when fully set up (or a test hands an Executor in).
   const executeOn = cityHallConfig !== null || options.executor !== undefined;
   const clock: Clock = options.clock ?? { now: () => new Date() };
@@ -228,6 +241,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   let warnedNoDm = false;
   let executeLane: ExecuteLane | null = null;
   let jobRecords: JobRecords | null = null;
+  let conversations: IntakeConversations | null = null;
+  let intakeExecutor: Executor | null = null;
   let executeRun: Promise<void> | null = null;
   let lastExecute = Number.NEGATIVE_INFINITY;
   // While forget-me runs (from its wait for the ticks to its erasure), no execute tick starts.
@@ -277,6 +292,14 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     if (failed > 0) host.log.warn(`${kind === "poll" ? "poll" : "notify"} lane: ${ran} ran, ${failed} failed`);
     // eBay API watches' DMs are not kept past six hours (ebay-forget.ts).
     if (kind === "notify" && db) forgetEbay(db, false);
+    // Idle intake conversations close, and week-old ended ones go (intake-store.ts).
+    if (kind === "notify" && conversations) {
+      try {
+        conversations.purge(clock.now());
+      } catch (err) {
+        host.log.warn(`intake: clearing old conversations failed (${err instanceof Error ? err.name : "error"})`);
+      }
+    }
     // The daily digest (plan 5.5, digest.ts), after the runs due now: a reminder never waits on it.
     if (kind === "notify" && options.digest !== false && deps && store) {
       const r = await runDigests({ store, notifier: deps.notifier, log: host.log, ...(delivery ? { health: delivery } : {}) }, clock.now(), signal);
@@ -369,6 +392,20 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     membership: options.webMembership ?? clientMembership,
   });
   const interactions = surface.interactions;
+  const intake = createIntake({
+    mode: intakeMode,
+    deps: () => deps,
+    conversations: () => conversations,
+    executor: () => intakeExecutor,
+    ids: intakeIds,
+    queue,
+    // As a command's: no gate without TRACKER_GUILD_ID; with one, unknown until an interaction gave the Client.
+    membership: async (discordId) => (guildIds === null ? "not-checked" : ((await clientMembership(discordId)) ?? "unknown")),
+    log: host.log,
+    ...(options.intakeSleep ? { sleep: options.intakeSleep } : {}),
+    ...(options.intakePollMs !== undefined ? { pollMs: options.intakePollMs } : {}),
+    ...(options.intakeWaitMs !== undefined ? { waitMs: options.intakeWaitMs } : {}),
+  });
 
   return {
     commands: surface.commands.map((c) => ({
@@ -378,10 +415,15 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         return c.handle(interaction);
       },
     })),
-    interactions: (interaction) => {
+    interactions: async (interaction) => {
       capture(interaction);
+      // A draft card's Save, Change or Cancel (intake.ts); every other press as before.
+      if (parseIntakeId(interaction.customId) && interaction.isMessageComponent() && (await intake.press(interaction))) return;
       return interactions(interaction);
     },
+
+    // A DM a person sent the bot (rackbops-discord-bot's DM seam): the intake reads it while TRACKER_INTAKE is on.
+    directMessage: (message) => intake.directMessage(message),
 
     async activate() {
       let path = options.dbPath;
@@ -416,6 +458,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         // fails part way leaves no handle a tick could find, and its database closed (below).
         const openedInbox = new WantInbox(opened);
         const openedSources = new ResearchSources(opened);
+        const openedConversations = new IntakeConversations(opened);
         // The owner of a task a recipient's failures paused is told once, by a plain DM: not counted
         // toward the owner's own pause (they may simply be offline), and `/tasks` shows it regardless.
         const openedDelivery = new DeliveryHealth(opened, openedStore, {
@@ -443,6 +486,23 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
             notice: async (key, text) => void (await noticeOnce(openedStore, notifier, key, clock.now(), { text })),
             ...(options.cityHallFetch ? { fetchImpl: options.cityHallFetch } : {}),
           });
+        }
+        // The intake's turns: their own city-hall Executor, Job ids in memory (intake.ts), its own tag when set.
+        let turns: Executor | null = options.intakeExecutor ?? options.executor ?? null;
+        if (!turns && cityHallConfig) {
+          turns = createCityHallExecutor({
+            config: { ...cityHallConfig, capability: intakeCapability ?? cityHallConfig.capability },
+            records: intakeIds,
+            databaseId: databaseId(opened),
+            log: host.log,
+            now: () => clock.now(),
+            notice: async (key, text) => void (await noticeOnce(openedStore, notifier, key, clock.now(), { text })),
+            ...(options.cityHallFetch ? { fetchImpl: options.cityHallFetch } : {}),
+          });
+        }
+        if (intakeMode !== "off") {
+          if (turns) host.log.info(`intake on for ${intakeMode}${cityHallConfig ? `, capability ${intakeCapability ?? cityHallConfig.capability}` : ""}`);
+          else host.log.warn(`${INTAKE_KEY} is ${intakeMode}, but the execute lane is off, so a DM is answered that the assistant is not set up`);
         }
         // One docket Lanes for the execute lane while active: it keeps the usage-limit pause (execute-lane.ts).
         // Its budget is docket's defaults with each person's raised ceiling read before every run (ceilings.ts),
@@ -503,6 +563,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         store = openedStore;
         inbox = openedInbox;
         sources = openedSources;
+        conversations = openedConversations;
+        intakeExecutor = turns;
         delivery = openedDelivery;
         jobRecords = records;
         executeLane = lane;
@@ -526,6 +588,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       store = null;
       inbox = null;
       sources = null;
+      conversations = null;
+      intakeExecutor = null;
       const closing = db;
       db = null;
       // A tick already running (notify, poll or execute: each is `tracked`) keeps the store it read,

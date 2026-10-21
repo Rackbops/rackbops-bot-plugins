@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-20T04:44:39.182Z",
+  "generatedAt": "2026-10-21T04:11:09.576Z",
   "plugins": [
     {
       "name": "mcp",
@@ -200,10 +200,12 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.33.1",
-      "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, eBay through eBay's own Browse API once its keys are set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, and a JSON task API with personal API tokens",
+      "version": "0.34.0",
+      "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, eBay through eBay's own Browse API once its keys are set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, a JSON task API with personal API tokens, and a plain-language intake: DM Clerk what you want in your own words, answer its questions, and press Save on the draft it shows",
       "hostApiVersion": 1,
-      "intents": [],
+      "intents": [
+        4096
+      ],
       "commands": [
         "allow",
         "register",
@@ -290,6 +292,20 @@
           "secret": true
         },
         {
+          "key": "TRACKER_INTAKE",
+          "format": "^ *([Oo][Ff][Ff]|[Aa][Dd][Mm][Ii][Nn][Ss]|[Ee][Vv][Ee][Rr][Yy][Oo][Nn][Ee])? *$",
+          "description": "Who may DM Clerk a request in their own words (the plain-language intake): off, admins or everyone registered. Unset or empty = off: DMs are not read. Each turn is a claude -p Job with no tools through the execute lane's city-hall, so it needs TRACKER_CITY_HALL_URL, _KEY and _CAPABILITY; the person presses Save on a draft before anything is made. Needs a bot host with the DM seam (rackbops-discord-bot#620).",
+          "required": false,
+          "secret": false
+        },
+        {
+          "key": "TRACKER_INTAKE_CAPABILITY",
+          "format": "^[a-z0-9]+([-:][a-z0-9]+)*$",
+          "description": "The capability tag the intake's turn Jobs name, so a runner of their own takes them and a turn never queues behind research, e.g. claude-cli:intake. Unset = TRACKER_CITY_HALL_CAPABILITY.",
+          "required": false,
+          "secret": false
+        },
+        {
           "key": "TRACKER_FIRECRAWL_KEY",
           "format": "^[!-~]+$",
           "description": "A Firecrawl API key for the want-list watcher's Shopify search (Firecrawl's Alexandria, shopify catalog/search_catalog, 5 credits a look). Set = /want source: shopify watches Shopify stores for new copies in stock, once a day by default and never more often; unset = /want source: shopify says it is not available. Sent only to api.firecrawl.dev. Never logged.",
@@ -355,6 +371,12 @@
       ],
       "releases": [
         {
+          "version": "0.34.0",
+          "publishedAt": "2026-10-21T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.34.0",
+          "notes": "### Added\n\n- The plain-language intake (plan E10). With `TRACKER_INTAKE` set to `admins` (or `everyone`), a person DMs Clerk what they want in their own words; Clerk asks one question at a time, then shows a draft with Save, Change and Cancel. Only Save makes the task, through the task API's own create, as that person and under the same rules; its history reads `created: in conversation`. Each turn is a `claude -p` Job with no tools through city-hall, on `TRACKER_INTAKE_CAPABILITY`'s tag when set. The conversation is kept in the tracker, deleted seven days after it ends and at once by forget-me. Off by default. Needs a bot host with the DM seam (rackbops-discord-bot#620), and declares the `DirectMessages` intent. On docket 0.14.0.\n- `GET /types` marks the one field an edit clears with `null` (a watch's `max`) with `\"nullable\": true`.\n\n### Schema\n\n- 12: adds `intake_conversations`, purely additive. A database at 12 is refused by 0.33.1 and older, so going back to 0.33.1 needs the database backup taken before the upgrade."
+        },
+        {
           "version": "0.33.1",
           "publishedAt": "2026-10-20T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.33.1",
@@ -407,12 +429,6 @@
           "publishedAt": "2026-10-16T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.30.0",
           "notes": "### Changed\n\n- **Research on docket 0.10.0: every part of the question, from its best source.** A research\n  answer now covers every part of your question: the run splits it into its parts and answers\n  each one.\n- The run names each part's best source -- BoardGameGeek for a board game, say -- and tries it.\n  BoardGameGeek is tried like any other site, with an honest read.\n- With the web area on, a best source that refuses the run (a 403, a CAPTCHA, a sign-in wall) is\n  listed on the answer's \"Couldn't open:\" list, with its address and why, rather than as a\n  \"didn't check\" line in the answer; that list is what starts the fuller pass (0.29.0), so\n  Claude in Chrome can gather it for you. Without the web area, no fuller pass can follow, so the\n  answer names it as a gap.\n- eBay is never opened by any research run (eBay's User Agreement, section 3). A `sources:\n  browser` request still answers only from the pages you send in.\n\n### Schema\n\n- No change."
-        },
-        {
-          "version": "0.29.0",
-          "publishedAt": "2026-10-14T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.29.0",
-          "notes": "### Added\n\n- **A fuller pass on pages the research could not open** (docket-types 0.9.0). A research request\n  whose first answer listed pages its run could not open (BoardGameGeek refusing the runner, a\n  403, a CAPTCHA, a sign-in wall) still DMs you its reviewed answer, now with a \"Couldn't open:\"\n  list, and then waits for pages for up to 14 days (or until 10 minutes before its deadline), on\n  one queued follow-up that sends, runs and charges nothing. Ask Claude in Chrome to gather pages\n  for it: the task API's `POST /api/v1/tasks/<id>/sources` takes them as for a `sources: browser`\n  request, and `POST /api/v1/tasks/<id>/sources/ready` moves the request to now and deletes the\n  follow-up, in that order, under the task's lock; the next execute tick runs a second pass on the\n  pages, which DMs you an \"Update to ...\" of what it adds or corrects. A request whose `ready`\n  never comes runs that second pass at its expiry on whatever pages are in, as a browser request\n  does; with none in it makes no model call and ends, the first answer standing. `ready` is a 409 on a paused request,\n  and once the follow-up has started, has fired or has its Job out at the runner (a try put back\n  pending is queued again, and deleting it would orphan its Job); both routes refuse the request\n  once the second pass has started.\n- The task API's JSON shows such a request's `waitingForPages`, `pages`, top-level `sources`\n  (`web`) and a new `blocked` list of `{site, url?, why}` -- the pages to gather -- for every\n  research request whose state lists any, and for a browser request (an empty list);\n  `settings.sources` stays `web`. `/tasks` and `/task history` add `(N pages in; waiting for\n  pages for a fuller pass)` to its line.\n\n### Changed\n\n- A request waiting for pages for a fuller pass does not count against the 5 research requests\n  one person may have waiting: its first answer is already delivered, and it runs nothing until\n  `ready` or its expiry.\n- The fuller pass needs the web area, whose task API is the only way pages arrive: on a bot\n  without `TRACKER_WEB_URL` the research type gets no page store, so a first answer with blocked\n  pages is sent and the request ends, as before 0.29.0, instead of waiting for pages nobody could\n  send.\n- Only a bot with `TRACKER_WEB_URL` set gives the research type its page store (`readSources`).\n  A bot restarted without the web area while a `sources: browser` request is still in flight loses\n  that request's stored pages: its run reads none and the request ends with a DM saying so, as no\n  new pages could reach it there anyway. A request already waiting for a fuller pass on such a bot\n  ends at its expiry, its first answer standing.\n- Since a request waiting for a fuller pass does not count against the cap of 5 and `ready` does\n  not check the cap again, one person whose fuller passes are readied can briefly have more than 5\n  research requests in work at once, and so can one whose waits reach their expiry with pages in;\n  the daily ceiling still bounds what they spend.\n- The 14-day wait, the 10-minute deadline margin and `sourcesExpiry` are docket-types' own now\n  (0.9.0), the tracker's copies gone; the tracker keeps its refusal of a browser request whose\n  deadline leaves less than 20 minutes.\n- docket-core and docket-types go to 0.9.0. No schema change."
         }
       ]
     },

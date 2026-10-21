@@ -321,11 +321,11 @@ ${tokenTable(v, tokens, now, (id) => adminTokenHref(v, id))}
 
 const WHAT_GOES =
   "every task (deleted ones too) with its runs, replies and history; your replies, answers and history on other people's tasks, " +
-  "and your place on the tasks shared with you; decline blocks either way; delivery pauses; your settings, sign-in sessions and API tokens; and your place on the list.";
+  "and your place on the tasks shared with you; decline blocks either way; delivery pauses; your settings, sign-in sessions and API tokens; your DM conversations with Clerk; and your place on the list.";
 
 /** What lives outside the tracker's store, which forget-me cannot reach (README, Forget me). */
 function outside(whose: "your" | "their"): string {
-  return `It cannot reach what is kept outside the tracker: city-hall's copy of a research request, the bot's log (which may hold ${whose} tracker id), and ${whose} usr account if linked, which is usr's to delete.`;
+  return `It cannot reach what is kept outside the tracker: city-hall's copy of a research request or of each turn of a DM conversation, the bot's log (which may hold ${whose} tracker id), and ${whose} usr account if linked, which is usr's to delete.`;
 }
 
 /** `/forget`: what forget-me deletes, and the button that asks for the confirmation. */

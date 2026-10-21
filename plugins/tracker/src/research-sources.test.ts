@@ -40,8 +40,9 @@ describe("migration 11", () => {
     const schema = () => db.query("SELECT type, name, sql FROM sqlite_master WHERE name != 'sqlite_sequence' ORDER BY name").all() as { name: string }[];
     const before = schema();
     expect(migrate(db)).toBe(10);
-    expect(MIGRATIONS).toHaveLength(11);
-    expect(schema().filter((s) => !s.name.includes("research_sources"))).toEqual(before);
+    expect(MIGRATIONS).toHaveLength(12);
+    // Migration 12's intake_conversations has its own test (intake-store.test.ts).
+    expect(schema().filter((s) => !s.name.includes("research_sources") && !s.name.includes("intake_conversations"))).toEqual(before);
     expect(schema().filter((s) => s.name.includes("research_sources")).map((s) => s.name)).toEqual(["research_sources", "research_sources_task", "sqlite_autoindex_research_sources_1"]);
   });
 });

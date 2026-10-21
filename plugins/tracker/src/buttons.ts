@@ -11,7 +11,10 @@ import type { HostButton } from "../../../packages/api/contract.js";
  * - `r.o.<occurrence>`: the Reply button, which opens the reply modal.
  * - `m.o.<occurrence>`: that modal; its submit carries the typed text.
  *
- * `r` and `m` are not codes docket's encoding uses, so the two never collide. docket keeps a
+ * - `i.<s|g|x>.<conversation>.<draft>`: Save, Change or Cancel on a draft the intake showed (intake.ts),
+ *   handled before the rest (index.ts).
+ *
+ * `r`, `m` and `i` are not codes docket's encoding uses, so they never collide. docket keeps a
  * reference within 80 characters; with the 8-character prefix every id stays inside Discord's 100.
  */
 
@@ -72,4 +75,23 @@ export function hostButtons(message: OutgoingMessage): HostButton[] {
   const occurrenceId = message.ref?.occurrenceId ?? null;
   if (occurrenceId === null) return buttons.slice(0, MAX_BUTTONS);
   return [...buttons.slice(0, MAX_BUTTONS - 1), { customId: replyButtonId(occurrenceId), label: "Reply", style: "secondary" }];
+}
+
+export const INTAKE_CODE = "i";
+
+export type IntakeAction = "save" | "change" | "cancel";
+
+const INTAKE_LETTER: Record<IntakeAction, string> = { save: "s", change: "g", cancel: "x" };
+
+/** A button on the intake's draft card: the conversation and the draft's number, so an older card's press is refused. */
+export function intakeButtonId(action: IntakeAction, conversationId: string, draftSeq: number): string {
+  return `${PREFIX}${INTAKE_CODE}.${INTAKE_LETTER[action]}.${conversationId}.${draftSeq}`;
+}
+
+/** What an intake button's customId stands for, or null when it is not one. */
+export function parseIntakeId(customId: string): { action: IntakeAction; conversationId: string; draftSeq: number } | null {
+  const m = /^tracker:i\.([sgx])\.(c[1-9][0-9]*)\.([0-9]{1,9})$/.exec(customId);
+  if (!m) return null;
+  const action = m[1] === "s" ? "save" : m[1] === "g" ? "change" : "cancel";
+  return { action, conversationId: m[2] as string, draftSeq: Number(m[3]) };
 }

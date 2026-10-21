@@ -12,6 +12,7 @@ import {
 } from "@rackbops/docket-core";
 import { clip, NO_SUCH_TASK, oneLine, pagesNote, type TrackerDeps } from "./actions.js";
 import { isRecipientPause, PERSON_REF, pauseNames } from "./delivery-health.js";
+import { CREATED_IN_CONVERSATION } from "./intake-store.js";
 import { errorNamesOther } from "./roster.js";
 import type { ChangesTail, RunsTail } from "./store.js";
 
@@ -50,7 +51,7 @@ export interface ChangeView {
   at: string;
   /** `created`, `recipient added`, ... */
   kind: string;
-  /** Shown for a pause or a resume only. */
+  /** Shown for a pause or a resume, and `in conversation` on a task the intake made (intake.ts). */
   detail: string | null;
 }
 
@@ -74,7 +75,12 @@ export function runView(o: Occurrence, replies: readonly Reply[], people: Readon
 }
 
 export function changeView(e: TaskEvent, viewer: User, now: Date, names: ReadonlyMap<string, string> = new Map()): ChangeView {
-  const detail = e.kind === "paused" || e.kind === "resumed" ? e.detail.replace(PERSON_REF, (_, id: string) => names.get(id) ?? "someone no longer on the tracker") : null;
+  const detail =
+    e.kind === "paused" || e.kind === "resumed"
+      ? e.detail.replace(PERSON_REF, (_, id: string) => names.get(id) ?? "someone no longer on the tracker")
+      : e.kind === "created" && e.detail.endsWith(CREATED_IN_CONVERSATION)
+        ? CREATED_IN_CONVERSATION.trim()
+        : null;
   return { at: formatInstant(e.at, viewer.timeZone, now), kind: e.kind.replaceAll("_", " "), detail };
 }
 

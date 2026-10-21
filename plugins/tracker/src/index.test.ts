@@ -86,12 +86,14 @@ describe("createPlugin", () => {
     expect(existsSync(join(dataDir, DB_DIR, DB_FILE))).toBe(false);
   });
 
-  it("declares exactly the commands it registers, an interactions handler, and the env keys it reads", () => {
+  it("declares exactly the commands it registers, an interactions handler, the DM hook and its intent, and the env keys it reads", () => {
     const plugin = createPlugin(makeFakeHost({ name: "tracker" }));
     expect(plugin.commands?.map((c) => c.name)).toEqual(pkg.botPlugin.commands);
     expect(pkg.botPlugin.commands).toEqual(["allow", "register", "remind", "renewal", "price", "research", "scout", "want", "tasks", "task", "settings", "web"]);
     expect(typeof plugin.interactions).toBe("function");
-    expect(pkg.botPlugin.intents).toEqual([]);
+    // DirectMessages (1 << 12) only, for the intake's DM hook (intake.ts); nothing privileged.
+    expect(pkg.botPlugin.intents).toEqual([4096]);
+    expect(typeof plugin.directMessage).toBe("function");
     expect(pkg.botPlugin.env.map((e) => e.key)).toEqual([
       "TRACKER_ADMIN_DISCORD_IDS",
       "TRACKER_GUILD_ID",
@@ -103,6 +105,8 @@ describe("createPlugin", () => {
       "TRACKER_CITY_HALL_CAPABILITY",
       "TRACKER_CITY_HALL_ACCESS_CLIENT_ID",
       "TRACKER_CITY_HALL_ACCESS_CLIENT_SECRET",
+      "TRACKER_INTAKE",
+      "TRACKER_INTAKE_CAPABILITY",
       "TRACKER_FIRECRAWL_KEY",
       "TRACKER_EBAY_CLIENT_ID",
       "TRACKER_EBAY_CLIENT_SECRET",

@@ -152,12 +152,13 @@ export interface PluginIndexEntry {
   /** Must equal `HOST_API_VERSION` to be installable; a newer plugin that needs a newer host is reported, not installed. */
   hostApiVersion: number;
   /** `GatewayIntentBits` values as numbers, so the JSON needs no discord.js; unioned into the Client before construction.
-   *  RESERVED for a future event seam: declaring one gives the plugin NO gateway events today. The host owns every
-   *  gateway listener and passes a plugin only the interactions addressed to it (its slash commands, and component/modal
-   *  interactions whose `customId` starts with `<name>:`), whatever intents it declares. What a declared intent does do
-   *  is widen the gateway subscription of the WHOLE bot (it joins the one shared Client), privileged intents included,
-   *  and a privileged one the operator has not enabled is a login failure (see `selectPlugins`, `src/plugins/registry.ts`).
-   *  Declare none. */
+   *  The host owns every gateway listener and passes a plugin only the interactions addressed to it (its slash commands,
+   *  and component/modal interactions whose `customId` starts with `<name>:`), plus, for exactly one intent, the event
+   *  seam below. `DirectMessages` (`1 << 12`, 4096) is that one: a plugin that declares it AND implements
+   *  `Plugin.directMessage` is handed every direct message a person sends the bot. Any other declared intent still
+   *  gives the plugin NO gateway events; what it does do is widen the gateway subscription of the WHOLE bot (it joins
+   *  the one shared Client), and a privileged one is refused outright (see `selectPlugins`, `src/plugins/registry.ts`).
+   *  Declare none unless you take direct messages. */
   intents?: number[];
   /** Bare slash-command names the bundle contributes; uniqueness (core + every enabled plugin) is checked BEFORE any code loads. */
   commands: string[];
@@ -404,6 +405,24 @@ export interface PluginHttpInfo {
   clientIp: string;
 }
 
+/**
+ * One direct message a person sent the bot, as `Plugin.directMessage` receives it. Plain data on
+ * purpose: the plugin never holds the discord.js `Message`, and answers through `HostApi.dm`.
+ */
+export interface PluginDirectMessage {
+  /** The sender's Discord user id. Never a bot's: the host drops messages from bots, webhooks and the system. */
+  userId: string;
+  /** Discord's id for this message. */
+  messageId: string;
+  /** The text as sent. Empty when the message carried only attachments or stickers, which are not passed on. */
+  content: string;
+  /** When Discord says it was sent, ISO 8601. */
+  sentAt: string;
+  /** Sends Discord's typing indicator ("<bot> is typing...") to this DM, which Discord shows for a few seconds.
+   *  Best-effort: it never rejects. */
+  typing(): Promise<void>;
+}
+
 export interface Plugin {
   commands?: readonly PluginCommand[];
   ticks?: readonly TickCheck[];
@@ -457,6 +476,18 @@ export interface Plugin {
    * #220 ignores it.
    */
   http?(request: Request, info: PluginHttpInfo): Promise<Response>;
+  /**
+   * Receives each direct message a person sends the bot, while the plugin is running, when its index
+   * entry declares the `DirectMessages` intent (`1 << 12`); without that intent it is never called. Every
+   * running plugin that qualifies gets every DM, so a plugin answers only what is its own to answer. The
+   * host does not wait on it in order: messages may be handed over concurrently, a throw or rejection is
+   * logged and isolated, and nothing is sent on the plugin's behalf; the host logs the plugin's name and
+   * its error, so keep the message's text out of what you throw. It is not timed out and holds no critical
+   * section, as an interaction does not. A DM that arrives while the plugin is not running (a restart, a
+   * handoff, before `activate()` resolves) is dropped, unlogged, and never replayed. Optional; a host from
+   * before it ignores it, and on such a host a plugin declaring the intent only widens the gateway subscription.
+   */
+  directMessage?(message: PluginDirectMessage): Promise<void>;
 }
 
 /**

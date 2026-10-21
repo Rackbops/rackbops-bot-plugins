@@ -413,8 +413,9 @@ describe("forget-me", () => {
     // the execute lane's charges, budget notices, findings and Job records, which no tick here writes,
     // and a watch's sent-in listings, which name its task, not him (roster.test.ts), and an alert
     // address, made only while the alert-email route is on (mail.test.ts), and a browser research
-    // request's pages, which name its task (research-sources.test.ts).
-    const elsewhere = new Set(["series", "delivery_pauses", "usage", "notices", "findings", "executor_jobs", "want_inbox", "mail_addresses", "research_sources"]);
+    // request's pages, which name its task (research-sources.test.ts), and a DM conversation with the
+    // intake, made only while it is on (intake.test.ts).
+    const elsewhere = new Set(["series", "delivery_pauses", "usage", "notices", "findings", "executor_jobs", "want_inbox", "mail_addresses", "research_sources", "intake_conversations"]);
     expect([...where].sort()).toEqual([...ERASED_TABLES].filter((t) => !elsewhere.has(t)).sort());
     // His copies of runs are in docket's deliveries, and so are the copies of his runs to Curly.
     expect(query(w.dbPath, "SELECT DISTINCT user_id FROM deliveries ORDER BY user_id")).toEqual([{ user_id: "u2" }, { user_id: "u3" }]);
