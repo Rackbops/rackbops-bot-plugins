@@ -58,6 +58,30 @@ describe("IntakeConversations", () => {
     expect(convs.get("t1")).toBeNull();
   });
 
+  it("takeDraft hands a card's draft to one press only, and only while it is the latest", () => {
+    const convs = new IntakeConversations(openDatabase(":memory:"));
+    const c = convs.open("u1", NOW);
+    const draft = { action: "create" as const, type: "reminder", fields: { text: "Call Anne" } };
+    convs.saveTurn(c.id, [], draft, NOW);
+    convs.saveTurn(c.id, [], draft, NOW);
+    expect(convs.takeDraft(c.id, 1, NOW)).toBeNull();
+    expect(convs.takeDraft(c.id, 2, NOW)).toMatchObject({ draft, draftSeq: 2 });
+    expect(convs.takeDraft(c.id, 2, NOW)).toBeNull();
+    expect(convs.get(c.id)).toMatchObject({ status: "open", draft: null, draftSeq: 2 });
+    convs.saveTurn(c.id, [], draft, NOW);
+    convs.end(c.id, "cancelled", NOW);
+    expect(convs.takeDraft(c.id, 3, NOW)).toBeNull();
+    expect(convs.takeDraft("t1", 3, NOW)).toBeNull();
+  });
+
+  it("an idle conversation closed by open() keeps no draft", () => {
+    const convs = new IntakeConversations(openDatabase(":memory:"));
+    const c = convs.open("u1", NOW);
+    convs.saveTurn(c.id, [], { action: "create", type: "reminder", fields: { text: "x" } }, NOW);
+    convs.open("u1", later(INTAKE_IDLE_MS + 1));
+    expect(convs.get(c.id)).toMatchObject({ status: "closed", draft: null });
+  });
+
   it("purge closes the idle and deletes what ended over a week ago", () => {
     const convs = new IntakeConversations(openDatabase(":memory:"));
     const idle = convs.open("u1", NOW);

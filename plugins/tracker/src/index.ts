@@ -496,7 +496,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
             databaseId: databaseId(opened),
             log: host.log,
             now: () => clock.now(),
-            notice: async (key, text) => void (await noticeOnce(openedStore, notifier, key, clock.now(), { text })),
+            // No admin notices: every turn is a new Job key, so they would come once per DM. The person
+            // hears that the assistant is busy, and the execute lane's own Executor tells the admins.
             ...(options.cityHallFetch ? { fetchImpl: options.cityHallFetch } : {}),
           });
         }

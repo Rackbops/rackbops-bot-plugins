@@ -100,7 +100,7 @@ export class IntakeConversations {
     return this.db.transaction((): Conversation => {
       const idleBefore = new Date(now.getTime() - INTAKE_IDLE_MS).toISOString();
       this.db
-        .query("UPDATE intake_conversations SET status = 'closed', ended_at = ? WHERE user_id = ? AND status = 'open' AND updated_at < ?")
+        .query("UPDATE intake_conversations SET status = 'closed', draft = NULL, ended_at = ? WHERE user_id = ? AND status = 'open' AND updated_at < ?")
         .run(at, userId, idleBefore);
       const found = this.db.query("SELECT * FROM intake_conversations WHERE user_id = ? AND status = 'open'").get(userId) as Row | null;
       if (found) return toConversation(found);
@@ -128,6 +128,20 @@ export class IntakeConversations {
       )
       .get(JSON.stringify(transcript), draft ? JSON.stringify(draft) : null, draft ? 1 : 0, now.toISOString(), seqOf(id)) as Row | null;
     return r ? toConversation(r) : null;
+  }
+
+  /**
+   * Takes the draft numbered `draftSeq` off an open conversation and returns the conversation as it
+   * was, draft included; null when that draft is no longer showing. One write, so only one press
+   * acts on a card.
+   */
+  takeDraft(id: string, draftSeq: number, now: Date): Conversation | null {
+    return this.db.transaction((): Conversation | null => {
+      const before = this.get(id);
+      if (!before || before.status !== "open" || before.draftSeq !== draftSeq || before.draft === null) return null;
+      this.db.query("UPDATE intake_conversations SET draft = NULL, updated_at = ? WHERE seq = ?").run(now.toISOString(), seqOf(id));
+      return before;
+    })();
   }
 
   /** Ends an open conversation; false when it had already ended. */

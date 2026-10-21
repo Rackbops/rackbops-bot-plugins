@@ -559,15 +559,19 @@ eBay's saved-search alerts reach eBay watches by mail (0.25.0), while `TRACKER_M
 ("remind me to call Anne on Friday", "watch eBay for Wingspan Oceania under 40 dollars"). Clerk asks
 one short question at a time and then shows a draft: the task's type and each field, with **Save**,
 **Change** and **Cancel**. Only Save makes the task, through the same create as the task API's
-`POST /tasks` and the web editor, as the person who pressed it and under the same rules and limits;
-its history then reads `created: in conversation`. Change takes the draft away and asks what should
-change; Cancel ends the conversation with nothing saved. A refused Save says why, and the
+`POST /tasks` and the web editor, as the person who pressed it and under the same rules (not the API's per-token rate limit);
+its history then reads `created: in conversation`. The card shows every value whole, so
+the person confirms exactly what Save stores; a draft too long to show whole is not offered, and
+the person is asked to shorten it. Change takes the draft away and asks what should change; Cancel
+ends the conversation with nothing saved. Only one press acts on a card, and none while a turn or a
+Save of the person's is out. A refused Save says why, and the
 conversation goes on. The model never writes anything (the tier rule: the agent proposes, the owner
 confirms, plain code acts). Editing an existing task this way is not built yet.
 
 - **Who.** `off` (the default: DMs are not read at all), `admins` (Rod's "I'll test it first",
-  2026-10-19: anyone else registered is told it is not open yet), or `everyone` registered. The
-  same gates as a command first: membership of `TRACKER_GUILD_ID` with its role, then being on
+  2026-10-19: anyone else registered is told it is not open yet), or `everyone` registered. While
+  it is on, every DM to the bot is answered: one from someone not admitted or not registered gets
+  the same answer a command would. The same gates as a command first: membership of `TRACKER_GUILD_ID` with its role, then being on
   the list and registered. Membership is checked through the Discord client of the last interaction
   the plugin handled, so right after a start, with a gate set, a DM is answered "could not check"
   until someone has used a command or button.
@@ -579,10 +583,16 @@ confirms, plain code acts). Editing an existing task this way is not built yet.
   past that the person is told to send it again. It names `TRACKER_INTAKE_CAPABILITY` when set,
   so a runner of its own can take turns and none waits behind research; else the execute lane's tag.
 - **Limits.** One turn at a time per person (a DM while one is out is turned away). A draft that
-  does not fit the type's fields goes back to the model once, unseen. Each model turn is one call
-  against the person's daily budget (unless `TRACKER_BUDGET_UNLIMITED`), charged as any Job is: not
-  on a usage limit, which says the assistant is busy and keeps nothing. A conversation closes after
-  20 turns or a day idle; the next DM starts a new one.
+  does not fit the type's fields goes back to the model once, unseen. Each model call is one call
+  against the person's daily budget (unless `TRACKER_BUDGET_UNLIMITED`), charged as any Job is, a
+  turn given up after 5 minutes included (its Job still runs). When city-hall puts a turn's Job
+  back in its queue because the runner is out of model time or locked out, the person is told at
+  once that the assistant is busy, nothing is charged and nothing is kept; city-hall has no cancel,
+  so that Job still runs once a runner takes it again, and its answer is dropped. Without
+  `TRACKER_INTAKE_CAPABILITY`, turns queue behind research Jobs on the one runner. The intake sends
+  the admins no notices of its own (each turn is a new Job, so they would come once per DM); the
+  execute lane's tell them. A conversation closes after 20 model calls (a retry counts) or a day
+  idle; the next DM starts a new one.
 - **Privacy.** The transcript lives in the tracker's store (`intake_conversations`, schema 12),
   deleted seven days after the conversation ends and at once by forget-me. city-hall keeps each
   turn's Job, which carries the conversation so far, under its own retention (Forget me, above).

@@ -82,6 +82,7 @@ export const NOT_UNDERSTOOD = "Something went wrong working that out, so I've dr
 export const CHANGE_ASK = "What should change?";
 export const STALE = "That draft is no longer open: the conversation moved on or ended.";
 export const NOTHING_SAVED = "Cancelled; nothing was saved.";
+export const TOO_BIG_FOR_CARD = "That is too long for me to show you whole before saving. Could you make it shorter?";
 export function tooLong(webEditor: boolean): string {
   return `This conversation has gone on for ${INTAKE_TURN_LIMIT} turns, so I've closed it. Send a new message to start again${webEditor ? ", or use the web editor (`/web`)" : ""}.`;
 }
@@ -163,7 +164,8 @@ export function localNow(timeZone: string, now: Date): string {
 
 /** The draft as the person reads it on the card: its type, then each field and value on a line. */
 export function draftText(draft: IntakeDraft): string {
-  const fields = Object.entries(draft.fields).map(([name, value]) => `- ${name}: ${value === null ? "(cleared)" : clip(oneLine(String(value)), 300)}`);
+  // Whole values, never clipped: Save stores what the card shows (`turn` refuses a card that does not fit).
+  const fields = Object.entries(draft.fields).map(([name, value]) => `- ${name}: ${value === null ? "(cleared)" : oneLine(String(value))}`);
   return ["Here is what I would save:", `- type: ${draft.type}`, ...fields].join("\n");
 }
 
@@ -175,12 +177,17 @@ export function draftButtons(conversationId: string, draftSeq: number): HostButt
   ];
 }
 
-/** A turn's run: its result and whether it is charged (docket's rule: not a usage limit, a refused credential or an executor failure). */
-type Ran = { result: JobResult; charged: boolean } | null;
+/**
+ * A turn's run: its result and whether it is charged (docket's rule: not a usage limit, a refused
+ * credential or an executor failure); `late` when `waitMs` passed, `submitted` when city-hall had
+ * taken the Job by then; `paused` when city-hall put the Job back after its runner stopped (a usage
+ * limit, a refused credential or a lost lease, `REQUEUED_OUTCOMES`).
+ */
+type Ran = { kind: "result"; result: JobResult; charged: boolean } | { kind: "late"; submitted: boolean } | { kind: "paused" };
 
 type Thought = { kind: "answer"; answer: IntakeAnswer } | { kind: "late" } | { kind: "failed"; usageLimit: boolean };
 
-const uncharged = (detail: string): Ran => ({ result: { kind: "error", detail, durationMs: 0 }, charged: false });
+const uncharged = (detail: string): Ran => ({ kind: "result", result: { kind: "error", detail, durationMs: 0 }, charged: false });
 
 export function createIntake(w: IntakeWiring): Intake {
   const sleep = w.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -205,18 +212,29 @@ export function createIntake(w: IntakeWiring): Intake {
         const submitted = w.ids.get(key) !== null;
         try {
           const result = await executor.run(submitted ? null : spec, conversationId, key);
-          return { result, charged: result.kind !== "usage_limit" && result.kind !== "auth_failed" };
+          return { kind: "result", result, charged: result.kind !== "usage_limit" && result.kind !== "auth_failed" };
         } catch (err) {
           if (!(err instanceof JobPendingError) && !(err instanceof ExecutorUnavailableError)) {
             return uncharged(`the executor failed: ${err instanceof Error ? err.name : "error"}`);
           }
         }
-        if (performance.now() >= until) return null;
+        // The city-hall Executor records a requeued Job as paused (executor.ts, pausedOrAnswer): the
+        // runner is out of model time or locked out, so the person hears so now rather than in five
+        // minutes. The Job stays in city-hall's queue (it has no cancel) and runs once a runner takes it
+        // again; its answer is then dropped, and it is not charged, as docket charges no usage limit.
+        if (w.ids.pausedAt(key) !== null) return { kind: "paused" };
+        if (performance.now() >= until) return { kind: "late", submitted: w.ids.get(key) !== null };
         await sleep(pollMs);
       }
     } finally {
       w.ids.forget(key);
     }
+  }
+
+  /** Charges one call to the person, unless forget-me erased them while the turn was out. */
+  async function chargeIfKnown(d: TrackerDeps, user: User, key: string, costUsd: number | null): Promise<void> {
+    if (!(await d.store.getUser(user.id))) return;
+    await charge(d.store, { userId: user.id, taskId: null, source: "run", key, calls: 1, costUsd, at: d.clock.now() });
   }
 
   /** The model's answer to the transcript, asking once more when its answer can be fixed (`readIntake`'s `retry`). */
@@ -227,14 +245,19 @@ export function createIntake(w: IntakeWiring): Intake {
       const key = `intake:${conv.id}:${conv.turns + attempt + 1}`;
       convs.countTurn(conv.id, d.clock.now());
       const ran = await run(executor, spec, conv.id, key, typing);
-      if (ran === null) return { kind: "late" };
-      const { result } = ran;
-      if (ran.charged) {
-        await charge(d.store, { userId: user.id, taskId: null, source: "run", key, calls: 1, costUsd: result.totalCostUsd ?? null, at: d.clock.now() });
+      if (ran.kind === "paused") return { kind: "failed", usageLimit: true };
+      if (ran.kind === "late") {
+        // A Job city-hall took still runs after the turn gives up on it: one call, as docket charges a late result.
+        if (ran.submitted) await chargeIfKnown(d, user, key, null);
+        return { kind: "late" };
       }
+      const { result } = ran;
+      if (ran.charged) await chargeIfKnown(d, user, key, result.totalCostUsd ?? null);
       const read = readIntake(result, types);
       if (read.ok) return { kind: "answer", answer: read.answer };
       if (!read.retry) return { kind: "failed", usageLimit: result.kind === "usage_limit" };
+      // A retry is one more model call: never past the conversation's limit.
+      if (conv.turns + attempt + 2 > INTAKE_TURN_LIMIT) break;
       problem = read.problem;
     }
     return { kind: "failed", usageLimit: false };
@@ -254,15 +277,23 @@ export function createIntake(w: IntakeWiring): Intake {
     // The person's line is kept only with an answer: a turn that fails leaves the transcript as it was.
     const transcript: IntakeLine[] = [...conv.transcript, { from: "person", text: text.slice(0, MAX_LINE_CHARS) }];
     const thought = await think(d, convs, executor, user, conv, transcript, intakeTypes(d), m.typing);
+    // Forget-me erased the person while the turn was out: nothing is kept and nothing said.
+    if (!(await d.store.getUser(user.id))) return;
     if (thought.kind === "late") return send(TOO_SLOW);
     if (thought.kind === "failed") return send(thought.usageLimit ? MODEL_BUSY : NOT_UNDERSTOOD);
     const { answer } = thought;
     const said: IntakeLine[] = [...transcript, { from: "bot", text: answer.reply }];
     const at = d.clock.now();
     if (answer.state === "ready" && answer.draft) {
+      const card = `${answer.reply}\n\n${draftText(answer.draft)}`;
+      // The person confirms exactly what Save stores, so a draft too long to show whole is not offered.
+      if (card.length > MAX_ANSWER) {
+        convs.saveTurn(conv.id, [...transcript, { from: "bot", text: TOO_BIG_FOR_CARD }], null, at);
+        return send(TOO_BIG_FOR_CARD);
+      }
       const saved = convs.saveTurn(conv.id, said, answer.draft, at);
       if (!saved) return send(STALE);
-      return send(`${answer.reply}\n\n${draftText(answer.draft)}`, draftButtons(saved.id, saved.draftSeq));
+      return send(card, draftButtons(saved.id, saved.draftSeq));
     }
     convs.saveTurn(conv.id, said, null, at);
     if (answer.state === "cancelled") convs.end(conv.id, "cancelled", at);
@@ -309,56 +340,57 @@ export function createIntake(w: IntakeWiring): Intake {
     const parsed = parseIntakeId(interaction.customId);
     if (!parsed) return false;
     await interaction.deferUpdate();
+    try {
+      await pressed(interaction, parsed);
+    } catch (err) {
+      // The error's name only, as a turn's.
+      w.log.error(`intake: a ${parsed.action} press failed (${err instanceof Error ? err.name : "error"})`);
+      try {
+        await interaction.followUp({ content: FAILED, ...EPHEMERAL });
+      } catch {
+        // The interaction is gone; the log has it.
+      }
+    }
+    return true;
+  }
+
+  async function pressed(interaction: MessageComponentInteraction, parsed: NonNullable<ReturnType<typeof parseIntakeId>>): Promise<void> {
     const original = interaction.message.content;
-    const settle = async (status: string, keep = false) => {
+    const settle = async (status: string) => {
       const suffix = `\n\n-- ${status}`;
-      await interaction.editReply({ content: `${clip(original, MAX_ANSWER - suffix.length)}${suffix}`, ...(keep ? {} : { components: [] }), ...NO_MENTIONS });
+      await interaction.editReply({ content: `${clip(original, MAX_ANSWER - suffix.length)}${suffix}`, components: [], ...NO_MENTIONS });
     };
-    const refuse = (content: string) => interaction.followUp({ content, ...EPHEMERAL });
+    const refuse = async (content: string) => void (await interaction.followUp({ content, ...EPHEMERAL }));
     const d = w.deps();
     const convs = w.conversations();
-    if (!d || !convs) {
-      await refuse(STARTING);
-      return true;
-    }
-    if (w.mode === "off") {
-      await settle(STALE);
-      return true;
-    }
+    if (!d || !convs) return refuse(STARTING);
+    if (w.mode === "off") return settle(STALE);
     const membership = await w.membership(interaction.user.id);
     const entry = await w.queue(() => enter(d, interaction.user.id, membership, "registered"));
-    if (!entry.ok) {
-      await refuse(entry.content);
-      return true;
-    }
+    if (!entry.ok) return refuse(entry.content);
     const user = entry.user;
-    if (w.mode === "admins" && !user.admin) {
-      await refuse(NOT_OPEN);
-      return true;
-    }
-    const conv = convs.get(parsed.conversationId);
-    if (!conv || conv.userId !== user.id || conv.status !== "open" || conv.draftSeq !== parsed.draftSeq || !conv.draft) {
-      await settle(STALE);
-      return true;
-    }
-    const now = d.clock.now();
-    if (parsed.action === "cancel") {
-      convs.end(conv.id, "cancelled", now);
-      await settle(NOTHING_SAVED);
-      return true;
-    }
-    if (parsed.action === "change") {
-      convs.saveTurn(conv.id, [...conv.transcript, { from: "bot", text: CHANGE_ASK }], null, now);
-      await settle(CHANGE_ASK);
-      return true;
-    }
-    if (busy.has(user.id)) {
-      await refuse(STILL_WORKING);
-      return true;
-    }
+    if (w.mode === "admins" && !user.admin) return refuse(NOT_OPEN);
+    // One thing at a time per person: a press waits for a turn or a Save that is out, so neither
+    // writes over what the other did.
+    if (busy.has(user.id)) return refuse(STILL_WORKING);
     busy.add(user.id);
     try {
+      const now = d.clock.now();
+      const owned = convs.get(parsed.conversationId);
+      // Taken off the conversation in one write, so only one press ever acts on a card's draft.
+      const conv = owned?.userId === user.id ? convs.takeDraft(parsed.conversationId, parsed.draftSeq, now) : null;
+      if (!conv?.draft) return settle(STALE);
       const draft = conv.draft;
+      if (parsed.action === "cancel") {
+        convs.end(conv.id, "cancelled", now);
+        return settle(NOTHING_SAVED);
+      }
+      if (parsed.action === "change") {
+        convs.saveTurn(conv.id, [...conv.transcript, { from: "bot", text: CHANGE_ASK }], null, now);
+        return settle(CHANGE_ASK);
+      }
+      // Only a new task is made by conversation so far; an edit draft is never offered (no tasks are shown to the model).
+      if (draft.action !== "create") return settle(STALE);
       const writer: Writer = { d, queue: w.queue, reading, userId: user.id, arrived: performance.now() };
       const answer = await createAnswer(writer, user, { type: draft.type, ...draft.fields }, "");
       const body = answer.body as { task?: { id?: unknown }; message?: unknown; error?: { message?: unknown } };
@@ -367,14 +399,12 @@ export function createIntake(w: IntakeWiring): Intake {
       if (answer.status === 201 && taskId !== null) {
         convs.end(conv.id, "saved", at, taskId);
         convs.markCreatedInConversation(taskId);
-        await settle(`Saved. ${typeof body.message === "string" ? body.message : ""}`.trim());
-        return true;
+        return settle(`Saved. ${typeof body.message === "string" ? body.message : ""}`.trim());
       }
       // Refused by the editor's own rules: the person hears why, and the model does at the next turn.
       const why = typeof body.error?.message === "string" ? body.error.message : "it could not be saved.";
       convs.saveTurn(conv.id, [...conv.transcript, { from: "bot", text: `I could not save that: ${why}` }], null, at);
-      await settle(`Not saved: ${why} Tell me what to change, or say stop.`);
-      return true;
+      return settle(`Not saved: ${why} Tell me what to change, or say stop.`);
     } finally {
       busy.delete(user.id);
     }

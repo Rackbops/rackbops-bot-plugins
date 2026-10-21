@@ -1,11 +1,14 @@
+import { Database } from "bun:sqlite";
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { INTAKE_MAX_TURNS, type IntakeLine } from "@rackbops/docket-types";
 import type { HostButton } from "../../../packages/api/contract.js";
 import { NOT_ADMITTED } from "./access.js";
 import { intakeButtonId, parseIntakeId } from "./buttons.js";
+import { CAPABILITY_FORMAT } from "./executor.js";
 import {
   CHANGE_ASK,
   draftText,
+  INTAKE_FORMAT,
   INTAKE_TURN_LIMIT,
   localNow,
   MODEL_BUSY,
@@ -18,6 +21,7 @@ import {
   STALE,
   STILL_WORKING,
   TEXT_ONLY,
+  TOO_BIG_FOR_CARD,
   TOO_SLOW,
   tooLong,
 } from "./intake.js";
@@ -34,7 +38,9 @@ afterEach(() => cleanup());
 afterAll(() => cleanup());
 
 const HOLD = Symbol("hold");
-type Scripted = unknown | typeof HOLD;
+/** A result for the Job; `HOLD` leaves it queued; a function does to the Job (and the world) what it says instead. */
+type ScriptedJob = { status: string; lastOutcome?: string | null; result?: unknown };
+type Scripted = unknown | typeof HOLD | ((job: ScriptedJob) => void);
 
 const asking = (reply: string) => success({ reply, state: "asking" }, 0.01);
 const ready = (reply: string, type: string, fields: Record<string, unknown>) => success({ reply, state: "ready", draft: { action: "create", type, fields } }, 0.01);
@@ -58,6 +64,7 @@ async function setup(o: { env?: Record<string, string>; script?: Scripted[]; wai
       if (!job || job.status !== "queued" || script.length === 0) return;
       const next = script.shift();
       if (next === HOLD) return;
+      if (typeof next === "function") return void (next as (job: ScriptedJob) => void)(job);
       job.status = "done";
       job.result = next;
     },
@@ -96,7 +103,9 @@ describe("TRACKER_INTAKE and TRACKER_INTAKE_CAPABILITY", () => {
     };
     expect(pkg.botPlugin.intents).toEqual([4096]);
     const env = new Map(pkg.botPlugin.env.map((e) => [e.key, e]));
-    const mode = new RegExp(env.get("TRACKER_INTAKE")?.format ?? "^$");
+    expect(env.get("TRACKER_INTAKE")?.format).toBe(INTAKE_FORMAT);
+    expect(env.get("TRACKER_INTAKE_CAPABILITY")?.format).toBe(CAPABILITY_FORMAT);
+    const mode = new RegExp(INTAKE_FORMAT);
     for (const ok of ["", "off", "Admins", " everyone "]) expect(mode.test(ok)).toBe(true);
     for (const bad of ["yes", "admin", "all"]) expect(mode.test(bad)).toBe(false);
     expect(env.get("TRACKER_INTAKE_CAPABILITY")?.secret).toBe(false);
@@ -271,11 +280,51 @@ describe("a conversation", () => {
     expect(query(w.dbPath, "SELECT 1 FROM usage")).toEqual([]);
   });
 
-  it("a turn not answered in time is dropped, and the person told to send it again", async () => {
+  it("a Job city-hall puts back after a usage limit says so at once, charges nothing, and tells no admin", async () => {
+    // As city-hall does (REQUEUED_OUTCOMES): queued again, its last claim ended by the limit.
+    const w = await setup({ script: [(job: ScriptedJob) => void (job.lastOutcome = "usage_limit")] });
+    const before = w.dmsTo(ADMIN).length;
+    await w.dm(ADMIN, "remind me to call Anne");
+    expect(w.dmsTo(ADMIN).slice(before).map((d) => d.content)).toEqual([MODEL_BUSY]);
+    expect(w.transcriptOf("c1")).toEqual([]);
+    expect(query(w.dbPath, "SELECT 1 FROM usage")).toEqual([]);
+    expect(query(w.dbPath, "SELECT 1 FROM notices")).toEqual([]);
+  });
+
+  it("a turn not answered in time is dropped, the person told to send it again, and its Job charged as one call", async () => {
     const w = await setup({ script: [HOLD], waitMs: 0 });
     await w.dm(ADMIN, "remind me to call Anne");
     expect(w.lastTo(ADMIN)?.content).toBe(TOO_SLOW);
     expect(w.transcriptOf("c1")).toEqual([]);
+    expect(query(w.dbPath, "SELECT calls, key FROM usage")).toEqual([{ calls: 1, key: "intake:c1:1" }]);
+  });
+
+  it("a person erased by forget-me while their turn is out is neither charged nor answered", async () => {
+    const w = await setup({
+      script: [
+        (job: ScriptedJob) => {
+          // As forget-me's erasure does, from beside the turn (the store's own connection never sees a lock).
+          const db = new Database(w.dbPath);
+          db.exec("DELETE FROM users WHERE seq = 1");
+          db.close();
+          job.status = "done";
+          job.result = asking("What time?");
+        },
+      ],
+    });
+    const before = w.dmsTo(ADMIN).length;
+    await w.dm(ADMIN, "remind me to call Anne");
+    expect(w.dmsTo(ADMIN).length).toBe(before);
+    expect(query(w.dbPath, "SELECT 1 FROM usage")).toEqual([]);
+  });
+
+  it("a draft too long to show whole on the card is not offered", async () => {
+    // Each value within its field's limit; the two together past one message.
+    const w = await setup({ script: [ready("A research request.", "research", { question: `Why ${"very ".repeat(170)}so?`, context: "some ".repeat(300) })], waitMs: 50 });
+    await w.dm(ADMIN, "research this long thing");
+    expect(w.lastTo(ADMIN)).toEqual({ content: TOO_BIG_FOR_CARD });
+    expect(w.conversations()[0]).toMatchObject({ status: "open", draft: null });
+    expect(w.transcriptOf("c1").at(-1)).toEqual({ from: "bot", text: TOO_BIG_FOR_CARD });
   });
 
   it("names TRACKER_INTAKE_CAPABILITY's tag when set", async () => {
@@ -285,11 +334,13 @@ describe("a conversation", () => {
   });
 
   it("one turn at a time per person: a DM while one is out is turned away", async () => {
-    const w = await setup({ script: [asking("What time?")] });
+    const w = await setup({ script: [asking("What time?")], waitMs: 50 });
     // The second arrives while the first waits on city-hall.
     await Promise.all([w.dm(ADMIN, "remind me to call Anne"), w.dm(ADMIN, "on Friday")]);
-    expect(w.dmsTo(ADMIN).map((d) => d.content)).toContain(STILL_WORKING);
-    expect(w.dmsTo(ADMIN).map((d) => d.content)).toContain("What time?");
+    const said = w.dmsTo(ADMIN).map((d) => d.content);
+    expect(said.filter((c) => c === STILL_WORKING)).toHaveLength(1);
+    expect(said).toContain("What time?");
+    expect(w.city.jobs.size).toBe(1);
   });
 
   it(`past ${INTAKE_TURN_LIMIT} turns the conversation closes`, async () => {
