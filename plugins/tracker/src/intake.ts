@@ -28,7 +28,7 @@ import type { Writer } from "./web/editor.js";
  * Cancel; only Save makes a task, or changes one of the person's own, through the very call the task
  * API's `POST /tasks` (or `PATCH /tasks/<id>`) makes, as the person who pressed it (the tier rule: the agent proposes, the owner confirms, plain code acts).
  *
- * Each turn is a one-shot `claude -p` Job with no tools (docket-types' `intakeJob`), sent whole with
+ * Each turn is a one-shot `claude -p` Job with web search only (docket-types' `intakeJob`), sent whole with
  * the transcript the tracker keeps (intake-store.ts; Rod, 2026-10-19, "Clerk keeps it"), through
  * city-hall to the runner on Rod's subscription. It does not wait on the execute lane, which ticks
  * once a minute and runs one Job at a time for everyone: a turn is submitted when the DM arrives and
