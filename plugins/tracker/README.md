@@ -584,8 +584,9 @@ away meanwhile, is never saved.
   the list and registered. Membership is checked through the Discord client of the last interaction
   the plugin handled, so right after a start, with a gate set, a DM is answered "could not check"
   until someone has used a command or button.
-- **Each turn** is one `claude -p` Job with no tools, at most 3 model turns, 0.10 USD and 60 s
-  (docket-types' `intakeJob`), through city-hall to the runner on the subscription, never an API
+- **Each turn** is one `claude -p` Job with web search only (no page is opened; since 0.35.0, so it
+  can look up a public fact such as when a game kicks off instead of sending the person off to look),
+  at most 6 model turns, 0.25 USD and 120 s (docket-types' `intakeJob`), through city-hall to the runner on the subscription, never an API
   key. The tracker keeps the conversation and sends it whole each turn, so no turn keeps a session
   on the runner (Rod, 2026-10-19, "Clerk keeps it"). A turn is submitted when the DM arrives and
   asked about every 2 s, beside the execute lane rather than through it, for at most 5 minutes;

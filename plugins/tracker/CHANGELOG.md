@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.35.0] - 2026-10-24
+
+### Changed
+
+- The plain-language intake may search the web, and nothing else, so a request that hangs on a public fact gets it looked up: asked "what time do they play?" for a game tomorrow, Clerk finds the kickoff and suggests a time instead of telling the person to look it up. No page is opened. A turn's caps rise to 6 model turns, 0.25 USD and 120 s, still inside the 5-minute wait, and each turn is still one call against the daily budget. On docket 0.15.0, which also carries docket's audit fixes: research on pages your browser sent searches but opens no other page, and a price read of 0 is a miss.
+
 ## [0.34.0] - 2026-10-21
 
 ### Added
