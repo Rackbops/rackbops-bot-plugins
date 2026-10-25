@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.35.0] - 2026-10-24
+
+### Changed
+
+- The plain-language intake may search the web, and nothing else, so a request that hangs on a public fact gets it looked up: asked "what time do they play?" for a game tomorrow, Clerk finds the kickoff and suggests a time instead of telling the person to look it up. No page is opened. A turn's caps rise to 8 model turns, 0.25 USD and 120 s; it is told to search at most twice, keep the person's own details out of a search, and copy no link into its reply (rules the model follows, not filters in code), still inside the 5-minute wait, and each turn is still one call, now up to 0.25 USD, against the daily budget. On docket 0.15.0, which also carries docket's audit fixes: research on pages your browser sent searches but opens no other page, a price read of 0 is a miss (and a stored baseline of 0 is replaced by the next real read), and a price is read differently in a few cases: "$12.99 2 left" is 12.99, and a JSON-LD price "29.990" is 29.99.
+
 ## [0.34.0] - 2026-10-21
 
 ### Added

@@ -165,11 +165,12 @@ describe("a conversation", () => {
     expect(w.lastTo(ADMIN)?.content).toBe("What time on Friday should I remind you?");
     expect(w.typed()).toBeGreaterThan(0);
 
-    // The turn's Job: no tools, one-shot, the intake's caps, the execute lane's tag, the person's words in the prompt.
+    // The turn's Job: web search only, one-shot, the intake's caps, the execute lane's tag, the person's words in the prompt.
     const first = w.city.byKey("intake:c1:1");
     expect(first?.capability).toBe(CITY_HALL.TRACKER_CITY_HALL_CAPABILITY);
     const spec = first?.spec as { prompt: string; allowedTools?: string[]; maxTurns?: number; resumeSessionId?: string };
-    expect(spec.allowedTools).toEqual([]);
+    expect(spec.allowedTools).toEqual(["WebSearch"]);
+    expect((spec as { disallowedTools?: string[] }).disallowedTools).toContain("WebFetch");
     expect(spec.maxTurns).toBe(INTAKE_MAX_TURNS);
     expect(spec.resumeSessionId).toBeUndefined();
     expect(spec.prompt).toContain("PERSON: remind me to call Anne on Friday");
