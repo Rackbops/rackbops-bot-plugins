@@ -170,6 +170,7 @@ describe("a conversation", () => {
     expect(first?.capability).toBe(CITY_HALL.TRACKER_CITY_HALL_CAPABILITY);
     const spec = first?.spec as { prompt: string; allowedTools?: string[]; maxTurns?: number; resumeSessionId?: string };
     expect(spec.allowedTools).toEqual(["WebSearch"]);
+    expect((spec as { disallowedTools?: string[] }).disallowedTools).toContain("WebFetch");
     expect(spec.maxTurns).toBe(INTAKE_MAX_TURNS);
     expect(spec.resumeSessionId).toBeUndefined();
     expect(spec.prompt).toContain("PERSON: remind me to call Anne on Friday");
