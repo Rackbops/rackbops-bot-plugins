@@ -1,5 +1,8 @@
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
+import { followUpKey, type Occurrence, runNowKey, type Store, type Task } from "@rackbops/docket-core";
 import type { Plugin } from "../../../../packages/api/contract.js";
+import { heldRuns } from "../retime.js";
 import { RUN_NOW_PER_DAY } from "../run-now.js";
 import { api, cleanup, LARRY, makeToken, people, signIn, slash, world } from "./harness.js";
 
@@ -74,16 +77,52 @@ describe("POST /tasks/<id>/run", () => {
     expect(res.status).toBe(400);
   });
 
-  it(`allows ${RUN_NOW_PER_DAY} runs now a day per person, then refuses until a day has passed`, async () => {
+  it(`allows ${RUN_NOW_PER_DAY} runs now a day per person over all their tasks, then refuses until a day has passed`, async () => {
     const w = await setup();
     await pills(w);
+    await slash(w.plugin, "remind", LARRY, { strings: { text: "stretch", repeat: "day", when: "9am" } });
     for (let n = 0; n < RUN_NOW_PER_DAY; n++) {
-      expect((await run(w, "t1")).status).toBe(202);
+      expect((await run(w, n % 2 === 0 ? "t1" : "t2")).status).toBe(202);
       await tick(w.plugin);
     }
     expect(await run(w, "t1")).toMatchObject({ status: 409, code: "limit_reached" });
+    expect(await run(w, "t2")).toMatchObject({ status: 409, code: "limit_reached" });
     w.clock.set(new Date(w.clock.now().getTime() + 24 * 3_600_000 + 60_000).toISOString());
     await tick(w.plugin);
     expect((await run(w, "t1")).status).toBe(202);
+  });
+
+  it("is dropped by the owner's pause, so it does not fire on a later resume", async () => {
+    const w = await setup();
+    await pills(w);
+    const before = remindersSent(w);
+    expect((await run(w, "t1")).status).toBe(202);
+    expect((await api(w.plugin, "POST", "/tasks/t1/pause", { token: w.token, body: {} })).status).toBe(200);
+    expect((await api(w.plugin, "POST", "/tasks/t1/resume", { token: w.token, body: {} })).status).toBe(200);
+    await tick(w.plugin);
+    expect(remindersSent(w)).toBe(before);
+  });
+
+  it("refuses a task waiting on a retry of its last look", async () => {
+    const w = await setup();
+    await pills(w);
+    const db = new Database(w.dbPath);
+    try {
+      db.exec("PRAGMA busy_timeout = 5000");
+      const later = new Date(w.clock.now().getTime() + 3_600_000).toISOString();
+      db.query("INSERT INTO occurrences (task_id, lane, due_at, status, late, dedupe_key, created_at) VALUES ('t1', 'notify', ?, 'queued', 0, ?, ?)").run(later, followUpKey("o999"), later);
+    } finally {
+      db.close();
+    }
+    expect(await run(w, "t1")).toMatchObject({ status: 409, code: "cannot_run_now", message: "That task cannot run now: it is waiting to try its last look again." });
+  });
+});
+
+describe("heldRuns", () => {
+  it("leaves a run now out, as docket's cancelScheduledRuns keeps it", async () => {
+    const row = (dedupeKey: string) => ({ id: dedupeKey, dueAt: "2026-10-01T13:00:00.000Z", dedupeKey, record: null, status: "queued" }) as unknown as Occurrence;
+    const rows = [row(runNowKey("t1", "r1")), row("sched:t1:2026-10-02T13:00:00.000Z")];
+    const store = { listOccurrences: async () => rows } as unknown as Store;
+    expect((await heldRuns(store, { id: "t1" } as Task)).map((o) => o.dedupeKey)).toEqual(["sched:t1:2026-10-02T13:00:00.000Z"]);
   });
 });

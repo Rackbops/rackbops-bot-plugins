@@ -192,11 +192,12 @@ export function saveEdit(w: Writer, task: Task, form: URLSearchParams): Promise<
 
 export type TaskAction = "pause" | "resume" | "delete";
 
-/** Pause, resume or delete the writer's task: manage.ts's rules, in the queue. */
 /** A run now (run-now.ts, #369), in the surface's one queue as the owner's other acts are. */
 export function runOn(w: Writer, taskId: string): Promise<Done | { ok: false; error: string }> {
   return asUser(w, (u) => runNow(w.d, u, taskId));
 }
+
+/** Pause, resume or delete the writer's task: manage.ts's rules, in the queue. */
 
 export function actOn(w: Writer, taskId: string, action: TaskAction): Promise<Done | { ok: false; error: string }> {
   const act = action === "pause" ? pauseTask : action === "resume" ? resumeTask : deleteTask;
