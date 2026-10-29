@@ -181,6 +181,7 @@ describe("the route-to-operation table", () => {
     const routes: [RouteKind, string[]][] = [
       [{ kind: "me" }, ["GET"]],
       [{ kind: "types" }, ["GET"]],
+      [{ kind: "capabilities" }, ["GET"]],
       [{ kind: "tasks" }, ["GET", "POST"]],
       [{ kind: "task", id: "t1" }, ["GET", "PATCH", "DELETE"]],
       [{ kind: "act", id: "t1", action: "pause" }, ["POST"]],

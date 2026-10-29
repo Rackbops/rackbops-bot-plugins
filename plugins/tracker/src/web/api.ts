@@ -6,6 +6,7 @@ import type { Queue } from "../discord-common.js";
 import { type ApiToken, TOKEN_PREFIX } from "./api-tokens.js";
 import {
   actAnswer,
+  capabilitiesAnswer,
   type ApiAnswer,
   createAnswer,
   editAnswer,
@@ -153,7 +154,7 @@ export function bearer(header: string | null): string | null {
 }
 
 type Route =
-  | { kind: "me" | "types" | "tasks" }
+  | { kind: "me" | "types" | "tasks" | "capabilities" }
   | { kind: "task"; id: string }
   | { kind: "act"; id: string; action: "pause" | "resume" }
   | { kind: "listings"; id: string }
@@ -175,6 +176,7 @@ function segment(raw: string | undefined): string {
 function route(rest: string): Route | null {
   if (rest === "/me") return { kind: "me" };
   if (rest === "/types") return { kind: "types" };
+  if (rest === "/capabilities") return { kind: "capabilities" };
   if (rest === "/tasks") return { kind: "tasks" };
   const act = ACT.exec(rest);
   if (act) return { kind: "act", id: segment(act[1]), action: act[2] as "pause" | "resume" };
@@ -371,7 +373,8 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
     return json(answer);
   }
   if (r.kind === "types") return json(typesAnswer(w.d));
-  if (r.kind === "tasks") return json(await listAnswer(w.d, user));
+  if (r.kind === "tasks") return json(await listAnswer(w.d, user, new URL(request.url).searchParams));
+  if (r.kind === "capabilities") return json(capabilitiesAnswer(w.d, user, { burst: RATE_BURST, perSecond: RATE_PER_SECOND }));
   if (r.kind === "task") return json(await getAnswer(w.d, user, r.id));
   return json({
     status: 200,
