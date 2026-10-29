@@ -12,6 +12,11 @@ import { actOn, editableTask, makeTask, READING, saveEdit, SLOW_PAGE, type TaskA
 import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_TYPES, type NewType } from "./editor-pages.js";
 import { editValues } from "./form-input.js";
 import { etag, taskVersion, VERSION_MISMATCH } from "./task-version.js";
+import { MAX_LIVE_TASKS } from "../limits.js";
+import { MAX_PRICE_TASKS } from "../price.js";
+import { MAX_LIVE_RESEARCH } from "../research.js";
+import { MAX_LIVE_SCOUTS } from "../scout.js";
+import { MAX_WANT_TASKS } from "../want.js";
 
 /**
  * The task API's task routes (rackbops-bot-plugins#80, slice 4; plan 5.10, E10): list, read, make,
@@ -213,12 +218,90 @@ function watchJson(c: WatchConfig) {
   };
 }
 
-/** `GET /tasks`: the owner's tasks that are not deleted -- active, paused and done -- oldest first. */
-export async function listAnswer(d: TrackerDeps, user: User): Promise<ApiAnswer> {
-  const tasks = (await d.store.listTasks({ ownerId: user.id })).filter((t) => t.status !== "archived");
+/** The most tasks one page of `GET /tasks` holds. */
+export const MAX_PAGE = 200;
+
+/** A page's cursor: the last task it held, opaque to the client. */
+const cursorOf = (taskId: string): string => Buffer.from(taskId).toString("base64url");
+const CURSOR = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * `GET /tasks`: the owner's tasks that are not deleted -- active, paused and done -- oldest first.
+ * With `limit` (1 to `MAX_PAGE`) it is one page, and `nextCursor` names where the next begins; send
+ * it back as `cursor`. A cursor is the last task the page held, found among every task the owner
+ * ever made (a deleted one stays in the store), so a task deleted or made between two pages moves
+ * no other task across the cut: each task still there is listed exactly once. Without `limit`, every
+ * task in one answer, as before.
+ */
+export async function listAnswer(d: TrackerDeps, user: User, query: URLSearchParams = new URLSearchParams()): Promise<ApiAnswer> {
+  const rawLimit = query.get("limit");
+  const rawCursor = query.get("cursor");
+  for (const key of query.keys()) {
+    if (key !== "limit" && key !== "cursor") return problem(400, "unknown_field", `\`${key.slice(0, 40)}\` is not a query parameter of GET tasks: it takes limit and cursor.`);
+  }
+  let limit: number | null = null;
+  if (rawLimit !== null) {
+    limit = /^[0-9]{1,4}$/.test(rawLimit) ? Number(rawLimit) : 0;
+    if (limit < 1 || limit > MAX_PAGE) return problem(400, "invalid", `\`limit\` is a whole number from 1 to ${MAX_PAGE}.`);
+  }
+  if (rawCursor !== null && limit === null) return problem(400, "invalid", "`cursor` goes with `limit`.");
+  // Every task, deleted ones too, in the store's order (oldest first): the cursor is found here.
+  const all = await d.store.listTasks({ ownerId: user.id });
+  let start = 0;
+  if (rawCursor !== null) {
+    const at = CURSOR.test(rawCursor) ? all.findIndex((t) => cursorOf(t.id) === rawCursor) : -1;
+    if (at < 0) return problem(400, "invalid_cursor", "That cursor is not one this API gave you: start again without it.");
+    start = at + 1;
+  }
   const out = [];
-  for (const t of tasks) out.push(await taskJson(d, user, t));
-  return { status: 200, body: { tasks: out } };
+  let last: Task | null = null;
+  let more = false;
+  for (let i = start; i < all.length; i++) {
+    const t = all[i] as Task;
+    if (t.status === "archived") continue;
+    if (limit !== null && out.length === limit) {
+      more = true;
+      break;
+    }
+    out.push(await taskJson(d, user, t));
+    last = t;
+  }
+  return { status: 200, body: { tasks: out, ...(limit !== null ? { nextCursor: more && last ? cursorOf(last.id) : null } : {}) } };
+}
+
+/**
+ * `GET /capabilities`: what this bot can make for the owner, in one read -- the types and their fields
+ * (as `GET /types`), the owner's zone and preferred hour, the caps on how many tasks a person keeps,
+ * the request limits, and which sources are set up, as true or false only: never a key, a token, an
+ * address or any other configured value.
+ */
+export function capabilitiesAnswer(d: TrackerDeps, user: User, rate: { burst: number; perSecond: number }): ApiAnswer {
+  return {
+    status: 200,
+    body: {
+      types: intakeTypes(d),
+      owner: { timeZone: user.timeZone, preferredHour: user.preferredHour },
+      limits: {
+        liveTasks: MAX_LIVE_TASKS,
+        priceTrackers: MAX_PRICE_TASKS,
+        researchWaiting: MAX_LIVE_RESEARCH,
+        scouts: MAX_LIVE_SCOUTS,
+        wantWatches: MAX_WANT_TASKS,
+        pageSize: MAX_PAGE,
+        requestsBurst: rate.burst,
+        requestsPerSecond: rate.perSecond,
+      },
+      sources: {
+        // The model runner (city-hall's executor): research and scouts.
+        runner: d.research === true,
+        bgg: d.bgg === true,
+        ebay: d.ebay === true,
+        shopify: d.shopify === true,
+        mail: d.mail != null,
+        web: d.webEditor,
+      },
+    },
+  };
 }
 
 /** `GET /tasks/<id>`: one of the owner's tasks (a deleted one too, as its web page stays), with its history and findings. */

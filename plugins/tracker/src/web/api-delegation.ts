@@ -30,7 +30,7 @@ export function parseDelegates(env: Readonly<Record<string, string | undefined>>
 
 /** The route shapes `operationOf` reads (api.ts's `Route`). */
 export type RouteKind =
-  | { kind: "me" | "types" | "tasks" }
+  | { kind: "me" | "types" | "tasks" | "capabilities" }
   | { kind: "task"; id: string }
   | { kind: "act"; id: string; action: "pause" | "resume" }
   | { kind: "listings" | "sources" | "ready"; id: string };
@@ -39,6 +39,7 @@ export type RouteKind =
 export const OPERATIONS = [
   "whoami",
   "list_task_types",
+  "get_capabilities",
   "list_tasks",
   "create_task",
   "get_task",
@@ -59,6 +60,8 @@ export function operationOf(r: RouteKind, method: string): Operation | null {
       return method === "GET" ? "whoami" : null;
     case "types":
       return method === "GET" ? "list_task_types" : null;
+    case "capabilities":
+      return method === "GET" ? "get_capabilities" : null;
     case "tasks":
       return method === "GET" ? "list_tasks" : method === "POST" ? "create_task" : null;
     case "task":
