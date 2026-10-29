@@ -20,6 +20,7 @@ import { sourcesAnswer, sourcesReadyAnswer } from "./api-sources.js";
 import type { Writer } from "./editor.js";
 import { readBody } from "./html.js";
 import { isIdempotencyKey } from "./api-idempotency.js";
+import { validateAnswer } from "./api-validate.js";
 import { sha256 } from "./secrets.js";
 import { canonicalJson, ifMatchVersion } from "./task-version.js";
 
@@ -154,7 +155,7 @@ export function bearer(header: string | null): string | null {
 }
 
 type Route =
-  | { kind: "me" | "types" | "tasks" | "capabilities" }
+  | { kind: "me" | "types" | "tasks" | "capabilities" | "validate" }
   | { kind: "task"; id: string }
   | { kind: "act"; id: string; action: "pause" | "resume" }
   | { kind: "listings"; id: string }
@@ -178,6 +179,8 @@ function route(rest: string): Route | null {
   if (rest === "/types") return { kind: "types" };
   if (rest === "/capabilities") return { kind: "capabilities" };
   if (rest === "/tasks") return { kind: "tasks" };
+  // Before `/tasks/<id>`: a task id is `t<seq>`, never `validate`.
+  if (rest === "/tasks/validate") return { kind: "validate" };
   const act = ACT.exec(rest);
   if (act) return { kind: "act", id: segment(act[1]), action: act[2] as "pause" | "resume" };
   const listings = LISTINGS.exec(rest);
@@ -191,7 +194,7 @@ function route(rest: string): Route | null {
 function allowedMethods(r: Route): string {
   if (r.kind === "tasks") return "GET, POST";
   if (r.kind === "task") return "GET, PATCH, DELETE";
-  if (r.kind === "act" || r.kind === "listings" || r.kind === "sources" || r.kind === "ready") return "POST";
+  if (r.kind === "validate" || r.kind === "act" || r.kind === "listings" || r.kind === "sources" || r.kind === "ready") return "POST";
   return "GET";
 }
 
@@ -331,6 +334,13 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
   const writer: Writer = { d: w.d, queue: w.queue, reading: w.reading, userId: user.id, arrived: w.arrived };
   const base = `${w.base}${API_PREFIX}`;
 
+  // A dry run writes nothing, so it takes no Idempotency-Key or If-Match and no write-queue turn.
+  if (r.kind === "validate") {
+    if (request.headers.get("if-match") !== null) return json(problem(400, "if_match_unsupported", "If-Match goes only with PATCH or DELETE of a task, or its pause or resume."));
+    const read = await readJson(request);
+    if (!read.ok) return json(read.answer);
+    return json(await validateAnswer(w.d, user, read.body));
+  }
   if (method === "POST" || method === "PATCH" || method === "DELETE") {
     // `If-Match` (#369): only on a write to one task, and only a version this API made; anything
     // else is refused rather than ignored, so a client never believes a write was conditional when
