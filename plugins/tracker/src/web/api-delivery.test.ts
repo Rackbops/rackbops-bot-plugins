@@ -51,9 +51,11 @@ describe("deliveryView", () => {
   const row = (userId: string, status: Delivery["status"], over: Partial<Delivery> = {}) =>
     ({ occurrenceId: "o1", userId, status, error: null, retryAt: null, attempts: 0, deferrals: 0, messageId: null, createdAt: "", claimedAt: null, settledAt: null, ...over }) as Delivery;
 
-  it("tells a run with nothing to send from one not run yet", () => {
+  it("tells a run with nothing to send from one not finished, a fired run put back to finish included", () => {
     expect(deliveryView(run(), [], names, owner, true).state).toBe("nothing_to_send");
     expect(deliveryView(run({ status: "queued", record: null }), [], names, owner, true).state).toBe("not_run");
+    expect(deliveryView(run({ status: "queued" }), [], names, owner, true).state).toBe("not_run");
+    expect(deliveryView(run({ status: "running" }), [], names, owner, true).state).toBe("not_run");
   });
 
   it("ranks a final failure over an unconfirmed send over one still owed, and a retried failure is still sending", () => {
@@ -66,9 +68,13 @@ describe("deliveryView", () => {
     expect(deliveryView(run(), [row("u2", "sent"), row("u1", "claimed")], names, owner, true).state).toBe("sending");
   });
 
-  it("shows a recipient only their own copy, never another's failure (#273)", () => {
+  it("gives a recipient the state of their own copy alone, never another's failure or pending send (#273)", () => {
     const rows = [row("u1", "failed", { error: "recipient u1 cannot be messaged" }), row("u2", "sent")];
     expect(deliveryView(run(), rows, names, curly, false)).toEqual({ state: "delivered", reason: null, sends: [{ to: "Curly", status: "sent", error: null }] });
     expect(deliveryView(run(), rows, names, owner, true).state).toBe("failed");
+    const owing = [row("u1", "pending", { retryAt: "2026-10-01T00:00:00Z" }), row("u2", "sent")];
+    expect(deliveryView(run(), owing, names, curly, false).state).toBe("delivered");
+    // A run that sent the recipient no copy has nothing for them, whatever it sent the owner.
+    expect(deliveryView(run(), [row("u1", "sent")], names, curly, false)).toEqual({ state: "nothing_to_send", reason: null, sends: [] });
   });
 });

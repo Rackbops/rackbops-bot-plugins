@@ -53,14 +53,16 @@ export interface RunView {
 /**
  * How one run's message went out, from docket's deliveries (plan 5.5), for the task API (#369):
  *
- * - `not_run`: the run has not fired yet, so nothing was planned.
- * - `nothing_to_send`: it ran and had no message for anyone (a price that did not move).
+ * - `not_run`: the run has not finished (queued or running), so no copy is planned yet.
+ * - `nothing_to_send`: no copy for the viewer: it fired with no message (a price that did not move),
+ *   was skipped, or failed before it had one.
  * - `sending`: a copy is still owed: not tried yet, out now, or failed or deferred with a retry to come.
  * - `delivered`: every copy went out.
  * - `unconfirmed`: a send failed in a way that does not say whether it went out; it is never resent.
  * - `failed`: a copy failed for good; `reason` says why.
  *
- * A copy that failed for good outweighs one unconfirmed, which outweighs one still owed.
+ * When copies differ, one that failed for good outranks one unconfirmed, which outranks one still
+ * owed, then `delivered`.
  */
 export type DeliveryState = "not_run" | "nothing_to_send" | "sending" | "delivered" | "unconfirmed" | "failed";
 
@@ -85,21 +87,25 @@ function owed(r: Delivery): boolean {
   return r.retryAt !== null || r.status === "claimed" || r.status === "pending";
 }
 
-/** Pure: a run's delivery state from its delivery rows, as `viewer` may see them. */
+/**
+ * Pure: a run's delivery state from its delivery rows, as `viewer` may see them. A recipient's comes
+ * from their own copy alone (#273), so a run that sent them none reads `nothing_to_send` to them.
+ * A run still queued or running reads `not_run` whatever its record says: one that fired but was put
+ * back (to finish after an error, or held through its task's pause) plans its copies only when it
+ * finishes, and a recipient's view nulls `record`, so owner and recipient read it alike.
+ */
 export function deliveryView(o: Occurrence, rows: readonly Delivery[], people: ReadonlyMap<string, User>, viewer: User, seesEveryone: boolean): RunDelivery {
   const shown = seesEveryone ? rows : rows.filter((r) => r.userId === viewer.id);
   const sends = shown.map((r) => ({ to: people.get(r.userId)?.displayName ?? r.userId, status: r.status, error: r.error ? clip(r.error, 120) : null }));
-  if (rows.length === 0) {
-    const fired = o.record !== null || (o.status !== "queued" && o.status !== "running");
-    return { state: fired ? "nothing_to_send" : "not_run", reason: null, sends };
+  if (shown.length === 0) {
+    const finished = o.status !== "queued" && o.status !== "running";
+    return { state: finished ? "nothing_to_send" : "not_run", reason: null, sends };
   }
   const lost = shown.find((r) => r.status === "failed" && !owed(r));
   if (lost) return { state: "failed", reason: lost.error ? clip(lost.error, 120) : null, sends };
   const unsure = shown.find((r) => r.status === "unconfirmed");
   if (unsure) return { state: "unconfirmed", reason: unsure.error ? clip(unsure.error, 120) : null, sends };
-  if (shown.some(owed)) return { state: "sending", reason: null, sends };
-  // A recipient with no copy of their own (one added after the run) sees it as the task's: sent.
-  return { state: rows.some(owed) ? "sending" : "delivered", reason: null, sends };
+  return { state: shown.some(owed) ? "sending" : "delivered", reason: null, sends };
 }
 
 export interface ChangeView {
