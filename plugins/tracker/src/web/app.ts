@@ -188,16 +188,17 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   }
 
   /**
+   * When each person's membership was last confirmed, for a credential that keeps no row of its own
+   * to hold it (the task API's usr delegation tokens, api-delegation.ts). In memory: after a restart
+   * a person's first delegated request needs a lookup that runs, with no 24-hour grace.
+   */
+  const memberConfirmed = new Map<string, string>();
+
+  /**
    * The membership re-check, for a session and an API token alike (`checkedAt` is theirs): "ok",
    * or "not-member" -- then every session and every API token of the person is gone -- or "unknown"
    * once the last confirmation is too old to trust (the caller decides what that ends).
    */
-  /**
-   * When each person's membership was last confirmed, for a credential that keeps no row of its own
-   * to hold it (the task API's usr delegation tokens, api-delegation.ts). In memory: a restart costs
-   * one lookup per person.
-   */
-  const memberConfirmed = new Map<string, string>();
 
   async function recheck(d: TrackerDeps, user: User, checkedAt: string | null): Promise<Recheck> {
     if (w.guildIds === null) return "ok";

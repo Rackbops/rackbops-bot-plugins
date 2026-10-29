@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
-import { MAX_DELEGATION_MS } from "../usr-identity.js";
+import { DELEGATION_SKEW_MS, MAX_DELEGATION_MS } from "../usr-identity.js";
 import { OPERATIONS, operationOf, parseDelegates, type RouteKind } from "./api-delegation.js";
 import { api, cleanup, CURLY, LARRY, makeToken, people, signIn, slash, world } from "./harness.js";
 
@@ -100,9 +100,25 @@ describe("a usr delegation token on the task API", () => {
     expect(await refusedWith(await w.token({}, { ...DLG, kid: "k9" }))).toEqual([401, "invalid_token"]);
     expect(await refusedWith(await w.token({ sub: "6f1c2a9e-0000-4000-8000-0000000000ff" }))).toEqual([401, "invalid_token"]);
     expect(await refusedWith(await w.token({ act: { sub: "key:8", name: "someone else" } }))).toEqual([401, "invalid_token"]);
-    expect(await refusedWith(await w.token({ exp: NOW_S + MAX_DELEGATION_MS / 1000 + 60 }))).toEqual([401, "invalid_token"]);
+    expect(await refusedWith(await w.token({ exp: NOW_S + (MAX_DELEGATION_MS + DELEGATION_SKEW_MS) / 1000 + 1 }))).toEqual([401, "invalid_token"]);
+    expect(await refusedWith(await w.token({ aud: ["tracker"] }))).toEqual([401, "invalid_token"]);
+    expect(await refusedWith(await w.token({ jti: undefined }))).toEqual([401, "invalid_token"]);
+    expect(await refusedWith(await w.token({ jti: "j1\nforged log line" }))).toEqual([401, "invalid_token"]);
     const other = await keyPair();
     expect(await refusedWith(await sign(other.pair.privateKey, claims()))).toEqual([401, "invalid_token"]);
+  });
+
+  it("takes a token at usr's full 30 minutes from a usr whose clock runs ahead of this one", async () => {
+    const w = await setup();
+    const res = await api(w.plugin, "GET", "/tasks", { token: await w.token({ exp: NOW_S + MAX_DELEGATION_MS / 1000 + 30 }) });
+    expect(res.status).toBe(200);
+  });
+
+  it("still takes trk_ tokens with delegation on", async () => {
+    const w = await setup();
+    const larry = await signIn(w.plugin, LARRY);
+    const trk = await makeToken(w, larry);
+    expect((await api(w.plugin, "GET", "/tasks", { token: trk })).status).toBe(200);
   });
 
   it("needs its operation in scope: a token to list tasks makes none", async () => {

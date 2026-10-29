@@ -317,8 +317,11 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
   // A delegation token does only what its scope names: one operation per route and method (#370).
   if (auth.via.kind === "delegation") {
     const operation = operationOf(r, method);
+    // Every route and method that got this far names one (the table's own test), so null is a
+    // refusal that cannot happen, kept so a future route without an operation fails closed.
+    if (operation === null) return json(problem(403, "insufficient_scope", "No delegation token can do this."));
     const needed = `${w.d.usr?.app}:${operation}`;
-    if (operation === null || !auth.via.delegation.scopes.has(needed)) {
+    if (!auth.via.delegation.scopes.has(needed)) {
       return json(problem(403, "insufficient_scope", `That token does not allow this: it needs ${needed}.`, { "WWW-Authenticate": `${CHALLENGE}, error="insufficient_scope", scope="${needed}"` }));
     }
     if (method !== "GET") w.d.log.info(`api: ${operation} for ${user.id} by usr ${auth.via.delegation.actor} (token ${auth.via.delegation.jti})`);

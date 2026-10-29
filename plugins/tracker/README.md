@@ -657,9 +657,18 @@ cannot steer.
 usr delegation token (usr `docs/design/tokens.md`) from the services it names -- tracker-mcp, the
 ChatGPT connector of #368 -- acting for one person. It is checked offline against usr's JWKS, as the
 web sign-in checks `nz_id`: header `typ` `dlg+jwt`, ES256, `iss` `usr`, `aud` this tracker's usr app
-(`TRACKER_USR_APP`), unexpired and living no longer than usr's 30-minute cap, and `act.sub` one of the
-listed keys. Its `sub` must be a usr account linked to a registered person (`/allow`), and the same
-membership re-check applies. It does only what its `scope` names, one operation per route:
+(`TRACKER_USR_APP`), unexpired with no more than usr's 30-minute cap left (plus a minute for usr's
+clock running ahead), a `jti`, and `act.sub` one of the listed keys. Its `sub` must be a usr account
+linked to a registered person (`/allow`), and the Discord membership re-check applies, with one
+difference: when it was last confirmed is kept in memory, so after a restart a person's first
+delegated request needs a lookup that runs, with no 24-hour grace (`503 membership_unknown` until
+one does).
+
+The token carries no roles, so the tracker cannot see `tracker:member` the way the web sign-in does,
+and usr mints one for anyone holding any `tracker:` role. A listed service must therefore check the
+member role itself: tracker-mcp asks usr's role lookup on every OAuth refresh. Nor can the tracker
+see a revocation: a token minted before the person unlinked the service, or lost the role, works
+until it expires (5 minutes by default, 30 at most). It does only what its `scope` names, one operation per route:
 `whoami` (`GET /me`), `list_task_types`, `list_tasks`, `create_task`, `get_task`, `update_task`
 (PATCH), `delete_task`, `pause_task`, `resume_task`, `send_listings`, `send_sources`,
 `sources_ready`, each as `<app>:<operation>`; a missing one is `403 insufficient_scope`. usr's keys
@@ -758,7 +767,7 @@ version_mismatch` and nothing is written. Without `If-Match` a write goes throug
 | 400 | `invalid_idempotency_key` | An `Idempotency-Key` not 8 to 128 of the characters above. |
 | 400 | `if_match_unsupported`, `invalid_if_match` | `If-Match` on a write that is not to one task (a create, listings, sources), or not one quoted version. |
 | 401 | `unauthorized` | No `Authorization` header. With `WWW-Authenticate: Bearer realm="tracker"`. |
-| 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered (their tokens are then deleted): one answer for all, with `WWW-Authenticate`. An owner forgotten while their write waited in the queue gets the same code with its own message and no `WWW-Authenticate`. |
+| 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered (their tokens are then deleted); a usr delegation token that fails a check above, comes from a service not in `TRACKER_API_DELEGATES`, or acts for a usr account linked to no one registered: one answer for all, with `WWW-Authenticate`. An owner forgotten while their write waited in the queue gets the same code with its own message and no `WWW-Authenticate`. |
 | 403 | `origin_refused` | The request carried an `Origin` header. |
 | 403 | `insufficient_scope` | A usr delegation token whose `scope` lacks this route's operation. With `WWW-Authenticate` naming the scope it needs. |
 | 403 | `not_member` | The owner has left every `TRACKER_GUILD_ID` server (or lacks the `TRACKER_GUILD_ROLES` role where one is asked); their tokens are revoked. |
@@ -777,7 +786,7 @@ version_mismatch` and nothing is written. Without `If-Match` a write goes throug
 | 500 | `outcome_unknown` | A retry under an `Idempotency-Key` whose first request failed partway: it may have made its change, so read your tasks before sending it again under a new key. |
 | 503 | `slow_page` | A new price's or page watch's page did not answer within 8 seconds of the request's arrival: nothing was made. With `Retry-After`. |
 | 503 | `usr_unavailable` | A usr delegation token, and usr's signing keys could not be fetched to check it. With `Retry-After`. |
-| 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours (the lookup goes through the Discord client of the last command or button the bot handled, so after a restart none runs until someone uses one); the type is not available on this bot. |
+| 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours, or, for a delegation token, since the plugin started (the lookup goes through the Discord client of the last command or button the bot handled, so after a restart none runs until someone uses one); the type is not available on this bot. |
 
 **Example.**
 

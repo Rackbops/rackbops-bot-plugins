@@ -45,6 +45,16 @@ export interface UsrDelegation {
 /** usr caps a delegation token at 30 minutes; one that claims to live longer is not usr's. */
 export const MAX_DELEGATION_MS = 30 * 60 * 1000;
 
+/**
+ * How far usr's clock may run ahead of this one before a token at usr's full 30 minutes reads as
+ * longer: the cap is checked against the time left (`exp` - now), so without it a usr minting at the
+ * cap would be refused whenever its clock led by a second.
+ */
+export const DELEGATION_SKEW_MS = 60 * 1000;
+
+/** A token id fit for a log line: usr's are 12 random bytes in base64url, so anything else is refused, not logged. */
+const JTI = /^[A-Za-z0-9_-]{1,64}$/;
+
 export interface UsrVerifierOptions {
   /** usr's origin (usr.ts's `UsrConfig.url`). */
   url: string;
@@ -99,13 +109,13 @@ export class UsrVerifier {
     if (signed.header.typ !== "dlg+jwt") return "invalid";
     const c = signed.claims as { iss?: unknown; sub?: unknown; aud?: unknown; exp?: unknown; scope?: unknown; act?: unknown; jti?: unknown };
     if (c.iss !== "usr" || c.aud !== audience) return "invalid";
-    if (typeof c.sub !== "string" || c.sub === "" || typeof c.scope !== "string" || typeof c.jti !== "string" || c.jti === "") return "invalid";
+    if (typeof c.sub !== "string" || c.sub === "" || typeof c.scope !== "string" || typeof c.jti !== "string" || !JTI.test(c.jti)) return "invalid";
     const actor = (c.act as { sub?: unknown } | null | undefined)?.sub;
     if (typeof actor !== "string" || !/^key:[0-9]+$/.test(actor)) return "invalid";
     if (typeof c.exp !== "number") return "invalid";
     const expiresAt = c.exp * 1000;
     const now = this.o.now();
-    if (expiresAt <= now || expiresAt - now > MAX_DELEGATION_MS) return "invalid";
+    if (expiresAt <= now || expiresAt - now > MAX_DELEGATION_MS + DELEGATION_SKEW_MS) return "invalid";
     return { sub: c.sub, actor, scopes: new Set(c.scope.split(" ").filter((x) => x !== "")), jti: c.jti, expiresAt };
   }
 
