@@ -41,6 +41,7 @@ import { ApiTokens } from "./web/api-tokens.js";
 import { Sessions } from "./web/sessions.js";
 import { LoginLinks } from "./web/signin-link.js";
 import { createUsrClient, parseUsrConfig } from "./usr.js";
+import { parseDelegates } from "./web/api-delegation.js";
 import { UsrVerifier } from "./usr-identity.js";
 import { UsrLinks } from "./usr-links.js";
 import { BUDGET_UNLIMITED_KEY, executeBudget, parseBudgetUnlimited, UNLIMITED_IDLE_LOG, UNLIMITED_LOG } from "./usage.js";
@@ -193,6 +194,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const cityHall = parseCityHallConfig(host.env);
   // The link to our usr (usr.ts): checked at load, so a half-set link refuses to start; off while unset.
   const usrConfig = parseUsrConfig(host.env);
+  const delegates = parseDelegates(host.env, usrConfig !== null);
   // The alert-email route (mail.ts): both settings or neither, checked at load.
   const mailConfig = parseMailConfig(host.env);
   const usrClient = usrConfig ? createUsrClient({ config: usrConfig, ...(options.usrFetch ? { fetchImpl: options.usrFetch } : {}) }) : null;
@@ -516,6 +518,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         if (cityHallConfig) host.log.info(`execute lane on: city-hall ${cityHallConfig.url}, capability ${cityHallConfig.capability}`);
         else if ("missing" in cityHall && cityHall.missing.length > 0) host.log.warn(`execute lane is off, so /research is unavailable: ${cityHall.missing.join(", ")} not set`);
         if (usrConfig) host.log.info(`usr link on: ${usrConfig.url}, app ${usrConfig.app}`);
+        if (delegates.size > 0) host.log.info(`task API takes usr delegation tokens from ${[...delegates].join(", ")}`);
         const openedDeps: TrackerDeps = {
           store: openedStore,
           admissions: new Admissions(opened),
@@ -553,6 +556,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
                   verifier: new UsrVerifier({ url: usrConfig.url, now: () => clock.now().getTime(), ...(options.usrFetch ? { fetchImpl: options.usrFetch } : {}) }),
                   app: usrConfig.app,
                   links: new UsrLinks(opened),
+                  delegates,
                 }
               : null,
         };

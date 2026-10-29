@@ -113,6 +113,8 @@ export interface UsrLink {
   verifier: UsrVerifier;
   app: string;
   links: UsrLinks;
+  /** The usr API keys (`key:<id>`) whose delegation tokens the task API takes (`TRACKER_API_DELEGATES`, web/api-delegation.ts); empty or absent = none. */
+  delegates?: ReadonlySet<string>;
 }
 
 /** A command's answer that first calls out (usr, a DM) outside the queue, then finishes in it (discord.ts's `Step`). */
