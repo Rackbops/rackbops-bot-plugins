@@ -37,6 +37,7 @@ import { awaitingPages, type ResearchSources, sentResearch, waitingForPages } fr
 import type { UsrVerifier } from "./usr-identity.js";
 import type { UsrLinks } from "./usr-links.js";
 import { type AllowResult, type RegisterLink, type UsrClient, UsrError } from "./usr.js";
+import type { ApiIdempotency } from "./web/api-idempotency.js";
 import type { ApiTokens } from "./web/api-tokens.js";
 import type { Sessions } from "./web/sessions.js";
 import type { LoginLinks } from "./web/signin-link.js";
@@ -69,6 +70,8 @@ export interface TrackerDeps {
   sessions: Sessions;
   /** The task API's personal bearer tokens (web/api-tokens.ts). */
   apiTokens: ApiTokens;
+  /** The task API's `Idempotency-Key`s and the answers kept for their retries (web/api-idempotency.ts). */
+  apiIdempotency: ApiIdempotency;
   /** The Discord ids `TRACKER_ADMIN_DISCORD_IDS` names: made admin at every start, so not revocable from the web. */
   configuredAdmins: ReadonlySet<string>;
   /** Whether a notify or poll tick is running, and a bounded wait for none to be (index.ts). */

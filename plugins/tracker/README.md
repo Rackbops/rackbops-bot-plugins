@@ -710,7 +710,7 @@ a research request cannot be edited, here or in Discord, and a `PATCH` of one an
 | `POST /api/v1/tasks/<id>/sources/ready` | Body `{}`. Starts that request on the pages it holds: its queued run is moved to now (docket-core's `reschedule`), and the execute lane submits it within a minute or two. For a request waiting for a fuller pass (0.29.0), it moves the request to now and then deletes the queued follow-up its wait rests on, under the task's lock, so the next execute tick runs the second pass on the pages; refused (`409`) once that follow-up has started, fired or has its Job out at the runner. No page in yet, a paused request, or one no longer waiting is `409`; the others as for `/sources`. From then the request takes no more pages; nor does it once a run of it has started, `ready` or not (the run at its expiry). Both routes take the task's lock: while the model runner has the task, either is `409 busy`. |
 | `DELETE /api/v1/tasks/<id>` | Deletes it as the web does: archived, nothing more sent, history kept. No confirmation step. |
 
-A task is `{"id", "type", "title", "status", "cadence", "nextAt", "createdAt", "updatedAt",
+A task is `{"id", "type", "title", "status", "version", "cadence", "nextAt", "createdAt", "updatedAt",
 "settings"}`, and a price also has a top-level `url`: `status` is `active`, `paused`, `done` or
 `deleted`; `cadence` is the schedule in words, in your zone; `nextAt` the next run's instant (UTC),
 null when paused or nothing is due; `settings` exactly the fields a `PATCH` takes, as the task has
@@ -718,6 +718,18 @@ them. A research request's `settings` are what was asked -- `question`, and `con
 `deadline` (an instant) when given, and `sources` (`web` or `browser`) -- shown to you alone and changed by no `PATCH`; a browser request also has a top-level `sources: "browser"` (the same value as `settings.sources`, for a helper that reads only the top level), `pages` (how many are in) and `waitingForPages` (true until `ready` moved its run, or a run of it started). So does a request whose first answer listed pages its run could not open (0.29.0, top-level `sources: "web"`, `waitingForPages` true while it waits for a fuller pass), and both have `blocked`, the pages to gather, each `{site, url?, why}` (empty when there are none). A price's `url` is read-only -- another page is another tracker -- so it is not in `settings`
 and a `PATCH` naming it is refused (`unknown_field`). A write answers
 `{"task", "message"}`, `message` being the words the web and the command say.
+
+**Retries and versions** (0.37.0, #369). Any write -- `POST`, `PATCH` or `DELETE` -- may carry
+`Idempotency-Key`, 8 to 128 letters, digits, `-`, `_`, `.` or `:` (a UUID will do). The same key
+with the same method, path and body (its keys in any order) within 24 hours is one write: a retry
+gets the first answer again, with `Idempotency-Replayed: true`, and makes nothing more. Only a `2xx`
+answer is kept, so a retry of a refused write runs again. The same key for a different request is
+`409 idempotency_conflict`; a retry while the first is still running is `409
+idempotency_in_progress` with `Retry-After`. Keys are per person, and forget-me erases them. A
+task's `version` (also its `ETag` on every answer about one task) changes when its title, settings,
+schedule or status does, not when it runs. Send it back as `If-Match: "<version>"` on a `PATCH`,
+`DELETE`, pause or resume to make the write conditional: a task changed since is `412
+version_mismatch` and nothing is written. Without `If-Match` a write goes through as before.
 
 **Errors** are `{"error": {"code": "...", "message": "..."}}`:
 
@@ -727,6 +739,8 @@ and a `PATCH` naming it is refused (`unknown_field`). A write answers
 | 400 | `unknown_field` | A field that type does not take (on a pause or resume, any field). |
 | 400 | `invalid_json` | The body is not JSON, or not one object. |
 | 400 | `too_many` | More than 40 listings in one `/listings` request. |
+| 400 | `invalid_idempotency_key` | An `Idempotency-Key` not 8 to 128 of the characters above. |
+| 400 | `if_match_unsupported`, `invalid_if_match` | `If-Match` on a write that is not to one task (a create, listings, sources), or not one quoted version. |
 | 401 | `unauthorized` | No `Authorization` header. With `WWW-Authenticate: Bearer realm="tracker"`. |
 | 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered (their tokens are then deleted): one answer for all, with `WWW-Authenticate`. An owner forgotten while their write waited in the queue gets the same code with its own message and no `WWW-Authenticate`. |
 | 403 | `origin_refused` | The request carried an `Origin` header. |
@@ -737,7 +751,9 @@ and a `PATCH` naming it is refused (`unknown_field`). A write answers
 | 409 | `limit_reached` | 200 active or paused tasks, 20 price trackers, 5 research requests waiting (one waiting for a fuller pass not counted), 3 scouts, or 20 want-list watches, as the commands count them. |
 | 409 | `too_many` | Pages sent to a research request that would then hold more than 10. (As a `400`, more than a request takes in one body.) |
 | 409 | `too_much_text` | None of the pages sent to a research request fits in the text it may still hold (99,800 characters in all). |
+| 409 | `idempotency_conflict`, `idempotency_in_progress` | That `Idempotency-Key` was used for another request; or its first request is still running (with `Retry-After`). |
 | 409 | `busy` | Your last new price tracker's page is still being read, or the task is with the model runner right now (try again in a minute). |
+| 412 | `version_mismatch` | `If-Match` names a version the task no longer has: read it again. |
 | 413 | `too_large` | Body over 16 KiB (64 KiB for `/listings`, 1 MiB for `/sources`). |
 | 415 | `unsupported_media_type` | Not `application/json`. |
 | 429 | `rate_limited` | With `Retry-After`: this token's bucket, or the shared one for bad tokens. |

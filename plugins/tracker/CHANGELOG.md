@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.37.0] - 2026-10-29
+
+### Added
+
+- The task API's writes can be retried safely and made conditional (rackbops-bot-plugins#369, for the ChatGPT client of #368). A write that carries `Idempotency-Key` is done once: a retry with the same key and request within 24 hours gets the first answer again (`Idempotency-Replayed: true`), the same key for another request is `409 idempotency_conflict`, and one sent while the first still runs is `409 idempotency_in_progress`. Only a successful answer is kept, so a refused write can be retried. Every task now shows a `version` (and an `ETag`), which moves when its title, settings, schedule or status changes, not when it runs; `If-Match` on an edit, delete, pause or resume refuses with `412 version_mismatch` when the task changed since it was read. Both headers are optional; a client that sends neither sees no change but the new `version` field.
+
+### Schema
+
+- 13: adds `api_idempotency`, purely additive. Forget-me erases a person's rows. A database at 13 is refused by 0.36.0 and older, so going back to 0.36.0 needs the database backup taken before the upgrade.
+
 ## [0.36.0] - 2026-10-29
 
 ### Changed
