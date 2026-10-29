@@ -3,7 +3,9 @@ import type {
   ConsentState,
   Delivery,
   DeliveryFilter,
+  DeleteGuard,
   DeliverySettle,
+  DeliveryStatus,
   FindingFilter,
   InviteBlock,
   Lane,
@@ -592,10 +594,35 @@ export class SqliteStore implements Store {
     return this.run(`UPDATE occurrences SET ${sets.join(", ")} WHERE seq = ?${guard}`, ...params).changes > 0;
   }
 
-  async deleteOccurrence(id: string): Promise<boolean> {
+  async deleteOccurrence(id: string, guard?: DeleteGuard): Promise<boolean> {
     const seq = seqOf("o", id);
     if (seq === null) return false;
-    return this.run("DELETE FROM occurrences WHERE seq = ? AND status = 'queued'", seq).changes > 0;
+    if (guard === undefined) return this.run("DELETE FROM occurrences WHERE seq = ? AND status = 'queued'", seq).changes > 0;
+    // One statement, so an event written between the caller's read and this delete is seen. An event
+    // id the store cannot find refuses: `seq > (subquery)` would be NULL there, and NULL deletes.
+    const last = guard.lastEventId === null ? null : seqOf("e", guard.lastEventId);
+    if (guard.lastEventId !== null && last === null) return false;
+    if (last === null) {
+      return (
+        this.run(
+          "DELETE FROM occurrences WHERE seq = ? AND status = 'queued' AND record IS NULL AND NOT EXISTS (SELECT 1 FROM events WHERE occurrence_id = ?)",
+          seq,
+          id,
+        ).changes > 0
+      );
+    }
+    return (
+      this.run(
+        `DELETE FROM occurrences WHERE seq = ? AND status = 'queued' AND record IS NULL
+         AND EXISTS (SELECT 1 FROM events WHERE seq = ? AND occurrence_id = ?)
+         AND NOT EXISTS (SELECT 1 FROM events WHERE occurrence_id = ? AND seq > ?)`,
+        seq,
+        last,
+        id,
+        id,
+        last,
+      ).changes > 0
+    );
   }
 
   async requeueRunning(lane?: Lane): Promise<string[]> {
@@ -731,7 +758,7 @@ export class SqliteStore implements Store {
       filter.since === undefined
         ? this.all("SELECT * FROM series WHERE task_id = ? ORDER BY at, seq", taskId)
         : this.all("SELECT * FROM series WHERE task_id = ? AND at >= ? ORDER BY at, seq", taskId, filter.since);
-    const kept = filter.limit === undefined ? points : points.slice(-filter.limit);
+    const kept = filter.limit === undefined ? points : !(filter.limit >= 1) ? [] : points.slice(-filter.limit);
     return kept.map(toPoint);
   }
 
@@ -853,10 +880,10 @@ export class SqliteStore implements Store {
     return changes === 1 ? this.delivery(occurrenceId, userId) : null;
   }
 
-  async settleDelivery(occurrenceId: string, userId: string, settle: DeliverySettle): Promise<Delivery> {
+  async settleDelivery(occurrenceId: string, userId: string, settle: DeliverySettle, expected?: DeliveryStatus): Promise<Delivery> {
     const { changes } = this.run(
       `UPDATE deliveries SET status = ?, message_id = ?, error = ?, attempts = ?, deferrals = ?, retry_at = ?, settled_at = ?
-       WHERE occurrence_id = ? AND user_id = ?`,
+       WHERE occurrence_id = ? AND user_id = ?${expected === undefined ? "" : " AND status = ?"}`,
       settle.status,
       settle.messageId ?? null,
       settle.error ?? null,
@@ -866,8 +893,10 @@ export class SqliteStore implements Store {
       settle.at,
       occurrenceId,
       userId,
+      ...(expected === undefined ? [] : [expected]),
     );
-    if (changes === 0) throw new Error(`no delivery ${occurrenceId}:${userId}`);
+    // A moved-on row is returned as it stands; only a missing one throws.
+    if (changes === 0 && !this.delivery(occurrenceId, userId)) throw new Error(`no delivery ${occurrenceId}:${userId}`);
     return this.delivery(occurrenceId, userId) as Delivery;
   }
 

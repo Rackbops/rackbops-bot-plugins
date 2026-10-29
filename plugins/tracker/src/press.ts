@@ -1,4 +1,5 @@
 import {
+  ConsentError,
   decodeReplyRef,
   invite,
   inviteMessage,
@@ -172,7 +173,7 @@ async function pressLocked(d: TrackerDeps, user: User, ref: string): Promise<Pre
         : answeredText(input.kind, outcome?.snoozeUntil ?? null, user, d.clock.now());
     return { ok: true, status, keepReplyFor: input.occurrenceId };
   } catch (err) {
-    if (err instanceof ReplyRefusedError) return { ok: false, error: err.message };
+    if (err instanceof ReplyRefusedError || err instanceof ConsentError) return { ok: false, error: err.message };
     throw err;
   }
 }

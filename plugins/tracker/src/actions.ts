@@ -436,7 +436,7 @@ export async function rescheduleKeepingSnoozes(
   schedule: Schedule,
   actorId: string,
 ): Promise<{ task: Task; jobOut: boolean }> {
-  const { task: updated, jobOut } = await reschedule(d.store, task, owner, schedule, actorId, d.clock.now());
+  const { task: updated, jobOut } = await reschedule(d.store, task, owner, schedule, actorId, d.clock.now(), d.types[task.type]);
   return { task: updated, jobOut };
 }
 

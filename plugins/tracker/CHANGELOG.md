@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.36.0] - 2026-10-29
+
+### Changed
+
+- Adopts docket 0.16.0's audit fixes (rackbops-bot-plugins#364). The store settles a delivery only while its status is the one the caller read, deletes a run only while no event has landed after the last one read (an unknown event id refuses), lists equal-time series points in insertion order, and returns no points for a limit below 1. An edit to a task's schedule is checked against the task's type, so a reminder can no longer be given a `poll` schedule. A price watch's `near` text is checked with docket-types' `patternProblem` when it is saved. Deleting a task, or a research request's fuller pass, keeps a run whose Job went out mid-delete. A reply that docket refuses for consent is answered, not thrown. On docket 0.16.0, so scout item keys drop per-view parameters (an item remembered under a `utm_*` URL is reported once more), a price the page declares in another currency is a miss, and an eBay watch in a non-USD currency warns at once.
+
+### Schema
+
+- No change. Still at 12.
+
 ## [0.35.0] - 2026-10-24
 
 ### Changed

@@ -6,6 +6,7 @@ import {
   DEFAULT_DROP_PERCENT,
   extractPrice,
   money,
+  patternProblem,
   type PriceConfig,
 } from "@rackbops/docket-types";
 import { MAX_NEAR, MAX_TITLE, MAX_URL } from "./limits.js";
@@ -53,6 +54,15 @@ export interface PriceInput {
 export function nearPattern(near: string): string {
   const literal = near.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return `${literal}[^0-9]{0,40}([0-9](?:[0-9.,]{0,14}[0-9])?)`;
+}
+
+/**
+ * The owner-facing refusal of a price pattern docket-types will not run (`patternProblem`, docket#45),
+ * or null. `nearPattern` builds a safe one today; this holds if a pattern ever comes from elsewhere.
+ */
+export function patternRefusal(pattern: string | undefined): string | null {
+  const problem = pattern === undefined ? null : patternProblem(pattern);
+  return problem ? `That \`near\` text cannot be used: ${problem}` : null;
 }
 
 export interface PriceSettings {
@@ -143,7 +153,11 @@ export async function startPrice(d: TrackerDeps, user: User, input: PriceInput):
   const capped = await liveTaskCap(d, user);
   if (capped) return { ok: false, error: capped };
   const { name, hours, drop, baseline } = settings;
-  const config: PriceConfig = { url, dropPercent: drop, baseline, ...(near ? { pattern: nearPattern(near) } : {}) };
+  const pattern = near ? nearPattern(near) : undefined;
+  // docket-types refuses a pattern it will not run (docket#45): tell the owner now, not on the third miss.
+  const refused = patternRefusal(pattern);
+  if (refused) return { ok: false, error: refused };
+  const config: PriceConfig = { url, dropPercent: drop, baseline, ...(pattern !== undefined ? { pattern } : {}) };
   return { ok: true, pending: { url, title: name || titleFor(url), hours, config } };
 }
 

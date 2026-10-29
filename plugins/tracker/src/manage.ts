@@ -1,4 +1,4 @@
-import { hasFired, materialize, type Task, type User } from "@rackbops/docket-core";
+import { deleteIdleRun, materialize, type Task, type User } from "@rackbops/docket-core";
 import { NO_SUCH_TASK, ownTask, type TrackerDeps } from "./actions.js";
 import { TASK_BUSY } from "./locks.js";
 
@@ -98,7 +98,7 @@ async function deleteLocked(d: TrackerDeps, user: User, taskId: string): Promise
   if (!task) return { ok: false, error: NO_SUCH_TASK };
   const at = d.clock.now().toISOString();
   for (const o of await d.store.listOccurrences({ taskId: task.id, status: "queued" })) {
-    if (!hasFired(o)) await d.store.deleteOccurrence(o.id);
+    await deleteIdleRun(d.store, o);
   }
   await d.store.updateTask(task.id, { status: "archived", at });
   await d.store.addTaskEvent({ taskId: task.id, actorId: user.id, kind: "archived", detail: "deleted by the owner", at });
