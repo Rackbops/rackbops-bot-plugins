@@ -721,13 +721,16 @@ and a `PATCH` naming it is refused (`unknown_field`). A write answers
 
 **Retries and versions** (0.37.0, #369). Any write -- `POST`, `PATCH` or `DELETE` -- may carry
 `Idempotency-Key`, 8 to 128 letters, digits, `-`, `_`, `.` or `:` (a UUID will do). The same key
-with the same method, path and body (its keys in any order) within 24 hours is one write: a retry
+with the same method, path, body (its keys in any order) and `If-Match` within 24 hours is one write: a retry
 gets the first answer again, with `Idempotency-Replayed: true`, and makes nothing more. Only a `2xx`
-answer is kept, so a retry of a refused write runs again. The same key for a different request is
+answer is kept, so a retry of a refused write runs again; a write that failed partway with a server
+error may have made its change, so its key answers `500 outcome_unknown` from then on. The same key for a different request is
 `409 idempotency_conflict`; a retry while the first is still running is `409
-idempotency_in_progress` with `Retry-After`. Keys are per person, and forget-me erases them. A
-task's `version` (also its `ETag` on every answer about one task) changes when its title, settings,
-schedule or status does, not when it runs. Send it back as `If-Match: "<version>"` on a `PATCH`,
+idempotency_in_progress` with `Retry-After`. Keys are per person, and forget-me erases them. A claim
+still unfinished after 2 minutes is treated as abandoned (every write here ends well before that). A
+task's `version` (also the `ETag` of `GET /tasks/<id>` and of every create, edit, pause, resume and
+delete answer) changes when its title, settings, schedule, status or capabilities do, not when it
+runs -- unless the run finishes the task, which changes its status. Send it back as `If-Match: "<version>"` on a `PATCH`,
 `DELETE`, pause or resume to make the write conditional: a task changed since is `412
 version_mismatch` and nothing is written. Without `If-Match` a write goes through as before.
 
@@ -757,6 +760,7 @@ version_mismatch` and nothing is written. Without `If-Match` a write goes throug
 | 413 | `too_large` | Body over 16 KiB (64 KiB for `/listings`, 1 MiB for `/sources`). |
 | 415 | `unsupported_media_type` | Not `application/json`. |
 | 429 | `rate_limited` | With `Retry-After`: this token's bucket, or the shared one for bad tokens. |
+| 500 | `outcome_unknown` | A retry under an `Idempotency-Key` whose first request failed partway: it may have made its change, so read your tasks before sending it again under a new key. |
 | 503 | `slow_page` | A new price's or page watch's page did not answer within 8 seconds of the request's arrival: nothing was made. With `Retry-After`. |
 | 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours (the lookup goes through the Discord client of the last command or button the bot handled, so after a restart none runs until someone uses one); the type is not available on this bot. |
 

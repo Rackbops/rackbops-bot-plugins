@@ -4,7 +4,7 @@ import type { Plugin } from "../../../../packages/api/contract.js";
 import { MIGRATIONS, migrate, openDatabase } from "../schema.js";
 import { CONFIRM_WORD } from "./admin-pages.js";
 import { canonicalJson } from "./api.js";
-import { ApiIdempotency, KEEP_MS, PENDING_MS } from "./api-idempotency.js";
+import { ApiIdempotency, KEEP_MS, OUTCOME_UNKNOWN, PENDING_MS } from "./api-idempotency.js";
 import { api, call, cleanup, csrfOf, CURLY, LARRY, makeToken, ORIGIN, people, signIn, slash, START, world } from "./harness.js";
 import { VERSION_MISMATCH } from "./task-version.js";
 
@@ -67,19 +67,21 @@ describe("ApiIdempotency", () => {
 
   it("claims a key once; a second claim while the first runs is in progress; a finished 2xx replays", () => {
     const keys = new ApiIdempotency(openDatabase(":memory:"));
-    expect(keys.begin("u1", "key-00001", "h1", NOW)).toEqual({ kind: "new" });
+    const first = keys.begin("u1", "key-00001", "h1", NOW);
+    expect(first).toEqual({ kind: "new", claim: expect.stringMatching(/^[0-9a-f]{32}$/) });
+    const claim = (first as { claim: string }).claim;
     expect(keys.begin("u1", "key-00001", "h1", at(1000))).toEqual({ kind: "in_progress" });
     expect(keys.begin("u1", "key-00001", "h2", at(1000))).toEqual({ kind: "conflict" });
-    keys.finish("u1", "key-00001", { status: 201, body: { task: { id: "t1" } }, headers: { Location: "/x" } });
+    keys.finish("u1", "key-00001", claim, { status: 201, body: { task: { id: "t1" } }, headers: { Location: "/x" } });
     expect(keys.begin("u1", "key-00001", "h1", at(2000))).toEqual({ kind: "replay", answer: { status: 201, body: { task: { id: "t1" } }, headers: { Location: "/x" } } });
     // Another person's same key is theirs alone.
-    expect(keys.begin("u2", "key-00001", "h9", at(2000))).toEqual({ kind: "new" });
+    expect(keys.begin("u2", "key-00001", "h9", at(2000)).kind).toBe("new");
   });
 
   it("drops a refusal's claim, so a retry runs again; a claim that never finished stops blocking after PENDING_MS", () => {
     const keys = new ApiIdempotency(openDatabase(":memory:"));
-    keys.begin("u1", "key-00002", "h1", NOW);
-    keys.finish("u1", "key-00002", { status: 400, body: { error: {} }, headers: {} });
+    const c = keys.begin("u1", "key-00002", "h1", NOW) as { claim: string };
+    keys.finish("u1", "key-00002", c.claim, { status: 400, body: { error: {} }, headers: {} });
     expect(keys.begin("u1", "key-00002", "h2", at(1)).kind).toBe("new");
     expect(keys.begin("u1", "key-00002", "h2", at(PENDING_MS - 1)).kind).toBe("in_progress");
     expect(keys.begin("u1", "key-00002", "h3", at(PENDING_MS + 1)).kind).toBe("new");
@@ -87,10 +89,32 @@ describe("ApiIdempotency", () => {
 
   it("forgets a key after KEEP_MS", () => {
     const keys = new ApiIdempotency(openDatabase(":memory:"));
-    keys.begin("u1", "key-00003", "h1", NOW);
-    keys.finish("u1", "key-00003", { status: 200, body: {}, headers: {} });
+    const c = keys.begin("u1", "key-00003", "h1", NOW) as { claim: string };
+    keys.finish("u1", "key-00003", c.claim, { status: 200, body: {}, headers: {} });
     expect(keys.begin("u1", "key-00003", "h2", at(KEEP_MS - 1)).kind).toBe("conflict");
     expect(keys.begin("u1", "key-00003", "h2", at(KEEP_MS + 1)).kind).toBe("new");
+  });
+
+  it("a slow request whose key was taken over cannot finish or drop the new claim", () => {
+    const keys = new ApiIdempotency(openDatabase(":memory:"));
+    const slow = keys.begin("u1", "key-00004", "h1", NOW) as { claim: string };
+    const next = keys.begin("u1", "key-00004", "h1", at(PENDING_MS + 1)) as { claim: string };
+    expect(next.claim).not.toBe(slow.claim);
+    keys.finish("u1", "key-00004", slow.claim, { status: 201, body: { stale: true }, headers: {} });
+    keys.abandon("u1", "key-00004", slow.claim);
+    expect(keys.begin("u1", "key-00004", "h1", at(PENDING_MS + 2)).kind).toBe("in_progress");
+    keys.finish("u1", "key-00004", next.claim, { status: 201, body: { fresh: true }, headers: {} });
+    expect(keys.begin("u1", "key-00004", "h1", at(PENDING_MS + 3))).toEqual({ kind: "replay", answer: { status: 201, body: { fresh: true }, headers: {} } });
+  });
+
+  it("a request that threw answers outcome_unknown to a retry instead of running again", () => {
+    const keys = new ApiIdempotency(openDatabase(":memory:"));
+    const c = keys.begin("u1", "key-00005", "h1", NOW) as { claim: string };
+    keys.fail("u1", "key-00005", c.claim);
+    expect(keys.begin("u1", "key-00005", "h1", at(PENDING_MS + 1))).toEqual({
+      kind: "replay",
+      answer: { status: 500, body: { error: { code: "outcome_unknown", message: OUTCOME_UNKNOWN } }, headers: {} },
+    });
   });
 
   it("hashes a body the same whatever the order of its keys", () => {
@@ -176,6 +200,17 @@ describe("Idempotency-Key", () => {
     expect((await api(w.plugin, "DELETE", "/tasks/t1", { token: w.token })).status).toBe(404);
   });
 
+  it("the same key and body under another If-Match version is another request", async () => {
+    const w = await setup();
+    await api(w.plugin, "POST", "/tasks", { token: w.token, body: REMIND });
+    const v1 = (await body(await api(w.plugin, "GET", "/tasks/t1", { token: w.token }))).task.version as string;
+    const key = { "idempotency-key": "pause-with-a-version" };
+    expect((await api(w.plugin, "POST", "/tasks/t1/pause", { token: w.token, body: {}, headers: { ...key, "if-match": `"${v1}"` } })).status).toBe(200);
+    const other = await api(w.plugin, "POST", "/tasks/t1/pause", { token: w.token, body: {}, headers: { ...key, "if-match": '"0123456789abcdef"' } });
+    expect(other.status).toBe(409);
+    expect((await body(other)).error.code).toBe("idempotency_conflict");
+  });
+
   it("forget-me erases a person's keys and kept answers", async () => {
     const w = await setup();
     await api(w.plugin, "POST", "/tasks", { token: w.token, body: REMIND, headers: { "idempotency-key": "larry-key-0001" } });
@@ -217,6 +252,19 @@ describe("If-Match", () => {
       expect(await body(res)).toEqual({ error: { code: "version_mismatch", message: VERSION_MISMATCH } });
     }
     expect(query(w.dbPath, "SELECT title, config, status FROM tasks")).toEqual(before);
+  });
+
+  it("a padded task id is checked like the plain one", async () => {
+    const w = await setup();
+    await api(w.plugin, "POST", "/tasks", { token: w.token, body: REMIND });
+    const stale = (await body(await api(w.plugin, "GET", "/tasks/t1", { token: w.token }))).task.version as string;
+    await api(w.plugin, "PATCH", "/tasks/t1", { token: w.token, body: { text: "changed elsewhere" } });
+    const headers = { "if-match": `"${stale}"` };
+    for (const [method, path, b] of [["PATCH", "/tasks/%20t1", { text: "mine" }], ["POST", "/tasks/%20t1/pause", {}], ["DELETE", "/tasks/t1%20", undefined]] as const) {
+      const res = await api(w.plugin, method, path, { token: w.token, headers, ...(b !== undefined ? { body: b } : {}) });
+      expect(res.status).toBe(412);
+    }
+    expect(query(w.dbPath, "SELECT title, status FROM tasks")).toEqual([{ title: "changed elsewhere", status: "active" }]);
   });
 
   it("a run of the task does not move its version", async () => {

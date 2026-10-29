@@ -266,20 +266,25 @@ export async function createAnswer(w: Writer, user: User, body: Record<string, u
   return written(w, user, await makeTask(w, type as NewType, form), 201, base);
 }
 
+/** The writer with its `If-Match` bound to the task the route found, not to the id as the client spelled it. */
+function bound(w: Writer, task: Task): Writer {
+  return w.ifMatch ? { ...w, ifMatch: { taskId: task.id, version: w.ifMatch.version } } : w;
+}
+
 /** `PATCH /tasks/<id>`: the fields to change; one left out keeps what the task has. */
 export async function editAnswer(w: Writer, user: User, id: string, body: Record<string, unknown>, base: string): Promise<ApiAnswer> {
   const task = await editableTask(w.d, user, id);
   if (!task) return (await ownLiveTask(w.d, user, id))?.type === "research" ? refusal(NOT_EDITABLE) : notFound();
   const form = asFields(body, task.type as EditorType, "edit");
   if (!(form instanceof URLSearchParams)) return form;
-  return written(w, user, await saveEdit(w, task, form), 200, base);
+  return written(w, user, await saveEdit(bound(w, task), task, form), 200, base);
 }
 
 /** `POST /tasks/<id>/pause`, `/resume`, and `DELETE /tasks/<id>`. */
 export async function actAnswer(w: Writer, user: User, id: string, action: TaskAction): Promise<ApiAnswer> {
   const task = await ownTask(w.d, user, id);
   if (!task || task.status === "archived") return notFound();
-  const done = await actOn(w, task.id, action);
+  const done = await actOn(bound(w, task), task.id, action);
   if (!done.ok) return refusal(done.error);
   const after = (await w.d.store.getTask(task.id)) ?? task;
   return { status: 200, headers: { ETag: etag(taskVersion(after)) }, body: { task: await taskJson(w.d, user, after), message: done.text } };

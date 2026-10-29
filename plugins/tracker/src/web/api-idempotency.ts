@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { randomBytes } from "node:crypto";
 
 /**
  * The task API's idempotent writes (rackbops-bot-plugins#369, for the ChatGPT client of #368): a
@@ -7,9 +8,12 @@ import type { Database } from "bun:sqlite";
  * task; the same key with a different request is refused (`409 idempotency_conflict`), and a retry
  * while the first is still running is told to wait (`409 idempotency_in_progress`).
  *
- * Only a 2xx answer is kept. Anything else -- a refusal, a 409 busy, a 429, a 5xx -- wrote nothing,
- * so its row is dropped and a retry with the same key runs again. A row whose request never
- * finished (the process stopped mid-write) stops blocking after `PENDING_MS`.
+ * Only a 2xx answer is kept. Any other answer -- a refusal, a 409 busy, a 429 -- wrote nothing, so
+ * its row is dropped and a retry with the same key runs again. A request that threw may have saved
+ * its change before it did, so its key answers `500 outcome_unknown` until it expires rather than
+ * run a second time. A row whose request never finished (the process stopped mid-write) stops
+ * blocking after `PENDING_MS`; each claim carries its own random id, so a request that was only
+ * slow cannot then finish or drop the row of the request that took its key over.
  *
  * Rows live in `api_idempotency` (schema migration 13), keyed by the owner, so one person's key never
  * meets another's; forget-me deletes them (roster.ts).
@@ -32,8 +36,11 @@ export interface KeptAnswer {
   headers: Record<string, string>;
 }
 
+export const OUTCOME_UNKNOWN =
+  "That request failed partway and may have made its change. Read your tasks before you send it again, under a new Idempotency-Key.";
+
 export type Begun =
-  | { kind: "new" }
+  | { kind: "new"; claim: string }
   | { kind: "replay"; answer: KeptAnswer }
   | { kind: "conflict" }
   | { kind: "in_progress" };
@@ -64,26 +71,33 @@ export class ApiIdempotency {
         }
         this.db.query("DELETE FROM api_idempotency WHERE user_id = ? AND key = ?").run(userId, key);
       }
+      const claim = randomBytes(16).toString("hex");
       this.db
-        .query("INSERT INTO api_idempotency (user_id, key, request_hash, status, answer, created_at) VALUES (?, ?, ?, NULL, NULL, ?)")
-        .run(userId, key, requestHash, at);
-      return { kind: "new" };
+        .query("INSERT INTO api_idempotency (user_id, key, request_hash, claim, status, answer, created_at) VALUES (?, ?, ?, ?, NULL, NULL, ?)")
+        .run(userId, key, requestHash, claim, at);
+      return { kind: "new", claim };
     })();
   }
 
   /** Keeps a 2xx answer for replay; drops the claim for anything else, so a retry runs again. */
-  finish(userId: string, key: string, answer: KeptAnswer): void {
-    if (answer.status >= 200 && answer.status < 300) {
-      this.db
-        .query("UPDATE api_idempotency SET status = ?, answer = ? WHERE user_id = ? AND key = ?")
-        .run(answer.status, JSON.stringify({ body: answer.body, headers: answer.headers }), userId, key);
-    } else {
-      this.abandon(userId, key);
-    }
+  finish(userId: string, key: string, claim: string, answer: KeptAnswer): void {
+    if (answer.status >= 200 && answer.status < 300) this.keep(userId, key, claim, answer);
+    else this.abandon(userId, key, claim);
   }
 
-  /** Drops the claim (the request threw before it answered). */
-  abandon(userId: string, key: string): void {
-    this.db.query("DELETE FROM api_idempotency WHERE user_id = ? AND key = ? AND status IS NULL").run(userId, key);
+  /** The request threw: it may have saved its change, so a retry is answered "outcome unknown". */
+  fail(userId: string, key: string, claim: string): void {
+    this.keep(userId, key, claim, { status: 500, body: { error: { code: "outcome_unknown", message: OUTCOME_UNKNOWN } }, headers: {} });
+  }
+
+  /** Drops the claim, if it is still this request's and unanswered. */
+  abandon(userId: string, key: string, claim: string): void {
+    this.db.query("DELETE FROM api_idempotency WHERE user_id = ? AND key = ? AND claim = ? AND status IS NULL").run(userId, key, claim);
+  }
+
+  private keep(userId: string, key: string, claim: string, answer: KeptAnswer): void {
+    this.db
+      .query("UPDATE api_idempotency SET status = ?, answer = ? WHERE user_id = ? AND key = ? AND claim = ? AND status IS NULL")
+      .run(answer.status, JSON.stringify({ body: answer.body, headers: answer.headers }), userId, key, claim);
   }
 }

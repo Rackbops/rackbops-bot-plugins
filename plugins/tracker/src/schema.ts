@@ -449,13 +449,14 @@ export const MIGRATIONS: readonly string[] = [
   // - `api_idempotency`: each `Idempotency-Key` a person's API write carried (web/api-idempotency.ts),
   //   for 24 hours: the request's SHA-256 (method, path and body), and once it has answered 2xx, that
   //   answer, replayed to a retry with the same key. `status` is null while the first request is still
-  //   running. `answer` holds the task as the owner's own API showed it, so forget-me deletes a
+  //   running; `claim` is that request's own random id, so only it can finish or drop the row. `answer` holds the task as the owner's own API showed it, so forget-me deletes a
   //   person's rows (roster.ts). A database at 13 is refused by 0.36.0 and older.
   `
   CREATE TABLE api_idempotency (
     user_id TEXT NOT NULL,
     key TEXT NOT NULL,
     request_hash TEXT NOT NULL,
+    claim TEXT NOT NULL,
     status INTEGER,
     answer TEXT,
     created_at TEXT NOT NULL,

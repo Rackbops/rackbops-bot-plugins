@@ -52,8 +52,9 @@ export interface Writer {
   arrived: number;
   /**
    * The task API's `If-Match` (rackbops-bot-plugins#369): the version the client last read of the
-   * task it writes. Checked in the queue, against the task as it stands then, so no other write can
-   * slip between the check and the change.
+   * task it writes. Checked in the queue, against the task as it stands then, so no other web, API or
+   * command write slips between the check and the change. A tick does not use the queue: a run that
+   * finishes the task can still land in between, and the act then meets the finished task's rules.
    */
   ifMatch?: { taskId: string; version: string };
 }
@@ -71,7 +72,7 @@ function asUser<T extends { ok: boolean }>(w: Writer, fn: (user: User) => Promis
     if (!user) return { ok: false as const, error: GONE };
     if (w.ifMatch) {
       const task = await w.d.store.getTask(w.ifMatch.taskId);
-      if (task && taskVersion(task) !== w.ifMatch.version) return { ok: false as const, error: VERSION_MISMATCH };
+      if (!task || taskVersion(task) !== w.ifMatch.version) return { ok: false as const, error: VERSION_MISMATCH };
     }
     return fn(user);
   });

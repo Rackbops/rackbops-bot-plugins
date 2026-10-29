@@ -18,7 +18,9 @@ import type { Writer } from "./editor.js";
 import { readBody } from "./html.js";
 import { isIdempotencyKey } from "./api-idempotency.js";
 import { sha256 } from "./secrets.js";
-import { ifMatchVersion } from "./task-version.js";
+import { canonicalJson, ifMatchVersion } from "./task-version.js";
+
+export { canonicalJson };
 
 /**
  * The tracker's JSON task API (rackbops-bot-plugins#80, slice 4; plan 5.10, E5), under
@@ -259,16 +261,6 @@ async function write(writer: Writer, user: User, r: Route, method: string, body:
   return problem(405, "method_not_allowed", "Not a write.");
 }
 
-/** A JSON value with every object's keys sorted, so the same body however its keys were ordered hashes the same. */
-export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const o = value as Record<string, unknown>;
-    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
 /** Answers one request under `/api/`; `path` is the plugin-relative path (`/api/v1/tasks`). */
 export async function handleApi(w: ApiWiring, request: Request, path: string): Promise<Response> {
   // A browser's request -- cross-origin, or a same-origin one other than GET -- carries Origin;
@@ -295,7 +287,7 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
       if (!onOneTask) return json(problem(400, "if_match_unsupported", "If-Match goes only with PATCH or DELETE of a task, or its pause or resume."));
       const version = ifMatchVersion(ifMatchRaw);
       if (version === null) return json(problem(400, "invalid_if_match", 'If-Match is one task version in quotes, as its ETag gives it: "0123456789abcdef".'));
-      writer.ifMatch = { taskId: (r as { id: string }).id, version };
+      writer.ifMatch = { taskId: (r as { id: string }).id.trim(), version };
     }
     const key = request.headers.get("idempotency-key");
     if (key !== null && !isIdempotencyKey(key)) return json(problem(400, "invalid_idempotency_key", "Idempotency-Key is 8 to 128 letters, digits, '-', '_', '.' or ':'; a UUID will do."));
@@ -308,7 +300,8 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
     if (key === null) return json(await write(writer, user, r, method, body, base));
     // The same key for the same request is one write (#369): the claim is taken before the write
     // runs, so a retry sent while the first is still running is told to wait, not run twice.
-    const hash = sha256(`${method} ${path}\n${canonicalJson(body)}`);
+    // The If-Match version is part of the request: the same body under another version is another write.
+    const hash = sha256(`${method} ${path}\n${writer.ifMatch?.version ?? ""}\n${canonicalJson(body)}`);
     const begun = w.d.apiIdempotency.begin(user.id, key, hash, w.d.clock.now());
     if (begun.kind === "conflict") return json(problem(409, "idempotency_conflict", "That Idempotency-Key was used for a different request; use a new key for a new request."));
     if (begun.kind === "in_progress") return json(problem(409, "idempotency_in_progress", "A request with that Idempotency-Key is still running; try again in a moment.", { "Retry-After": "1" }));
@@ -317,10 +310,12 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
     try {
       answer = await write(writer, user, r, method, body, base);
     } catch (err) {
-      w.d.apiIdempotency.abandon(user.id, key);
+      // It may have thrown after its change was saved (building the answer), so a retry must not run
+      // it again: the key answers "outcome unknown" until it expires.
+      w.d.apiIdempotency.fail(user.id, key, begun.claim);
       throw err;
     }
-    w.d.apiIdempotency.finish(user.id, key, { status: answer.status, body: answer.body, headers: answer.headers ?? {} });
+    w.d.apiIdempotency.finish(user.id, key, begun.claim, { status: answer.status, body: answer.body, headers: answer.headers ?? {} });
     return json(answer);
   }
   if (r.kind === "types") return json(typesAnswer(w.d));
