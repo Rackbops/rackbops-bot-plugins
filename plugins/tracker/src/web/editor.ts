@@ -7,6 +7,7 @@ import { createScout, editScout, SCOUT_OFF } from "../scout.js";
 import { loadHistory } from "../history.js";
 import { deleteTask, type Done, ownLiveTask, pauseTask, resumeTask } from "../manage.js";
 import { createReminder } from "../reminders.js";
+import { runNow } from "../run-now.js";
 import { finishPrice, previewPrice, startPrice } from "../price.js";
 import { createResearch, RESEARCH_OFF } from "../research.js";
 import { createRenewal } from "../tracked.js";
@@ -192,6 +193,11 @@ export function saveEdit(w: Writer, task: Task, form: URLSearchParams): Promise<
 export type TaskAction = "pause" | "resume" | "delete";
 
 /** Pause, resume or delete the writer's task: manage.ts's rules, in the queue. */
+/** A run now (run-now.ts, #369), in the surface's one queue as the owner's other acts are. */
+export function runOn(w: Writer, taskId: string): Promise<Done | { ok: false; error: string }> {
+  return asUser(w, (u) => runNow(w.d, u, taskId));
+}
+
 export function actOn(w: Writer, taskId: string, action: TaskAction): Promise<Done | { ok: false; error: string }> {
   const act = action === "pause" ? pauseTask : action === "resume" ? resumeTask : deleteTask;
   return asUser(w, (u) => act(w.d, u, taskId));

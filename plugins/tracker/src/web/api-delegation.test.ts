@@ -187,6 +187,7 @@ describe("the route-to-operation table", () => {
       [{ kind: "task", id: "t1" }, ["GET", "PATCH", "DELETE"]],
       [{ kind: "act", id: "t1", action: "pause" }, ["POST"]],
       [{ kind: "act", id: "t1", action: "resume" }, ["POST"]],
+      [{ kind: "run", id: "t1" }, ["POST"]],
       [{ kind: "listings", id: "t1" }, ["POST"]],
       [{ kind: "sources", id: "t1" }, ["POST"]],
       [{ kind: "ready", id: "t1" }, ["POST"]],
