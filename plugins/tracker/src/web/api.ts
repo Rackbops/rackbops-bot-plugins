@@ -6,11 +6,11 @@ import type { Queue } from "../discord-common.js";
 import { type ApiToken, TOKEN_PREFIX } from "./api-tokens.js";
 import {
   actAnswer,
+  capabilitiesAnswer,
   type ApiAnswer,
   createAnswer,
   editAnswer,
   getAnswer,
-  capabilitiesAnswer,
   listAnswer,
   problem,
   typesAnswer,

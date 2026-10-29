@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { MAX_LIVE_TASKS } from "../limits.js";
-import { RATE_BURST } from "./api.js";
+import { MAX_PRICE_TASKS } from "../price.js";
+import { MAX_LIVE_RESEARCH } from "../research.js";
+import { MAX_LIVE_SCOUTS } from "../scout.js";
+import { MAX_WANT_TASKS } from "../want.js";
+import { RATE_BURST, RATE_PER_SECOND } from "./api.js";
 import { MAX_PAGE } from "./api-tasks.js";
 import { api, cleanup, LARRY, makeToken, people, signIn, slash, world } from "./harness.js";
 
@@ -31,7 +35,7 @@ const remind = (w: Awaited<ReturnType<typeof setup>>, text: string) =>
   slash(w.plugin, "remind", LARRY, { strings: { text, when: "tomorrow 9am" } });
 
 describe("GET /tasks in pages", () => {
-  it("lists every task exactly once across pages, even when one is deleted between them", async () => {
+  it("lists every task exactly once across pages, even when one is deleted or made between them", async () => {
     const w = await setup();
     for (const n of [1, 2, 3, 4, 5]) await remind(w, `task ${n}`);
     const first = await page(w, "?limit=2");
@@ -42,12 +46,24 @@ describe("GET /tasks in pages", () => {
     expect((await api(w.plugin, "DELETE", `/tasks/${gone}`, { token: w.token })).status).toBe(200);
     const second = await page(w, `?limit=2&cursor=${first.nextCursor}`);
     expect(second.tasks.map((t) => t.title)).toEqual(["task 3", "task 4"]);
+    // A task made now lands after the cut, on the last page.
+    await remind(w, "task 6");
     const third = await page(w, `?limit=2&cursor=${second.nextCursor}`);
-    expect(third.tasks.map((t) => t.title)).toEqual(["task 5"]);
+    expect(third.tasks.map((t) => t.title)).toEqual(["task 5", "task 6"]);
     expect(third.nextCursor).toBeNull();
   });
 
-  it("answers as before without limit, and refuses a bad limit, a cursor alone, a made-up cursor or another parameter", async () => {
+  it("ends with a null cursor when the last page is exactly full, even with a deleted task after it", async () => {
+    const w = await setup();
+    for (const n of [1, 2, 3]) await remind(w, `task ${n}`);
+    const all = await page(w, "");
+    expect((await api(w.plugin, "DELETE", `/tasks/${all.tasks[2]?.id}`, { token: w.token })).status).toBe(200);
+    const only = await page(w, "?limit=2");
+    expect(only.tasks.map((t) => t.title)).toEqual(["task 1", "task 2"]);
+    expect(only.nextCursor).toBeNull();
+  });
+
+  it("answers as before without limit, ignores another parameter, and refuses a bad limit, a cursor alone, a made-up cursor or a repeated one", async () => {
     const w = await setup();
     await remind(w, "only one");
     const all = await page(w, "");
@@ -62,7 +78,8 @@ describe("GET /tasks in pages", () => {
     expect(await refused("?limit=1.5")).toEqual([400, "invalid"]);
     expect(await refused("?cursor=dDE")).toEqual([400, "invalid"]);
     expect(await refused("?limit=1&cursor=bm9wZQ")).toEqual([400, "invalid_cursor"]);
-    expect(await refused("?limit=1&sort=desc")).toEqual([400, "unknown_field"]);
+    expect(await refused("?limit=1&limit=500")).toEqual([400, "invalid"]);
+    expect((await page(w, "?limit=1&_=123")).tasks).toHaveLength(1);
   });
 });
 
@@ -82,8 +99,17 @@ describe("GET /capabilities", () => {
     };
     expect(body.types.map((t) => t.type)).toContain("reminder");
     expect(typeof body.owner.timeZone).toBe("string");
-    expect(body.limits).toMatchObject({ liveTasks: MAX_LIVE_TASKS, pageSize: MAX_PAGE, requestsBurst: RATE_BURST });
-    expect(body.sources).toEqual({ runner: false, bgg: false, ebay: false, shopify: true, mail: false, web: true });
+    expect(body.limits).toEqual({
+      liveTasks: MAX_LIVE_TASKS,
+      priceTrackers: MAX_PRICE_TASKS,
+      researchWaiting: MAX_LIVE_RESEARCH,
+      scouts: MAX_LIVE_SCOUTS,
+      wantWatches: MAX_WANT_TASKS,
+      pageSize: MAX_PAGE,
+      requestsBurst: RATE_BURST,
+      requestsPerSecond: RATE_PER_SECOND,
+    });
+    expect(body.sources).toEqual({ runner: false, bgg: false, ebay: false, shopify: true, mail: false, webArea: true });
     for (const v of Object.values(body.sources)) expect(typeof v).toBe("boolean");
   });
 });

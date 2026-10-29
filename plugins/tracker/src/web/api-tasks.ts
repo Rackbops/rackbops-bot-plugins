@@ -223,6 +223,7 @@ export const MAX_PAGE = 200;
 
 /** A page's cursor: the last task it held, opaque to the client. */
 const cursorOf = (taskId: string): string => Buffer.from(taskId).toString("base64url");
+/** Room for an id of up to 48 bytes (a task's is `t<seq>`); a longer id format needs this widened. */
 const CURSOR = /^[A-Za-z0-9_-]{1,64}$/;
 
 /**
@@ -236,8 +237,10 @@ const CURSOR = /^[A-Za-z0-9_-]{1,64}$/;
 export async function listAnswer(d: TrackerDeps, user: User, query: URLSearchParams = new URLSearchParams()): Promise<ApiAnswer> {
   const rawLimit = query.get("limit");
   const rawCursor = query.get("cursor");
-  for (const key of query.keys()) {
-    if (key !== "limit" && key !== "cursor") return problem(400, "unknown_field", `\`${key.slice(0, 40)}\` is not a query parameter of GET tasks: it takes limit and cursor.`);
+  // Another parameter is ignored, as on every other GET (a cache-buster breaks nothing); one of
+  // these two given twice is refused, so a page is never read with a value the client did not mean.
+  for (const key of ["limit", "cursor"]) {
+    if (query.getAll(key).length > 1) return problem(400, "invalid", `\`${key}\` is given more than once.`);
   }
   let limit: number | null = null;
   if (rawLimit !== null) {
@@ -298,7 +301,8 @@ export function capabilitiesAnswer(d: TrackerDeps, user: User, rate: { burst: nu
         ebay: d.ebay === true,
         shopify: d.shopify === true,
         mail: d.mail != null,
-        web: d.webEditor,
+        // The web area (`TRACKER_WEB_URL`), which browser research (`sources: "browser"`) needs; not web research.
+        webArea: d.webEditor,
       },
     },
   };
