@@ -653,6 +653,19 @@ lets them on for 24 hours from the last confirmation, then answers 503 until one
 A token is looked up by the SHA-256 of what was sent, so the comparison is over a hash the sender
 cannot steer.
 
+**usr delegation tokens** (0.37.0, #370). With `TRACKER_API_DELEGATES` set, the task API also takes a
+usr delegation token (usr `docs/design/tokens.md`) from the services it names -- tracker-mcp, the
+ChatGPT connector of #368 -- acting for one person. It is checked offline against usr's JWKS, as the
+web sign-in checks `nz_id`: header `typ` `dlg+jwt`, ES256, `iss` `usr`, `aud` this tracker's usr app
+(`TRACKER_USR_APP`), unexpired and living no longer than usr's 30-minute cap, and `act.sub` one of the
+listed keys. Its `sub` must be a usr account linked to a registered person (`/allow`), and the same
+membership re-check applies. It does only what its `scope` names, one operation per route:
+`whoami` (`GET /me`), `list_task_types`, `list_tasks`, `create_task`, `get_task`, `update_task`
+(PATCH), `delete_task`, `pause_task`, `resume_task`, `send_listings`, `send_sources`,
+`sources_ready`, each as `<app>:<operation>`; a missing one is `403 insufficient_scope`. usr's keys
+out of reach is `503 usr_unavailable`, never a pass. Its rate limit is the person's, shared by every
+service acting for them; each write is logged with the acting key and the token's `jti`.
+
 **Browsers.** No answer carries a CORS header, and a request with an `Origin` header -- which a
 browser adds to every cross-origin request and to any same-origin one that is not a GET -- is
 refused with 403: the API is for programs, not pages. A browser page cannot send a cross-origin
@@ -747,6 +760,7 @@ version_mismatch` and nothing is written. Without `If-Match` a write goes throug
 | 401 | `unauthorized` | No `Authorization` header. With `WWW-Authenticate: Bearer realm="tracker"`. |
 | 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered (their tokens are then deleted): one answer for all, with `WWW-Authenticate`. An owner forgotten while their write waited in the queue gets the same code with its own message and no `WWW-Authenticate`. |
 | 403 | `origin_refused` | The request carried an `Origin` header. |
+| 403 | `insufficient_scope` | A usr delegation token whose `scope` lacks this route's operation. With `WWW-Authenticate` naming the scope it needs. |
 | 403 | `not_member` | The owner has left every `TRACKER_GUILD_ID` server (or lacks the `TRACKER_GUILD_ROLES` role where one is asked); their tokens are revoked. |
 | 404 | `not_found` | No such endpoint, or no such task of yours. Anyone else's task -- one shared with you, or any task to an admin's token -- answers exactly as an unknown id. |
 | 405 | `method_not_allowed` | With `Allow`. |
@@ -762,6 +776,7 @@ version_mismatch` and nothing is written. Without `If-Match` a write goes throug
 | 429 | `rate_limited` | With `Retry-After`: this token's bucket, or the shared one for bad tokens. |
 | 500 | `outcome_unknown` | A retry under an `Idempotency-Key` whose first request failed partway: it may have made its change, so read your tasks before sending it again under a new key. |
 | 503 | `slow_page` | A new price's or page watch's page did not answer within 8 seconds of the request's arrival: nothing was made. With `Retry-After`. |
+| 503 | `usr_unavailable` | A usr delegation token, and usr's signing keys could not be fetched to check it. With `Retry-After`. |
 | 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours (the lookup goes through the Discord client of the last command or button the bot handled, so after a restart none runs until someone uses one); the type is not available on this bot. |
 
 **Example.**
@@ -834,6 +849,7 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 | `TRACKER_USR_KEY` | yes | The tracker's usr API key, with the role `usr:discord` only (usr's `/api/discord/allow` and `/register-link`), never `tracker:admin` or `tracker:register`, and a usr Discord service (`PUT /api/discord/services/<keyId>`) set to the tracker's app. Required with `TRACKER_USR_URL`; set without it, or with whitespace in it, refuses to load. Never logged. |
 | `TRACKER_MAIL_DOMAIN` | no | The domain the alert-email route (0.25.0, Alert emails below) receives mail at, e.g. `alerts.example.com`: lower case, at least one dot. With `TRACKER_MAIL_KEY`; both unset = off (`/tracker/mail/inbound` answers 404 and no address is shown). One without the other, a domain that is not one, or a key under 32 characters or with white space refuses to load, never echoing either. |
 | `TRACKER_MAIL_KEY` | yes | The bearer the Email Worker posts to `/tracker/mail/inbound` with, at least 32 characters; the same value is the Worker's `CLERK_MAIL_KEY` secret. Never logged. |
+| `TRACKER_API_DELEGATES` | no | usr API key ids (digits, comma-separated) of the services whose usr delegation tokens the task API takes, such as tracker-mcp's. Unset = only `trk_` tokens. Needs `TRACKER_USR_URL`. |
 | `TRACKER_USR_APP` | no | The usr app the tracker's roles live under (`tracker:member`, `tracker:register`): lowercase words joined by `-`. It must match the app on the key's usr Discord service row, which is what usr goes by. Unset = `tracker`. Needs `TRACKER_USR_URL`. |
 
 **The execute lane is off until all three of `TRACKER_CITY_HALL_URL`, `_KEY` and `_CAPABILITY` are
