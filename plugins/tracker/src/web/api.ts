@@ -16,6 +16,11 @@ import { listingsAnswer } from "./api-listings.js";
 import { sourcesAnswer, sourcesReadyAnswer } from "./api-sources.js";
 import type { Writer } from "./editor.js";
 import { readBody } from "./html.js";
+import { isIdempotencyKey } from "./api-idempotency.js";
+import { sha256 } from "./secrets.js";
+import { canonicalJson, ifMatchVersion } from "./task-version.js";
+
+export { canonicalJson };
 
 /**
  * The tracker's JSON task API (rackbops-bot-plugins#80, slice 4; plan 5.10, E5), under
@@ -238,6 +243,24 @@ async function authenticate(w: ApiWiring, request: Request): Promise<Auth> {
   return { ok: true, token: current, user };
 }
 
+/** One write -- create, edit, pause, resume, delete, listings, sources -- as its answer. */
+async function write(writer: Writer, user: User, r: Route, method: string, body: Record<string, unknown>, base: string): Promise<ApiAnswer> {
+  if (method === "DELETE") return actAnswer(writer, user, (r as { id: string }).id, "delete");
+  if (r.kind === "tasks") return createAnswer(writer, user, body, base);
+  if (r.kind === "task") return editAnswer(writer, user, r.id, body, base);
+  if (r.kind === "act") {
+    if (Object.keys(body).length > 0) return problem(400, "unknown_field", `\`${r.action}\` takes no fields: send {}.`);
+    return actAnswer(writer, user, r.id, r.action);
+  }
+  if (r.kind === "listings") return listingsAnswer(writer, user, r.id, body);
+  if (r.kind === "sources") return sourcesAnswer(writer, user, r.id, body);
+  if (r.kind === "ready") {
+    if (Object.keys(body).length > 0) return problem(400, "unknown_field", "`ready` takes no fields: send {}.");
+    return sourcesReadyAnswer(writer, user, r.id);
+  }
+  return problem(405, "method_not_allowed", "Not a write.");
+}
+
 /** Answers one request under `/api/`; `path` is the plugin-relative path (`/api/v1/tasks`). */
 export async function handleApi(w: ApiWiring, request: Request, path: string): Promise<Response> {
   // A browser's request -- cross-origin, or a same-origin one other than GET -- carries Origin;
@@ -254,24 +277,47 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
   const writer: Writer = { d: w.d, queue: w.queue, reading: w.reading, userId: user.id, arrived: w.arrived };
   const base = `${w.base}${API_PREFIX}`;
 
-  if (method === "POST" || method === "PATCH") {
-    const read = await readJson(request, r.kind === "listings" ? MAX_LISTINGS_BYTES : r.kind === "sources" ? MAX_SOURCES_BYTES : MAX_API_BYTES);
-    if (!read.ok) return json(read.answer);
-    const { body } = read;
-    if (r.kind === "tasks") return json(await createAnswer(writer, user, body, base));
-    if (r.kind === "task") return json(await editAnswer(writer, user, r.id, body, base));
-    if (r.kind === "act") {
-      if (Object.keys(body).length > 0) return json(problem(400, "unknown_field", `\`${r.action}\` takes no fields: send {}.`));
-      return json(await actAnswer(writer, user, r.id, r.action));
+  if (method === "POST" || method === "PATCH" || method === "DELETE") {
+    // `If-Match` (#369): only on a write to one task, and only a version this API made; anything
+    // else is refused rather than ignored, so a client never believes a write was conditional when
+    // it was not.
+    const ifMatchRaw = request.headers.get("if-match");
+    if (ifMatchRaw !== null) {
+      const onOneTask = (r.kind === "task" && method !== "POST") || r.kind === "act";
+      if (!onOneTask) return json(problem(400, "if_match_unsupported", "If-Match goes only with PATCH or DELETE of a task, or its pause or resume."));
+      const version = ifMatchVersion(ifMatchRaw);
+      if (version === null) return json(problem(400, "invalid_if_match", 'If-Match is one task version in quotes, as its ETag gives it: "0123456789abcdef".'));
+      writer.ifMatch = { taskId: (r as { id: string }).id.trim(), version };
     }
-    if (r.kind === "listings") return json(await listingsAnswer(writer, user, r.id, body));
-    if (r.kind === "sources") return json(await sourcesAnswer(writer, user, r.id, body));
-    if (r.kind === "ready") {
-      if (Object.keys(body).length > 0) return json(problem(400, "unknown_field", "`ready` takes no fields: send {}."));
-      return json(await sourcesReadyAnswer(writer, user, r.id));
+    const key = request.headers.get("idempotency-key");
+    if (key !== null && !isIdempotencyKey(key)) return json(problem(400, "invalid_idempotency_key", "Idempotency-Key is 8 to 128 letters, digits, '-', '_', '.' or ':'; a UUID will do."));
+    let body: Record<string, unknown> = {};
+    if (method !== "DELETE") {
+      const read = await readJson(request, r.kind === "listings" ? MAX_LISTINGS_BYTES : r.kind === "sources" ? MAX_SOURCES_BYTES : MAX_API_BYTES);
+      if (!read.ok) return json(read.answer);
+      body = read.body;
     }
+    if (key === null) return json(await write(writer, user, r, method, body, base));
+    // The same key for the same request is one write (#369): the claim is taken before the write
+    // runs, so a retry sent while the first is still running is told to wait, not run twice.
+    // The If-Match version is part of the request: the same body under another version is another write.
+    const hash = sha256(`${method} ${path}\n${writer.ifMatch?.version ?? ""}\n${canonicalJson(body)}`);
+    const begun = w.d.apiIdempotency.begin(user.id, key, hash, w.d.clock.now());
+    if (begun.kind === "conflict") return json(problem(409, "idempotency_conflict", "That Idempotency-Key was used for a different request; use a new key for a new request."));
+    if (begun.kind === "in_progress") return json(problem(409, "idempotency_in_progress", "A request with that Idempotency-Key is still running; try again in a moment.", { "Retry-After": "1" }));
+    if (begun.kind === "replay") return json({ status: begun.answer.status, body: begun.answer.body, headers: { ...begun.answer.headers, "Idempotency-Replayed": "true" } });
+    let answer: ApiAnswer;
+    try {
+      answer = await write(writer, user, r, method, body, base);
+    } catch (err) {
+      // It may have thrown after its change was saved (building the answer), so a retry must not run
+      // it again: the key answers "outcome unknown" until it expires.
+      w.d.apiIdempotency.fail(user.id, key, begun.claim);
+      throw err;
+    }
+    w.d.apiIdempotency.finish(user.id, key, begun.claim, { status: answer.status, body: answer.body, headers: answer.headers ?? {} });
+    return json(answer);
   }
-  if (method === "DELETE" && r.kind === "task") return json(await actAnswer(writer, user, r.id, "delete"));
   if (r.kind === "types") return json(typesAnswer(w.d));
   if (r.kind === "tasks") return json(await listAnswer(w.d, user));
   if (r.kind === "task") return json(await getAnswer(w.d, user, r.id));

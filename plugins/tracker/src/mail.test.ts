@@ -291,9 +291,9 @@ describe("migration 10", () => {
     const schema = () => db.query("SELECT type, name, sql FROM sqlite_master WHERE name != 'sqlite_sequence' ORDER BY name").all() as { name: string }[];
     const before = schema();
     expect(migrate(db)).toBe(9);
-    expect(MIGRATIONS).toHaveLength(12);
-    // Migration 11's research_sources and 12's intake_conversations have their own tests (research-sources.test.ts, intake-store.test.ts).
-    expect(schema().filter((s) => !s.name.includes("mail_addresses") && !s.name.includes("research_sources") && !s.name.includes("intake_conversations"))).toEqual(before);
+    expect(MIGRATIONS).toHaveLength(13);
+    // Migration 11's research_sources, 12's intake_conversations and 13's api_idempotency have their own tests (research-sources.test.ts, intake-store.test.ts).
+    expect(schema().filter((s) => !s.name.includes("mail_addresses") && !s.name.includes("research_sources") && !s.name.includes("intake_conversations") && !s.name.includes("api_idempotency"))).toEqual(before);
     for (const id of ["1", "2"]) db.exec(`INSERT INTO users (discord_id, display_name, time_zone, preferred_hour, admin, created_at) VALUES ('${id}', 'x', 'UTC', 9, 0, 'now')`);
     const mail = new MailAddresses(db, DOMAIN);
     const at = new Date("2026-10-13T12:00:00.000Z");

@@ -277,10 +277,10 @@ describe("migration 7", () => {
 
     expect(migrate(db)).toBe(6);
     // Every later migration runs too; migration 8's want_inbox, migration 9's users.usr_subject and
-    // migration 10's mail_addresses, migration 11's research_sources and migration 12's intake_conversations have their own tests (inbox.test.ts, usr.test.ts, mail.test.ts,
+    // migration 10's mail_addresses, migration 11's research_sources and migration 12's intake_conversations and migration 13's api_idempotency have their own tests (inbox.test.ts, usr.test.ts, mail.test.ts,
     // research-sources.test.ts): users gains exactly that column, nothing else.
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
-    const later = (s: { name: string }) => s.name.startsWith("want_inbox") || s.name === "users_usr_subject" || s.name.includes("mail_addresses") || s.name.includes("research_sources") || s.name.includes("intake_conversations");
+    const later = (s: { name: string }) => s.name.startsWith("want_inbox") || s.name === "users_usr_subject" || s.name.includes("mail_addresses") || s.name.includes("research_sources") || s.name.includes("intake_conversations") || s.name.includes("api_idempotency");
     const after = schema().filter((s) => !later(s));
     expect(after.filter((s) => !s.name.startsWith("ceiling_changes"))).toEqual(before.schema.map(withUsrSubject));
     expect(after.filter((s) => s.name.startsWith("ceiling_changes")).map((s) => s.name)).toEqual(["ceiling_changes", "ceiling_changes_user"]);

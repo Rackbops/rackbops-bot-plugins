@@ -444,6 +444,26 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE UNIQUE INDEX intake_conversations_open ON intake_conversations (user_id) WHERE status = 'open';
   `,
+  // 13 (0.37.0; the task API's idempotent writes, rackbops-bot-plugins#369, for the ChatGPT client of
+  // #368): purely additive, one new table and its index; no existing table or row is touched.
+  // - `api_idempotency`: each `Idempotency-Key` a person's API write carried (web/api-idempotency.ts),
+  //   for 24 hours: the request's SHA-256 (method, path and body), and once it has answered 2xx, that
+  //   answer, replayed to a retry with the same key. `status` is null while the first request is still
+  //   running; `claim` is that request's own random id, so only it can finish or drop the row. `answer` holds the task as the owner's own API showed it, so forget-me deletes a
+  //   person's rows (roster.ts). A database at 13 is refused by 0.36.0 and older.
+  `
+  CREATE TABLE api_idempotency (
+    user_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    claim TEXT NOT NULL,
+    status INTEGER,
+    answer TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, key)
+  );
+  CREATE INDEX api_idempotency_created ON api_idempotency (created_at);
+  `,
 ];
 
 /** How long a statement waits on another connection's lock before SQLITE_BUSY. */

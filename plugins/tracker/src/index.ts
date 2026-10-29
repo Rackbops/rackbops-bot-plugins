@@ -36,6 +36,7 @@ import { createWebHandler } from "./web/app.js";
 import { handleMailInbound, MAIL_PATH } from "./web/mail-inbound.js";
 import { MailAddresses, parseMailConfig } from "./mail.js";
 import { parseWebUrl } from "./web/config.js";
+import { ApiIdempotency } from "./web/api-idempotency.js";
 import { ApiTokens } from "./web/api-tokens.js";
 import { Sessions } from "./web/sessions.js";
 import { LoginLinks } from "./web/signin-link.js";
@@ -529,6 +530,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           logins: new LoginLinks(opened),
           sessions: new Sessions(opened),
           apiTokens: new ApiTokens(opened),
+          apiIdempotency: new ApiIdempotency(opened),
           roster: new Roster(opened),
           ceilings,
           budgetUnlimited,

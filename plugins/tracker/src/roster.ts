@@ -103,6 +103,7 @@ export const ERASED_TABLES = [
   "web_sessions",
   "web_login_tokens",
   "api_tokens",
+  "api_idempotency",
   "usage",
   "notices",
   "ceiling_changes",
@@ -438,6 +439,8 @@ export class Roster {
       del("web_sessions", "user_id = ?", userId);
       del("web_login_tokens", "user_id = ?", userId);
       del("api_tokens", "user_id = ?", userId);
+      // Their API writes' idempotency keys and replayable answers (web/api-idempotency.ts, schema migration 13).
+      del("api_idempotency", "user_id = ?", userId);
       // docket's once-only budget notices name a person in their key (`budget:person:<id>:<day>`).
       del("notices", "key LIKE 'budget:person:' || ? || ':%'", userId);
       // Their daily digests' once-only claims (`digest:<id>:<day>`, digest.ts).

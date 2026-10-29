@@ -225,11 +225,11 @@ describe("migration 9", () => {
     const before = { indexes: indexes(), tables: tables(), users: all("SELECT * FROM users ORDER BY seq") as Record<string, unknown>[] };
 
     expect(migrate(db)).toBe(8);
-    // Every later migration runs too; migration 10's mail_addresses, migration 11's research_sources and migration 12's intake_conversations
+    // Every later migration runs too; migration 10's mail_addresses, migration 11's research_sources, migration 12's intake_conversations and migration 13's api_idempotency
     // have their own tests (mail.test.ts, research-sources.test.ts).
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
-    expect(tables().filter((t) => t !== "mail_addresses" && t !== "research_sources" && t !== "intake_conversations")).toEqual(before.tables);
-    expect(indexes().filter((i) => i.name !== "users_usr_subject" && !i.name.includes("mail_addresses") && !i.name.includes("research_sources") && !i.name.includes("intake_conversations"))).toEqual(before.indexes);
+    expect(tables().filter((t) => t !== "mail_addresses" && t !== "research_sources" && t !== "intake_conversations" && t !== "api_idempotency")).toEqual(before.tables);
+    expect(indexes().filter((i) => i.name !== "users_usr_subject" && !i.name.includes("mail_addresses") && !i.name.includes("research_sources") && !i.name.includes("intake_conversations") && !i.name.includes("api_idempotency"))).toEqual(before.indexes);
     expect(all("SELECT * FROM users ORDER BY seq")).toEqual(before.users.map((u) => ({ ...u, usr_subject: null })));
   });
 

@@ -24,8 +24,8 @@ describe("migration 12", () => {
     const schema = () => db.query("SELECT type, name, sql FROM sqlite_master WHERE name != 'sqlite_sequence' ORDER BY name").all() as { name: string }[];
     const before = schema();
     expect(migrate(db)).toBe(11);
-    expect(MIGRATIONS).toHaveLength(12);
-    expect(schema().filter((s) => !s.name.includes("intake_conversations"))).toEqual(before);
+    expect(MIGRATIONS).toHaveLength(13);
+    expect(schema().filter((s) => !s.name.includes("intake_conversations") && !s.name.includes("api_idempotency"))).toEqual(before);
     expect(schema().filter((s) => s.name.includes("intake_conversations")).map((s) => s.name)).toEqual(["intake_conversations", "intake_conversations_open"]);
   });
 });

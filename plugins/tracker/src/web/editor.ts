@@ -14,6 +14,7 @@ import { editWant, finishWant, previewWant, startWant, type WatchConfig, watchSi
 import { EDITOR_TYPES, type EditorType, confirmDeletePage, editTaskPage, type NewType, newTaskPage, notice, ownerControls, taskHref, type Values } from "./editor-pages.js";
 import { editValues, priceEdit, priceInput, reminderEdit, reminderInput, renewalEdit, renewalInput, researchInput, scoutEdit, scoutInput, typed, wantEdit, wantInput } from "./form-input.js";
 import { htmlResponse, redirect } from "./html.js";
+import { taskVersion, VERSION_MISMATCH } from "./task-version.js";
 import { historyPage, notFoundPage, type Viewer } from "./pages.js";
 
 /**
@@ -49,6 +50,13 @@ export interface Writer {
   userId: string;
   /** `performance.now()` when the request arrived (app.ts, api.ts), before any sign-in or membership check. */
   arrived: number;
+  /**
+   * The task API's `If-Match` (rackbops-bot-plugins#369): the version the client last read of the
+   * task it writes. Checked in the queue, against the task as it stands then, so no other web, API or
+   * command write slips between the check and the change. A tick does not use the queue: a run that
+   * finishes the task can still land in between, and the act then meets the finished task's rules.
+   */
+  ifMatch?: { taskId: string; version: string };
 }
 
 export const READING = "I am still reading a page for your last new price tracker or want-list watch; try again when it is done.";
@@ -61,7 +69,12 @@ const writer = (e: Editor): Writer => ({ d: e.d, queue: e.queue, reading: e.read
 function asUser<T extends { ok: boolean }>(w: Writer, fn: (user: User) => Promise<T>): Promise<T | { ok: false; error: string }> {
   return w.queue(async () => {
     const user = await w.d.store.getUser(w.userId);
-    return user ? fn(user) : { ok: false as const, error: GONE };
+    if (!user) return { ok: false as const, error: GONE };
+    if (w.ifMatch) {
+      const task = await w.d.store.getTask(w.ifMatch.taskId);
+      if (!task || taskVersion(task) !== w.ifMatch.version) return { ok: false as const, error: VERSION_MISMATCH };
+    }
+    return fn(user);
   });
 }
 

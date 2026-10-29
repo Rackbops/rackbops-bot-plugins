@@ -11,6 +11,7 @@ import { INBOX_OFF, JUDGE_OFF, type WatchConfig, watchSite } from "../want.js";
 import { actOn, editableTask, makeTask, READING, saveEdit, SLOW_PAGE, type TaskAction, type Writer, type Written } from "./editor.js";
 import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_TYPES, type NewType } from "./editor-pages.js";
 import { editValues } from "./form-input.js";
+import { etag, taskVersion, VERSION_MISMATCH } from "./task-version.js";
 
 /**
  * The task API's task routes (rackbops-bot-plugins#80, slice 4; plan 5.10, E10): list, read, make,
@@ -128,6 +129,7 @@ export function refusal(error: string): ApiAnswer {
   // The page did not answer before the host's deadline (editor.ts, #174): nothing made, worth a retry.
   if (error === SLOW_PAGE) return problem(503, "slow_page", error, { "Retry-After": "10" });
   if (error === NOT_EDITABLE) return problem(409, "conflict", error);
+  if (error === VERSION_MISMATCH) return problem(412, "version_mismatch", error);
   if (error === RESEARCH_OFF || error === SCOUT_OFF) return problem(503, "unavailable", error);
   if (error === FINISHED || /^That task is [a-z]+, not [a-z]+\.$/.test(error)) return problem(409, "conflict", error);
   if (/^You already (have|track|watch for) [0-9]+ /.test(error)) return problem(409, "limit_reached", error);
@@ -175,6 +177,8 @@ export async function taskJson(d: TrackerDeps, user: User, task: Task) {
     type: task.type,
     title: task.title,
     status: task.status === "archived" ? "deleted" : task.status,
+    // What `If-Match` names to make a write conditional (task-version.ts; #369).
+    version: taskVersion(task),
     cadence: task.schedule ? describeSchedule(task.schedule, user, user.timeZone, d.clock.now()) : "no schedule",
     nextAt: await nextAt(d, task),
     createdAt: task.createdAt,
@@ -225,6 +229,7 @@ export async function getAnswer(d: TrackerDeps, user: User, id: string): Promise
   if (!view) return notFound();
   return {
     status: 200,
+    headers: { ETag: etag(taskVersion(view.task)) },
     body: {
       task: await taskJson(d, user, view.task),
       history: { next: view.next, runs: view.runs, earlierRuns: view.earlierRuns, changes: view.changes, earlierChanges: view.earlierChanges },
@@ -237,10 +242,11 @@ export async function getAnswer(d: TrackerDeps, user: User, id: string): Promise
 async function written(w: Writer, user: User, result: Written, status: number, base: string): Promise<ApiAnswer> {
   if (!result.ok) return refusal(result.error);
   const task = (await w.d.store.getTask(result.task.id)) ?? result.task;
+  const tag = { ETag: etag(taskVersion(task)) };
   return {
     status,
     body: { task: await taskJson(w.d, user, task), message: result.text },
-    ...(status === 201 ? { headers: { Location: `${base}/tasks/${encodeURIComponent(task.id)}` } } : {}),
+    headers: status === 201 ? { ...tag, Location: `${base}/tasks/${encodeURIComponent(task.id)}` } : tag,
   };
 }
 
@@ -260,21 +266,26 @@ export async function createAnswer(w: Writer, user: User, body: Record<string, u
   return written(w, user, await makeTask(w, type as NewType, form), 201, base);
 }
 
+/** The writer with its `If-Match` bound to the task the route found, not to the id as the client spelled it. */
+function bound(w: Writer, task: Task): Writer {
+  return w.ifMatch ? { ...w, ifMatch: { taskId: task.id, version: w.ifMatch.version } } : w;
+}
+
 /** `PATCH /tasks/<id>`: the fields to change; one left out keeps what the task has. */
 export async function editAnswer(w: Writer, user: User, id: string, body: Record<string, unknown>, base: string): Promise<ApiAnswer> {
   const task = await editableTask(w.d, user, id);
   if (!task) return (await ownLiveTask(w.d, user, id))?.type === "research" ? refusal(NOT_EDITABLE) : notFound();
   const form = asFields(body, task.type as EditorType, "edit");
   if (!(form instanceof URLSearchParams)) return form;
-  return written(w, user, await saveEdit(w, task, form), 200, base);
+  return written(w, user, await saveEdit(bound(w, task), task, form), 200, base);
 }
 
 /** `POST /tasks/<id>/pause`, `/resume`, and `DELETE /tasks/<id>`. */
 export async function actAnswer(w: Writer, user: User, id: string, action: TaskAction): Promise<ApiAnswer> {
   const task = await ownTask(w.d, user, id);
   if (!task || task.status === "archived") return notFound();
-  const done = await actOn(w, task.id, action);
+  const done = await actOn(bound(w, task), task.id, action);
   if (!done.ok) return refusal(done.error);
   const after = (await w.d.store.getTask(task.id)) ?? task;
-  return { status: 200, body: { task: await taskJson(w.d, user, after), message: done.text } };
+  return { status: 200, headers: { ETag: etag(taskVersion(after)) }, body: { task: await taskJson(w.d, user, after), message: done.text } };
 }

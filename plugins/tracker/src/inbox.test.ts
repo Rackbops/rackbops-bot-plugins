@@ -69,10 +69,10 @@ describe("migration 8", () => {
 
     expect(migrate(db)).toBe(7);
     // Every later migration runs too; migration 9's users.usr_subject and migration 10's
-    // mail_addresses, migration 11's research_sources and migration 12's intake_conversations have their own tests (usr.test.ts,
+    // mail_addresses, migration 11's research_sources and migration 12's intake_conversations and migration 13's api_idempotency have their own tests (usr.test.ts,
     // mail.test.ts, research-sources.test.ts): users gains exactly that column.
     expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(MIGRATIONS.length);
-    const after = schema().filter((s) => s.name !== "users_usr_subject" && !s.name.includes("mail_addresses") && !s.name.includes("research_sources") && !s.name.includes("intake_conversations"));
+    const after = schema().filter((s) => s.name !== "users_usr_subject" && !s.name.includes("mail_addresses") && !s.name.includes("research_sources") && !s.name.includes("intake_conversations") && !s.name.includes("api_idempotency"));
     expect(after.filter((s) => !s.name.startsWith("want_inbox"))).toEqual(before.schema.map(withUsrSubject));
     expect(after.filter((s) => s.name.startsWith("want_inbox")).map((s) => s.name)).toEqual(["want_inbox", "want_inbox_key", "want_inbox_task"]);
     expect(users()).toEqual(before.users.map((u) => ({ ...(u as object), usr_subject: null })));
