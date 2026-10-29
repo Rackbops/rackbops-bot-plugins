@@ -1,4 +1,4 @@
-import { type Occurrence, reschedule, ScheduleError, type Task, type User } from "@rackbops/docket-core";
+import { deleteIdleRun, type Occurrence, reschedule, ScheduleError, type Task, type User } from "@rackbops/docket-core";
 import { type GatheredPage, gatheredPages } from "@rackbops/docket-types";
 import { TASK_BUSY } from "../locks.js";
 import { ownLiveTask } from "../manage.js";
@@ -132,7 +132,7 @@ export async function sourcesReadyAnswer(w: Writer, user: User, id: string): Pro
         const now = w.d.clock.now();
         if (followUp) return fullerPass(w, user, task, owner, followUp, held, now);
         try {
-          await reschedule(w.d.store, task, owner, { kind: "once", at: now.toISOString() }, user.id, now);
+          await reschedule(w.d.store, task, owner, { kind: "once", at: now.toISOString() }, user.id, now, w.d.types[task.type]);
         } catch (err) {
           // A run sent out between the check and the move (docket refuses to move a `once` run then).
           if (err instanceof ScheduleError) return problem(409, "conflict", "That research request has started.");
@@ -161,13 +161,13 @@ async function fullerPass(w: Writer, user: User, task: Task, owner: User, follow
   const store = w.d.store;
   let next: Occurrence | null;
   try {
-    next = (await reschedule(store, task, owner, { kind: "once", at: now.toISOString() }, user.id, now)).next;
+    next = (await reschedule(store, task, owner, { kind: "once", at: now.toISOString() }, user.id, now, w.d.types[task.type])).next;
   } catch (err) {
     if (err instanceof ScheduleError) return problem(409, "conflict", "That research request has started.");
     throw err;
   }
   if (!next) return problem(409, "conflict", "That research request could not be started just now; try again later.");
-  if (!(await store.deleteOccurrence(followUp.id))) {
+  if (!(await deleteIdleRun(store, followUp))) {
     await store.deleteOccurrence(next.id);
     return problem(409, "conflict", "That research request has started.");
   }

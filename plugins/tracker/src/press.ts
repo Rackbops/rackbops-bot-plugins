@@ -1,4 +1,5 @@
 import {
+  ConsentError,
   decodeReplyRef,
   invite,
   inviteMessage,
@@ -173,6 +174,8 @@ async function pressLocked(d: TrackerDeps, user: User, ref: string): Promise<Pre
     return { ok: true, status, keepReplyFor: input.occurrenceId };
   } catch (err) {
     if (err instanceof ReplyRefusedError) return { ok: false, error: err.message };
+    // docket's consent messages carry internal ids; the person gets a fixed line.
+    if (err instanceof ConsentError) return { ok: false, error: "That is not yours to answer." };
     throw err;
   }
 }

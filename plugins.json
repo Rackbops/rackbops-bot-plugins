@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-25T02:42:38.904Z",
+  "generatedAt": "2026-10-29T13:29:41.774Z",
   "plugins": [
     {
       "name": "mcp",
@@ -200,7 +200,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.35.0",
+      "version": "0.36.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, eBay through eBay's own Browse API once its keys are set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, a JSON task API with personal API tokens, and a plain-language intake: DM Clerk what you want in your own words, answer its questions, and press Save on the draft it shows",
       "hostApiVersion": 1,
       "intents": [
@@ -371,6 +371,12 @@
       ],
       "releases": [
         {
+          "version": "0.36.0",
+          "publishedAt": "2026-10-29T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.36.0",
+          "notes": "### Changed\n\n- Adopts docket 0.16.0's audit fixes (rackbops-bot-plugins#364). The store settles a delivery only while its status is the one the caller read, deletes a run only while no event has landed after the last one read (an unknown event id refuses), lists equal-time series points in insertion order, and returns no points for a limit below 1. An edit to a task's schedule is checked against the task's type, so a reminder can no longer be given a `poll` schedule. A price watch's `near` text is checked with docket-types' `patternProblem` when it is saved. Deleting a task, or a research request's fuller pass, keeps a run whose Job went out mid-delete. A reply that docket refuses for consent is answered, not thrown. On docket 0.16.0, so scout item keys drop per-view parameters (an item remembered under a `utm_*` URL is reported once more), a price the page declares in another currency is a miss, and an eBay watch in a non-USD currency warns at once.\n\n### Schema\n\n- No change. Still at 12."
+        },
+        {
           "version": "0.35.0",
           "publishedAt": "2026-10-24T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.35.0",
@@ -423,12 +429,6 @@
           "publishedAt": "2026-10-17T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.31.1",
           "notes": "Prepared but never published (no `tracker-v0.31.1` tag); these fixes ship in 0.31.2, where #348 changes the late-press reply below to \"That task was deleted.\" or \"That task is done.\"\n\n### Fixed\n\n- Deleting a task, or it finishing, withdraws the invitations nobody has answered yet. After a delete, a late Accept or Decline from one of those invitees is refused (\"That is not yours to answer.\") and writes no block against the owner; invitees who already accepted or declined are left alone (Rackbops/rackbops-bot-plugins#205, #343).\n- Deleting or finishing an inbox watch now deletes its stored inbox rows, which nothing could read again (#208, #346)."
-        },
-        {
-          "version": "0.31.0",
-          "publishedAt": "2026-10-17T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.31.0",
-          "notes": "### Added\n\n- **Refresh usr links.** The admin page's \"usr links\" section has a second button. One press asks usr again for everyone on the list who is linked and keeps the account usr has for each of them now, so someone usr moved to an account they already had can sign in through usr straight after, without an admin running `/allow` for them one at a time. It ends with a summary of how many changed, are new, failed or were skipped, and names each failure. A refresh changes usr: it puts the tracker's member role back for everyone still linked and in the server, and someone whose usr link a usr admin removed gets a new usr account (Rackbops/rackbops-bot-plugins#170, #316).\n\n### Fixed\n\n- A city-hall key or Access value that is not visible ASCII is refused when it is set (#214, #314).\n- A renewal amount is capped at 1,000,000, in the command, the web editor and the Task API; a renewal saved earlier with a larger amount must be lowered before an edit that carries the amount will be accepted (#209, #315)."
         }
       ]
     },

@@ -321,17 +321,17 @@ describe("runDigests (plan 5.5)", () => {
     }
   });
 
-  it("dates a claim no later than now when a fall-back repeats the hour, so the rest of that hour writes nothing (#211 notify-5)", async () => {
+  it("dates a claim at the first pass of an hour a fall-back repeats, so the rest of that hour writes nothing (#211 notify-5)", async () => {
     const s = await setup();
     // London falls back on Sun 2026-10-25: 1:00 comes at 00:00Z (BST) and again at 01:00Z (GMT), and
-    // the zone resolves the due hour to the later pass.
+    // docket 0.16 resolves the due hour to the first pass (00:00Z); the claim is never dated after now.
     await setPreferences(s.store, s.owner.id, { timeZone: "Europe/London", preferredHour: 1 });
     const claims: string[] = [];
     const claimNotice = s.store.claimNotice.bind(s.store);
     s.store.claimNotice = (key, at) => (claims.push(key), claimNotice(key, at));
     s.clock.set("2026-10-25T00:30:00.000Z");
     expect((await s.digests()).claimed).toBe(1);
-    expect(s.db.query("SELECT at FROM notices").all()).toEqual([{ at: "2026-10-25T00:30:00.000Z" }]);
+    expect(s.db.query("SELECT at FROM notices").all()).toEqual([{ at: "2026-10-25T00:00:00.000Z" }]);
     s.clock.set("2026-10-25T00:45:00.000Z");
     expect(await s.digests()).toEqual({ claimed: 0, sent: 0, failed: 0 });
     expect(claims).toEqual([digestKey(s.owner.id, "2026-10-25")]);
