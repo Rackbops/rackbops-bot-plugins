@@ -1,4 +1,4 @@
-import { hasFired, nextDue, type Occurrence, periodDate, type Schedule, scheduledKey, SNOOZE_PREFIX, type Store, type Task, type User, wallClock } from "@rackbops/docket-core";
+import { hasFired, isOffSchedule, nextDue, type Occurrence, periodDate, type Schedule, scheduledKey, type Store, type Task, type User, wallClock } from "@rackbops/docket-core";
 
 /**
  * Re-timing a paused task's queued run when its owner's zone or preferred hour moves
@@ -40,11 +40,11 @@ export function retimed(s: Schedule, day: string, owner: User): Date | null {
 }
 
 /**
- * The task's queued scheduled runs that have not fired (not snoozes, not a run put back to finish),
+ * The task's queued scheduled runs that have not fired (not a snooze's, a follow-up or a run now, not a run put back to finish),
  * read before a reschedule drops them: exactly what docket's `cancelScheduledRuns` cancels.
  */
 export async function heldRuns(store: Store, task: Task): Promise<Occurrence[]> {
-  return (await store.listOccurrences({ taskId: task.id, status: "queued" })).filter((o) => !o.dedupeKey.startsWith(SNOOZE_PREFIX) && !hasFired(o));
+  return (await store.listOccurrences({ taskId: task.id, status: "queued" })).filter((o) => !isOffSchedule(o.dedupeKey) && !hasFired(o));
 }
 
 /**

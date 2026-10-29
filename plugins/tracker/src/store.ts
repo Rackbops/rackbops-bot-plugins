@@ -710,6 +710,18 @@ export class SqliteStore implements Store {
     return { rows: rows.reverse().map(toOccurrence), total, next: next ? toOccurrence(next) : null };
   }
 
+  // --- run now's cap (run-now.ts `RunNowReads`, #369) -------------------------------------------
+
+  async runsNowSince(ownerId: string, since: string): Promise<number> {
+    // A task's id is `t<seq>` (`idOf`); a run now's key starts `now:` (docket-core `RUN_NOW_PREFIX`).
+    const row = this.one(
+      "SELECT COUNT(*) AS n FROM occurrences o JOIN tasks t ON o.task_id = 't' || t.seq WHERE t.owner_id = ? AND o.dedupe_key LIKE 'now:%' AND o.created_at >= ?",
+      ownerId,
+      since,
+    );
+    return Number(row?.n ?? 0);
+  }
+
   async repliesTo(taskId: string, occurrenceIds: readonly string[], userId: string | null): Promise<Reply[]> {
     if (occurrenceIds.length === 0) return [];
     const ids = `occurrence_id IN (${occurrenceIds.map(() => "?").join(", ")})`;

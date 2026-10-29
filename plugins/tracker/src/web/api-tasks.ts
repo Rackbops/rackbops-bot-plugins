@@ -6,9 +6,10 @@ import { TASK_BUSY } from "../locks.js";
 import { FINISHED, ownLiveTask } from "../manage.js";
 import { RESEARCH_OFF } from "../research.js";
 import { awaitingPages, blockedPages, sentResearch, waitingForPages } from "../research-sources.js";
+import { NOT_NOW } from "../run-now.js";
 import { SCOUT_OFF } from "../scout.js";
 import { INBOX_OFF, JUDGE_OFF, type WatchConfig, watchSite } from "../want.js";
-import { actOn, editableTask, makeTask, READING, saveEdit, SLOW_PAGE, type TaskAction, type Writer, type Written } from "./editor.js";
+import { actOn, editableTask, runOn, makeTask, READING, saveEdit, SLOW_PAGE, type TaskAction, type Writer, type Written } from "./editor.js";
 import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_TYPES, type NewType } from "./editor-pages.js";
 import { editValues } from "./form-input.js";
 import { etag, taskVersion, VERSION_MISMATCH } from "./task-version.js";
@@ -137,7 +138,8 @@ export function refusal(error: string): ApiAnswer {
   if (error === VERSION_MISMATCH) return problem(412, "version_mismatch", error);
   if (error === RESEARCH_OFF || error === SCOUT_OFF) return problem(503, "unavailable", error);
   if (error === FINISHED || /^That task is [a-z]+, not [a-z]+\.$/.test(error)) return problem(409, "conflict", error);
-  if (/^You already (have|track|watch for) [0-9]+ /.test(error)) return problem(409, "limit_reached", error);
+  if (/^You already (have|track|watch for|ran) [0-9]+ /.test(error)) return problem(409, "limit_reached", error);
+  if (error.startsWith(NOT_NOW)) return problem(409, "cannot_run_now", error);
   if (error === INBOX_OFF || error === JUDGE_OFF) return problem(503, "unavailable", error);
   if (/ (is|are) not available on this bot\.$/.test(error)) return problem(503, "unavailable", error);
   return problem(400, "invalid", error);
@@ -365,6 +367,16 @@ export async function editAnswer(w: Writer, user: User, id: string, body: Record
   const form = asFields(body, task.type as EditorType, "edit");
   if (!(form instanceof URLSearchParams)) return form;
   return written(w, user, await saveEdit(bound(w, task), task, form), 200, base);
+}
+
+/** `POST /tasks/<id>/run` (#369): one extra run now, off the schedule (run-now.ts). `202`: it goes within a minute. */
+export async function runNowAnswer(w: Writer, user: User, id: string): Promise<ApiAnswer> {
+  const task = await ownTask(w.d, user, id);
+  if (!task || task.status === "archived") return notFound();
+  const done = await runOn(w, task.id);
+  if (!done.ok) return refusal(done.error);
+  const after = (await w.d.store.getTask(task.id)) ?? task;
+  return { status: 202, headers: { ETag: etag(taskVersion(after)) }, body: { task: await taskJson(w.d, user, after), message: done.text } };
 }
 
 /** `POST /tasks/<id>/pause`, `/resume`, and `DELETE /tasks/<id>`. */

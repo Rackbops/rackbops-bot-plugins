@@ -27,10 +27,10 @@
     },
     "plugins/tracker": {
       "name": "@rackbops/plugin-tracker",
-      "version": "0.38.0",
+      "version": "0.37.0",
       "devDependencies": {
-        "@rackbops/docket-core": "^0.17.0",
-        "@rackbops/docket-types": "^0.17.0",
+        "@rackbops/docket-core": "^0.18.0",
+        "@rackbops/docket-types": "^0.18.0",
         "@rackbops/styles": "^0.2.42",
       },
       "peerDependencies": {
@@ -87,9 +87,9 @@
 
     "@discordjs/ws": ["@discordjs/ws@1.2.3", "", { "dependencies": { "@discordjs/collection": "^2.1.0", "@discordjs/rest": "^2.5.1", "@discordjs/util": "^1.1.0", "@sapphire/async-queue": "^1.5.2", "@types/ws": "^8.5.10", "@vladfrangu/async_event_emitter": "^2.2.4", "discord-api-types": "^0.38.1", "tslib": "^2.6.2", "ws": "^8.17.0" } }, "sha512-wPlQDxEmlDg5IxhJPuxXr3Vy9AjYq5xCvFWGJyD7w7Np8ZGu+Mc+97LCoEc/+AYCo2IDpKioiH0/c/mj5ZR9Uw=="],
 
-    "@rackbops/docket-core": ["@rackbops/docket-core@0.17.0", "", {}, "sha512-QjP+K1FlX1eDKlgxfpN/dBAoziS3l+CYM6eaKnUGQF8i6o2FCswH+KFcQ8tAZkHpZtgHJCQUWtK7NVJlfinTwQ=="],
+    "@rackbops/docket-core": ["@rackbops/docket-core@0.18.0", "", {}, "sha512-s6uzogfrp2dJyuTrcGt/fg1A/hsNcG6thr5+jYHfsjosRVIWA75Q0rLdbEMi0uU+kyDlHqbBbCgFN3VKvtm6kQ=="],
 
-    "@rackbops/docket-types": ["@rackbops/docket-types@0.17.0", "", { "dependencies": { "@rackbops/docket-core": "^0.17.0" } }, "sha512-PaA77qRgzRt1yYGw7rhNQYp35STO0a2xH5Q2uonDFukmrG29o0GlZO6BMrGbRK5+v2Pp32CxGdb0WXue5qs3SA=="],
+    "@rackbops/docket-types": ["@rackbops/docket-types@0.18.0", "", { "dependencies": { "@rackbops/docket-core": "^0.18.0" } }, "sha512-wwifyWbAPI9rjZ87J9BAFbyOtcax0d4DlGpDUI5bKN1jS+ROZ83uUNe8mtUyEZgAczh9kqswWKTnMgiKJcOnng=="],
 
     "@rackbops/plugin-mcp": ["@rackbops/plugin-mcp@workspace:plugins/mcp"],
 

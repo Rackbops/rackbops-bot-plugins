@@ -33,6 +33,7 @@ export type RouteKind =
   | { kind: "me" | "types" | "tasks" | "capabilities" | "validate" }
   | { kind: "task"; id: string }
   | { kind: "act"; id: string; action: "pause" | "resume" }
+  | { kind: "run"; id: string }
   | { kind: "listings" | "sources" | "ready"; id: string };
 
 /** Every operation a delegation token can name, one per route and method. */
@@ -48,6 +49,7 @@ export const OPERATIONS = [
   "delete_task",
   "pause_task",
   "resume_task",
+  "run_task",
   "send_listings",
   "send_sources",
   "sources_ready",
@@ -71,6 +73,8 @@ export function operationOf(r: RouteKind, method: string): Operation | null {
       return method === "GET" ? "get_task" : method === "PATCH" ? "update_task" : method === "DELETE" ? "delete_task" : null;
     case "act":
       return method === "POST" ? (r.action === "pause" ? "pause_task" : "resume_task") : null;
+    case "run":
+      return method === "POST" ? "run_task" : null;
     case "listings":
       return method === "POST" ? "send_listings" : null;
     case "sources":
