@@ -85,7 +85,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "26"
 
       # #28: generate-index's files-allowlist guard and build-plugins' non-empty-output assert both run
       # earlier in this job -- this is the last line of defense, on the REAL tarball that `publish` will
@@ -120,7 +120,7 @@ jobs:
           awk -v heading="## [$PLUGIN_VERSION]" 'index($0, heading) == 1 {flag=1; next} /^## / || /^\[[^]]+\]:[ \t]*[^ \t]/ {flag=0} flag' \
             "plugins/$PLUGIN_NAME/CHANGELOG.md" > release/release-notes.md
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release
           path: release/
@@ -137,14 +137,14 @@ jobs:
       PLUGIN_VERSION: ${{ needs.verify.outputs.version }}
       TARBALL: ${{ needs.verify.outputs.tarball }}
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release
           path: release
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "26"
           registry-url: "https://registry.npmjs.org"
 
       - name: Ensure npm supports OIDC trusted publishing (>= 11.5.1)
