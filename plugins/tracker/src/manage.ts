@@ -1,4 +1,4 @@
-import { deleteIdleRun, materialize, type Task, type User } from "@rackbops/docket-core";
+import { deleteIdleRun, materialize, RUN_NOW_PREFIX, type Task, type User } from "@rackbops/docket-core";
 import { NO_SUCH_TASK, ownTask, type TrackerDeps } from "./actions.js";
 import { TASK_BUSY } from "./locks.js";
 
@@ -54,6 +54,10 @@ async function pauseLocked(d: TrackerDeps, user: User, taskId: string): Promise<
   const at = d.clock.now().toISOString();
   await d.store.updateTask(task.id, { status: "paused", at });
   await d.store.addTaskEvent({ taskId: task.id, actorId: user.id, kind: "paused", detail: "paused by the owner", at });
+  // A run now not yet fired goes (run-now.ts): "now" is no longer now once the task resumes.
+  for (const o of await d.store.listOccurrences({ taskId: task.id, status: "queued" })) {
+    if (o.dedupeKey.startsWith(RUN_NOW_PREFIX)) await deleteIdleRun(d.store, o);
+  }
   return { ok: true, text: `Paused \`${task.id}\`: nothing is sent until you resume it.` };
 }
 

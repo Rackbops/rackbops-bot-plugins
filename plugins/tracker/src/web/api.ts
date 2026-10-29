@@ -6,6 +6,7 @@ import type { Queue } from "../discord-common.js";
 import { type ApiToken, TOKEN_PREFIX } from "./api-tokens.js";
 import {
   actAnswer,
+  runNowAnswer,
   capabilitiesAnswer,
   type ApiAnswer,
   createAnswer,
@@ -158,10 +159,12 @@ type Route =
   | { kind: "me" | "types" | "tasks" | "capabilities" | "validate" }
   | { kind: "task"; id: string }
   | { kind: "act"; id: string; action: "pause" | "resume" }
+  | { kind: "run"; id: string }
   | { kind: "listings"; id: string }
   | { kind: "sources" | "ready"; id: string };
 
 const ACT = /^\/tasks\/([^/]+)\/(pause|resume)$/;
+const RUN = /^\/tasks\/([^/]+)\/run$/;
 const LISTINGS = /^\/tasks\/([^/]+)\/listings$/;
 const SOURCES = /^\/tasks\/([^/]+)\/sources(\/ready)?$/;
 const ONE = /^\/tasks\/([^/]+)$/;
@@ -183,6 +186,8 @@ function route(rest: string): Route | null {
   if (rest === "/tasks/validate") return { kind: "validate" };
   const act = ACT.exec(rest);
   if (act) return { kind: "act", id: segment(act[1]), action: act[2] as "pause" | "resume" };
+  const run = RUN.exec(rest);
+  if (run) return { kind: "run", id: segment(run[1]) };
   const listings = LISTINGS.exec(rest);
   if (listings) return { kind: "listings", id: segment(listings[1]) };
   const sources = SOURCES.exec(rest);
@@ -194,7 +199,7 @@ function route(rest: string): Route | null {
 function allowedMethods(r: Route): string {
   if (r.kind === "tasks") return "GET, POST";
   if (r.kind === "task") return "GET, PATCH, DELETE";
-  if (r.kind === "validate" || r.kind === "act" || r.kind === "listings" || r.kind === "sources" || r.kind === "ready") return "POST";
+  if (r.kind === "validate" || r.kind === "act" || r.kind === "run" || r.kind === "listings" || r.kind === "sources" || r.kind === "ready") return "POST";
   return "GET";
 }
 
@@ -288,7 +293,7 @@ async function authenticateDelegation(w: ApiWiring, usr: UsrLink, delegates: Rea
   return { ok: true, via: { kind: "delegation", delegation: checked }, user };
 }
 
-/** One write -- create, edit, pause, resume, delete, listings, sources -- as its answer. */
+/** One write -- create, edit, pause, resume, run now, delete, listings, sources -- as its answer. */
 async function write(writer: Writer, user: User, r: Route, method: string, body: Record<string, unknown>, base: string): Promise<ApiAnswer> {
   if (method === "DELETE") return actAnswer(writer, user, (r as { id: string }).id, "delete");
   if (r.kind === "tasks") return createAnswer(writer, user, body, base);
@@ -296,6 +301,10 @@ async function write(writer: Writer, user: User, r: Route, method: string, body:
   if (r.kind === "act") {
     if (Object.keys(body).length > 0) return problem(400, "unknown_field", `\`${r.action}\` takes no fields: send {}.`);
     return actAnswer(writer, user, r.id, r.action);
+  }
+  if (r.kind === "run") {
+    if (Object.keys(body).length > 0) return problem(400, "unknown_field", "`run` takes no fields: send {}.");
+    return runNowAnswer(writer, user, r.id);
   }
   if (r.kind === "listings") return listingsAnswer(writer, user, r.id, body);
   if (r.kind === "sources") return sourcesAnswer(writer, user, r.id, body);

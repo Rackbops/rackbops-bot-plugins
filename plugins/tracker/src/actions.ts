@@ -27,6 +27,7 @@ import type { Admissions } from "./admissions.js";
 import type { Ceilings } from "./ceilings.js";
 import { type DeliveryHealth, PAUSE_AFTER, resumedNotice } from "./delivery-health.js";
 import type { HistoryReads } from "./history.js";
+import type { RunNowReads } from "./run-now.js";
 import { MAX_LIVE_TASKS, MAX_WHEN } from "./limits.js";
 import { TASK_BUSY, type TaskLocks } from "./locks.js";
 import { admit, PeopleError, setPreferences } from "./people.js";
@@ -52,7 +53,7 @@ import type { MailAddresses } from "./mail.js";
 
 export interface TrackerDeps {
   /** docket's port, and the bounded reads `/task history` makes past it (store.ts, history.ts). */
-  store: Store & HistoryReads;
+  store: Store & HistoryReads & RunNowReads;
   admissions: Admissions;
   health: DeliveryHealth;
   clock: Clock;
