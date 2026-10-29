@@ -21,6 +21,7 @@ import {
   changesForRecipient,
   changeView,
   findingView,
+  deliveryView,
   HISTORY_CHANGES,
   HISTORY_RUNS,
   type HistoryView,
@@ -88,8 +89,10 @@ async function wholeHistory(d: Pick<TrackerDeps, "store" | "clock">, user: User,
   const seesEveryone = user.admin || task.ownerId === user.id;
   const visible = (await visibleHistory(d.store, actor, task.id)) ?? [];
   const changes = seesEveryone ? visible : changesForRecipient(visible, user.id);
+  // Every delivery of the task, read whole, then those of the runs shown.
+  const allDeliveries = await d.store.listDeliveries();
   const people = new Map<string, User>();
-  for (const r of replies) {
+  for (const r of [...replies, ...allDeliveries]) {
     if (!people.has(r.userId)) {
       const u = await d.store.getUser(r.userId);
       if (u) people.set(u.id, u);
@@ -109,7 +112,10 @@ async function wholeHistory(d: Pick<TrackerDeps, "store" | "clock">, user: User,
     task,
     cadence: task.schedule && owner ? describeSchedule(task.schedule, owner, user.timeZone, now) : "no schedule",
     next: next ? formatInstant(next.dueAt, user.timeZone, now) : null,
-    runs: runs.slice(-HISTORY_RUNS).map((o) => runView(o, replies, people, user, now, seesEveryone)),
+    runs: runs.slice(-HISTORY_RUNS).map((o) => ({
+      ...runView(o, replies, people, user, now, seesEveryone),
+      delivery: deliveryView(o, allDeliveries.filter((r) => r.occurrenceId === o.id), people, user, seesEveryone),
+    })),
     earlierRuns: Math.max(0, runs.length - HISTORY_RUNS),
     changes: changes.slice(-HISTORY_CHANGES).map((e) => changeView(e, user, now, names)),
     earlierChanges: Math.max(0, changes.length - HISTORY_CHANGES),
@@ -196,6 +202,15 @@ async function built(seed: number, runs: number, changes: number): Promise<Built
     const status = pick(DONE);
     const error = status === "failed" ? pick([`recipient ${pick(everyone).id} cannot be messaged`, "the page did not answer", `delivery to ${larry.id} failed`]) : null;
     await store.updateOccurrence(o.id, { status, error, late: rnd() < 0.3 });
+    // Some fired runs sent a copy to some of their people, each settled one way or another.
+    for (const u of [owner, larry, curly]) {
+      if (rnd() < 0.5) continue;
+      await store.planDelivery(o.id, u.id, at);
+      const final = pick<"sent" | "failed" | "unconfirmed" | "pending">(["sent", "failed", "unconfirmed", "pending"]);
+      if (final === "pending") continue;
+      await store.claimDelivery(o.id, u.id, at);
+      await store.settleDelivery(o.id, u.id, { status: final, error: final === "sent" ? null : `recipient ${u.id} cannot be messaged`, attempts: 1, deferrals: 0, retryAt: final === "failed" && rnd() < 0.5 ? at : null, at });
+    }
   }
   for (const o of made) {
     if (rnd() < 0.5) continue;
