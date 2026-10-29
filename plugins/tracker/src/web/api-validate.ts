@@ -14,8 +14,9 @@ import { reminderInput, renewalInput, scoutInput } from "./form-input.js";
  * before it writes is run here too -- the type's own plan (reminders.ts, tracked.ts, scout.ts), the
  * live-task cap and the scout cap -- and the answer says when it would first run and the run after,
  * in the owner's zone, from the schedule the create would store. A price, a want-list watch and a
- * research request are checked only as far as their fields go (names and JSON types): their create
- * reads a page or a source, or asks the model runner, so the rest is known only when it is made.
+ * research request get their fields (names and JSON types) and the live-task cap checked, and none of
+ * their type's own checks: their create reads a page or a source, or asks the model runner, so the
+ * rest is known only when it is made.
  *
  * Nothing here takes the write queue or writes: a validate run in parallel with a create can pass
  * and the create still meet a cap, which is why the answer is advice, never a reservation.
@@ -32,14 +33,14 @@ function firstDueAfter(schedule: Schedule, now: Date): Date {
 
 /**
  * The first two runs the schedule gives, as the scheduler would place them for this owner. A renewal
- * whose first ask is already due (tracked.ts's `firstAskIfDue`: due within its lead) is asked at once,
- * then on the schedule.
+ * whose first ask is already due (tracked.ts's `firstAskIfDue`: due within its lead) is stored at that
+ * ask's own, past, instant, so it is asked at once; `first` is that instant, as the task's `nextAt`.
  */
 function runs(schedule: Schedule, user: User, now: Date, renewal: boolean): { first: Date | null; second: Date | null } {
   const ctx = { zone: user.timeZone, preferredHour: user.preferredHour };
   if (renewal) {
     const ask = nextDue(schedule, new Date(0), ctx);
-    if (ask && ask.getTime() <= now.getTime()) return { first: now, second: nextDue(schedule, now, ctx) };
+    if (ask && ask.getTime() <= now.getTime()) return { first: ask, second: nextDue(schedule, now, ctx) };
   }
   const first = nextDue(schedule, firstDueAfter(schedule, now), ctx);
   return { first, second: first && schedule.kind !== "once" ? nextDue(schedule, first, ctx) : null };
@@ -51,7 +52,10 @@ export async function validateAnswer(d: TrackerDeps, user: User, body: Record<st
     return problem(400, "invalid", `\`type\` is one of ${offeredTypes(d).join(", ")}.`);
   }
   if (type === "research" && !d.research) return refusal(RESEARCH_OFF);
-  if (type === "scout" && !d.research) return refusal(SCOUT_OFF);
+  if (type === "scout" && (!d.types.scout || !d.research)) return refusal(SCOUT_OFF);
+  // The create's own "not available" refusals for the types it checks in full (reminders.ts, tracked.ts).
+  if (type === "reminder" && !d.types.reminder) return refusal("Reminders are not available on this bot.");
+  if (type === "renewal" && !d.types.renewal) return refusal("Renewals are not available on this bot.");
   const form = asFields(body, type as NewType, "new");
   if (!(form instanceof URLSearchParams)) return form;
   const now = d.clock.now();
@@ -84,7 +88,7 @@ export async function validateAnswer(d: TrackerDeps, user: User, body: Record<st
         valid: true,
         type,
         checked: "fields",
-        message: `The fields of that ${type} are right. The rest is checked when it is made: ${type === "research" ? "the model runner takes it then" : "its page or source is read then"}.`,
+        message: `The fields of that ${type} are right, and you are under the live-task cap. The rest is checked when it is made: ${type === "research" ? "the model runner takes it then" : "its page or source is read then"}. Nothing was made.`,
       },
     };
   }
@@ -103,7 +107,7 @@ export async function validateAnswer(d: TrackerDeps, user: User, body: Record<st
       firstAt: first?.toISOString() ?? null,
       thenAt: then?.toISOString() ?? null,
       message: first
-        ? `That ${type} would first run ${formatInstant(first.toISOString(), user.timeZone, now)}${then ? `, then ${formatInstant(then.toISOString(), user.timeZone, now)}` : ""} (${cadence}). Nothing was made.`
+        ? `That ${type} would first run ${first.getTime() <= now.getTime() ? "at once" : formatInstant(first.toISOString(), user.timeZone, now)}${then ? `, then ${formatInstant(then.toISOString(), user.timeZone, now)}` : ""} (${cadence}). Nothing was made.`
         : `That ${type} would never run: its time has no next run. Nothing was made.`,
     },
   };
