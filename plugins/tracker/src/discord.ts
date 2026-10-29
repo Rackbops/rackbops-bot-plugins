@@ -15,7 +15,7 @@ import {
   withNotice,
 } from "./actions.js";
 import { resumeTask } from "./manage.js";
-import { CURRENCY_LENGTH, DATE_LENGTH, MAX_AMOUNT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
+import { CURRENCY_LENGTH, DATE_LENGTH, MAX_AMOUNT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
 import { remind, type Repeat } from "./reminders.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./research.js";
 import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
@@ -412,6 +412,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           )
           .addNumberOption((o) => o.setName("max").setDescription("Only listings at or under this price").setMinValue(0.01))
           .addStringOption((o) => o.setName("currency").setDescription("Only listings in this currency, e.g. USD").setMinLength(CURRENCY_LENGTH).setMaxLength(CURRENCY_LENGTH))
+          .addStringOption((o) => o.setName("exclude").setDescription("Leave out listings whose title has any of these words, separated by commas").setMaxLength(MAX_EXCLUDE_TEXT))
           .addIntegerOption((o) =>
             o
               .setName("hours")
@@ -426,6 +427,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           const judge = interaction.options.getBoolean("judge");
           const max = interaction.options.getNumber("max");
           const currency = interaction.options.getString("currency");
+          const exclude = interaction.options.getString("exclude");
           const hours = interaction.options.getInteger("hours");
           return wantCommand(d, user, {
             name: interaction.options.getString("name", true),
@@ -433,6 +435,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             ...(target !== null ? { target } : {}),
             ...(max !== null ? { max } : {}),
             ...(currency !== null ? { currency } : {}),
+            ...(exclude !== null ? { exclude } : {}),
             ...(hours !== null ? { hours } : {}),
             ...(judge !== null ? { judge } : {}),
           });
