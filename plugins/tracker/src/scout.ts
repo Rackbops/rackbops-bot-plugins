@@ -89,7 +89,10 @@ export function scoutSchedule(every: number, zone: string, now: Date): CalendarS
   return { kind: "calendar", every, unit: "day", start };
 }
 
-async function liveScouts(d: TrackerDeps, user: User): Promise<number> {
+/** The scout cap's refusal: `/scout new`, the web and the task API's create and validate. */
+export const SCOUT_CAP = `You already have ${MAX_LIVE_SCOUTS} scouts, the most one person may. Delete or change one instead.`;
+
+export async function liveScouts(d: TrackerDeps, user: User): Promise<number> {
   const active = await d.store.listTasks({ ownerId: user.id, status: "active", type: "scout" });
   const paused = await d.store.listTasks({ ownerId: user.id, status: "paused", type: "scout" });
   return active.length + paused.length;
@@ -104,7 +107,7 @@ export async function createScout(d: TrackerDeps, user: User, input: ScoutInput)
   const capped = await liveTaskCap(d, user);
   if (capped) return { ok: false, error: capped };
   if ((await liveScouts(d, user)) >= MAX_LIVE_SCOUTS) {
-    return { ok: false, error: `You already have ${MAX_LIVE_SCOUTS} scouts, the most one person may. Delete or change one instead.` };
+    return { ok: false, error: SCOUT_CAP };
   }
   const now = d.clock.now();
   const actor: Actor = { userId: user.id, admin: user.admin };
