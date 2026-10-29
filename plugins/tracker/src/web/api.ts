@@ -1,9 +1,12 @@
 import type { User } from "@rackbops/docket-core";
-import type { TrackerDeps } from "../actions.js";
+import type { TrackerDeps, UsrLink } from "../actions.js";
+import type { UsrDelegation } from "../usr-identity.js";
+import { operationOf } from "./api-delegation.js";
 import type { Queue } from "../discord-common.js";
-import type { ApiToken } from "./api-tokens.js";
+import { type ApiToken, TOKEN_PREFIX } from "./api-tokens.js";
 import {
   actAnswer,
+  capabilitiesAnswer,
   type ApiAnswer,
   createAnswer,
   editAnswer,
@@ -17,6 +20,7 @@ import { sourcesAnswer, sourcesReadyAnswer } from "./api-sources.js";
 import type { Writer } from "./editor.js";
 import { readBody } from "./html.js";
 import { isIdempotencyKey } from "./api-idempotency.js";
+import { validateAnswer } from "./api-validate.js";
 import { sha256 } from "./secrets.js";
 import { canonicalJson, ifMatchVersion } from "./task-version.js";
 
@@ -96,6 +100,8 @@ export interface ApiWiring {
   arrived: number;
   /** The web's membership re-check, for a token's owner (app.ts). */
   recheck(user: User, checkedAt: string | null): Promise<Recheck>;
+  /** When the person's membership was last confirmed by any check, for a delegation token's person (app.ts). */
+  confirmedAt(userId: string): string | null;
 }
 
 /**
@@ -149,7 +155,7 @@ export function bearer(header: string | null): string | null {
 }
 
 type Route =
-  | { kind: "me" | "types" | "tasks" }
+  | { kind: "me" | "types" | "tasks" | "capabilities" | "validate" }
   | { kind: "task"; id: string }
   | { kind: "act"; id: string; action: "pause" | "resume" }
   | { kind: "listings"; id: string }
@@ -171,7 +177,10 @@ function segment(raw: string | undefined): string {
 function route(rest: string): Route | null {
   if (rest === "/me") return { kind: "me" };
   if (rest === "/types") return { kind: "types" };
+  if (rest === "/capabilities") return { kind: "capabilities" };
   if (rest === "/tasks") return { kind: "tasks" };
+  // Before `/tasks/<id>`: a task id is `t<seq>`, never `validate`.
+  if (rest === "/tasks/validate") return { kind: "validate" };
   const act = ACT.exec(rest);
   if (act) return { kind: "act", id: segment(act[1]), action: act[2] as "pause" | "resume" };
   const listings = LISTINGS.exec(rest);
@@ -185,7 +194,7 @@ function route(rest: string): Route | null {
 function allowedMethods(r: Route): string {
   if (r.kind === "tasks") return "GET, POST";
   if (r.kind === "task") return "GET, PATCH, DELETE";
-  if (r.kind === "act" || r.kind === "listings" || r.kind === "sources" || r.kind === "ready") return "POST";
+  if (r.kind === "validate" || r.kind === "act" || r.kind === "listings" || r.kind === "sources" || r.kind === "ready") return "POST";
   return "GET";
 }
 
@@ -208,8 +217,11 @@ async function readJson(request: Request, max = MAX_API_BYTES): Promise<Read> {
   return { ok: true, body: value as Record<string, unknown> };
 }
 
-/** The token and its owner, or the answer refusing the request. */
-type Auth = { ok: true; token: ApiToken; user: User } | { ok: false; answer: ApiAnswer };
+/** What a request was authenticated by: one of the owner's `trk_` tokens, or a usr delegation token (#370). */
+type Credential = { kind: "token"; token: ApiToken } | { kind: "delegation"; delegation: UsrDelegation };
+
+/** The credential and the person it acts as, or the answer refusing the request. */
+type Auth = { ok: true; via: Credential; user: User } | { ok: false; answer: ApiAnswer };
 
 async function authenticate(w: ApiWiring, request: Request): Promise<Auth> {
   const { d } = w;
@@ -219,6 +231,12 @@ async function authenticate(w: ApiWiring, request: Request): Promise<Auth> {
   const invalid = problem(401, "invalid_token", "That token is unknown, revoked or expired.", { "WWW-Authenticate": `${CHALLENGE}, error="invalid_token"` });
   const sent = bearer(header);
   const now = d.clock.now();
+  // A usr delegation token (#370) is a JWT, never `trk_`; taken only from the services
+  // TRACKER_API_DELEGATES names. Anything else is looked up as a `trk_` token, as before.
+  const delegates = d.usr?.delegates;
+  if (sent !== null && !sent.startsWith(TOKEN_PREFIX) && d.usr && delegates && delegates.size > 0) {
+    return authenticateDelegation(w, d.usr, delegates, sent, invalid);
+  }
   const token = sent === null ? null : d.apiTokens.find(sent, now);
   if (!token) {
     const waitFailed = w.failed.take(FAILED_KEY, now.getTime());
@@ -240,7 +258,34 @@ async function authenticate(w: ApiWiring, request: Request): Promise<Auth> {
   const current = d.apiTokens.find(sent as string, d.clock.now());
   if (!current) return no(invalid);
   d.apiTokens.touch(current, d.clock.now());
-  return { ok: true, token: current, user };
+  return { ok: true, via: { kind: "token", token: current }, user };
+}
+
+/**
+ * A usr delegation token (usr-identity.ts `verifyDelegation`): for this app (`aud`), signed by usr,
+ * unexpired, from a listed service (`act.sub`), for a person linked to a usr account who is still
+ * registered and a member. usr's keys out of reach is 503, never a pass. Its rate limit is the
+ * person's (`sub`), shared by every service acting for them.
+ */
+async function authenticateDelegation(w: ApiWiring, usr: UsrLink, delegates: ReadonlySet<string>, sent: string, invalid: ApiAnswer): Promise<Auth> {
+  const { d } = w;
+  const no = (answer: ApiAnswer): Auth => ({ ok: false, answer });
+  const failed = (): Auth => {
+    const wait = w.failed.take(FAILED_KEY, d.clock.now().getTime());
+    return no(wait > 0 ? problem(429, "rate_limited", `Too many requests with bad tokens; try again in ${wait} s.`, { "Retry-After": String(wait) }) : invalid);
+  };
+  const checked = await usr.verifier.verifyDelegation(sent, usr.app);
+  if (checked === "unavailable") return no(problem(503, "usr_unavailable", "I could not fetch usr's signing keys to check that token; try again in a minute.", { "Retry-After": "60" }));
+  if (checked === "invalid" || !delegates.has(checked.actor)) return failed();
+  const wait = w.limiter.take(`dlg:${checked.sub}`, d.clock.now().getTime());
+  if (wait > 0) return no(problem(429, "rate_limited", `Too many requests for this person; try again in ${wait} s.`, { "Retry-After": String(wait) }));
+  const userId = usr.links.userOfSubject(checked.sub);
+  const user = userId ? await d.store.getUser(userId) : null;
+  if (!user || !d.admissions.isRegistered(user.id)) return failed();
+  const found = await w.recheck(user, w.confirmedAt(user.id));
+  if (found === "not-member") return no(problem(403, "not_member", "That person is no longer a member of this tracker's server, or lost the role it asks for."));
+  if (found === "unknown") return no(problem(503, "membership_unknown", MEMBERSHIP_UNKNOWN, { "Retry-After": "60" }));
+  return { ok: true, via: { kind: "delegation", delegation: checked }, user };
 }
 
 /** One write -- create, edit, pause, resume, delete, listings, sources -- as its answer. */
@@ -274,9 +319,28 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
   const allowed = allowedMethods(r);
   const method = request.method;
   if (!allowed.split(", ").includes(method)) return json(problem(405, "method_not_allowed", `Use ${allowed}.`, { Allow: allowed }));
+  // A delegation token does only what its scope names: one operation per route and method (#370).
+  if (auth.via.kind === "delegation") {
+    const operation = operationOf(r, method);
+    // Every route and method that got this far names one (the table's own test), so null is a
+    // refusal that cannot happen, kept so a future route without an operation fails closed.
+    if (operation === null) return json(problem(403, "insufficient_scope", "No delegation token can do this."));
+    const needed = `${w.d.usr?.app}:${operation}`;
+    if (!auth.via.delegation.scopes.has(needed)) {
+      return json(problem(403, "insufficient_scope", `That token does not allow this: it needs ${needed}.`, { "WWW-Authenticate": `${CHALLENGE}, error="insufficient_scope", scope="${needed}"` }));
+    }
+    if (method !== "GET") w.d.log.info(`api: ${operation} for ${user.id} by usr ${auth.via.delegation.actor} (token ${auth.via.delegation.jti})`);
+  }
   const writer: Writer = { d: w.d, queue: w.queue, reading: w.reading, userId: user.id, arrived: w.arrived };
   const base = `${w.base}${API_PREFIX}`;
 
+  // A dry run writes nothing, so it takes no Idempotency-Key or If-Match and no write-queue turn.
+  if (r.kind === "validate") {
+    if (request.headers.get("if-match") !== null) return json(problem(400, "if_match_unsupported", "If-Match goes only with PATCH or DELETE of a task, or its pause or resume."));
+    const read = await readJson(request);
+    if (!read.ok) return json(read.answer);
+    return json(await validateAnswer(w.d, user, read.body));
+  }
   if (method === "POST" || method === "PATCH" || method === "DELETE") {
     // `If-Match` (#369): only on a write to one task, and only a version this API made; anything
     // else is refused rather than ignored, so a client never believes a write was conditional when
@@ -319,13 +383,16 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
     return json(answer);
   }
   if (r.kind === "types") return json(typesAnswer(w.d));
-  if (r.kind === "tasks") return json(await listAnswer(w.d, user));
+  if (r.kind === "tasks") return json(await listAnswer(w.d, user, new URL(request.url).searchParams));
+  if (r.kind === "capabilities") return json(capabilitiesAnswer(w.d, user, { burst: RATE_BURST, perSecond: RATE_PER_SECOND }));
   if (r.kind === "task") return json(await getAnswer(w.d, user, r.id));
   return json({
     status: 200,
     body: {
       user: { id: user.id, name: user.displayName, timeZone: user.timeZone, preferredHour: user.preferredHour },
-      token: { id: auth.token.id, name: auth.token.name, createdAt: auth.token.createdAt, expiresAt: auth.token.expiresAt },
+      ...(auth.via.kind === "token"
+        ? { token: { id: auth.via.token.id, name: auth.via.token.name, createdAt: auth.via.token.createdAt, expiresAt: auth.via.token.expiresAt } }
+        : { delegation: { actor: auth.via.delegation.actor, scopes: [...auth.via.delegation.scopes].sort(), expiresAt: new Date(auth.via.delegation.expiresAt).toISOString() } }),
     },
   });
 }

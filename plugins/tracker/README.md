@@ -653,6 +653,29 @@ lets them on for 24 hours from the last confirmation, then answers 503 until one
 A token is looked up by the SHA-256 of what was sent, so the comparison is over a hash the sender
 cannot steer.
 
+**usr delegation tokens** (0.37.0, #370). With `TRACKER_API_DELEGATES` set, the task API also takes a
+usr delegation token (usr `docs/design/tokens.md`) from the services it names -- tracker-mcp, the
+ChatGPT connector of #368 -- acting for one person. It is checked offline against usr's JWKS, as the
+web sign-in checks `nz_id`: header `typ` `dlg+jwt`, ES256, `iss` `usr`, `aud` this tracker's usr app
+(`TRACKER_USR_APP`), unexpired with no more than usr's 30-minute cap left (plus a minute for usr's
+clock running ahead), a `jti`, and `act.sub` one of the listed keys. Its `sub` must be a usr account
+linked to a registered person (`/allow`), and the Discord membership re-check applies, with one
+difference: when it was last confirmed is kept in memory, so after a restart a person's first
+delegated request needs a lookup that runs, with no 24-hour grace (`503 membership_unknown` until
+one does).
+
+The token carries no roles, so the tracker cannot see `tracker:member` the way the web sign-in does,
+and usr mints one for anyone holding any `tracker:` role. A listed service must therefore check the
+member role itself: tracker-mcp asks usr's role lookup on every OAuth refresh. Nor can the tracker
+see a revocation: a token minted before the person unlinked the service, or lost the role, works
+until it expires (5 minutes by default, 30 at most). It does only what its `scope` names, one operation per route:
+`whoami` (`GET /me`), `list_task_types`, `get_capabilities`, `list_tasks`, `create_task`, `validate_task`, `get_task`, `update_task`
+(PATCH), `delete_task`, `pause_task`, `resume_task`, `send_listings`, `send_sources`,
+`sources_ready`, each as `<app>:<operation>`; a missing one is `403 insufficient_scope`. `get_capabilities`
+and `validate_task` are new in 0.37.0, so a service link made before it does not cover them until it is made again. usr's keys
+out of reach is `503 usr_unavailable`, never a pass. Its rate limit is the person's, shared by every
+service acting for them; each write is logged with the acting key and the token's `jti`.
+
 **Browsers.** No answer carries a CORS header, and a request with an `Origin` header -- which a
 browser adds to every cross-origin request and to any same-origin one that is not a GET -- is
 refused with 403: the API is for programs, not pages. A browser page cannot send a cross-origin
@@ -700,9 +723,11 @@ a research request cannot be edited, here or in Discord, and a `PATCH` of one an
 |---|---|
 | `GET /api/v1/me` | The token's owner (id, name, zone, preferred hour) and the token (id, name, made, expires). |
 | `GET /api/v1/types` | Each type this bot makes now (research and scout only while the model runner is set up), whether a `PATCH` takes it (`editable`; false for research, whose `edit` is empty), and its create and edit fields: name, JSON type, required (never, for an edit), description, and limits (`maxLength`, `minimum`, `maximum`, `enum`). This describes the tracker's own editor fields -- what these endpoints take -- and is **not** docket-core's `TaskType.intake` (`IntakeSpec`), which describes a type's config. |
-| `GET /api/v1/tasks` | Your tasks that are not deleted -- active, paused and done -- oldest first. Not the ones shared with you. |
+| `GET /api/v1/capabilities` | What this bot can make for you, in one read: `types` (as `GET /types`), `owner` (your zone and preferred hour), `limits` (`liveTasks`, `priceTrackers`, `researchWaiting`, `scouts`, `wantWatches`, `pageSize`, `requestsBurst`, `requestsPerSecond`) and `sources`, which say whether each is set up on this bot -- `runner` (research and scouts), `bgg`, `ebay` (eBay's own API), `shopify`, `mail` (alert email) and `webArea` (the web area, `TRACKER_WEB_URL`, which browser research needs) -- as true or false only, never a key, token or address. (0.37.0, #369.) |
+| `GET /api/v1/tasks` | Your tasks that are not deleted -- active, paused and done -- oldest first. Not the ones shared with you. With `?limit=N` (1 to 200) one page of them, and `nextCursor` (null on the last page): send it back as `?limit=N&cursor=<nextCursor>` for the next. A task made or deleted between two pages moves no other across the cut, so each one still there is listed exactly once. Without `limit`, all of them, and no `nextCursor`. Any other query parameter is ignored; `limit` or `cursor` given twice is `400 invalid`. (0.37.0, #369.) |
 | `POST /api/v1/tasks` | Makes one: `type` is `reminder`, `renewal`, `price`, `research`, `scout` or `wantlist`, and the rest are that type's create fields. `201`, with `Location`. A price's page is read first, and nothing is made unless a price is found in it. A research request's fields are `question` (required), `context`, `deadline`, `at` and `sources` (`web`, the default, or `browser`: it waits for the pages your browser sends in, below), all text. A scout's are `interests` (required, text, separated by commas or new lines), `lens`, `for` and `notes` (text) and `every` (a whole number of days). A want-list watch's (`wantlist`) are `name` (required), `target` (required but for an inbox watch), `source` (`page`, `bgg` or `ebay`), `max` (a number), `currency` (text), `exclude` (text: words or phrases separated by commas; an empty string clears it in an edit, and `settings.exclude` reads them back joined by `, `), `hours` (a whole number) and `judge` (`"yes"` or `"no"`; `"yes"` without the model runner is a `503`); a judged one comes back as `type: "wantjudge"`, edited by the same fields but `judge`; a task's JSON shows its `source` and `target`, which no edit changes -- an inbox watch's `source` reads back as `inbox` and its `target` is its inbox key -- and for an inbox watch its `site` (`ebay` or `bgg`), its words to `search` for and a BGG `game` when one was named. |
-| `GET /api/v1/tasks/<id>` | One of your tasks (a deleted one too), with its history: the newest runs and changes, as `/task history` shows them. |
+| `POST /api/v1/tasks/validate` | A dry run of `POST /tasks`: the same body, checked, and nothing made or written. A reminder, a renewal or a scout gets every check its create runs before it writes (the type's rules, the live-task cap, the scout cap) and `{"valid": true, "checked": "full", "timeZone", "cadence", "firstAt", "thenAt", "message"}`: its first run and the run after, as UTC instants, placed in your zone as the scheduler places them (a renewal already within its lead is asked at once: its `firstAt` is then the ask's own date, already past, as the made task's `nextAt` will be). A price, a want-list watch or a research request gets its fields checked and the live-task cap (`"checked": "fields"`), and none of its type's own checks: its create reads a page or a source, or asks the model runner, so the rest is known only when it is made, and its create may refuse first for another reason (a bad address, the price-tracker cap). A refusal is the create's own (`400 invalid`, `unknown_field`, `409 limit_reached`, `503 unavailable`). Advice, not a reservation: a create made after it can still meet a cap. Takes no `If-Match`; an `Idempotency-Key` is ignored, as nothing is written. (0.37.0, #369.) |
+| `GET /api/v1/tasks/<id>` | One of your tasks (a deleted one too), with its history: the newest runs and changes, as `/task history` shows them. Each run carries `delivery` (0.37.0, #369): `state` is `not_run` (not finished yet: queued or running, so no copy is planned), `nothing_to_send` (no copy: it fired with no message for anyone, was skipped, or failed before it had one), `sending` (a copy still owed: not tried, out now, or retrying), `delivered` (every copy went out), `unconfirmed` (a send failed in a way that does not say whether it went out; never resent) or `failed` (a copy failed for good); when copies differ, `failed` outranks `unconfirmed`, which outranks `sending`, then `delivered`. `reason` is the error of the failed or unconfirmed copy; `sends` lists each copy, `to`, `status` and `error`. |
 | `PATCH /api/v1/tasks/<id>` | Edits it: the fields to change. A price's page is not editable. |
 | `POST /api/v1/tasks/<id>/pause`, `/resume` | Body `{}`. As the web's Pause and Resume, and `/task resume`. |
 | `POST /api/v1/tasks/<id>/listings` | Sends listings in to your inbox watch (an eBay watch made without the bot's eBay keys, or a BGG one made without BGG's API): `{"listings": [{"title", "url", "price", "currency", "condition", "seller"}, ...]}`, 1 to 40 of them, `title` and an absolute http(s) `url` on the watch's own site (one of eBay's own domains, `EBAY_DOMAINS` in `src/web/api-listings.ts`, or a subdomain, for an eBay watch; `boardgamegeek.com` or a subdomain for a BGG one) required, `price` a number or text such as `"$30.00"`, `currency` three letters. Each is cleaned by docket-types' `submittedListing` (an eBay item's address becomes its bare `/itm/<number>`, so one item stays one listing); the usable ones are kept, the others counted: `200 {"accepted", "rejected", "message"}`. None usable, or the wrong shape, is `400`; more than 40 is `400 too_many`; anyone else's, a deleted or finished watch, or not a watch, is `404`; a page, BGG-API, Shopify or eBay-API watch is `409` (its listings are read, not sent). The next look DMs the new ones within the watch's limits, each once. The newest 100 per watch are kept, as many as one look reads: more than 100 sent between two looks loses the oldest. Body up to 64 KiB. |
@@ -738,15 +763,17 @@ version_mismatch` and nothing is written. Without `If-Match` a write goes throug
 
 | Status | Code | When |
 |---|---|---|
-| 400 | `invalid` | A rule refused a value; `message` is the rule's own words, as the web editor shows them. Also a field of the wrong JSON type, or no `type`. |
+| 400 | `invalid` | A rule refused a value; `message` is the rule's own words, as the web editor shows them. Also a field of the wrong JSON type, or no `type`; a `limit` not 1 to 200, a `cursor` without one, or either given twice. |
 | 400 | `unknown_field` | A field that type does not take (on a pause or resume, any field). |
+| 400 | `invalid_cursor` | A `cursor` this API did not give (or the owner's tasks were erased since). |
 | 400 | `invalid_json` | The body is not JSON, or not one object. |
 | 400 | `too_many` | More than 40 listings in one `/listings` request. |
 | 400 | `invalid_idempotency_key` | An `Idempotency-Key` not 8 to 128 of the characters above. |
-| 400 | `if_match_unsupported`, `invalid_if_match` | `If-Match` on a write that is not to one task (a create, listings, sources), or not one quoted version. |
+| 400 | `if_match_unsupported`, `invalid_if_match` | `If-Match` on a write that is not to one task (a create, a validate, listings, sources), or not one quoted version. |
 | 401 | `unauthorized` | No `Authorization` header. With `WWW-Authenticate: Bearer realm="tracker"`. |
-| 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered (their tokens are then deleted): one answer for all, with `WWW-Authenticate`. An owner forgotten while their write waited in the queue gets the same code with its own message and no `WWW-Authenticate`. |
+| 401 | `invalid_token` | A token unknown, revoked or expired, or whose owner is no longer registered (their tokens are then deleted); a usr delegation token that fails a check above, comes from a service not in `TRACKER_API_DELEGATES`, or acts for a usr account linked to no one registered: one answer for all, with `WWW-Authenticate`. An owner forgotten while their write waited in the queue gets the same code with its own message and no `WWW-Authenticate`. |
 | 403 | `origin_refused` | The request carried an `Origin` header. |
+| 403 | `insufficient_scope` | A usr delegation token whose `scope` lacks this route's operation. With `WWW-Authenticate` naming the scope it needs. |
 | 403 | `not_member` | The owner has left every `TRACKER_GUILD_ID` server (or lacks the `TRACKER_GUILD_ROLES` role where one is asked); their tokens are revoked. |
 | 404 | `not_found` | No such endpoint, or no such task of yours. Anyone else's task -- one shared with you, or any task to an admin's token -- answers exactly as an unknown id. |
 | 405 | `method_not_allowed` | With `Allow`. |
@@ -762,7 +789,8 @@ version_mismatch` and nothing is written. Without `If-Match` a write goes throug
 | 429 | `rate_limited` | With `Retry-After`: this token's bucket, or the shared one for bad tokens. |
 | 500 | `outcome_unknown` | A retry under an `Idempotency-Key` whose first request failed partway: it may have made its change, so read your tasks before sending it again under a new key. |
 | 503 | `slow_page` | A new price's or page watch's page did not answer within 8 seconds of the request's arrival: nothing was made. With `Retry-After`. |
-| 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours (the lookup goes through the Discord client of the last command or button the bot handled, so after a restart none runs until someone uses one); the type is not available on this bot. |
+| 503 | `usr_unavailable` | A usr delegation token, and usr's signing keys could not be fetched to check it. With `Retry-After`. |
+| 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours, or, for a delegation token, since the plugin started (the lookup goes through the Discord client of the last command or button the bot handled, so after a restart none runs until someone uses one); the type is not available on this bot. |
 
 **Example.**
 
@@ -834,6 +862,7 @@ $ curl -s https://clerk.example.com/tracker/api/v1/tasks/t9 -H "Authorization: B
 | `TRACKER_USR_KEY` | yes | The tracker's usr API key, with the role `usr:discord` only (usr's `/api/discord/allow` and `/register-link`), never `tracker:admin` or `tracker:register`, and a usr Discord service (`PUT /api/discord/services/<keyId>`) set to the tracker's app. Required with `TRACKER_USR_URL`; set without it, or with whitespace in it, refuses to load. Never logged. |
 | `TRACKER_MAIL_DOMAIN` | no | The domain the alert-email route (0.25.0, Alert emails below) receives mail at, e.g. `alerts.example.com`: lower case, at least one dot. With `TRACKER_MAIL_KEY`; both unset = off (`/tracker/mail/inbound` answers 404 and no address is shown). One without the other, a domain that is not one, or a key under 32 characters or with white space refuses to load, never echoing either. |
 | `TRACKER_MAIL_KEY` | yes | The bearer the Email Worker posts to `/tracker/mail/inbound` with, at least 32 characters; the same value is the Worker's `CLERK_MAIL_KEY` secret. Never logged. |
+| `TRACKER_API_DELEGATES` | no | usr API key ids (digits, comma-separated) of the services whose usr delegation tokens the task API takes, such as tracker-mcp's. Unset = only `trk_` tokens. Needs `TRACKER_USR_URL`. |
 | `TRACKER_USR_APP` | no | The usr app the tracker's roles live under (`tracker:member`, `tracker:register`): lowercase words joined by `-`. It must match the app on the key's usr Discord service row, which is what usr goes by. Unset = `tracker`. Needs `TRACKER_USR_URL`. |
 
 **The execute lane is off until all three of `TRACKER_CITY_HALL_URL`, `_KEY` and `_CAPABILITY` are

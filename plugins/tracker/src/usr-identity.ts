@@ -6,6 +6,11 @@ import { readBody } from "./web/html.js";
  * `docs/sso-verifier.md` says -- signature (ES256, P-256), `iss` "usr", `exp`, and never a delegation
  * token (header `typ` "dlg+jwt", or an `act` claim). Keys are cached for `JWKS_TTL_MS` and fetched
  * again on an unknown `kid`, at most every `JWKS_RETRY_MS`. WebCrypto only: no dependency.
+ *
+ * The same keys verify usr's delegation tokens (`verifyDelegation`, rackbops-bot-plugins#370), which
+ * the task API takes from a service acting for a person (usr `docs/design/tokens.md`, "Delegation
+ * token"): header `typ` "dlg+jwt", `aud` this app, a `scope` of `<app>:<operation>` and an `act`
+ * naming the usr API key that asked. Never the other way round: an `nz_id` is never a delegation.
  */
 
 export const SSO_COOKIE = "nz_id";
@@ -22,6 +27,33 @@ export interface UsrIdentity {
   /** Every app's roles, `app:role`. */
   roles: string[];
 }
+
+/** A verified delegation token: who it acts for, which service acts, and what it may do. */
+export interface UsrDelegation {
+  /** usr's opaque user id of the person acted for. */
+  sub: string;
+  /** The acting usr API key, `key:<id>`. */
+  actor: string;
+  /** The granted operations, each `<app>:<operation>`. */
+  scopes: ReadonlySet<string>;
+  /** usr's unique id for the token, for the log. */
+  jti: string;
+  /** Expiry, milliseconds since the epoch. */
+  expiresAt: number;
+}
+
+/** usr caps a delegation token at 30 minutes; one that claims to live longer is not usr's. */
+export const MAX_DELEGATION_MS = 30 * 60 * 1000;
+
+/**
+ * How far usr's clock may run ahead of this one before a token at usr's full 30 minutes reads as
+ * longer: the cap is checked against the time left (`exp` - now), so without it a usr minting at the
+ * cap would be refused whenever its clock led by a second.
+ */
+export const DELEGATION_SKEW_MS = 60 * 1000;
+
+/** A token id fit for a log line: usr's are 12 random bytes in base64url, so anything else is refused, not logged. */
+const JTI = /^[A-Za-z0-9_-]{1,64}$/;
 
 export interface UsrVerifierOptions {
   /** usr's origin (usr.ts's `UsrConfig.url`). */
@@ -47,30 +79,63 @@ function decode(part: string): unknown {
 export class UsrVerifier {
   private keys: Key[] = [];
   private fetchedAt = Number.NEGATIVE_INFINITY;
+  /** Whether the last JWKS fetch failed (unreachable, not 200, not a JWKS). */
+  private loadFailed = false;
   private pending: Promise<void> | null = null;
 
   constructor(private readonly o: UsrVerifierOptions) {}
 
   /** The identity in an `nz_id` token, or null when it is missing, malformed, unsigned by usr, expired or a delegation token. */
   async verify(token: string | null): Promise<UsrIdentity | null> {
-    if (!token || token.length > MAX_TOKEN) return null;
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    const [h, p, s] = parts as [string, string, string];
-    const header = decode(h) as { alg?: unknown; kid?: unknown; typ?: unknown } | null;
-    if (!header || header.alg !== "ES256" || header.typ === "dlg+jwt" || typeof header.kid !== "string") return null;
-    const key = (await this.keyFor(header.kid, false)) ?? (await this.keyFor(header.kid, true));
-    if (!key) return null;
-    const signature = Buffer.from(s, "base64url");
-    if (signature.length !== 64) return null;
-    const ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, signature, new TextEncoder().encode(`${h}.${p}`));
-    if (!ok) return null;
-    const claims = decode(p) as { iss?: unknown; sub?: unknown; exp?: unknown; act?: unknown; roles?: unknown } | null;
-    if (!claims || claims.iss !== "usr" || claims.act !== undefined) return null;
+    const signed = await this.signed(token);
+    if (typeof signed === "string" || signed.header.typ === "dlg+jwt") return null;
+    const claims = signed.claims as { iss?: unknown; sub?: unknown; exp?: unknown; act?: unknown; roles?: unknown };
+    if (claims.iss !== "usr" || claims.act !== undefined) return null;
     if (typeof claims.exp !== "number" || claims.exp * 1000 <= this.o.now()) return null;
     if (typeof claims.sub !== "string" || claims.sub === "") return null;
     const roles = Array.isArray(claims.roles) ? claims.roles.filter((r): r is string => typeof r === "string") : [];
     return { sub: claims.sub, roles };
+  }
+
+  /**
+   * A usr delegation token for `audience`, or why not: `"unavailable"` when usr's keys could not be
+   * fetched and none fits (so the caller refuses with 503, never lets it through), `"invalid"` for
+   * anything else -- malformed, unsigned by usr, an `nz_id`, another audience, expired, past usr's
+   * 30-minute cap, or missing a claim.
+   */
+  async verifyDelegation(token: string | null, audience: string): Promise<UsrDelegation | "invalid" | "unavailable"> {
+    const signed = await this.signed(token);
+    if (typeof signed === "string") return signed;
+    if (signed.header.typ !== "dlg+jwt") return "invalid";
+    const c = signed.claims as { iss?: unknown; sub?: unknown; aud?: unknown; exp?: unknown; scope?: unknown; act?: unknown; jti?: unknown };
+    if (c.iss !== "usr" || c.aud !== audience) return "invalid";
+    if (typeof c.sub !== "string" || c.sub === "" || typeof c.scope !== "string" || typeof c.jti !== "string" || !JTI.test(c.jti)) return "invalid";
+    const actor = (c.act as { sub?: unknown } | null | undefined)?.sub;
+    if (typeof actor !== "string" || !/^key:[0-9]+$/.test(actor)) return "invalid";
+    if (typeof c.exp !== "number") return "invalid";
+    const expiresAt = c.exp * 1000;
+    const now = this.o.now();
+    if (expiresAt <= now || expiresAt - now > MAX_DELEGATION_MS + DELEGATION_SKEW_MS) return "invalid";
+    return { sub: c.sub, actor, scopes: new Set(c.scope.split(" ").filter((x) => x !== "")), jti: c.jti, expiresAt };
+  }
+
+  /** A token whose ES256 signature one of usr's keys verifies, with its header and claims; or why not. */
+  private async signed(token: string | null): Promise<{ header: { typ?: unknown }; claims: object } | "invalid" | "unavailable"> {
+    if (!token || token.length > MAX_TOKEN) return "invalid";
+    const parts = token.split(".");
+    if (parts.length !== 3) return "invalid";
+    const [h, p, s] = parts as [string, string, string];
+    const header = decode(h) as { alg?: unknown; kid?: unknown; typ?: unknown } | null;
+    if (!header || header.alg !== "ES256" || typeof header.kid !== "string") return "invalid";
+    const key = (await this.keyFor(header.kid, false)) ?? (await this.keyFor(header.kid, true));
+    if (!key) return this.loadFailed ? "unavailable" : "invalid";
+    const signature = Buffer.from(s, "base64url");
+    if (signature.length !== 64) return "invalid";
+    const ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, key, signature, new TextEncoder().encode(`${h}.${p}`));
+    if (!ok) return "invalid";
+    const claims = decode(p);
+    if (claims === null || typeof claims !== "object") return "invalid";
+    return { header, claims };
   }
 
   private async keyFor(kid: string, force: boolean): Promise<CryptoKey | null> {
@@ -104,6 +169,8 @@ export class UsrVerifier {
 
   private async load(): Promise<void> {
     this.fetchedAt = this.o.now();
+    // Cleared only by a fetch that reads a JWKS; every early return below leaves it set.
+    this.loadFailed = true;
     try {
       const res = await (this.o.fetchImpl ?? fetch)(`${this.o.url}/.well-known/jwks.json`, {
         headers: { Accept: "application/json" },
@@ -128,6 +195,7 @@ export class UsrVerifier {
         }
       }
       this.keys = keys;
+      this.loadFailed = false;
     } catch {
       // usr unreachable: keep what we had.
     }

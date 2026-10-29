@@ -188,10 +188,18 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
   }
 
   /**
+   * When each person's membership was last confirmed, for a credential that keeps no row of its own
+   * to hold it (the task API's usr delegation tokens, api-delegation.ts). In memory: after a restart
+   * a person's first delegated request needs a lookup that runs, with no 24-hour grace.
+   */
+  const memberConfirmed = new Map<string, string>();
+
+  /**
    * The membership re-check, for a session and an API token alike (`checkedAt` is theirs): "ok",
    * or "not-member" -- then every session and every API token of the person is gone -- or "unknown"
    * once the last confirmation is too old to trust (the caller decides what that ends).
    */
+
   async function recheck(d: TrackerDeps, user: User, checkedAt: string | null): Promise<Recheck> {
     if (w.guildIds === null) return "ok";
     const now = d.clock.now().getTime();
@@ -207,12 +215,14 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       else failedAt.set(user.id, d.clock.now().getTime());
     }
     if (found === "not-member") {
+      memberConfirmed.delete(user.id);
       d.sessions.deleteForUser(user.id);
       d.apiTokens.deleteForUser(user.id);
       return "not-member";
     }
     if (found === "member") {
       const at = d.clock.now().toISOString();
+      memberConfirmed.set(user.id, at);
       d.sessions.confirmMember(user.id, at);
       d.apiTokens.confirmMember(user.id, at);
       return "ok";
@@ -391,7 +401,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       if (w.origin === null) return plain(404, "Not found");
       const d = w.deps();
       if (!d) return json(problem(503, "starting", "The tracker is starting up; try again in a minute.", { "Retry-After": "60" }));
-      return handleApi({ d, queue: w.queue, reading, base, limiter, failed, arrived, recheck: (user, at) => recheck(d, user, at) }, request, info.path);
+      return handleApi({ d, queue: w.queue, reading, base, limiter, failed, arrived, recheck: (user, at) => recheck(d, user, at), confirmedAt: (userId) => memberConfirmed.get(userId) ?? null }, request, info.path);
     }
     const method = request.method;
     if (method !== "GET" && method !== "POST") return plain(405, "Method not allowed", { Allow: "GET, POST" });

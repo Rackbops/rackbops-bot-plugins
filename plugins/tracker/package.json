@@ -157,6 +157,13 @@
         "description": "The usr app the tracker's roles live under (tracker:member, tracker:register); it must match the app on the key's usr Discord service row, which is what usr goes by. Unset = tracker. Needs TRACKER_USR_URL."
       },
       {
+        "key": "TRACKER_API_DELEGATES",
+        "format": "^[0-9]+(,[0-9]+)*$",
+        "required": false,
+        "secret": false,
+        "description": "usr API key ids (digits, comma-separated: the number in key:<id>, the act.sub of that service's delegation tokens) of the services whose usr delegation tokens the task API takes, such as tracker-mcp's: such a token acts for one linked person, only for the operations its scope names (tracker:list_tasks, tracker:create_task, ...). Unset = the task API takes only trk_ tokens. Needs TRACKER_USR_URL."
+      },
+      {
         "key": "TRACKER_MAIL_DOMAIN",
         "format": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$",
         "required": false,

@@ -1,4 +1,5 @@
 import {
+  type Delivery,
   describeSchedule,
   formatInstant,
   visibleFindings,
@@ -45,6 +46,66 @@ export interface RunView {
   error: string | null;
   /** `Larry replied "..."`, `Curly opted out`: plain text, one line each; Discord's rendering (`runLine`) escapes them. */
   answers: string[];
+  /** How the run's message went out (`loadHistory` only; the task API shows it, #369). */
+  delivery?: RunDelivery;
+}
+
+/**
+ * How one run's message went out, from docket's deliveries (plan 5.5), for the task API (#369):
+ *
+ * - `not_run`: the run has not finished (queued or running), so no copy is planned yet.
+ * - `nothing_to_send`: no copy for the viewer: it fired with no message (a price that did not move),
+ *   was skipped, or failed before it had one.
+ * - `sending`: a copy is still owed: not tried yet, out now, or failed or deferred with a retry to come.
+ * - `delivered`: every copy went out.
+ * - `unconfirmed`: a send failed in a way that does not say whether it went out; it is never resent.
+ * - `failed`: a copy failed for good; `reason` says why.
+ *
+ * When copies differ, one that failed for good outranks one unconfirmed, which outranks one still
+ * owed, then `delivered`.
+ */
+export type DeliveryState = "not_run" | "nothing_to_send" | "sending" | "delivered" | "unconfirmed" | "failed";
+
+export interface DeliverySend {
+  /** The recipient, as they are called now. */
+  to: string;
+  status: Delivery["status"];
+  /** Why it failed, was deferred, or is unconfirmed; clipped. */
+  error: string | null;
+}
+
+export interface RunDelivery {
+  state: DeliveryState;
+  /** The first final failure's (or unconfirmed send's) error, clipped; null otherwise. */
+  reason: string | null;
+  /** Each copy the viewer may see: every one for the owner or an admin, only their own for a recipient (#273). */
+  sends: DeliverySend[];
+}
+
+/** A copy still owed: a retry is set (`pending`, `deferred`, `failed` with tries left), or the send is out. */
+function owed(r: Delivery): boolean {
+  return r.retryAt !== null || r.status === "claimed" || r.status === "pending";
+}
+
+/**
+ * Pure: a run's delivery state from its delivery rows, as `viewer` may see them. A recipient's comes
+ * from their own copy alone (#273), so a run that sent them none reads `nothing_to_send` to them.
+ * A run still queued or running reads `not_run` whatever its record says: one that fired but was put
+ * back (to finish after an error, or held through its task's pause) plans its copies only when it
+ * finishes, and a recipient's view nulls `record`, so owner and recipient read it alike.
+ */
+export function deliveryView(o: Occurrence, rows: readonly Delivery[], people: ReadonlyMap<string, User>, viewer: User, seesEveryone: boolean): RunDelivery {
+  const shown = seesEveryone ? rows : rows.filter((r) => r.userId === viewer.id);
+  const sends = shown.map((r) => ({ to: people.get(r.userId)?.displayName ?? r.userId, status: r.status, error: r.error ? clip(r.error, 120) : null }));
+  if (shown.length === 0) {
+    const finished = o.status !== "queued" && o.status !== "running";
+    return { state: finished ? "nothing_to_send" : "not_run", reason: null, sends };
+  }
+  const lost = shown.find((r) => r.status === "failed" && !owed(r));
+  if (lost) return { state: "failed", reason: lost.error ? clip(lost.error, 120) : null, sends };
+  const unsure = shown.find((r) => r.status === "unconfirmed");
+  if (unsure) return { state: "unconfirmed", reason: unsure.error ? clip(unsure.error, 120) : null, sends };
+  return { state: shown.some(owed) ? "sending" : "delivered", reason: null, sends };
 }
 
 export interface ChangeView {
@@ -245,8 +306,10 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
   const tail = await d.store.changesTail(task.id, seesEveryone ? null : user.id, HISTORY_CHANGES);
   const lead = tail.before?.kind === "paused" ? [tail.before] : [];
   const changes = seesEveryone ? tail.rows : changesForRecipient([...lead, ...tail.rows], user.id).slice(lead.length);
+  const deliveries = new Map<string, Delivery[]>();
+  for (const o of runs.rows) deliveries.set(o.id, await d.store.listDeliveries({ occurrenceId: o.id }));
   const people = new Map<string, User>();
-  for (const r of replies) {
+  for (const r of [...replies, ...[...deliveries.values()].flat()]) {
     if (!people.has(r.userId)) {
       const u = await d.store.getUser(r.userId);
       if (u) people.set(u.id, u);
@@ -267,7 +330,7 @@ export async function loadHistory(d: Pick<TrackerDeps, "store" | "clock">, user:
     task,
     cadence: task.schedule && owner ? describeSchedule(task.schedule, owner, user.timeZone, now) : "no schedule",
     next: next ? formatInstant(next.dueAt, user.timeZone, now) : null,
-    runs: runs.rows.map((o) => runView(o, replies, people, user, now, seesEveryone)),
+    runs: runs.rows.map((o) => ({ ...runView(o, replies, people, user, now, seesEveryone), delivery: deliveryView(o, deliveries.get(o.id) ?? [], people, user, seesEveryone) })),
     earlierRuns: Math.max(0, runs.total - HISTORY_RUNS),
     changes: changes.map((e) => changeView(e, user, now, names)),
     earlierChanges: Math.max(0, tail.total - HISTORY_CHANGES),
