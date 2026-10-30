@@ -18,6 +18,8 @@ export const MAX_WHEN = 100;
 export const MAX_NOTE = 300;
 /** A price's page. */
 export const MAX_URL = 1000;
+/** A watch's exclude words, as one comma-separated field (want.ts reads at most docket's 20 entries). */
+export const MAX_EXCLUDE_TEXT = 1000;
 /** A price's `near` text. */
 export const MAX_NEAR = 100;
 /**

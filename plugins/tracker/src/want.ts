@@ -1,11 +1,24 @@
 import { type Actor, createTask, type Schedule, type TaskPatch, type User } from "@rackbops/docket-core";
-import { isEbayHost, money, pageSource, parseBggThingId, type SourceId, SourceMiss, type WantConfig, withinLimits } from "@rackbops/docket-types";
+import {
+  EXCLUDE_CHARS,
+  isEbayHost,
+  MAX_EXCLUDE,
+  money,
+  pageSource,
+  parseBggThingId,
+  parseExclude,
+  type SourceId,
+  SourceMiss,
+  searchWords,
+  type WantConfig,
+  wanted,
+} from "@rackbops/docket-types";
 import { clip, liveTaskCap, NO_LONGER_LISTED, NO_SUCH_TASK, type Plan, rescheduleKeepingSnoozes, said, type TaskResult, type TrackerDeps } from "./actions.js";
 import type { Step } from "./discord.js";
 import { applyEdit, busyTask, nextRun, owned, refusingScheduleError, same, savedText } from "./edit.js";
 import { FetchRefusedError, urlProblem } from "./fetch.js";
 import { type InboxSite, inboxSite, newInboxKey } from "./inbox.js";
-import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
+import { CURRENCY_LENGTH, MAX_EXCLUDE_TEXT, MAX_TITLE, MAX_URL } from "./limits.js";
 
 /**
  * `/want`'s rules (category 2; rackbops-bot-plugins#83), for the command, the web editor and the task
@@ -55,6 +68,13 @@ import { CURRENCY_LENGTH, MAX_TITLE, MAX_URL } from "./limits.js";
  * the runner it is a plain watch, and `judge: true` is refused. An eBay API watch is never judged (see
  * `startWant`). Which it is stays fixed once made,
  * since a task's type is: to change it, make a new watch.
+ *
+ * `exclude` (docket#77, the Arkham pilot of rackbops-bot-plugins#368): words or phrases, one
+ * comma-separated field, that rule a listing out when its title holds one (docket-types'
+ * `isExcluded`), from any source. Kept in the config as docket's list; editable, and cleared by an
+ * empty field or `-`. For a watch searched by its words (Shopify, eBay's API), a one-word entry that
+ * is one of those words is refused: every listing such a watch keeps has that word, so it would
+ * leave out every one.
  */
 
 export const MAX_WANT_TASKS = 20;
@@ -97,16 +117,19 @@ export interface WantInput {
   max?: number;
   currency?: string;
   hours?: number;
+  /** Words or phrases that rule a listing out, separated by commas. */
+  exclude?: string;
   /** Whether the model looks at each new listing first; left out, it does whenever it can. */
   judge?: boolean;
 }
 
-/** Every field optional: one left out keeps the task's own; an empty `max` or `currency`, or `-`, clears it. */
+/** Every field optional: one left out keeps the task's own; an empty `max`, `currency` or `exclude`, or `-`, clears it. */
 export interface WantEdit {
   name?: string;
   max?: number | null;
   currency?: string;
   hours?: number;
+  exclude?: string;
 }
 
 function plural(n: number, word: string): string {
@@ -138,6 +161,34 @@ function limitsPlan(input: { name: string; max?: number | undefined; currency?: 
     ok: true,
     limits: { name, hours, ...(input.max !== undefined ? { maxPrice: input.max } : {}), ...(currency ? { currency } : {}) },
   };
+}
+
+/**
+ * A watch's exclude words from its one field: at most `MAX_EXCLUDE` distinct entries of
+ * `EXCLUDE_CHARS`, at least one with a word in it, and for a watch searched by `words`, no one-word
+ * entry that is one of them (it would exclude every listing).
+ */
+export function excludePlan(text: string | undefined, words: string | null): Plan<{ exclude: string[] }> {
+  const raw = (text ?? "").trim();
+  if (raw === "" || raw === "-") return { ok: true, exclude: [] };
+  if (raw.length > MAX_EXCLUDE_TEXT) return { ok: false, error: `\`exclude\` is longer than ${MAX_EXCLUDE_TEXT} characters.` };
+  const entries = raw.split(/[,\n]/).map((e) => e.trim()).filter((e) => e !== "");
+  const long = entries.find((e) => e.length > EXCLUDE_CHARS);
+  if (long !== undefined) return { ok: false, error: `Each word or phrase in \`exclude\` is at most ${EXCLUDE_CHARS} characters.` };
+  // Counted as `parseExclude` keeps them: repeats and entries with no words are not entries.
+  const distinct = new Set(entries.map((e) => searchWords(e).join(" ")).filter((k) => k !== ""));
+  if (distinct.size > MAX_EXCLUDE) return { ok: false, error: `\`exclude\` takes at most ${MAX_EXCLUDE} words or phrases, separated by commas.` };
+  if (distinct.size === 0) return { ok: false, error: "`exclude` needs words or phrases, separated by commas, such as `investigator`." };
+  const exclude = parseExclude(raw);
+  if (words !== null) {
+    const searched = new Set(searchWords(words));
+    const every = exclude.find((e) => {
+      const w = searchWords(e);
+      return w.length === 1 && searched.has(w[0] as string);
+    });
+    if (every !== undefined) return { ok: false, error: `\`exclude\` has "${every}", a word this watch searches for, so every listing it finds has it and none would be left.` };
+  }
+  return { ok: true, exclude };
 }
 
 /** The eBay search the owner saves on eBay: the words, used and new, with the price cap as eBay's own. */
@@ -283,6 +334,8 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   if ((await liveWants(d, user)) >= MAX_WANT_TASKS) return { ok: false, error: atCap(d) };
   const capped = await liveTaskCap(d, user);
   if (capped) return { ok: false, error: capped };
+  const excluded = excludePlan(input.exclude, words);
+  if (!excluded.ok) return excluded;
   const where: WatchConfig =
     words !== null
       ? { source: source === "ebay" ? "ebay" : "shopify", target: words }
@@ -293,6 +346,7 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
     ...where,
     ...(limits.maxPrice !== undefined ? { maxPrice: limits.maxPrice } : {}),
     ...(limits.currency ? { currency: limits.currency } : {}),
+    ...(excluded.exclude.length > 0 ? { exclude: excluded.exclude } : {}),
   };
   return { ok: true, start: { title: limits.name, hours: limits.hours, config, judge: judged.judge } };
 }
@@ -304,8 +358,9 @@ export async function previewWant(d: TrackerDeps, start: PendingWant): Promise<W
   if (start.config.source !== "page") return { ok: true, text: "" };
   try {
     const listings = await pageSource.search(start.config.target, d.fetch ?? undefined);
-    const within = listings.filter((l) => withinLimits(l, start.config)).length;
-    const limited = start.config.maxPrice !== undefined || start.config.currency ? `, ${within} within your limits` : "";
+    const within = listings.filter((l) => wanted(l, start.config)).length;
+    const c = start.config;
+    const limited = c.maxPrice !== undefined || c.currency || (c.exclude?.length ?? 0) > 0 ? `, ${within} within your limits` : "";
     return { ok: true, text: `The page lists ${plural(listings.length, "thing")} now${limited}.` };
   } catch (err) {
     const cause = err instanceof Error ? err.cause : undefined;
@@ -361,6 +416,8 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
         ...(c.source === "ebay"
           ? ["I search eBay US through eBay's own API, newest listings first, new and used, an auction at its current bid (or its Buy It Now price), and count a listing only when its title has every word you are watching for. I never open an eBay page, and the model does not check these listings. eBay's terms let me keep its listings only briefly, so they are in the DM alone, and my own copy of it is cleared after 6 hours."]
           : []),
+        // Last, so a long list is what the reply's length cap cuts, never how listings reach the watch.
+        ...(c.exclude && c.exclude.length > 0 ? [`I leave out any listing whose title has ${c.exclude.map((e) => `"${e}"`).join(", ")}.`] : []),
       ].join("\n"),
     ),
   };
@@ -400,6 +457,9 @@ async function editWantLocked(d: TrackerDeps, user: User, taskId: string, input:
   if (!planned.ok) return planned;
   const { limits } = planned;
   if (config.source === "ebay" && limits.currency && limits.currency !== "USD") return { ok: false, error: EBAY_USD };
+  const searchedBy = config.source === "shopify" || config.source === "ebay" ? config.target : null;
+  const excluded = input.exclude === undefined ? ({ ok: true, exclude: config.exclude ?? [] } as const) : excludePlan(input.exclude, searchedBy);
+  if (!excluded.ok) return excluded;
   // Where it looks stays: the source, the target (an inbox watch's key) and an inbox watch's words and game.
   const nextConfig: WatchConfig = {
     source: config.source,
@@ -408,6 +468,7 @@ async function editWantLocked(d: TrackerDeps, user: User, taskId: string, input:
     ...(config.game !== undefined ? { game: config.game } : {}),
     ...(limits.maxPrice !== undefined ? { maxPrice: limits.maxPrice } : {}),
     ...(limits.currency ? { currency: limits.currency } : {}),
+    ...(excluded.exclude.length > 0 ? { exclude: excluded.exclude } : {}),
   };
   const patch: Omit<TaskPatch, "at"> = {};
   if (limits.name !== task.title) patch.title = limits.name;

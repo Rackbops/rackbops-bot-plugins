@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.38.0] - 2026-10-29
+
+### Added
+
+- Exclude words on want-list watches (docket#77, the Arkham pilot of #368). `/want` takes `exclude`: words or phrases separated by commas, at most 20; a listing whose title has any of them, as whole words in that order, is left out before it is DMed or judged, from every source, and the confirmation names them. The web editor and the task API take the same field on a new watch and an edit (an empty one clears it), `settings.exclude` reads it back, and `GET /types` lists it, so the plain-language intake can set it too. For a Shopify or eBay-API watch, a one-word entry that is one of the words searched for is refused, since it would leave out every listing. eBay API watches stay unjudged. Needs docket 0.17.0 or later (the tracker pins ^0.18.0).
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.37.0] - 2026-10-29
 
 ### Added

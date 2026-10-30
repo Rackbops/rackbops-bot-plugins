@@ -92,9 +92,10 @@ export function scoutEdit(form: URLSearchParams): ScoutEdit {
   };
 }
 
-/** `/want`'s options: an empty target, max, currency or hours is left out, as an unset option is. */
+/** `/want`'s options: an empty target, max, currency, exclude or hours is left out, as an unset option is. */
 export function wantInput(form: URLSearchParams): WantInput {
   const target = opt(form, "target");
+  const exclude = opt(form, "exclude");
   const max = decimal(form, "max");
   const currency = opt(form, "currency");
   const hours = int(form, "hours");
@@ -107,11 +108,12 @@ export function wantInput(form: URLSearchParams): WantInput {
     ...(target !== undefined ? { target } : {}),
     ...(max !== undefined ? { max } : {}),
     ...(currency !== undefined ? { currency } : {}),
+    ...(exclude !== undefined ? { exclude } : {}),
     ...(hours !== undefined ? { hours } : {}),
   };
 }
 
-/** A watch's edit: an empty name or hours keeps the watch's; a sent empty `max` or `currency` clears it. */
+/** A watch's edit: an empty name or hours keeps the watch's; a sent empty `max`, `currency` or `exclude` clears it. */
 export function wantEdit(form: URLSearchParams): WantEdit {
   const name = opt(form, "name");
   const hours = int(form, "hours");
@@ -119,6 +121,7 @@ export function wantEdit(form: URLSearchParams): WantEdit {
     ...(name !== undefined ? { name } : {}),
     ...(form.has("max") ? { max: decimal(form, "max") ?? null } : {}),
     ...(form.has("currency") ? { currency: str(form, "currency") } : {}),
+    ...(form.has("exclude") ? { exclude: str(form, "exclude") } : {}),
     ...(hours !== undefined ? { hours } : {}),
   };
 }
@@ -221,7 +224,8 @@ export function editValues(d: Pick<TrackerDeps, "clock">, user: User, task: Task
   if (task.type === "wantlist" || task.type === "wantjudge") {
     const c = task.config as WantConfig;
     const every = task.schedule?.kind === "poll" ? task.schedule.every : "";
-    return { name: task.title, max: c.maxPrice !== undefined ? String(c.maxPrice) : "", currency: c.currency ?? "", hours: String(every) };
+    const exclude = Array.isArray(c.exclude) ? c.exclude.filter((e) => typeof e === "string").join(", ") : "";
+    return { name: task.title, max: c.maxPrice !== undefined ? String(c.maxPrice) : "", currency: c.currency ?? "", exclude, hours: String(every) };
   }
   if (task.type !== "price") return {};
   const c = task.config as PriceConfig;
