@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.40.0] - 2026-10-30
+
+### Added
+
+- Confirm words on want-list watches (docket#87, the Arkham pilot of #368). `/want` takes `confirm` and `unconfirmed`: words or phrases separated by commas, at most 300 characters each. A listing whose title has no `confirm` word is read in full where its source can (eBay's getItem for an eBay API watch: its item specifics and description), then DMed if that has one, left out if its title or full listing has an `unconfirmed` word, and otherwise DMed marked `check: not confirmed as "..."`. The confirmation says so. The web editor and the task API take both fields on a new watch and an edit (an empty one clears it), `settings.confirm` and `settings.unconfirmed` read them back, and `GET /types` lists them. For a plain watch only: with `judge: true` they are refused, and with `judge` left out they make a plain watch. `unconfirmed` needs `confirm`, and a one-word `confirm` entry that the watch searches for is refused.
+
+### Changed
+
+- An eBay API watch reads each new listing in full once (at most 20 a run, together), so its DM lines show shipping too ("4.99 USD shipping", "free shipping"). Nothing of the read is kept. Needs docket 0.20.0.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.39.0] - 2026-10-30
 
 ### Added

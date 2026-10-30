@@ -18,7 +18,7 @@ import type { Step } from "./discord.js";
 import { applyEdit, busyTask, nextRun, owned, refusingScheduleError, same, savedText } from "./edit.js";
 import { FetchRefusedError, urlProblem } from "./fetch.js";
 import { type InboxSite, inboxSite, newInboxKey } from "./inbox.js";
-import { CURRENCY_LENGTH, MAX_EXCLUDE_TEXT, MAX_TITLE, MAX_URL } from "./limits.js";
+import { CURRENCY_LENGTH, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_TITLE, MAX_URL } from "./limits.js";
 
 /**
  * `/want`'s rules (category 2; rackbops-bot-plugins#83), for the command, the web editor and the task
@@ -75,6 +75,14 @@ import { CURRENCY_LENGTH, MAX_EXCLUDE_TEXT, MAX_TITLE, MAX_URL } from "./limits.
  * empty field or `-`. For a watch searched by its words (Shopify, eBay's API), a one-word entry that
  * is one of those words is refused: every listing such a watch keeps has that word, so it would
  * leave out every one.
+ *
+ * `confirm` and `unconfirmed` (docket#87, docket 0.20.0, the Arkham pilot of #368, Rod 2026-10-30:
+ * "leave it out, then double check any that don't have it"): words or phrases in the same one-field
+ * form. A listing whose title has no `confirm` word is read in full where its source can (eBay's
+ * getItem), then told if that has one, ruled out if its title or full listing has an `unconfirmed`
+ * word, and otherwise told marked to check. Plain watches only: a judged watch's listings are the
+ * model's to check. `unconfirmed` needs `confirm`; a `confirm` word that the watch searches for is
+ * refused, since every listing it finds would confirm.
  */
 
 export const MAX_WANT_TASKS = 20;
@@ -119,17 +127,23 @@ export interface WantInput {
   hours?: number;
   /** Words or phrases that rule a listing out, separated by commas. */
   exclude?: string;
+  /** Words or phrases that confirm a listing is the thing, separated by commas (plain watches). */
+  confirm?: string;
+  /** Words or phrases that rule out a listing `confirm` did not confirm, separated by commas. */
+  unconfirmed?: string;
   /** Whether the model looks at each new listing first; left out, it does whenever it can. */
   judge?: boolean;
 }
 
-/** Every field optional: one left out keeps the task's own; an empty `max`, `currency` or `exclude`, or `-`, clears it. */
+/** Every field optional: one left out keeps the task's own; an empty `max`, `currency`, `exclude`, `confirm` or `unconfirmed`, or `-`, clears it. */
 export interface WantEdit {
   name?: string;
   max?: number | null;
   currency?: string;
   hours?: number;
   exclude?: string;
+  confirm?: string;
+  unconfirmed?: string;
 }
 
 function plural(n: number, word: string): string {
@@ -169,26 +183,54 @@ function limitsPlan(input: { name: string; max?: number | undefined; currency?: 
  * entry that is one of them (it would exclude every listing).
  */
 export function excludePlan(text: string | undefined, words: string | null): Plan<{ exclude: string[] }> {
+  const planned = wordsPlan("exclude", text, MAX_EXCLUDE_TEXT, words, "investigator", "so every listing it finds has it and none would be left");
+  return planned.ok ? { ok: true, exclude: planned.words } : planned;
+}
+
+/**
+ * One words field (`exclude`, `confirm`, `unconfirmed`) by `excludePlan`'s rules; `every` says why a
+ * searched word is refused, or is null where one is allowed.
+ */
+function wordsPlan(field: string, text: string | undefined, max: number, words: string | null, example: string, every: string | null): Plan<{ words: string[] }> {
   const raw = (text ?? "").trim();
-  if (raw === "" || raw === "-") return { ok: true, exclude: [] };
-  if (raw.length > MAX_EXCLUDE_TEXT) return { ok: false, error: `\`exclude\` is longer than ${MAX_EXCLUDE_TEXT} characters.` };
+  if (raw === "" || raw === "-") return { ok: true, words: [] };
+  if (raw.length > max) return { ok: false, error: `\`${field}\` is longer than ${max} characters.` };
   const entries = raw.split(/[,\n]/).map((e) => e.trim()).filter((e) => e !== "");
   const long = entries.find((e) => e.length > EXCLUDE_CHARS);
-  if (long !== undefined) return { ok: false, error: `Each word or phrase in \`exclude\` is at most ${EXCLUDE_CHARS} characters.` };
+  if (long !== undefined) return { ok: false, error: `Each word or phrase in \`${field}\` is at most ${EXCLUDE_CHARS} characters.` };
   // Counted as `parseExclude` keeps them: repeats and entries with no words are not entries.
   const distinct = new Set(entries.map((e) => searchWords(e).join(" ")).filter((k) => k !== ""));
-  if (distinct.size > MAX_EXCLUDE) return { ok: false, error: `\`exclude\` takes at most ${MAX_EXCLUDE} words or phrases, separated by commas.` };
-  if (distinct.size === 0) return { ok: false, error: "`exclude` needs words or phrases, separated by commas, such as `investigator`." };
-  const exclude = parseExclude(raw);
-  if (words !== null) {
+  if (distinct.size > MAX_EXCLUDE) return { ok: false, error: `\`${field}\` takes at most ${MAX_EXCLUDE} words or phrases, separated by commas.` };
+  if (distinct.size === 0) return { ok: false, error: `\`${field}\` needs words or phrases, separated by commas, such as \`${example}\`.` };
+  const parsed = parseExclude(raw);
+  if (words !== null && every !== null) {
     const searched = new Set(searchWords(words));
-    const every = exclude.find((e) => {
+    const hit = parsed.find((e) => {
       const w = searchWords(e);
       return w.length === 1 && searched.has(w[0] as string);
     });
-    if (every !== undefined) return { ok: false, error: `\`exclude\` has "${every}", a word this watch searches for, so every listing it finds has it and none would be left.` };
+    if (hit !== undefined) return { ok: false, error: `\`${field}\` has "${hit}", a word this watch searches for, ${every}.` };
   }
-  return { ok: true, exclude };
+  return { ok: true, words: parsed };
+}
+
+export const CONFIRM_JUDGED = "`confirm` and `unconfirmed` are for a plain watch: the model checks a judged watch's listings itself. Leave them out, or make the watch with `judge: false`.";
+export const UNCONFIRMED_ALONE = "`unconfirmed` rules out listings that `confirm` did not confirm, so it needs `confirm` words too.";
+
+/** A watch's `confirm` and `unconfirmed` words, by `wordsPlan`; `judged` refuses either. */
+export function confirmPlan(confirm: string | undefined, unconfirmed: string | undefined, words: string | null, judged: boolean): Plan<{ confirm: string[]; unconfirmed: string[] }> {
+  const c = wordsPlan("confirm", confirm, MAX_CONFIRM_TEXT, words, "campaign", "so every listing it finds would confirm");
+  if (!c.ok) return c;
+  const u = wordsPlan("unconfirmed", unconfirmed, MAX_CONFIRM_TEXT, words, "investigator", null);
+  if (!u.ok) return u;
+  if (judged && (c.words.length > 0 || u.words.length > 0)) return { ok: false, error: CONFIRM_JUDGED };
+  if (u.words.length > 0 && c.words.length === 0) return { ok: false, error: UNCONFIRMED_ALONE };
+  return { ok: true, confirm: c.words, unconfirmed: u.words };
+}
+
+/** A stored words field as one comma-separated field again (a stored string is kept as it is). */
+export function wordsText(value: unknown): string {
+  return Array.isArray(value) ? value.filter((e) => typeof e === "string").join(", ") : typeof value === "string" ? value : "";
 }
 
 /** The eBay search the owner saves on eBay: the words, used and new, with the price cap as eBay's own. */
@@ -302,7 +344,9 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   if (source === "ebay" && d.ebay === true && limits.currency && limits.currency !== "USD") return { ok: false, error: EBAY_USD };
   // An eBay API watch keeps no eBay data (ebay-forget.ts), and a judged one would hand its listings to
   // city-hall's queue: it is never judged, whatever `judge` says (the web form always sends one).
-  const judged = searched && source === "ebay" ? ({ ok: true, judge: false } as const) : judgePlan(d, input.judge);
+  // Confirm words make a plain watch unless the owner asked for the model, which `confirmPlan` refuses.
+  const confirming = [input.confirm, input.unconfirmed].some((v) => v !== undefined && v.trim() !== "" && v.trim() !== "-");
+  const judged = (searched && source === "ebay") || (confirming && input.judge !== true) ? ({ ok: true, judge: false } as const) : judgePlan(d, input.judge);
   if (!judged.ok) return judged;
   const target = (input.target ?? "").trim();
   let inbox: { search: string; game: number | null } | null = null;
@@ -336,6 +380,8 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   if (capped) return { ok: false, error: capped };
   const excluded = excludePlan(input.exclude, words);
   if (!excluded.ok) return excluded;
+  const confirmed = confirmPlan(input.confirm, input.unconfirmed, words, judged.judge);
+  if (!confirmed.ok) return confirmed;
   const where: WatchConfig =
     words !== null
       ? { source: source === "ebay" ? "ebay" : "shopify", target: words }
@@ -347,6 +393,8 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
     ...(limits.maxPrice !== undefined ? { maxPrice: limits.maxPrice } : {}),
     ...(limits.currency ? { currency: limits.currency } : {}),
     ...(excluded.exclude.length > 0 ? { exclude: excluded.exclude } : {}),
+    ...(confirmed.confirm.length > 0 ? { confirm: confirmed.confirm } : {}),
+    ...(confirmed.unconfirmed.length > 0 ? { unconfirmed: confirmed.unconfirmed } : {}),
   };
   return { ok: true, start: { title: limits.name, hours: limits.hours, config, judge: judged.judge } };
 }
@@ -418,9 +466,21 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
           : []),
         // Last, so a long list is what the reply's length cap cuts, never how listings reach the watch.
         ...(c.exclude && c.exclude.length > 0 ? [`I leave out any listing whose title has ${c.exclude.map((e) => `"${e}"`).join(", ")}.`] : []),
+        ...confirmNote(c),
       ].join("\n"),
     ),
   };
+}
+
+/** The confirmation's line on `confirm` and `unconfirmed`, last with the exclude words. */
+function confirmNote(c: WatchConfig): string[] {
+  if (!c.confirm || c.confirm.length === 0) return [];
+  const list = (w: string[]) => w.map((e) => `"${e}"`).join(", ");
+  const read = c.source === "ebay" ? "I read it in full through eBay's API (its item specifics and description), and " : "";
+  const out = c.unconfirmed && c.unconfirmed.length > 0 ? `leave it out if it has ${list(c.unconfirmed)}, and otherwise` : "otherwise";
+  return [
+    `A listing whose title has none of ${list(c.confirm)}: ${read}DM it if that says one, ${out} DM it marked \`check: not confirmed as "${c.confirm[0]}"\`.`,
+  ];
 }
 
 /** `/want`: checked in the queue, a page read once outside it, the task made back in it. */
@@ -460,6 +520,13 @@ async function editWantLocked(d: TrackerDeps, user: User, taskId: string, input:
   const searchedBy = config.source === "shopify" || config.source === "ebay" ? config.target : null;
   const excluded = input.exclude === undefined ? ({ ok: true, exclude: config.exclude ?? [] } as const) : excludePlan(input.exclude, searchedBy);
   if (!excluded.ok) return excluded;
+  const confirmed = confirmPlan(
+    input.confirm !== undefined ? input.confirm : wordsText(config.confirm),
+    input.unconfirmed !== undefined ? input.unconfirmed : wordsText(config.unconfirmed),
+    searchedBy,
+    task.type === "wantjudge",
+  );
+  if (!confirmed.ok) return confirmed;
   // Where it looks stays: the source, the target (an inbox watch's key) and an inbox watch's words and game.
   const nextConfig: WatchConfig = {
     source: config.source,
@@ -469,6 +536,8 @@ async function editWantLocked(d: TrackerDeps, user: User, taskId: string, input:
     ...(limits.maxPrice !== undefined ? { maxPrice: limits.maxPrice } : {}),
     ...(limits.currency ? { currency: limits.currency } : {}),
     ...(excluded.exclude.length > 0 ? { exclude: excluded.exclude } : {}),
+    ...(confirmed.confirm.length > 0 ? { confirm: confirmed.confirm } : {}),
+    ...(confirmed.unconfirmed.length > 0 ? { unconfirmed: confirmed.unconfirmed } : {}),
   };
   const patch: Omit<TaskPatch, "at"> = {};
   if (limits.name !== task.title) patch.title = limits.name;

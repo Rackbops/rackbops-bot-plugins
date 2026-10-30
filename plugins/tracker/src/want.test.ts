@@ -374,6 +374,10 @@ describe("/want", () => {
     const ebayFetch = (async (url: string, init: RequestInit) => {
       calls.push({ url, init });
       if (url.endsWith("/identity/v1/oauth2/token")) return new Response(JSON.stringify({ access_token: "app-token", expires_in: 7200 }), { status: 200 });
+      // The full listing, read once for each new listing (docket 0.20.0): its shipping reaches the DM.
+      if (new URL(url).pathname.startsWith("/buy/browse/v1/item/")) {
+        return new Response(JSON.stringify({ itemId: "v1|123456789012|0", title: "Wingspan Oceania Expansion New Sealed", shippingOptions: [{ shippingCost: { value: "4.99", currency: "USD" } }] }), { status: 200 });
+      }
       const itemSummaries = [item("123456789012", "Wingspan Oceania Expansion New Sealed", "29.99", "boardgame_bin"), item("223456789012", "Wingspan base game", "20.00", "elsewhere")];
       return new Response(JSON.stringify({ total: 2, itemSummaries }), { status: 200 });
     }) as unknown as typeof fetch;
@@ -389,16 +393,21 @@ describe("/want", () => {
     expect(made).toContain("the model does not check these listings");
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "Oceania", source: "ebay", currency: "GBP" } })).toBe(EBAY_USD);
     await pollTick(w.plugin);
-    expect(calls.map((c) => new URL(c.url).origin)).toEqual(["https://api.ebay.com", "https://api.ebay.com"]);
+    expect(calls.map((c) => new URL(c.url).origin)).toEqual(["https://api.ebay.com", "https://api.ebay.com", "https://api.ebay.com"]);
+    // The one listing with every word is read in full through getItem, by its own item id only.
+    const read = new URL(calls[2]?.url ?? "");
+    expect(read.pathname).toBe("/buy/browse/v1/item/v1%7C123456789012%7C0");
+    expect(read.searchParams.get("fieldgroups")).toBe("PRODUCT");
+    expect((calls[2]?.init.headers as Record<string, string>).authorization).toBe("Bearer app-token");
     expect(new URL(calls[1]?.url ?? "").searchParams.get("filter")).toBe("price:[..35.00],priceCurrency:USD");
     expect((calls[1]?.init.headers as Record<string, string>).authorization).toBe("Bearer app-token");
     expect(page.reads).toEqual([]);
-    expect(content(w.sent, 0)).toContain("- Wingspan Oceania Expansion New Sealed -- 29.99 USD -- New -- sold by boardgame_bin, 99.6% positive, 4821 feedback <https://www.ebay.com/itm/123456789012> (via eBay)");
+    expect(content(w.sent, 0)).toContain("- Wingspan Oceania Expansion New Sealed -- 29.99 USD -- 4.99 USD shipping -- New -- sold by boardgame_bin, 99.6% positive, 4821 feedback <https://www.ebay.com/itm/123456789012> (via eBay)");
     expect(content(w.sent, 0)).not.toContain("base game");
     w.clock.advance(3600_000);
     await pollTick(w.plugin);
-    // The token is kept: one more search, no second minting, and nothing new is nothing said.
-    expect(calls).toHaveLength(3);
+    // The token is kept: one more search, no second minting, no listing read again, and nothing new is nothing said.
+    expect(calls).toHaveLength(4);
     expect(w.sent).toHaveLength(1);
     // No finding is kept, and six hours on, the run's stored DM holds no listing.
     const db = new Database(w.dbPath);

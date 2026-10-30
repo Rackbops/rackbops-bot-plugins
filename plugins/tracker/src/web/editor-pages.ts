@@ -1,5 +1,5 @@
 import type { Task } from "@rackbops/docket-core";
-import { CURRENCY_LENGTH, MAX_AMOUNT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
+import { CURRENCY_LENGTH, MAX_AMOUNT, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
 import { backOn } from "../delivery-health.js";
 import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
@@ -128,6 +128,8 @@ const wantLimits = (mode: Mode, surface: Surface): readonly Field[] => [
   { name: "max", label: "Top price", kind: "text", decimal: true, help: "Only listings at or under it, and so only listings that show a price. Leave it empty for any price." },
   { name: "currency", label: "Currency", kind: "text", maxlength: CURRENCY_LENGTH, help: "Only listings in it, such as USD. Leave it empty for any." },
   { name: "exclude", label: "Leave out titles with", kind: "text", maxlength: MAX_EXCLUDE_TEXT, help: "Words or phrases, separated by commas: a listing whose title has any of them is left out, such as investigator for a campaign box. At most 20. Leave it empty to leave nothing out." },
+  { name: "confirm", label: "Double-check titles without", kind: "text", maxlength: MAX_CONFIRM_TEXT, help: "Words or phrases, separated by commas, that say a listing is the thing, such as campaign. A listing whose title has none is read in full where the source can (eBay's item specifics and description), then DMed if that has one, and otherwise DMed marked to check. For a plain watch only (judge: no). Leave it empty to check nothing." },
+  { name: "unconfirmed", label: "Then leave out ones with", kind: "text", maxlength: MAX_CONFIRM_TEXT, help: "Words or phrases, separated by commas: a listing that the words above did not confirm is left out when its title or full listing has any of them, such as investigator. Needs the words above. Leave it empty to leave none out." },
   { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}, and at least ${MIN_SHOPIFY_HOURS} for Shopify, since each Shopify look is a paid Firecrawl search. ${empty(mode, `When empty, ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG, ${DEFAULT_EBAY_HOURS} for eBay, ${DEFAULT_INBOX_HOURS} for BGG when this bot has no BGG access, whose listings are sent in, and ${DEFAULT_SHOPIFY_HOURS} for Shopify.`, surface)}` },
 ];
 
