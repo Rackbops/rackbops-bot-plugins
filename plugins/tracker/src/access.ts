@@ -6,8 +6,8 @@ import type { User } from "@rackbops/docket-core";
  *
  * - **Membership**: the person is a member of one of the configured servers (`TRACKER_GUILD_ID`, one
  *   id or a comma-separated list) and, in a server `TRACKER_GUILD_ROLES` names roles for, holds one
- *   of them (plan 1.1, 5.5). The host API has no member lookup; the handler asks Discord
- *   through the interaction's client (discord-common.ts). Unset = no membership gate. A lookup that
+ *   of them (plan 1.1, 5.5). The handler asks Discord through the host's member lookup
+ *   (`HostApi.member`) or, on an older host, the interaction's client (discord-common.ts). Unset = no membership gate. A lookup that
  *   fails for another reason refuses (fails closed) rather than guessing.
  * - **Admission**: the person is in the tracker's store -- an admin `/allow`ed them, or the
  *   configuration made them an admin. A person nobody admitted is told to ask an admin.

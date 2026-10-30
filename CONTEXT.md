@@ -152,9 +152,11 @@ so the pin only needs to change in one place.
   "membership gate" is the admission list alone, with a Discord-role check left unknown; checking
   membership of one configured server came with #79's brief, not the plan of record; a list of
   servers (a member of any one passes) came with #106. Not verified live against Discord (below).
-- **A plugin checks guild membership through `interaction.client`, not the Host API**, which has no
-  member lookup (`plugins/tracker/src/discord.ts` `lookupMembership`): `guilds.fetch(id)` then
-  `members.fetch({ user })`, a REST call that needs no privileged intent; Discord's 10007 (unknown
+- **A plugin checks guild membership through the Host API's optional `member`**
+  (rackbops-discord-bot#623) when the host has it, and otherwise through `interaction.client`
+  (`plugins/tracker/src/discord-common.ts` `lookupMembership`; a command still asks through its own
+  interaction's client): `guilds.fetch(id)` then `members.fetch({ user })`, a REST call that needs no
+  privileged intent; Discord's 10007 (unknown
   member) and 10013 (unknown user) mean "not a member". Unit-tested against a fake client only; not
   yet run against real Discord (inferred from discord.js v14's API, not verified live).
 - **The host hands a plugin's `http` every method, not only GET and POST** (read in

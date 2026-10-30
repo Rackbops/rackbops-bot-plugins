@@ -390,6 +390,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const clientMembership = async (discordId: string): Promise<Membership | null> => {
     const fetch = hostMember ? hostMemberFetch(hostMember) : discordClient ? clientMemberFetch(discordClient) : null;
     if (!fetch) return null;
+    // `client` is read only by lookupMembership's default fetch, and a fetch is always passed here.
     const asking = { guildId: null, user: { id: discordId }, client: discordClient as Interactionish["client"] };
     return lookupMembership(asking, guildIds, discordId, host.log, roleGate, fetch);
   };
@@ -409,7 +410,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     executor: () => intakeExecutor,
     ids: intakeIds,
     queue,
-    // As a command's: no gate without TRACKER_GUILD_ID; with one, unknown until an interaction gave the Client.
+    // As a command's: no gate without TRACKER_GUILD_ID; with one, the host's lookup, or on an older
+    // host unknown until an interaction gave the Client.
     membership: async (discordId) => (guildIds === null ? "not-checked" : ((await clientMembership(discordId)) ?? "unknown")),
     log: host.log,
     ...(options.intakeSleep ? { sleep: options.intakeSleep } : {}),

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import type { HostMember } from "../../../packages/api/contract.js";
 import { MEMBERSHIP_UNKNOWN } from "./web/api.js";
 import { MEMBER_GRACE_MS, MEMBER_RECHECK_MS } from "./web/app.js";
-import { api, cleanup, GUILD, LARRY, makeToken, people, signIn, world } from "./web/harness.js";
+import { api, cleanup, GUILD, LARRY, makeToken, people, signIn, slash, world } from "./web/harness.js";
 
 /**
  * The host's member lookup (`HostApi.member`, rackbops-discord-bot#623): with it, the web area and
@@ -70,5 +70,27 @@ describe("HostApi.member", () => {
     w.clock.advance(MEMBER_RECHECK_MS);
     l.answer = { roleIds: [GUILD], guildRoleIds: [GUILD, ROLE] };
     expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(403);
+  });
+
+  it("a configured role the server lacks is unknown on the host path too, never a revoke", async () => {
+    const { l, fn } = lookup();
+    l.answer = { roleIds: [GUILD, ROLE], guildRoleIds: [GUILD, ROLE] };
+    const w = await setup(fn, { TRACKER_GUILD_ROLES: `${GUILD}:${ROLE}` });
+    l.answer = { roleIds: [GUILD], guildRoleIds: [GUILD] };
+    w.clock.advance(MEMBER_GRACE_MS);
+    expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(503);
+  });
+
+  it("asks the host even once a command has handed over an interaction's Client", async () => {
+    const { l, fn } = lookup();
+    const w = await setup(fn);
+    const asked: string[] = [];
+    const client = { guilds: { fetch: async (id: string) => (asked.push(id), Promise.reject(new Error("not this way"))) } };
+    await slash(w.plugin, "tasks", LARRY, { client });
+    w.clock.advance(MEMBER_RECHECK_MS);
+    const before = l.calls.length;
+    expect((await api(w.plugin, "GET", "/me", { token: w.token })).status).toBe(200);
+    expect(l.calls.length).toBeGreaterThan(before);
+    expect(asked).toEqual([]);
   });
 });

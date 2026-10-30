@@ -664,7 +664,8 @@ clock running ahead), a `jti`, and `act.sub` one of the listed keys. Its `sub` m
 linked to a registered person (`/allow`), and the Discord membership re-check applies, with one
 difference: when it was last confirmed is kept in memory, so after a restart a person's first
 delegated request needs a lookup that runs, with no 24-hour grace (`503 membership_unknown` until
-one does).
+one does; with the host's own member lookup it runs at once, and on an older host only once someone
+has used a command or button).
 
 The token carries no roles, so the tracker cannot see `tracker:member` the way the web sign-in does,
 and usr mints one for anyone holding any `tracker:` role. A listed service must therefore check the
