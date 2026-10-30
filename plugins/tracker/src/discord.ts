@@ -21,7 +21,7 @@ import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./resear
 import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
 import { createNews, DEFAULT_NEWS_EVERY, editNews, MAX_INCLUDE_TEXT, MAX_NEWS_EVERY, type NewsInput } from "./news.js";
 import { createScout, DEFAULT_SCOUT_EVERY, editScout, MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "./scout.js";
-import { type BaselineRule, MAX_DISAMBIGUATE_CHARS, MAX_FOR_CHARS, MAX_SCOUT_NOTES, MAX_SUBJECT_CHARS, type RenewalDecision } from "@rackbops/docket-types";
+import { type BaselineRule, MAX_DISAMBIGUATE_CHARS, MAX_FOR_CHARS, MAX_NOTES_CHARS, MAX_SCOUT_NOTES, MAX_SUBJECT_CHARS, type RenewalDecision } from "@rackbops/docket-types";
 import {
   EPHEMERAL,
   FAILED,
@@ -51,6 +51,7 @@ function newsOptions(s: SlashCommandSubcommandBuilder, mode: "new" | "edit"): Sl
     .addStringOption((o) => o.setName("include").setDescription(`What counts, separated by commas: new music, reissues${clear}`).setMaxLength(MAX_INCLUDE_TEXT))
     .addStringOption((o) => o.setName("exclude").setDescription(`What never counts, separated by commas: concert${clear}`).setMaxLength(MAX_EXCLUDE_TEXT))
     .addStringOption((o) => o.setName("disambiguate").setDescription(`Similarly named acts or things it is not${clear}`).setMaxLength(MAX_DISAMBIGUATE_CHARS))
+    .addStringOption((o) => o.setName("notes").setDescription(`What is worth sending: who it is for, what to skip, what to point out${clear}`).setMaxLength(MAX_NOTES_CHARS))
     .addBooleanOption((o) => o.setName("shows").setDescription("Give each show's city, venue, date and tickets"))
     .addIntegerOption((o) => o.setName("every").setDescription(mode === "new" ? `Days between runs (default ${DEFAULT_NEWS_EVERY})` : "Days between runs").setMinValue(1).setMaxValue(MAX_NEWS_EVERY));
 }
@@ -434,12 +435,14 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           const include = text("include");
           const exclude = text("exclude");
           const disambiguate = text("disambiguate");
+          const notes = text("notes");
           const shows = interaction.options.getBoolean("shows");
           const every = interaction.options.getInteger("every");
           const rest: Omit<NewsInput, "subject"> = {
             ...(include !== null ? { include } : {}),
             ...(exclude !== null ? { exclude } : {}),
             ...(disambiguate !== null ? { disambiguate } : {}),
+            ...(notes !== null ? { notes } : {}),
             ...(shows !== null ? { shows } : {}),
             ...(every !== null ? { every } : {}),
           };

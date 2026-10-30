@@ -1,5 +1,5 @@
 import { type Actor, type CalendarSchedule, createTask, describeSchedule, formatInstant, type TaskPatch, type User } from "@rackbops/docket-core";
-import { MAX_DISAMBIGUATE_CHARS, MAX_INCLUDE, MAX_KIND_CHARS, MAX_SUBJECT_CHARS, NEWS_MAX_BUDGET_USD, NEWS_REVIEW_MAX_BUDGET_USD, type NewsConfig } from "@rackbops/docket-types";
+import { MAX_DISAMBIGUATE_CHARS, MAX_INCLUDE, MAX_KIND_CHARS, MAX_NOTES_CHARS, MAX_SUBJECT_CHARS, NEWS_MAX_BUDGET_USD, NEWS_REVIEW_MAX_BUDGET_USD, type NewsConfig } from "@rackbops/docket-types";
 
 /** What one try of each run costs at most, for the confirmation and the web form: a failed try is retried once. */
 export const NEWS_COST_TEXT = `up to ${NEWS_MAX_BUDGET_USD.toFixed(2)} USD for the search and ${NEWS_REVIEW_MAX_BUDGET_USD.toFixed(2)} USD for the review, each try (a failed try is retried once)`;
@@ -34,12 +34,14 @@ export interface NewsInput {
   /** What never counts, separated by commas. */
   exclude?: string;
   disambiguate?: string;
+  /** What makes an item worth sending, in the owner's words: who it is for, what to skip, what to point out. */
+  notes?: string;
   /** A boolean from Discord; the web and the API send "yes" or "no", and anything else is refused. */
   shows?: boolean | string;
   every?: number;
 }
 
-/** Every field optional: one left out keeps the watch's own; an empty or `-` include, exclude or disambiguate clears it. */
+/** Every field optional: one left out keeps the watch's own; an empty or `-` include, exclude, disambiguate or notes clears it. */
 export type NewsEdit = Partial<NewsInput>;
 
 /** `-` is "none": Discord sends no empty option, so `/news new` and `/news edit` both take it. */
@@ -66,7 +68,7 @@ export function newsTitle(config: NewsConfig): string {
   return clip(`News: ${config.subject}`, MAX_TITLE);
 }
 
-/** The subject, kinds, exclusions, notes and shows as a config, and the days between runs; or why not. */
+/** The subject, kinds, exclusions, how to tell it apart, notes and shows as a config, and the days between runs; or why not. */
 export function newsPlan(input: NewsInput): Plan<{ config: NewsConfig; every: number }> {
   const subject = input.subject.trim().replace(/\s+/g, " ");
   if (subject.length === 0) return { ok: false, error: "Name who or what to watch, with enough to tell it apart: for example `Platinum Blonde (the Canadian band)`." };
@@ -77,6 +79,8 @@ export function newsPlan(input: NewsInput): Plan<{ config: NewsConfig; every: nu
   if (!exclude.ok) return exclude;
   const disambiguate = none(input.disambiguate);
   if (disambiguate.length > MAX_DISAMBIGUATE_CHARS) return { ok: false, error: `\`disambiguate\` is longer than ${MAX_DISAMBIGUATE_CHARS} characters.` };
+  const notes = none(input.notes);
+  if (notes.length > MAX_NOTES_CHARS) return { ok: false, error: `\`notes\` is longer than ${MAX_NOTES_CHARS} characters.` };
   const every = input.every ?? DEFAULT_NEWS_EVERY;
   if (!Number.isInteger(every) || every < 1 || every > MAX_NEWS_EVERY) return { ok: false, error: `\`every\` is a whole number of days from 1 to ${MAX_NEWS_EVERY}.` };
   const shows = input.shows === "yes" ? true : input.shows === "no" ? false : input.shows;
@@ -86,6 +90,7 @@ export function newsPlan(input: NewsInput): Plan<{ config: NewsConfig; every: nu
     ...(include.length > 0 ? { include } : {}),
     ...(exclude.exclude.length > 0 ? { exclude: exclude.exclude } : {}),
     ...(disambiguate ? { disambiguate } : {}),
+    ...(notes ? { notes } : {}),
     ...(shows === true ? { shows: true } : {}),
   };
   return { ok: true, config, every };
@@ -154,6 +159,7 @@ async function editNewsLocked(d: TrackerDeps, user: User, taskId: string, input:
     include: input.include !== undefined ? input.include : kindsOf(config.include).join("\n"),
     exclude: input.exclude !== undefined ? input.exclude : exclude,
     disambiguate: input.disambiguate !== undefined ? input.disambiguate : (config.disambiguate ?? ""),
+    notes: input.notes !== undefined ? input.notes : (config.notes ?? ""),
     shows: input.shows !== undefined ? input.shows : config.shows === true,
     every: input.every ?? schedule.every,
   });

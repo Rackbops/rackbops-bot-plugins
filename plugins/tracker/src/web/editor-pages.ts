@@ -5,7 +5,7 @@ import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
 import { DEFAULT_NEWS_EVERY, MAX_INCLUDE_TEXT, MAX_NEWS_EVERY, NEWS_COST_TEXT } from "../news.js";
 import { MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "../scout.js";
-import { LOOKBACK_DAYS, MAX_DISAMBIGUATE_CHARS, MAX_FOR_CHARS, MAX_INCLUDE, MAX_SCOUT_NOTES, MAX_SUBJECT_CHARS } from "@rackbops/docket-types";
+import { LOOKBACK_DAYS, MAX_DISAMBIGUATE_CHARS, MAX_FOR_CHARS, MAX_INCLUDE, MAX_NOTES_CHARS, MAX_SCOUT_NOTES, MAX_SUBJECT_CHARS } from "@rackbops/docket-types";
 import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, MIN_SHOPIFY_HOURS } from "../want.js";
 import { MAX_EVERY, MAX_LEAD_DAYS } from "../tracked.js";
 import { html, type Html } from "./html.js";
@@ -116,6 +116,7 @@ const newsFields = (mode: Mode, surface: Surface): readonly Field[] => [
   { name: "include", label: "What counts", kind: "textarea", maxlength: MAX_INCLUDE_TEXT, help: `Kinds of news separated by commas or one per line, at most ${MAX_INCLUDE}: new music, reissues, show announcements. Leave it empty for any news.` },
   { name: "exclude", label: "What never counts", kind: "text", maxlength: MAX_EXCLUDE_TEXT, help: "Words or phrases, separated by commas: an item whose title or kind has any of them is left out, such as concert. At most 20. Leave it empty to leave nothing out." },
   { name: "disambiguate", label: "How to tell it apart", kind: "textarea", maxlength: MAX_DISAMBIGUATE_CHARS, help: "Similarly named acts or things it is not. It goes to the model." },
+  { name: "notes", label: "What is worth sending", kind: "textarea", maxlength: MAX_NOTES_CHARS, help: "In your own words: who it is for, what to skip, what to point out, such as a gift for Anne; skip plain copies of albums I own; flag shows near December 12. It goes to the model. Leave out of What never counts anything a special edition might share." },
   { name: "shows", label: "Shows", kind: "select", options: SHOWS_OPTIONS },
   { name: "every", label: "Days between runs", kind: "number", min: 1, max: MAX_NEWS_EVERY, help: `1 to ${MAX_NEWS_EVERY}. ${empty(mode, `${DEFAULT_NEWS_EVERY} when empty.`, surface)} Each run is at your preferred hour.` },
 ];

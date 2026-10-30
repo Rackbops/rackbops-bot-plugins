@@ -93,23 +93,25 @@ export function scoutEdit(form: URLSearchParams): ScoutEdit {
   };
 }
 
-/** `/news new`'s options: an empty include, exclude, disambiguate, shows or every is left out, as an unset option is. */
+/** `/news new`'s options: an empty include, exclude, disambiguate, notes, shows or every is left out, as an unset option is. */
 export function newsInput(form: URLSearchParams): NewsInput {
   const include = lines(opt(form, "include"));
   const exclude = opt(form, "exclude");
   const disambiguate = lines(opt(form, "disambiguate"));
+  const notes = lines(opt(form, "notes"));
   const every = int(form, "every");
   return {
     subject: str(form, "subject"),
     ...(include !== undefined ? { include } : {}),
     ...(exclude !== undefined ? { exclude } : {}),
     ...(disambiguate !== undefined ? { disambiguate } : {}),
+    ...(notes !== undefined ? { notes } : {}),
     ...(opt(form, "shows") !== undefined ? { shows: str(form, "shows") } : {}),
     ...(every !== undefined ? { every } : {}),
   };
 }
 
-/** A news watch's edit: an empty subject or every keeps the watch's; a sent empty include, exclude or disambiguate clears it. */
+/** A news watch's edit: an empty subject or every keeps the watch's; a sent empty include, exclude, disambiguate or notes clears it. */
 export function newsEdit(form: URLSearchParams): NewsEdit {
   const subject = opt(form, "subject");
   const every = int(form, "every");
@@ -118,6 +120,7 @@ export function newsEdit(form: URLSearchParams): NewsEdit {
     ...(form.has("include") ? { include: lines(str(form, "include")) ?? "" } : {}),
     ...(form.has("exclude") ? { exclude: str(form, "exclude") } : {}),
     ...(form.has("disambiguate") ? { disambiguate: lines(str(form, "disambiguate")) ?? "" } : {}),
+    ...(form.has("notes") ? { notes: lines(str(form, "notes")) ?? "" } : {}),
     ...(opt(form, "shows") !== undefined ? { shows: str(form, "shows") } : {}),
     ...(every !== undefined ? { every } : {}),
   };
@@ -262,7 +265,7 @@ export function editValues(d: Pick<TrackerDeps, "clock">, user: User, task: Task
     const c = task.config as NewsConfig;
     const every = task.schedule?.kind === "calendar" ? task.schedule.every : DEFAULT_NEWS_EVERY;
     const exclude = Array.isArray(c.exclude) ? c.exclude.filter((e) => typeof e === "string").join(", ") : typeof c.exclude === "string" ? c.exclude : "";
-    return { subject: c.subject, include: kindsOf(c.include).join("\n"), exclude, disambiguate: c.disambiguate ?? "", shows: c.shows === true ? "yes" : "no", every: String(every) };
+    return { subject: c.subject, include: kindsOf(c.include).join("\n"), exclude, disambiguate: c.disambiguate ?? "", notes: c.notes ?? "", shows: c.shows === true ? "yes" : "no", every: String(every) };
   }
   if (task.type === "wantlist" || task.type === "wantjudge") {
     const c = task.config as WantConfig;
