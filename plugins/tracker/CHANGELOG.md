@@ -8,6 +8,8 @@
 
 ### Changed
 
+- Membership is checked through the host's own member lookup when the bot offers one (`HostApi.member`, rackbops-discord-bot#623), so after a restart the task API, the web area and intake no longer wait for someone to use a command or button before they can check (the 503 `membership_unknown` ChatGPT showed). On an older bot, nothing changes. The 503's message now says the restart case applies to an older bot only.
+- A one-off reminder answered done is now finished (docket 0.20.0, docket#89); it stayed active before, and a second done was refused as already answered.
 - An eBay API watch reads each new listing in full once (at most 20 a run, together), so its DM lines show shipping too ("4.99 USD shipping", "free shipping"). Nothing of the read is kept but that shipping text in the DM, which is cut after six hours like the rest of an eBay DM. Needs docket 0.20.0.
 
 ### Schema

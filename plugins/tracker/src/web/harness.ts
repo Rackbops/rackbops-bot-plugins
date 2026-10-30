@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Fetch } from "@rackbops/docket-core";
 import type { ChatInputCommandInteraction, MessageComponentInteraction, ModalSubmitInteraction } from "discord.js";
-import type { Plugin } from "../../../../packages/api/contract.js";
+import type { HostApi, Plugin } from "../../../../packages/api/contract.js";
 import { makeFakeHost } from "../../../../packages/testkit/index.js";
 import type { Membership } from "../access.js";
 import type { PageFetchOptions } from "../fetch.js";
@@ -63,6 +63,8 @@ export async function world(
     webUrl?: string | null;
     guild?: boolean | string;
     webMembership?: WebLookup;
+    /** The host's member lookup (`HostApi.member`), for the real membership path with no interaction. */
+    hostMember?: NonNullable<HostApi["member"]>;
     fetch?: Fetch;
     logs?: string[];
     /** More settings, e.g. `TRACKER_CITY_HALL_*`. */
@@ -114,6 +116,7 @@ export async function world(
             error: (m: string, e?: unknown) => void opts.logs?.push(`${m} ${String(e ?? "")}`),
           }
         : { info() {}, warn() {}, error() {} },
+      ...(opts.hostMember ? { member: opts.hostMember } : {}),
       dm: async (userId: string, message: unknown) => {
         if (delivery.hold) {
           delivery.held++;

@@ -126,6 +126,13 @@ export interface HostDelivery {
   messageId: string;
 }
 
+/** A server member as `HostApi.member` reads them: the role ids they hold, and every role id the server has.
+ *  Both include the server's @everyone role, whose id is the server's own id, as discord.js reports them. */
+export interface HostMember {
+  roleIds: string[];
+  guildRoleIds: string[];
+}
+
 /** One of this plugin's declared destinations as the operator has mapped it (`HostApi.destinations`). */
 export interface HostMappedDestination {
   guildId: string;
@@ -325,6 +332,13 @@ export interface HostApi {
   /** Where this plugin's declared `destinations` (its manifest) are mapped right now, across every
    *  server it lives in. Optional, like `post` (#736). */
   destinations?(): Promise<HostMappedDestination[]>;
+  /** Looks `userId` up in `guildId` with a forced REST fetch (no member cache, no privileged intent),
+   *  so a plugin can check membership without waiting for an interaction to borrow its `client` from:
+   *  the member's role ids and the server's, or null when Discord answers that the user is not in that
+   *  server (unknown member, or unknown user). Anything else -- the bot is not in that server, an
+   *  outage -- rejects as `dm` does, without the request. Optional, like `post` (#736): absent on a
+   *  host that predates it, so `typeof host.member === "function"` is how a plugin feature-detects. */
+  member?(guildId: string, userId: string): Promise<HostMember | null>;
 }
 
 export interface PluginCommand {

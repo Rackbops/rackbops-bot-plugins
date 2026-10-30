@@ -347,10 +347,10 @@ other than GET or POST (or the wrong one of the two for a path) is 405.
 **Membership on the web.** With `TRACKER_GUILD_ID` set, `/web` issues a link only to a member,
 and the session remembers when that was confirmed. A web request more than 15 minutes after the
 last confirmation re-checks membership (one lookup per listed server, all at once, the first yes enough; about 3
-seconds at most, outside the write queue), through the discord.js Client of an interaction the
-plugin has handled since it started (the host API has no member lookup of its own; the Client is
-held in memory, never stored). Not a member of any listed server: every session of theirs ends, on a page that says why. A member: the time is
-refreshed. A failed or slow lookup, or no interaction yet since a restart: they stay signed in
+seconds at most, outside the write queue), through the host's own member lookup (`HostApi.member`,
+rackbops-discord-bot#623), or on an older host through the discord.js Client of an interaction the
+plugin has handled since it started (held in memory, never stored). Not a member of any listed server: every session of theirs ends, on a page that says why. A member: the time is
+refreshed. A failed or slow lookup, or (on an older host) no interaction yet since a restart: they stay signed in
 while the last confirmation is under 24 hours old, and are then signed out and told to run `/web`
 again. Concurrent requests share one lookup per person, and after a failed one that person is not
 looked up again for a minute, so an outage or rate limit does not pile up calls. A confirmation
@@ -369,8 +369,8 @@ person's task (the owner's acts answer them 404, as in slice 2). What an admin c
 the function the command path runs:
 
 - **Allow** a person by Discord id: `/allow`'s own `allowPerson`, with the same server-membership
-  check when `TRACKER_GUILD_ID` is set (one bounded lookup; no Discord client yet since a restart
-  refuses, as an unknown answer does). A form cannot tell a bot's id from a person's; a bot's row can
+  check when `TRACKER_GUILD_ID` is set (one bounded lookup; on an older host, no Discord client yet
+  since a restart refuses, as an unknown answer does). A form cannot tell a bot's id from a person's; a bot's row can
   never `/register`.
 - **Make admin / Revoke admin** (plan 5.8). The last admin can be neither revoked nor removed. An
   admin who revokes themselves lands on My tasks. Each change is logged (`u1 made u2 an admin`).
@@ -794,7 +794,7 @@ version_mismatch` and nothing is written. Without `If-Match` a write goes throug
 | 500 | `outcome_unknown` | A retry under an `Idempotency-Key` whose first request failed partway: it may have made its change, so read your tasks before sending it again under a new key. |
 | 503 | `slow_page` | A new price's or page watch's page did not answer within 8 seconds of the request's arrival: nothing was made. With `Retry-After`. |
 | 503 | `usr_unavailable` | A usr delegation token, and usr's signing keys could not be fetched to check it. With `Retry-After`. |
-| 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours, or, for a delegation token, since the plugin started (the lookup goes through the Discord client of the last command or button the bot handled, so after a restart none runs until someone uses one); the type is not available on this bot. |
+| 503 | `starting`, `membership_unknown`, `unavailable` | The plugin is starting; the owner's membership could not be checked for 24 hours, or, for a delegation token, since the plugin started (on a host with its own member lookup this is an outage; on an older host the lookup goes through the Discord client of the last command or button the bot handled, so after a restart none runs until someone uses one); the type is not available on this bot. |
 
 **Example.**
 
