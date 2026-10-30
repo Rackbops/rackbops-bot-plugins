@@ -26,7 +26,7 @@ import { type Done, ownLiveTask } from "./manage.js";
  */
 
 /** The types a run now suits: each run is the same look or the same reminder as a scheduled one. */
-export const RUNNABLE: ReadonlySet<string> = new Set(["reminder", "price", "wantlist", "wantjudge", "scout"]);
+export const RUNNABLE: ReadonlySet<string> = new Set(["reminder", "price", "wantlist", "wantjudge", "scout", "news"]);
 
 export const RUN_NOW_PER_DAY = 10;
 const DAY_MS = 24 * 3_600_000;

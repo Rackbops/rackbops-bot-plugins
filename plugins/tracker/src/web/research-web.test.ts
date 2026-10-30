@@ -194,6 +194,7 @@ describe("research from the task API", () => {
       ["price", true],
       ["research", false],
       ["scout", true],
+      ["news", true],
       ["wantlist", true],
     ]);
     const research = types.types[3];
@@ -208,7 +209,7 @@ describe("research from the task API", () => {
     expect(research.create[4].enum).toEqual(["web", "browser"]);
     expect(research.edit).toEqual([]);
     const bad = await body(await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "auction" } }));
-    expect(bad.error.message).toBe("`type` is one of reminder, renewal, price, research, scout, wantlist.");
+    expect(bad.error.message).toBe("`type` is one of reminder, renewal, price, research, scout, news, wantlist.");
   });
 
   it("POST makes one by /research's rules; it reads back to its owner only, and a PATCH answers 409", async () => {

@@ -3,8 +3,9 @@ import { CURRENCY_LENGTH, MAX_AMOUNT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_
 import { backOn } from "../delivery-health.js";
 import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
+import { DEFAULT_NEWS_EVERY, MAX_INCLUDE_TEXT, MAX_NEWS_EVERY } from "../news.js";
 import { MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "../scout.js";
-import { MAX_FOR_CHARS, MAX_SCOUT_NOTES } from "@rackbops/docket-types";
+import { MAX_DISAMBIGUATE_CHARS, MAX_FOR_CHARS, MAX_INCLUDE, MAX_SCOUT_NOTES, MAX_SUBJECT_CHARS } from "@rackbops/docket-types";
 import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, MIN_SHOPIFY_HOURS } from "../want.js";
 import { MAX_EVERY, MAX_LEAD_DAYS } from "../tracked.js";
 import { html, type Html } from "./html.js";
@@ -21,8 +22,8 @@ import { framed, type Viewer } from "./pages.js";
  * The types the editor edits; the scout (#83) is made only while the model runner is set up. A judged
  * watch (`wantjudge`) is edited here like a plain one but made through the want-list form (`judge`).
  */
-export type EditorType = "reminder" | "renewal" | "price" | "scout" | "wantlist" | "wantjudge";
-export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "price", "scout", "wantlist", "wantjudge"];
+export type EditorType = "reminder" | "renewal" | "price" | "scout" | "news" | "wantlist" | "wantjudge";
+export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "price", "scout", "news", "wantlist", "wantjudge"];
 
 /**
  * What the web and the API can make: the editor's types, and a research request
@@ -30,11 +31,11 @@ export const EDITOR_TYPES: readonly EditorType[] = ["reminder", "renewal", "pric
  * `/research` has no edit either. It is offered only while research is available (`d.research`).
  */
 export type NewType = EditorType | "research";
-export const NEW_TYPES: readonly NewType[] = ["reminder", "renewal", "price", "research", "scout", "wantlist"];
+export const NEW_TYPES: readonly NewType[] = ["reminder", "renewal", "price", "research", "scout", "news", "wantlist"];
 // `wantjudge` is in `NewType` only as an editor type: no form or API create names it.
 
-/** The types that run on the model runner: made only while it is set up (`d.research`); a scout made before stays editable. */
-export const MODEL_TYPES: ReadonlySet<NewType> = new Set<NewType>(["research", "scout"]);
+/** The types that run on the model runner: made only while it is set up (`d.research`); a scout or news watch made before stays editable. */
+export const MODEL_TYPES: ReadonlySet<NewType> = new Set<NewType>(["research", "scout", "news"]);
 
 export type Values = Readonly<Record<string, string>>;
 
@@ -108,6 +109,17 @@ const scoutFields = (mode: Mode, surface: Surface): readonly Field[] => [
   { name: "every", label: "Days between runs", kind: "number", min: 1, max: MAX_SCOUT_EVERY, help: `1 to ${MAX_SCOUT_EVERY}. ${empty(mode, "1 when empty.", surface)} Each run is at your preferred hour.` },
 ];
 
+const SHOWS_OPTIONS = [["no", "no"], ["yes", "yes: give each show's city, venue, date and tickets"]] as const;
+
+const newsFields = (mode: Mode, surface: Surface): readonly Field[] => [
+  { name: "subject", label: "Who or what to watch", kind: "text", required: true, maxlength: MAX_SUBJECT_CHARS, help: "With enough to tell it apart, such as Platinum Blonde (the Canadian band)." },
+  { name: "include", label: "What counts", kind: "textarea", maxlength: MAX_INCLUDE_TEXT, help: `Kinds of news separated by commas or one per line, at most ${MAX_INCLUDE}: new music, reissues, show announcements. Leave it empty for any news.` },
+  { name: "exclude", label: "What never counts", kind: "text", maxlength: MAX_EXCLUDE_TEXT, help: "Words or phrases, separated by commas: an item whose title or kind has any of them is left out, such as concert. At most 20. Leave it empty to leave nothing out." },
+  { name: "disambiguate", label: "How to tell it apart", kind: "textarea", maxlength: MAX_DISAMBIGUATE_CHARS, help: "Similarly named acts or things it is not. It goes to the model." },
+  { name: "shows", label: "Shows", kind: "select", options: SHOWS_OPTIONS },
+  { name: "every", label: "Days between runs", kind: "number", min: 1, max: MAX_NEWS_EVERY, help: `1 to ${MAX_NEWS_EVERY}. ${empty(mode, `${DEFAULT_NEWS_EVERY} when empty.`, surface)} Each run is at your preferred hour.` },
+];
+
 const SOURCE_OPTIONS = [["page", "a listing page I paste"], ["bgg", "BoardGameGeek's marketplace"], ["ebay", "eBay: its own API, or listings I send in"], ["shopify", "Shopify stores: new copies in stock"]] as const;
 const JUDGE_OPTIONS = [["yes", "yes: the model checks each new listing and its seller first"], ["no", "no: DM me every new listing"]] as const;
 
@@ -129,6 +141,8 @@ export function fieldsFor(type: NewType, mode: Mode, surface: Surface = "web"): 
     return mode === "new" ? RESEARCH_FIELDS : [];
   case "scout":
     return scoutFields(mode, surface);
+  case "news":
+    return newsFields(mode, surface);
   case "wantlist":
   case "wantjudge":
     return [
@@ -234,7 +248,7 @@ export function taskHref(v: Viewer, id: string, action = ""): string {
   return `${v.base}/tasks/${encodeURIComponent(id)}${action ? `/${action}` : ""}`;
 }
 
-const NOUN: Record<NewType, string> = { reminder: "reminder", renewal: "renewal", price: "price tracker", research: "research request", scout: "scout", wantlist: "want-list watch", wantjudge: "checked want-list watch" };
+const NOUN: Record<NewType, string> = { reminder: "reminder", renewal: "renewal", price: "price tracker", research: "research request", scout: "scout", news: "news watch", wantlist: "want-list watch", wantjudge: "checked want-list watch" };
 
 const INTRO: Partial<Record<NewType, string>> = {
   price: "I read the page once now; nothing is made unless I find a price in it.",
@@ -244,6 +258,8 @@ const INTRO: Partial<Record<NewType, string>> = {
     "A research run looks it up on the web, then a second run checks the answer against its sources; only an answer that passes is DMed to you. It can take a while, and requests share a daily budget.",
   scout:
     "Each run looks on the web for 5 to 10 new things that fit the interests, through the lens, and DMs them to you; a link shown before is not shown again. A run can cost up to 1.50 USD of the daily model budget.",
+  news:
+    "Each run looks on the web for new items about the subject from the last 30 days; a second run checks each one against its own page, and only what passes is DMed to you. A run with nothing new sends nothing. A run can cost up to 2.25 USD of the daily model budget.",
 };
 
 /**

@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
-import { bggSource, ebaySource, inboxSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
+import { bggSource, ebaySource, inboxSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, news, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
 import { createEbayBrowse, parseEbayKeys } from "./ebay.js";
 import { forgetEbayMessages } from "./ebay-forget.js";
 import { createFirecrawlScrape, parseFirecrawlKey } from "./firecrawl.js";
@@ -86,7 +86,8 @@ export const DISPOSE_WAIT_MS = 1_500;
  * `poll` tick like `price`, reading pasted pages here; `createPlugin` swaps in one that also reads
  * BoardGameGeek once `TRACKER_BGG_TOKEN` is set -- and `wantjudge` (#83), the same watch with the
  * model looking at each new listing first (docket-types' `wantjudge`): an execute-lane type, under the
- * execute lane's switch, its plain-code reads through the same Fetch port.
+ * execute lane's switch, its plain-code reads through the same Fetch port -- and `news` (plan item
+ * 153), the news watch (docket-types' `news`), an execute-lane type under the same switch.
  *
  * These are the types without a database: the want-list pair here reads pasted pages only, and
  * `research` runs web requests only (a browser request here is told it cannot be run). `createPlugin`
@@ -100,6 +101,7 @@ export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object
   price: price as TaskType<unknown>,
   research: researchType() as TaskType<unknown>,
   scout: scout as TaskType<unknown>,
+  news: news as TaskType<unknown>,
   wantlist: wantlistType({ page: pageSource }) as TaskType<unknown>,
   wantjudge: wantjudgeType({ page: pageSource }) as TaskType<unknown>,
 });

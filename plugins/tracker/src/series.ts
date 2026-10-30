@@ -59,9 +59,9 @@ function isWant(task: Task): boolean {
   return task.type === "wantlist" || task.type === "wantjudge";
 }
 
-/** A task whose history counts its findings (docket 0.5.0): a research request, a scout or a want-list watch. */
+/** A task whose history counts its findings (docket 0.5.0): a research request, a scout, a news watch or a want-list watch. */
 function countsFindings(task: Task): boolean {
-  return task.type === "research" || task.type === "scout" || isWant(task);
+  return task.type === "research" || task.type === "scout" || task.type === "news" || isWant(task);
 }
 
 /** One finding's line; the source in <...>, so Discord shows the link without an embed, as the research DM does. */

@@ -7,6 +7,7 @@ import { FINISHED, ownLiveTask } from "../manage.js";
 import { RESEARCH_OFF } from "../research.js";
 import { awaitingPages, blockedPages, sentResearch, waitingForPages } from "../research-sources.js";
 import { NOT_NOW } from "../run-now.js";
+import { MAX_LIVE_NEWS, NEWS_OFF } from "../news.js";
 import { SCOUT_OFF } from "../scout.js";
 import { INBOX_OFF, JUDGE_OFF, type WatchConfig, watchSite } from "../want.js";
 import { actOn, editableTask, runOn, makeTask, READING, saveEdit, SLOW_PAGE, type TaskAction, type Writer, type Written } from "./editor.js";
@@ -49,7 +50,7 @@ function jsonKind(f: Field): "integer" | "number" | "string" {
   return f.decimal ? "number" : "string";
 }
 
-/** The types this bot makes now: research and the scout only while the model runner is set up (`d.research`). */
+/** The types this bot makes now: research, the scout and the news watch only while the model runner is set up (`d.research`). */
 export function offeredTypes(d: Pick<TrackerDeps, "research">): readonly NewType[] {
   return d.research ? NEW_TYPES : NEW_TYPES.filter((t) => !MODEL_TYPES.has(t));
 }
@@ -136,7 +137,7 @@ export function refusal(error: string): ApiAnswer {
   if (error === SLOW_PAGE) return problem(503, "slow_page", error, { "Retry-After": "10" });
   if (error === NOT_EDITABLE) return problem(409, "conflict", error);
   if (error === VERSION_MISMATCH) return problem(412, "version_mismatch", error);
-  if (error === RESEARCH_OFF || error === SCOUT_OFF) return problem(503, "unavailable", error);
+  if (error === RESEARCH_OFF || error === SCOUT_OFF || error === NEWS_OFF) return problem(503, "unavailable", error);
   if (error === FINISHED || /^That task is [a-z]+, not [a-z]+\.$/.test(error)) return problem(409, "conflict", error);
   if (/^You already (have|track|watch for|ran) [0-9]+ /.test(error)) return problem(409, "limit_reached", error);
   if (error.startsWith(NOT_NOW)) return problem(409, "cannot_run_now", error);
@@ -291,13 +292,14 @@ export function capabilitiesAnswer(d: TrackerDeps, user: User, rate: { burst: nu
         priceTrackers: MAX_PRICE_TASKS,
         researchWaiting: MAX_LIVE_RESEARCH,
         scouts: MAX_LIVE_SCOUTS,
+        newsWatches: MAX_LIVE_NEWS,
         wantWatches: MAX_WANT_TASKS,
         pageSize: MAX_PAGE,
         requestsBurst: rate.burst,
         requestsPerSecond: rate.perSecond,
       },
       sources: {
-        // The model runner (city-hall's executor): research and scouts.
+        // The model runner (city-hall's executor): research, scouts and news watches.
         runner: d.research === true,
         bgg: d.bgg === true,
         ebay: d.ebay === true,
@@ -350,6 +352,7 @@ export async function createAnswer(w: Writer, user: User, body: Record<string, u
   }
   if (type === "research" && !w.d.research) return refusal(RESEARCH_OFF);
   if (type === "scout" && !w.d.research) return refusal(SCOUT_OFF);
+  if (type === "news" && !w.d.research) return refusal(NEWS_OFF);
   const form = asFields(body, type as NewType, "new");
   if (!(form instanceof URLSearchParams)) return form;
   return written(w, user, await makeTask(w, type as NewType, form), 201, base);

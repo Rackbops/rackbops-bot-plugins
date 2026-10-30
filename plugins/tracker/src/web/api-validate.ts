@@ -1,12 +1,13 @@
 import { describeSchedule, formatInstant, nextDue, type Schedule, scheduleProblems, type User } from "@rackbops/docket-core";
 import { liveTaskCap, type TrackerDeps } from "../actions.js";
 import { reminderPlan } from "../reminders.js";
+import { liveNews, MAX_LIVE_NEWS, NEWS_CAP, NEWS_OFF, newsPlan, newsSchedule } from "../news.js";
 import { RESEARCH_OFF } from "../research.js";
 import { liveScouts, MAX_LIVE_SCOUTS, SCOUT_CAP, SCOUT_OFF, scoutPlan, scoutSchedule } from "../scout.js";
 import { renewalPlan } from "../tracked.js";
 import { type ApiAnswer, asFields, offeredTypes, problem, refusal } from "./api-tasks.js";
 import { NEW_TYPES, type NewType } from "./editor-pages.js";
-import { reminderInput, renewalInput, scoutInput } from "./form-input.js";
+import { newsInput, reminderInput, renewalInput, scoutInput } from "./form-input.js";
 
 /**
  * `POST /tasks/validate` (rackbops-bot-plugins#369): a create's body, checked as `POST /tasks` would
@@ -53,6 +54,7 @@ export async function validateAnswer(d: TrackerDeps, user: User, body: Record<st
   }
   if (type === "research" && !d.research) return refusal(RESEARCH_OFF);
   if (type === "scout" && (!d.types.scout || !d.research)) return refusal(SCOUT_OFF);
+  if (type === "news" && (!d.types.news || !d.research)) return refusal(NEWS_OFF);
   // The create's own "not available" refusals for the types it checks in full (reminders.ts, tracked.ts).
   if (type === "reminder" && !d.types.reminder) return refusal("Reminders are not available on this bot.");
   if (type === "renewal" && !d.types.renewal) return refusal("Renewals are not available on this bot.");
@@ -73,13 +75,18 @@ export async function validateAnswer(d: TrackerDeps, user: User, body: Record<st
     const plan = scoutPlan(scoutInput(form));
     if (!plan.ok) return refusal(plan.error);
     schedule = scoutSchedule(plan.every, user.timeZone, now);
+  } else if (type === "news") {
+    const plan = newsPlan(newsInput(form));
+    if (!plan.ok) return refusal(plan.error);
+    schedule = newsSchedule(plan.every, user.timeZone, now);
   }
-  // The caps the create checks, in its order: every live task, then scouts.
+  // The caps the create checks, in its order: every live task, then scouts or news watches.
   const capped = await liveTaskCap(d, user);
   if (capped) return refusal(capped);
   if (type === "scout" && (await liveScouts(d, user)) >= MAX_LIVE_SCOUTS) {
     return refusal(SCOUT_CAP);
   }
+  if (type === "news" && (await liveNews(d, user)) >= MAX_LIVE_NEWS) return refusal(NEWS_CAP);
 
   if (schedule === null) {
     return {

@@ -1,10 +1,11 @@
 import type { Task, User } from "@rackbops/docket-core";
-import type { BaselineRule, PriceConfig, RenewalConfig, ScoutConfig, WantConfig } from "@rackbops/docket-types";
+import type { BaselineRule, NewsConfig, PriceConfig, RenewalConfig, ScoutConfig, WantConfig } from "@rackbops/docket-types";
 import type { TrackerDeps } from "../actions.js";
 import { renewalDate } from "../edit.js";
 import type { PriceInput } from "../price.js";
 import { type ReminderInput, type Repeat, repeatOf } from "../reminders.js";
 import type { ResearchInput } from "../research.js";
+import { kindsOf, type NewsEdit, type NewsInput } from "../news.js";
 import type { ScoutEdit, ScoutInput } from "../scout.js";
 import type { PeriodUnit, RenewalInput } from "../tracked.js";
 import type { WantEdit, WantInput } from "../want.js";
@@ -88,6 +89,36 @@ export function scoutEdit(form: URLSearchParams): ScoutEdit {
     ...(lens !== undefined ? { lens } : {}),
     ...(form.has("for") ? { for: str(form, "for") } : {}),
     ...(form.has("notes") ? { notes: lines(str(form, "notes")) ?? "" } : {}),
+    ...(every !== undefined ? { every } : {}),
+  };
+}
+
+/** `/news new`'s options: an empty include, exclude, disambiguate or every is left out, as an unset option is; shows is "yes" or not. */
+export function newsInput(form: URLSearchParams): NewsInput {
+  const include = lines(opt(form, "include"));
+  const exclude = opt(form, "exclude");
+  const disambiguate = lines(opt(form, "disambiguate"));
+  const every = int(form, "every");
+  return {
+    subject: str(form, "subject"),
+    ...(include !== undefined ? { include } : {}),
+    ...(exclude !== undefined ? { exclude } : {}),
+    ...(disambiguate !== undefined ? { disambiguate } : {}),
+    ...(form.has("shows") ? { shows: str(form, "shows") === "yes" } : {}),
+    ...(every !== undefined ? { every } : {}),
+  };
+}
+
+/** A news watch's edit: an empty subject or every keeps the watch's; a sent empty include, exclude or disambiguate clears it. */
+export function newsEdit(form: URLSearchParams): NewsEdit {
+  const subject = opt(form, "subject");
+  const every = int(form, "every");
+  return {
+    ...(subject !== undefined ? { subject } : {}),
+    ...(form.has("include") ? { include: lines(str(form, "include")) ?? "" } : {}),
+    ...(form.has("exclude") ? { exclude: str(form, "exclude") } : {}),
+    ...(form.has("disambiguate") ? { disambiguate: lines(str(form, "disambiguate")) ?? "" } : {}),
+    ...(form.has("shows") ? { shows: str(form, "shows") === "yes" } : {}),
     ...(every !== undefined ? { every } : {}),
   };
 }
@@ -220,6 +251,12 @@ export function editValues(d: Pick<TrackerDeps, "clock">, user: User, task: Task
     const c = task.config as ScoutConfig;
     const every = task.schedule?.kind === "calendar" ? task.schedule.every : 1;
     return { interests: c.interests.join("\n"), lens: c.lens, for: c.for ?? "", notes: c.notes ?? "", every: String(every) };
+  }
+  if (task.type === "news") {
+    const c = task.config as NewsConfig;
+    const every = task.schedule?.kind === "calendar" ? task.schedule.every : 7;
+    const exclude = Array.isArray(c.exclude) ? c.exclude.filter((e) => typeof e === "string").join(", ") : typeof c.exclude === "string" ? c.exclude : "";
+    return { subject: c.subject, include: kindsOf(c.include).join("\n"), exclude, disambiguate: c.disambiguate ?? "", shows: c.shows === true ? "yes" : "no", every: String(every) };
   }
   if (task.type === "wantlist" || task.type === "wantjudge") {
     const c = task.config as WantConfig;

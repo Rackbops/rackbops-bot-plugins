@@ -3,6 +3,7 @@ import type { PriceConfig } from "@rackbops/docket-types";
 import { NO_LONGER_LISTED, NO_SUCH_TASK, type TaskResult, type TrackerDeps } from "../actions.js";
 import type { Queue } from "../discord-common.js";
 import { editPrice, editReminder, editRenewal } from "../edit.js";
+import { createNews, editNews, NEWS_OFF } from "../news.js";
 import { createScout, editScout, SCOUT_OFF } from "../scout.js";
 import { loadHistory } from "../history.js";
 import { deleteTask, type Done, ownLiveTask, pauseTask, resumeTask } from "../manage.js";
@@ -13,7 +14,7 @@ import { createResearch, RESEARCH_OFF } from "../research.js";
 import { createRenewal } from "../tracked.js";
 import { editWant, finishWant, previewWant, startWant, type WatchConfig, watchSite } from "../want.js";
 import { EDITOR_TYPES, type EditorType, confirmDeletePage, editTaskPage, type NewType, newTaskPage, notice, ownerControls, taskHref, type Values } from "./editor-pages.js";
-import { editValues, priceEdit, priceInput, reminderEdit, reminderInput, renewalEdit, renewalInput, researchInput, scoutEdit, scoutInput, typed, wantEdit, wantInput } from "./form-input.js";
+import { editValues, newsEdit, newsInput, priceEdit, priceInput, reminderEdit, reminderInput, renewalEdit, renewalInput, researchInput, scoutEdit, scoutInput, typed, wantEdit, wantInput } from "./form-input.js";
 import { htmlResponse, redirect } from "./html.js";
 import { taskVersion, VERSION_MISMATCH } from "./task-version.js";
 import { historyPage, notFoundPage, type Viewer } from "./pages.js";
@@ -123,6 +124,7 @@ export async function makeTask(w: Writer, type: NewType, form: URLSearchParams):
   // Research only queues a Job: nothing reaches city-hall until the execute tick, so nothing slow runs here.
   if (type === "research") return asUser(w, (u) => createResearch(w.d, u, researchInput(form)));
   if (type === "scout") return asUser(w, (u) => createScout(w.d, u, scoutInput(form)));
+  if (type === "news") return asUser(w, (u) => createNews(w.d, u, newsInput(form)));
   if (type === "wantlist") return makeWant(w, form);
   const input = priceInput(form);
   // One page read per person at a time: the web has no Discord rate limit in front of it, and
@@ -186,6 +188,7 @@ export function saveEdit(w: Writer, task: Task, form: URLSearchParams): Promise<
   if (task.type === "reminder") return asUser(w, (u) => editReminder(w.d, u, task.id, reminderEdit(form)));
   if (task.type === "renewal") return asUser(w, (u) => editRenewal(w.d, u, task.id, renewalEdit(form)));
   if (task.type === "scout") return asUser(w, (u) => editScout(w.d, u, task.id, scoutEdit(form)));
+  if (task.type === "news") return asUser(w, (u) => editNews(w.d, u, task.id, newsEdit(form)));
   if (task.type === "wantlist" || task.type === "wantjudge") return asUser(w, (u) => editWant(w.d, u, task.id, wantEdit(form)));
   return asUser(w, (u) => editPrice(w.d, u, task.id, priceEdit(form)));
 }
@@ -212,6 +215,7 @@ const DEFAULTS: Record<NewType, Values> = {
   price: { hours: "12", drop: "10", baseline: "last" },
   research: {},
   scout: { lens: "general", every: "1" },
+  news: { shows: "no", every: "7" },
   wantlist: { source: "page" },
   wantjudge: {},
 };
@@ -220,6 +224,7 @@ export function newGet(e: Editor, type: NewType): Response {
   // Without the model runner the page says so instead of offering a form that can only be refused.
   if (type === "research" && !e.d.research) return htmlResponse(newTaskPage(e.v, type, {}, undefined, RESEARCH_OFF));
   if (type === "scout" && !e.d.research) return htmlResponse(newTaskPage(e.v, type, {}, undefined, SCOUT_OFF));
+  if (type === "news" && !e.d.research) return htmlResponse(newTaskPage(e.v, type, {}, undefined, NEWS_OFF));
   if (type === "wantlist") return htmlResponse(newTaskPage(e.v, type, { ...DEFAULTS.wantlist, judge: e.d.research ? "yes" : "no" }));
   return htmlResponse(newTaskPage(e.v, type, type === "renewal" ? { ...DEFAULTS.renewal, currency: "USD" } : DEFAULTS[type]));
 }
