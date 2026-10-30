@@ -1,5 +1,5 @@
 import { MessageFlags } from "discord.js";
-import type { PluginLog } from "../../../packages/api/contract.js";
+import type { HostApi, PluginLog } from "../../../packages/api/contract.js";
 import type { GuildRoles, Membership } from "./access.js";
 import type { TrackerDeps } from "./actions.js";
 
@@ -32,6 +32,33 @@ export interface Interactionish {
   client: { guilds: { fetch(id: string): Promise<{ members: { fetch(o: { user: string; force?: boolean }): Promise<unknown> } }> } };
 }
 
+/**
+ * One server's member and the server itself, duck-typed as `memberOf` reads them (their roles'
+ * caches). Rejects with Discord's code 10007 or 10013 when the person is not in that server.
+ */
+export type MemberFetch = (guildId: string, discordId: string) => Promise<{ guild: unknown; member: unknown }>;
+
+/** A forced fetch through discord.js's Client (an interaction's). */
+export function clientMemberFetch(client: Interactionish["client"]): MemberFetch {
+  return async (guildId, discordId) => {
+    const guild = await client.guilds.fetch(guildId);
+    return { guild, member: await guild.members.fetch({ user: discordId, force: true }) };
+  };
+}
+
+/**
+ * The host's own lookup (`HostApi.member`, rackbops-discord-bot#623), which needs no interaction:
+ * so after a restart the web area, the task API and intake can check membership before anyone has
+ * pressed a button. The same forced fetch on the host side; its null is "not in that server".
+ */
+export function hostMemberFetch(member: NonNullable<HostApi["member"]>): MemberFetch {
+  return async (guildId, discordId) => {
+    const found = await member(guildId, discordId);
+    if (found === null) throw Object.assign(new Error("Unknown Member"), { code: UNKNOWN_MEMBER });
+    return { guild: { roles: { cache: new Set(found.guildRoleIds) } }, member: { roles: { cache: new Set(found.roleIds) } } };
+  };
+}
+
 /** `TRACKER_GUILD_ROLES` and who skips it (lookupMembership). */
 export interface RoleGate {
   roles: GuildRoles | null;
@@ -40,7 +67,7 @@ export interface RoleGate {
 
 /**
  * Whether `discordId` is a member of any of `guildIds`, asked of Discord through the interaction's
- * client (the host API has no member lookup; plan 5.5). A single-member fetch is a REST call and
+ * client, or through `fetch` when given (the host's lookup, with no interaction; plan 5.5). A single-member fetch is a REST call and
  * needs no privileged intent. Discord's "unknown member" or "unknown user" is a no for that server;
  * anything else (the bot left the server, an outage) is `unknown` for it. A yes from any server is
  * `member`; otherwise one `unknown` makes the whole answer `unknown`, which refuses and never
@@ -72,13 +99,14 @@ export async function lookupMembership(
   discordId: string,
   log: PluginLog,
   gate: RoleGate = { roles: null, exempt: new Set() },
+  fetch: MemberFetch = clientMemberFetch(interaction.client),
 ): Promise<Membership> {
   if (guildIds === null) return "not-checked";
   const rolesFor = (guildId: string): readonly string[] | null =>
     gate.exempt.has(discordId) ? null : (gate.roles?.get(guildId) ?? null);
   const here = interaction.guildId;
   if (here !== null && guildIds.includes(here) && interaction.user.id === discordId && rolesFor(here) === null) return "member";
-  const lookups = guildIds.map((guildId) => memberOf(interaction.client, guildId, discordId, rolesFor(guildId), log));
+  const lookups = guildIds.map((guildId) => memberOf(fetch, guildId, discordId, rolesFor(guildId), log));
   // The first yes answers at once, so a slow or hung server cannot hold up a member of another.
   const firstYes = new Promise<"member">((resolve) => {
     for (const l of lookups) void l.then((a) => a === "member" && resolve("member"));
@@ -88,15 +116,14 @@ export async function lookupMembership(
 }
 
 async function memberOf(
-  client: Interactionish["client"],
+  fetch: MemberFetch,
   guildId: string,
   discordId: string,
   roleIds: readonly string[] | null,
   log: PluginLog,
 ): Promise<"member" | "not-member" | "unknown"> {
   try {
-    const guild = await client.guilds.fetch(guildId);
-    const member = await guild.members.fetch({ user: discordId, force: true });
+    const { guild, member } = await fetch(guildId, discordId);
     if (roleIds === null) return "member";
     const known = (guild as { roles?: { cache?: { has?: unknown } } }).roles?.cache;
     if (typeof known?.has === "function") {

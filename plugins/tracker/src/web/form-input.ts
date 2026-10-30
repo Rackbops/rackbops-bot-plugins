@@ -8,7 +8,7 @@ import type { ResearchInput } from "../research.js";
 import { DEFAULT_NEWS_EVERY, kindsOf, type NewsEdit, type NewsInput } from "../news.js";
 import type { ScoutEdit, ScoutInput } from "../scout.js";
 import type { PeriodUnit, RenewalInput } from "../tracked.js";
-import type { WantEdit, WantInput } from "../want.js";
+import { type WantEdit, type WantInput, wordsText } from "../want.js";
 import { fieldsFor, type NewType, type Values } from "./editor-pages.js";
 
 /**
@@ -123,10 +123,12 @@ export function newsEdit(form: URLSearchParams): NewsEdit {
   };
 }
 
-/** `/want`'s options: an empty target, max, currency, exclude or hours is left out, as an unset option is. */
+/** `/want`'s options: an empty target, max, currency, exclude, confirm, unconfirmed or hours is left out, as an unset option is. */
 export function wantInput(form: URLSearchParams): WantInput {
   const target = opt(form, "target");
   const exclude = opt(form, "exclude");
+  const confirm = opt(form, "confirm");
+  const unconfirmed = opt(form, "unconfirmed");
   const max = decimal(form, "max");
   const currency = opt(form, "currency");
   const hours = int(form, "hours");
@@ -140,11 +142,13 @@ export function wantInput(form: URLSearchParams): WantInput {
     ...(max !== undefined ? { max } : {}),
     ...(currency !== undefined ? { currency } : {}),
     ...(exclude !== undefined ? { exclude } : {}),
+    ...(confirm !== undefined ? { confirm } : {}),
+    ...(unconfirmed !== undefined ? { unconfirmed } : {}),
     ...(hours !== undefined ? { hours } : {}),
   };
 }
 
-/** A watch's edit: an empty name or hours keeps the watch's; a sent empty `max`, `currency` or `exclude` clears it. */
+/** A watch's edit: an empty name or hours keeps the watch's; a sent empty `max`, `currency`, `exclude`, `confirm` or `unconfirmed` clears it. */
 export function wantEdit(form: URLSearchParams): WantEdit {
   const name = opt(form, "name");
   const hours = int(form, "hours");
@@ -153,6 +157,8 @@ export function wantEdit(form: URLSearchParams): WantEdit {
     ...(form.has("max") ? { max: decimal(form, "max") ?? null } : {}),
     ...(form.has("currency") ? { currency: str(form, "currency") } : {}),
     ...(form.has("exclude") ? { exclude: str(form, "exclude") } : {}),
+    ...(form.has("confirm") ? { confirm: str(form, "confirm") } : {}),
+    ...(form.has("unconfirmed") ? { unconfirmed: str(form, "unconfirmed") } : {}),
     ...(hours !== undefined ? { hours } : {}),
   };
 }
@@ -262,7 +268,7 @@ export function editValues(d: Pick<TrackerDeps, "clock">, user: User, task: Task
     const c = task.config as WantConfig;
     const every = task.schedule?.kind === "poll" ? task.schedule.every : "";
     const exclude = Array.isArray(c.exclude) ? c.exclude.filter((e) => typeof e === "string").join(", ") : "";
-    return { name: task.title, max: c.maxPrice !== undefined ? String(c.maxPrice) : "", currency: c.currency ?? "", exclude, hours: String(every) };
+    return { name: task.title, max: c.maxPrice !== undefined ? String(c.maxPrice) : "", currency: c.currency ?? "", exclude, confirm: wordsText(c.confirm), unconfirmed: wordsText(c.unconfirmed), hours: String(every) };
   }
   if (task.type !== "price") return {};
   const c = task.config as PriceConfig;

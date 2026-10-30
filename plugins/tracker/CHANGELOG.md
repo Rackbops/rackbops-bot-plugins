@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.40.0] - 2026-10-30
+
+### Added
+
+- Confirm words on want-list watches (docket#87, the Arkham pilot of #368). `/want` takes `confirm` and `unconfirmed`: words or phrases separated by commas, at most 300 characters each. A listing whose title has no `confirm` word is read in full where its source can (eBay's getItem for an eBay API watch: its item specifics and description), then DMed if that has one, left out if its title or full listing has an `unconfirmed` word, and otherwise DMed marked `check: not confirmed as "..."`. The confirmation says so. The web editor and the task API take both fields on a new watch and an edit (an empty one clears it), `settings.confirm` and `settings.unconfirmed` read them back, and `GET /types` lists them. For a plain watch only: with `judge: true` they are refused (but an eBay API watch is never judged, so it takes them whatever `judge` says), and with `judge` left out they make a plain watch; the web editor always sends `judge`, so set it to no there. `unconfirmed` needs `confirm`, and for a Shopify or eBay-API watch a one-word `confirm` entry that it searches for is refused.
+
+### Changed
+
+- Membership is checked through the host's own member lookup when the bot offers one (`HostApi.member`, rackbops-discord-bot#623), so after a restart the task API, the web area and intake no longer wait for someone to use a command or button before they can check (the 503 `membership_unknown` ChatGPT showed). On an older bot, nothing changes. The 503's message now says the restart case applies to an older bot only.
+- A one-off reminder answered done is now finished (docket 0.20.0, docket#89); it stayed active before, and a second done was refused as already answered.
+- An eBay API watch reads each new listing in full once (at most 20 a run, together), so its DM lines show shipping too ("4.99 USD shipping", "free shipping"). Nothing of the read is kept but that shipping text in the DM, which is cut after six hours like the rest of an eBay DM. Needs docket 0.20.0.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.39.0] - 2026-10-30
 
 ### Added

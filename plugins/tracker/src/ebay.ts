@@ -9,8 +9,10 @@ import { readCapped } from "./fetch.js";
  *
  * The token comes from eBay's client-credentials grant (`POST /identity/v1/oauth2/token`, scope
  * `https://api.ebay.com/oauth/api_scope`, developer.ebay.com, read 2026-10-20), is kept in memory
- * only, and is minted again a minute before eBay says it ends, or once when a search answers 401.
- * Both addresses are fixed on api.ebay.com, so no person names where the keys go; no redirect is
+ * only, and is minted again a minute before eBay says it ends, or once when a call answers 401.
+ * Two calls go through it: a search (`/buy/browse/v1/item_summary/search`) and, since docket 0.20.0,
+ * one listing's full read (getItem, `/buy/browse/v1/item/<item id>`), both built by docket-types.
+ * Every call goes to api.ebay.com (`EBAY_API`, fixed here; the paths come from docket-types), so no person names where the keys go; no redirect is
  * followed; a call gives up after `EBAY_TIMEOUT_MS`; at most `EBAY_MAX_BYTES` of an answer is read.
  * The keys and the token are never logged and never put in an error: a failed call says only what
  * went wrong in fixed words. This is the only way the tracker reads eBay: no eBay page is opened.

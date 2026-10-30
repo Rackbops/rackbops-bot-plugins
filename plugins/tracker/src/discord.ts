@@ -15,7 +15,7 @@ import {
   withNotice,
 } from "./actions.js";
 import { resumeTask } from "./manage.js";
-import { CURRENCY_LENGTH, DATE_LENGTH, MAX_AMOUNT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
+import { CURRENCY_LENGTH, DATE_LENGTH, MAX_AMOUNT, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
 import { remind, type Repeat } from "./reminders.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./research.js";
 import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
@@ -472,6 +472,8 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           .addNumberOption((o) => o.setName("max").setDescription("Only listings at or under this price").setMinValue(0.01))
           .addStringOption((o) => o.setName("currency").setDescription("Only listings in this currency, e.g. USD").setMinLength(CURRENCY_LENGTH).setMaxLength(CURRENCY_LENGTH))
           .addStringOption((o) => o.setName("exclude").setDescription("Leave out listings whose title has any of these words, separated by commas").setMaxLength(MAX_EXCLUDE_TEXT))
+          .addStringOption((o) => o.setName("confirm").setDescription("Double-check a listing whose title has none of these words, e.g. campaign").setMaxLength(MAX_CONFIRM_TEXT))
+          .addStringOption((o) => o.setName("unconfirmed").setDescription("Then leave it out if it has any of these, e.g. investigator").setMaxLength(MAX_CONFIRM_TEXT))
           .addIntegerOption((o) =>
             o
               .setName("hours")
@@ -479,7 +481,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .setMinValue(1)
               .setMaxValue(MAX_WANT_HOURS),
           )
-          .addBooleanOption((o) => o.setName("judge").setDescription("Have the model check each new listing and its seller first (default: yes, when it can)")),
+          .addBooleanOption((o) => o.setName("judge").setDescription("Model checks each new listing and its seller first (default: yes if it can, no with confirm)")),
       handle: (interaction) =>
         run(interaction, "registered", (d, user) => {
           const target = interaction.options.getString("target");
@@ -487,6 +489,8 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           const max = interaction.options.getNumber("max");
           const currency = interaction.options.getString("currency");
           const exclude = interaction.options.getString("exclude");
+          const confirm = interaction.options.getString("confirm");
+          const unconfirmed = interaction.options.getString("unconfirmed");
           const hours = interaction.options.getInteger("hours");
           return wantCommand(d, user, {
             name: interaction.options.getString("name", true),
@@ -495,6 +499,8 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             ...(max !== null ? { max } : {}),
             ...(currency !== null ? { currency } : {}),
             ...(exclude !== null ? { exclude } : {}),
+            ...(confirm !== null ? { confirm } : {}),
+            ...(unconfirmed !== null ? { unconfirmed } : {}),
             ...(hours !== null ? { hours } : {}),
             ...(judge !== null ? { judge } : {}),
           });

@@ -16,7 +16,7 @@ import { createBggFetch, createPageFetch, type PageFetchOptions } from "./fetch.
 import { EXECUTE_MIN_GAP_MS, ExecuteLane } from "./execute-lane.js";
 import { type CityHallConfig, createCityHallExecutor, databaseId, JobRecords, parseCityHallConfig } from "./executor.js";
 import type { Membership } from "./access.js";
-import { type Interactionish, lookupMembership, type RoleGate, serial } from "./discord-common.js";
+import { clientMemberFetch, hostMemberFetch, type Interactionish, lookupMembership, type RoleGate, serial } from "./discord-common.js";
 import { createSurface, type SurfaceWiring } from "./discord.js";
 import { decideHealth, type HealthState, healthResponse } from "./health.js";
 import { WantInbox } from "./inbox.js";
@@ -376,17 +376,23 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     options.executeStarted?.(executeRun);
   }
 
-  // The web area's member re-check needs Discord, and the host API has no member lookup: it asks
-  // through the discord.js Client of the last interaction the plugin handled (`interaction.client`
-  // is the bot's one long-lived Client). Held here only, never stored; none until the first one.
+  // The web area's member re-check, the task API's and intake's need Discord. The host's own lookup
+  // (`host.member`, rackbops-discord-bot#623) answers with no interaction, so a restart blocks
+  // nobody; an older host has none, and then the lookup asks through the discord.js Client of the
+  // last interaction the plugin handled (`interaction.client` is the bot's one long-lived Client),
+  // held here only, never stored, and none until the first one.
   let discordClient: Interactionish["client"] | null = null;
   const capture = (interaction: unknown) => {
     const client = (interaction as { client?: Interactionish["client"] }).client;
     if (client) discordClient = client;
   };
+  const hostMember = typeof host.member === "function" ? host.member.bind(host) : null;
   const clientMembership = async (discordId: string): Promise<Membership | null> => {
-    if (!discordClient) return null;
-    return lookupMembership({ guildId: null, user: { id: discordId }, client: discordClient }, guildIds, discordId, host.log, roleGate);
+    const fetch = hostMember ? hostMemberFetch(hostMember) : discordClient ? clientMemberFetch(discordClient) : null;
+    if (!fetch) return null;
+    // `client` is read only by lookupMembership's default fetch, and a fetch is always passed here.
+    const asking = { guildId: null, user: { id: discordId }, client: discordClient as Interactionish["client"] };
+    return lookupMembership(asking, guildIds, discordId, host.log, roleGate, fetch);
   };
   const web = createWebHandler({
     name: host.name,
@@ -404,7 +410,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     executor: () => intakeExecutor,
     ids: intakeIds,
     queue,
-    // As a command's: no gate without TRACKER_GUILD_ID; with one, unknown until an interaction gave the Client.
+    // As a command's: no gate without TRACKER_GUILD_ID; with one, the host's lookup, or on an older
+    // host unknown until an interaction gave the Client.
     membership: async (discordId) => (guildIds === null ? "not-checked" : ((await clientMembership(discordId)) ?? "unknown")),
     log: host.log,
     ...(options.intakeSleep ? { sleep: options.intakeSleep } : {}),

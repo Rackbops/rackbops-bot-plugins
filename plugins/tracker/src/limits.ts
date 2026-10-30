@@ -20,6 +20,8 @@ export const MAX_NOTE = 300;
 export const MAX_URL = 1000;
 /** A watch's exclude words, as one comma-separated field (want.ts reads at most docket's 20 entries). */
 export const MAX_EXCLUDE_TEXT = 1000;
+/** A watch's confirm and unconfirmed words, each one comma-separated field: shorter, so the want form stays under the body cap. */
+export const MAX_CONFIRM_TEXT = 300;
 /** A price's `near` text. */
 export const MAX_NEAR = 100;
 /**
