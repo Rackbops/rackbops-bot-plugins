@@ -1,7 +1,7 @@
 {
   "name": "@rackbops/plugin-tracker",
-  "version": "0.38.0",
-  "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, eBay through eBay's own Browse API once its keys are set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, a JSON task API with personal API tokens, and a plain-language intake: DM Clerk what you want in your own words, answer its questions, and press Save on the draft it shows",
+  "version": "0.39.0",
+  "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout and a news watch (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, eBay through eBay's own Browse API once its keys are set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /news, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, a JSON task API with personal API tokens, and a plain-language intake: DM Clerk what you want in your own words, answer its questions, and press Save on the draft it shows",
   "type": "module",
   "main": "dist/plugin.js",
   "files": ["dist"],
@@ -11,8 +11,8 @@
     "directory": "plugins/tracker"
   },
   "devDependencies": {
-    "@rackbops/docket-core": "^0.18.0",
-    "@rackbops/docket-types": "^0.18.0",
+    "@rackbops/docket-core": "^0.19.0",
+    "@rackbops/docket-types": "^0.19.0",
     "@rackbops/styles": "^0.2.42"
   },
   "peerDependencies": {
@@ -21,7 +21,7 @@
   "botPlugin": {
     "hostApiVersion": 1,
     "intents": [4096],
-    "commands": ["allow", "register", "remind", "renewal", "price", "research", "scout", "want", "tasks", "task", "settings", "web"],
+    "commands": ["allow", "register", "remind", "renewal", "price", "research", "scout", "news", "want", "tasks", "task", "settings", "web"],
     "env": [
       {
         "key": "TRACKER_ADMIN_DISCORD_IDS",
@@ -63,7 +63,7 @@
         "format": "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$",
         "required": false,
         "secret": false,
-        "description": "The https origin of the city-hall that queues the tracker's model Jobs for docket-runner (no path). With TRACKER_CITY_HALL_KEY and TRACKER_CITY_HALL_CAPABILITY it turns the execute lane, /research and /scout on; any of the three unset = off: /research and /scout say they are not available."
+        "description": "The https origin of the city-hall that queues the tracker's model Jobs for docket-runner (no path). With TRACKER_CITY_HALL_KEY and TRACKER_CITY_HALL_CAPABILITY it turns the execute lane, /research, /scout and /news on; any of the three unset = off: /research, /scout and /news say they are not available."
       },
       {
         "key": "TRACKER_CITY_HALL_KEY",

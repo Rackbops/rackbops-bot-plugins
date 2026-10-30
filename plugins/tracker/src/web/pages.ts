@@ -90,7 +90,7 @@ function cadence(entry: TaskListEntry, viewer: User, now: Date): string {
   return describeSchedule(s, entry.from ?? viewer, viewer.timeZone, now);
 }
 
-/** The links to the editor's new-task forms; research (#82) and the scout (#83) only while the model runner is set up. */
+/** The links to the editor's new-task forms; research (#82), the scout (#83) and the news watch only while the model runner is set up. */
 function newLinks(v: Viewer, research: boolean): Html {
   return html`<p class="tr-row">
 <a class="rb-btn rb-btn--primary rb-btn--sm" href="${v.base}/new/reminder">New reminder</a>
@@ -99,6 +99,7 @@ function newLinks(v: Viewer, research: boolean): Html {
 <a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/wantlist">New want-list watch</a>
 ${research ? html`<a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/research">New research request</a>` : null}
 ${research ? html`<a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/scout">New scout</a>` : null}
+${research ? html`<a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/new/news">New news watch</a>` : null}
 </p>`;
 }
 
@@ -163,12 +164,13 @@ function findingRow(f: FindingView): Html {
 const EMPTY_FINDINGS: Readonly<Record<string, string>> = {
   research: "None yet: a research request's checked claims are kept here once it is answered.",
   scout: "None yet: what the scout shows you is kept here, so it is never shown twice.",
+  news: "None yet: each item the news watch sends you is kept here with its link and date.",
   wantlist: "None yet: each listing I DM you is kept here, so it is never sent twice.",
   wantjudge: "None yet: each new listing is kept here with what the model made of it, DMed or not, so it is never sent twice.",
 };
 
 function findingsSection(h: HistoryView): Html | null {
-  if (h.findings.length === 0 && h.task.type !== "research" && h.task.type !== "scout" && h.task.type !== "wantlist" && h.task.type !== "wantjudge") return null;
+  if (h.findings.length === 0 && h.task.type !== "research" && h.task.type !== "scout" && h.task.type !== "news" && h.task.type !== "wantlist" && h.task.type !== "wantjudge") return null;
   const shown = h.findings.slice(-FINDINGS_SHOWN);
   const earlier = h.findings.length - shown.length;
   return html`<section>

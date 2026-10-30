@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { MAX_LIVE_TASKS } from "../limits.js";
 import { MAX_PRICE_TASKS } from "../price.js";
 import { MAX_LIVE_RESEARCH } from "../research.js";
+import { MAX_LIVE_NEWS } from "../news.js";
 import { MAX_LIVE_SCOUTS } from "../scout.js";
 import { MAX_WANT_TASKS } from "../want.js";
 import { RATE_BURST, RATE_PER_SECOND } from "./api.js";
@@ -104,6 +105,7 @@ describe("GET /capabilities", () => {
       priceTrackers: MAX_PRICE_TASKS,
       researchWaiting: MAX_LIVE_RESEARCH,
       scouts: MAX_LIVE_SCOUTS,
+      newsWatches: MAX_LIVE_NEWS,
       wantWatches: MAX_WANT_TASKS,
       pageSize: MAX_PAGE,
       requestsBurst: RATE_BURST,

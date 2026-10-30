@@ -26,7 +26,7 @@ import { type Done, ownLiveTask } from "./manage.js";
  */
 
 /** The types a run now suits: each run is the same look or the same reminder as a scheduled one. */
-export const RUNNABLE: ReadonlySet<string> = new Set(["reminder", "price", "wantlist", "wantjudge", "scout"]);
+export const RUNNABLE: ReadonlySet<string> = new Set(["reminder", "price", "wantlist", "wantjudge", "scout", "news"]);
 
 export const RUN_NOW_PER_DAY = 10;
 const DAY_MS = 24 * 3_600_000;
@@ -60,7 +60,9 @@ async function runNowLocked(d: TrackerDeps, user: User, taskId: string): Promise
     return { ok: false, error: `${NOT_NOW} it already has a run due, which is on its way.` };
   }
   if (queued.some((o) => !hasFired(o) && o.dedupeKey.startsWith(FOLLOW_UP_PREFIX))) {
-    return { ok: false, error: `${NOT_NOW} it is waiting to try its last look again.` };
+    // A news watch's follow-up is its review as often as a retry.
+    const what = task.type === "news" ? "to finish its last run" : "to try its last look again";
+    return { ok: false, error: `${NOT_NOW} it is waiting ${what}.` };
   }
   const since = new Date(now.getTime() - DAY_MS).toISOString();
   if ((await d.store.runsNowSince(user.id, since)) >= RUN_NOW_PER_DAY) {

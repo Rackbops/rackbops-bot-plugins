@@ -19,8 +19,9 @@ import { CURRENCY_LENGTH, DATE_LENGTH, MAX_AMOUNT, MAX_EXCLUDE_TEXT, MAX_NEAR, M
 import { remind, type Repeat } from "./reminders.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./research.js";
 import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
+import { createNews, DEFAULT_NEWS_EVERY, editNews, MAX_INCLUDE_TEXT, MAX_NEWS_EVERY, type NewsInput } from "./news.js";
 import { createScout, DEFAULT_SCOUT_EVERY, editScout, MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "./scout.js";
-import { type BaselineRule, MAX_FOR_CHARS, MAX_SCOUT_NOTES, type RenewalDecision } from "@rackbops/docket-types";
+import { type BaselineRule, MAX_DISAMBIGUATE_CHARS, MAX_FOR_CHARS, MAX_SCOUT_NOTES, MAX_SUBJECT_CHARS, type RenewalDecision } from "@rackbops/docket-types";
 import {
   EPHEMERAL,
   FAILED,
@@ -42,6 +43,17 @@ import { addRenewal, decideRenewal, DEFAULT_LEAD_DAYS, MAX_EVERY, MAX_LEAD_DAYS,
 import { type WebLocation, webLink } from "./web/command.js";
 
 export { lookupMembership, type Interactionish, STARTING, FAILED } from "./discord-common.js";
+
+/** The news watch's options after its subject, on `/news new` and `/news edit` alike; `-` clears a text one on an edit. */
+function newsOptions(s: SlashCommandSubcommandBuilder, mode: "new" | "edit"): SlashCommandSubcommandBuilder {
+  const clear = mode === "edit" ? "; - for none" : "";
+  return s
+    .addStringOption((o) => o.setName("include").setDescription(`What counts, separated by commas: new music, reissues${clear}`).setMaxLength(MAX_INCLUDE_TEXT))
+    .addStringOption((o) => o.setName("exclude").setDescription(`What never counts, separated by commas: concert${clear}`).setMaxLength(MAX_EXCLUDE_TEXT))
+    .addStringOption((o) => o.setName("disambiguate").setDescription(`Similarly named acts or things it is not${clear}`).setMaxLength(MAX_DISAMBIGUATE_CHARS))
+    .addBooleanOption((o) => o.setName("shows").setDescription("Give each show's city, venue, date and tickets"))
+    .addIntegerOption((o) => o.setName("every").setDescription(mode === "new" ? `Days between runs (default ${DEFAULT_NEWS_EVERY})` : "Days between runs").setMinValue(1).setMaxValue(MAX_NEWS_EVERY));
+}
 
 /** The scout's `lens` option, on `/scout new` and `/scout edit` alike. */
 function lensOption(s: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
@@ -387,6 +399,53 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           if (sub === "new") return said(await createScout(d, user, { interests: interaction.options.getString("interests", true), ...rest }));
           const interests = interaction.options.getString("interests");
           return said(await editScout(d, user, interaction.options.getString("task", true), { ...(interests !== null ? { interests } : {}), ...rest }));
+        }),
+    },
+    {
+      name: "news",
+      build: (b: SlashCommandBuilder) =>
+        b
+          .setDescription("A watch that looks on the web every few days for news about one band, person or thing")
+          .addSubcommand((s) =>
+            newsOptions(
+              s
+                .setName("new")
+                .setDescription("Start a news watch: it DMs you only what is new and checked")
+                .addStringOption((o) =>
+                  o.setName("subject").setDescription("Who or what, with enough to tell it apart").setRequired(true).setMaxLength(MAX_SUBJECT_CHARS),
+                ),
+              "new",
+            ),
+          )
+          .addSubcommand((s) =>
+            newsOptions(
+              s
+                .setName("edit")
+                .setDescription("Change a news watch's subject, what counts, what never counts, how to tell it apart, shows or days")
+                .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(MAX_TASK_ID))
+                .addStringOption((o) => o.setName("subject").setDescription("Who or what, with enough to tell it apart").setMaxLength(MAX_SUBJECT_CHARS)),
+              "edit",
+            ),
+          ),
+      handle: (interaction) =>
+        run(interaction, "registered", async (d, user) => {
+          const sub = interaction.options.getSubcommand();
+          const text = (name: string) => interaction.options.getString(name);
+          const include = text("include");
+          const exclude = text("exclude");
+          const disambiguate = text("disambiguate");
+          const shows = interaction.options.getBoolean("shows");
+          const every = interaction.options.getInteger("every");
+          const rest: Omit<NewsInput, "subject"> = {
+            ...(include !== null ? { include } : {}),
+            ...(exclude !== null ? { exclude } : {}),
+            ...(disambiguate !== null ? { disambiguate } : {}),
+            ...(shows !== null ? { shows } : {}),
+            ...(every !== null ? { every } : {}),
+          };
+          if (sub === "new") return said(await createNews(d, user, { subject: interaction.options.getString("subject", true), ...rest }));
+          const subject = text("subject");
+          return said(await editNews(d, user, interaction.options.getString("task", true), { ...(subject !== null ? { subject } : {}), ...rest }));
         }),
     },
     {

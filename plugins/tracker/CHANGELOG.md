@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.39.0] - 2026-10-30
+
+### Added
+
+- News watches (plan item 153, docket#78; the Platinum Blonde and Rhythm Corps pilots of #368). `/news new` takes a `subject`, what counts (`include`), what never counts (`exclude`), how to tell it apart (`disambiguate`), `shows` and `every` days (default 7). Each run searches the web for items from the last 30 days; repeats, eBay links and excluded items are dropped in plain code, and a second run checks each remaining item against its own page before only the kept ones are DMed, each kept as a finding. A run with nothing new sends nothing and says "no news" in its history. `/news edit` changes one, and the web editor (`/new/news`) and the task API (`POST /tasks` with `type: "news"`, `PATCH`, `POST /tasks/validate`, `GET /types`, and `limits.newsWatches` in `GET /capabilities`) take the same fields; `POST /tasks/<id>/run` runs one now. Made only while the model runner is set up; at most 3 per person; each run counts against the daily model budget, up to 1.50 USD for the search and 0.75 USD for the review, each try (a failed try is retried once). Three failed runs in a row are told once. Needs docket 0.19.0.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.38.0] - 2026-10-29
 
 ### Added
