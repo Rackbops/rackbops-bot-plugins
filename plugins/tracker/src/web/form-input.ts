@@ -5,7 +5,7 @@ import { renewalDate } from "../edit.js";
 import type { PriceInput } from "../price.js";
 import { type ReminderInput, type Repeat, repeatOf } from "../reminders.js";
 import type { ResearchInput } from "../research.js";
-import { kindsOf, type NewsEdit, type NewsInput } from "../news.js";
+import { DEFAULT_NEWS_EVERY, kindsOf, type NewsEdit, type NewsInput } from "../news.js";
 import type { ScoutEdit, ScoutInput } from "../scout.js";
 import type { PeriodUnit, RenewalInput } from "../tracked.js";
 import type { WantEdit, WantInput } from "../want.js";
@@ -93,7 +93,7 @@ export function scoutEdit(form: URLSearchParams): ScoutEdit {
   };
 }
 
-/** `/news new`'s options: an empty include, exclude, disambiguate or every is left out, as an unset option is; shows is "yes" or not. */
+/** `/news new`'s options: an empty include, exclude, disambiguate, shows or every is left out, as an unset option is. */
 export function newsInput(form: URLSearchParams): NewsInput {
   const include = lines(opt(form, "include"));
   const exclude = opt(form, "exclude");
@@ -104,7 +104,7 @@ export function newsInput(form: URLSearchParams): NewsInput {
     ...(include !== undefined ? { include } : {}),
     ...(exclude !== undefined ? { exclude } : {}),
     ...(disambiguate !== undefined ? { disambiguate } : {}),
-    ...(form.has("shows") ? { shows: str(form, "shows") === "yes" } : {}),
+    ...(opt(form, "shows") !== undefined ? { shows: str(form, "shows") } : {}),
     ...(every !== undefined ? { every } : {}),
   };
 }
@@ -118,7 +118,7 @@ export function newsEdit(form: URLSearchParams): NewsEdit {
     ...(form.has("include") ? { include: lines(str(form, "include")) ?? "" } : {}),
     ...(form.has("exclude") ? { exclude: str(form, "exclude") } : {}),
     ...(form.has("disambiguate") ? { disambiguate: lines(str(form, "disambiguate")) ?? "" } : {}),
-    ...(form.has("shows") ? { shows: str(form, "shows") === "yes" } : {}),
+    ...(opt(form, "shows") !== undefined ? { shows: str(form, "shows") } : {}),
     ...(every !== undefined ? { every } : {}),
   };
 }
@@ -254,7 +254,7 @@ export function editValues(d: Pick<TrackerDeps, "clock">, user: User, task: Task
   }
   if (task.type === "news") {
     const c = task.config as NewsConfig;
-    const every = task.schedule?.kind === "calendar" ? task.schedule.every : 7;
+    const every = task.schedule?.kind === "calendar" ? task.schedule.every : DEFAULT_NEWS_EVERY;
     const exclude = Array.isArray(c.exclude) ? c.exclude.filter((e) => typeof e === "string").join(", ") : typeof c.exclude === "string" ? c.exclude : "";
     return { subject: c.subject, include: kindsOf(c.include).join("\n"), exclude, disambiguate: c.disambiguate ?? "", shows: c.shows === true ? "yes" : "no", every: String(every) };
   }

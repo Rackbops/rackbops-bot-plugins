@@ -1,5 +1,8 @@
 import { type Actor, type CalendarSchedule, createTask, describeSchedule, formatInstant, type TaskPatch, type User } from "@rackbops/docket-core";
 import { MAX_DISAMBIGUATE_CHARS, MAX_INCLUDE, MAX_KIND_CHARS, MAX_SUBJECT_CHARS, NEWS_MAX_BUDGET_USD, NEWS_REVIEW_MAX_BUDGET_USD, type NewsConfig } from "@rackbops/docket-types";
+
+/** What one try of each run costs at most, for the confirmation and the web form: a failed try is retried once. */
+export const NEWS_COST_TEXT = `up to ${NEWS_MAX_BUDGET_USD.toFixed(2)} USD for the search and ${NEWS_REVIEW_MAX_BUDGET_USD.toFixed(2)} USD for the review, each try (a failed try is retried once)`;
 import { clip, liveTaskCap, type Plan, rescheduleKeepingSnoozes, type TaskResult, type TrackerDeps } from "./actions.js";
 import { applyEdit, busyTask, nextRun, owned, refusingScheduleError, same, savedText } from "./edit.js";
 import { MAX_TITLE } from "./limits.js";
@@ -31,7 +34,8 @@ export interface NewsInput {
   /** What never counts, separated by commas. */
   exclude?: string;
   disambiguate?: string;
-  shows?: boolean;
+  /** A boolean from Discord; the web and the API send "yes" or "no", and anything else is refused. */
+  shows?: boolean | string;
   every?: number;
 }
 
@@ -75,12 +79,14 @@ export function newsPlan(input: NewsInput): Plan<{ config: NewsConfig; every: nu
   if (disambiguate.length > MAX_DISAMBIGUATE_CHARS) return { ok: false, error: `\`disambiguate\` is longer than ${MAX_DISAMBIGUATE_CHARS} characters.` };
   const every = input.every ?? DEFAULT_NEWS_EVERY;
   if (!Number.isInteger(every) || every < 1 || every > MAX_NEWS_EVERY) return { ok: false, error: `\`every\` is a whole number of days from 1 to ${MAX_NEWS_EVERY}.` };
+  const shows = input.shows === "yes" ? true : input.shows === "no" ? false : input.shows;
+  if (shows !== undefined && typeof shows !== "boolean") return { ok: false, error: "`shows` is yes or no." };
   const config: NewsConfig = {
     subject,
     ...(include.length > 0 ? { include } : {}),
     ...(exclude.exclude.length > 0 ? { exclude: exclude.exclude } : {}),
     ...(disambiguate ? { disambiguate } : {}),
-    ...(input.shows === true ? { shows: true } : {}),
+    ...(shows === true ? { shows: true } : {}),
   };
   return { ok: true, config, every };
 }
@@ -119,14 +125,13 @@ export async function createNews(d: TrackerDeps, user: User, input: NewsInput): 
   const { task, next } = await createTask(d.store, actor, user, { type, title: newsTitle(plan.config), config: plan.config, schedule }, now);
   const first = next ? formatInstant(next.dueAt, user.timeZone, now) : "not scheduled";
   const kinds = kindsOf(plan.config.include);
-  const cost = NEWS_MAX_BUDGET_USD + NEWS_REVIEW_MAX_BUDGET_USD;
   return {
     ok: true,
     task,
     text: clip(
       `News watch \`${task.id}\` made: ${describeSchedule(schedule, user, user.timeZone, now)}. First run ${first}.\n` +
         `Each run looks on the web for new ${kinds.length > 0 ? kinds.join(", ") : "news"} about ${plan.config.subject}; a second run checks each find against its page, and only what passes is DMed to you. ` +
-        `A run with nothing new sends nothing. A run can cost up to ${cost.toFixed(2)} USD of the daily model budget. \`/news edit ${task.id}\` changes it.`,
+        `A run with nothing new sends nothing. A run counts against the daily model budget, ${NEWS_COST_TEXT}. \`/news edit ${task.id}\` changes it.`,
     ),
   };
 }
@@ -140,7 +145,8 @@ async function editNewsLocked(d: TrackerDeps, user: User, taskId: string, input:
   if (typeof task === "string") return { ok: false, error: task };
   const config = task.config as NewsConfig;
   const schedule = task.schedule?.kind === "calendar" ? task.schedule : newsSchedule(DEFAULT_NEWS_EVERY, user.timeZone, d.clock.now());
-  const keepSubject = input.subject === undefined || input.subject.trim() === "";
+  // A subject cannot be cleared: empty or `-` keeps it.
+  const keepSubject = input.subject === undefined || input.subject.trim() === "" || input.subject.trim() === "-";
   const exclude = Array.isArray(config.exclude) ? config.exclude.join(", ") : typeof config.exclude === "string" ? config.exclude : "";
   const plan = newsPlan({
     subject: keepSubject ? config.subject : (input.subject as string),

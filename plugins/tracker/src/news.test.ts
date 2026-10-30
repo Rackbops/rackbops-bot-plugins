@@ -159,6 +159,12 @@ describe("/news through city-hall", () => {
     const patched = await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { shows: "no", every: 3 } });
     expect(patched.status).toBe(200);
     expect(config()).toEqual({ subject: "Rhythm Corps (the Detroit band)", include: ["reissues", "new music"] });
+    expect(((await patched.json()) as { task: { settings: Record<string, unknown> } }).task.settings).toMatchObject({ subject: "Rhythm Corps (the Detroit band)", include: "reissues\nnew music", shows: "no", every: 3 });
+    // An empty include clears it; a shows that is not yes or no is refused; a subject of `-` keeps it.
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { include: "", subject: "-" } })).status).toBe(200);
+    expect(config()).toEqual({ subject: "Rhythm Corps (the Detroit band)" });
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { shows: "true" } })).status).toBe(400);
+    expect(config()).toEqual({ subject: "Rhythm Corps (the Detroit band)" });
     const made = await api(w.plugin, "POST", "/tasks", { token, body: { type: "news", subject: "Platinum Blonde", exclude: "concert" } });
     expect(made.status).toBe(201);
     const checked = await api(w.plugin, "POST", "/tasks/validate", { token, body: { type: "news", subject: "Platinum Blonde", exclude: "x".repeat(81) } });

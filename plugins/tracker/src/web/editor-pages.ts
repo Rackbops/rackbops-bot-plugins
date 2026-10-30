@@ -3,9 +3,9 @@ import { CURRENCY_LENGTH, MAX_AMOUNT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_
 import { backOn } from "../delivery-health.js";
 import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
-import { DEFAULT_NEWS_EVERY, MAX_INCLUDE_TEXT, MAX_NEWS_EVERY } from "../news.js";
+import { DEFAULT_NEWS_EVERY, MAX_INCLUDE_TEXT, MAX_NEWS_EVERY, NEWS_COST_TEXT } from "../news.js";
 import { MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "../scout.js";
-import { MAX_DISAMBIGUATE_CHARS, MAX_FOR_CHARS, MAX_INCLUDE, MAX_SCOUT_NOTES, MAX_SUBJECT_CHARS } from "@rackbops/docket-types";
+import { LOOKBACK_DAYS, MAX_DISAMBIGUATE_CHARS, MAX_FOR_CHARS, MAX_INCLUDE, MAX_SCOUT_NOTES, MAX_SUBJECT_CHARS } from "@rackbops/docket-types";
 import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, MIN_SHOPIFY_HOURS } from "../want.js";
 import { MAX_EVERY, MAX_LEAD_DAYS } from "../tracked.js";
 import { html, type Html } from "./html.js";
@@ -259,7 +259,7 @@ const INTRO: Partial<Record<NewType, string>> = {
   scout:
     "Each run looks on the web for 5 to 10 new things that fit the interests, through the lens, and DMs them to you; a link shown before is not shown again. A run can cost up to 1.50 USD of the daily model budget.",
   news:
-    "Each run looks on the web for new items about the subject from the last 30 days; a second run checks each one against its own page, and only what passes is DMed to you. A run with nothing new sends nothing. A run can cost up to 2.25 USD of the daily model budget.",
+    `Each run looks on the web for new items about the subject from the last ${LOOKBACK_DAYS} days; a second run checks each one against its own page, and only what passes is DMed to you. A run with nothing new sends nothing; three failed runs in a row are told once. A run counts against the daily model budget, ${NEWS_COST_TEXT}.`,
 };
 
 /**

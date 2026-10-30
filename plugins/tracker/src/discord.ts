@@ -421,7 +421,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             newsOptions(
               s
                 .setName("edit")
-                .setDescription("Change a news watch's subject, what counts, what never counts, notes or days")
+                .setDescription("Change a news watch's subject, what counts, what never counts, how to tell it apart, shows or days")
                 .addStringOption((o) => o.setName("task").setDescription("The task id from /tasks, e.g. t3").setRequired(true).setMaxLength(MAX_TASK_ID))
                 .addStringOption((o) => o.setName("subject").setDescription("Who or what, with enough to tell it apart").setMaxLength(MAX_SUBJECT_CHARS)),
               "edit",
