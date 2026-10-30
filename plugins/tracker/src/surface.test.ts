@@ -245,11 +245,12 @@ describe("the first slice: a reminder by slash command, by DM, answered by butto
     expect(pressed.edits[0]?.content).toBe("water the plants\n\n-- Marked done.");
     expect(pressed.edits[0]?.components).toHaveLength(1); // only the Reply button is left
 
+    // Done on a one-off reminder finishes it (docket 0.20.0, docket#89), so a second press is refused.
     const again = await pressButton(w.plugin, done as string, LARRY);
-    expect(again.followUps).toEqual(["That run has already been answered."]);
+    expect(again.followUps).toEqual(["That task is done."]);
 
     const history = await slash(w.plugin, "task", LARRY, { sub: "history", strings: { task: "t1" } });
-    expect(history).toContain("`t1` water the plants -- reminder, active, once, Thu Oct 1, 9:00");
+    expect(history).toContain("`t1` water the plants -- reminder, done, once, Thu Oct 1, 9:00");
     expect(history).toContain("- Thu Oct 1, 9:00 -- done; Larry done");
     expect(history).toContain("created");
     // Admin sees it too (plan 5.10); a stranger to the task does not.
