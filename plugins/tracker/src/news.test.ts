@@ -145,6 +145,9 @@ describe("/news through city-hall", () => {
     // `-` clears a text field, which Discord cannot send empty.
     await slash(w.plugin, "news", LARRY, { sub: "edit", strings: { task: "t1", disambiguate: "-", notes: "an anniversary with Anne" } });
     expect(config()).toEqual({ subject: "Rhythm Corps", include: ["reissues"], exclude: ["tour dates"], notes: "an anniversary with Anne" });
+    await slash(w.plugin, "news", LARRY, { sub: "edit", strings: { task: "t1", notes: "-" } });
+    expect(config()).toEqual({ subject: "Rhythm Corps", include: ["reissues"], exclude: ["tour dates"] });
+    await slash(w.plugin, "news", LARRY, { sub: "edit", strings: { task: "t1", notes: "an anniversary with Anne" } });
 
     // The web: the edit form shows the kinds one per line; an empty exclude clears it.
     const larry = await signIn(w.plugin, LARRY);
@@ -163,6 +166,9 @@ describe("/news through city-hall", () => {
     // The API sets notes, and an empty one clears them; too long is refused.
     const tokenFirst = await makeToken({ plugin: w.plugin, sent: w.sent }, larry);
     expect((await api(w.plugin, "PATCH", "/tasks/t1", { token: tokenFirst, body: { notes: "flag shows near December 12" } })).status).toBe(200);
+    expect(config()).toMatchObject({ notes: "flag shows near December 12" });
+    // A PATCH that leaves notes out keeps them.
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token: tokenFirst, body: { every: 4 } })).status).toBe(200);
     expect(config()).toMatchObject({ notes: "flag shows near December 12" });
     expect((await api(w.plugin, "PATCH", "/tasks/t1", { token: tokenFirst, body: { notes: "x".repeat(MAX_NOTES_CHARS + 1) } })).status).toBe(400);
     expect((await api(w.plugin, "PATCH", "/tasks/t1", { token: tokenFirst, body: { notes: "" } })).status).toBe(200);
@@ -191,6 +197,11 @@ describe("/news through city-hall", () => {
     const on = await setup();
     const larry = await signIn(on.plugin, LARRY);
     expect(await (await call(on.plugin, "GET", "/", { jar: larry })).text()).toContain('href="/tracker/new/news"');
+    // A new watch from the web keeps its notes.
+    const csrf = await csrfOf(on.plugin, larry);
+    const made = await call(on.plugin, "POST", "/new/news", { jar: larry, origin: ORIGIN, form: { csrf, subject: "Platinum Blonde", notes: "a gift for Anne", shows: "no", every: "" } });
+    expect(made.status).toBe(303);
+    expect(JSON.parse(query<{ config: string }>(on.dbPath, "SELECT config FROM tasks")[0]?.config ?? "")).toEqual({ subject: "Platinum Blonde", notes: "a gift for Anne" });
     await cleanup();
     const off = await setup({});
     const jar = await signIn(off.plugin, LARRY);

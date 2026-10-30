@@ -5,7 +5,7 @@
 ### Added
 
 - Notes on a news watch (docket#86, for the Platinum Blonde and Rhythm Corps pilots of #368). `/news new` and `/news edit` take `notes`: in your own words, what is worth sending -- who it is for, what to skip, what to point out -- at most 500 characters; `-` clears it on an edit. Both the search and the review read it. The web editor and the task API take it on a new watch and an edit (an empty one clears it), `settings.notes` reads it back, and `GET /types` lists it.
-- A news DM shows each item's release date, price and availability when its page gives them, and a Note: line for what your notes ask to point out; the review drops an item with a detail its page does not bear out.
+- A news DM shows each item's release date, price and availability when the search finds them, and a Note: line for what your notes ask to point out; the review drops an item with a detail its page does not bear out.
 
 ### Changed
 
