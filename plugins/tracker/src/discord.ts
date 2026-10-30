@@ -481,7 +481,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .setMinValue(1)
               .setMaxValue(MAX_WANT_HOURS),
           )
-          .addBooleanOption((o) => o.setName("judge").setDescription("Have the model check each new listing and its seller first (default: yes, when it can)")),
+          .addBooleanOption((o) => o.setName("judge").setDescription("Model checks each new listing and its seller first (default: yes if it can, no with confirm)")),
       handle: (interaction) =>
         run(interaction, "registered", (d, user) => {
           const target = interaction.options.getString("target");

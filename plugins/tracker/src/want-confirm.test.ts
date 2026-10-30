@@ -3,6 +3,7 @@ import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../packages/api/contract.js";
 import { CONFIRM_JUDGED, UNCONFIRMED_ALONE } from "./want.js";
 import { shopSearch } from "./want-fixtures.js";
+import { fieldsFor } from "./web/editor-pages.js";
 import { CITY_HALL, fakeCityHall } from "./web/execute-harness.js";
 import { api, call, cleanup, csrfOf, LARRY, makeToken, ORIGIN, people, signIn, slash, world } from "./web/harness.js";
 
@@ -55,7 +56,7 @@ describe("confirm words", () => {
     await people(w.plugin);
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "E", source: "page", target: SHOP, unconfirmed: "investigator" } })).toBe(UNCONFIRMED_ALONE);
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "E", source: "page", target: SHOP, confirm: "campaign" }, booleans: { judge: true } })).toBe(CONFIRM_JUDGED);
-    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "E", source: "page", target: SHOP, confirm: "x".repeat(301) } })).toContain("`confirm` is longer than 300 characters.");
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "E", source: "page", target: SHOP, confirm: Array.from({ length: 20 }, (_, i) => `w${String(i).padStart(2, "0")}xxxxxxxxxxx`).join(",") } })).toContain("`confirm` is longer than 300 characters.");
     const plain = await slash(w.plugin, "want", LARRY, { strings: { name: "E", source: "page", target: SHOP, confirm: "campaign" } });
     expect(plain).toContain("Watching `t1`");
     expect(plain).not.toContain("the model looks at each listing");
@@ -91,6 +92,20 @@ describe("confirm words", () => {
     const cleared = await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { confirm: "", unconfirmed: "" } });
     expect(cleared.status).toBe(200);
     expect((await cleared.json()).task.settings).toMatchObject({ confirm: "", unconfirmed: "" });
+    // The 300 characters are counted as the words read back, joined by ", ", so a kept field always
+    // fits an edit that sends it back: 20 entries of 14 characters with bare commas (299) are 318.
+    const word = (i: number) => `w${String(i).padStart(2, "0")}xxxxxxxxxxx`;
+    const tight = Array.from({ length: 20 }, (_, i) => word(i));
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { confirm: tight.join(",") } })).status).toBe(400);
+    const fits = tight.slice(0, 18).join(", ");
+    const set = await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { confirm: fits.replaceAll(", ", ",") } });
+    expect(set.status).toBe(200);
+    expect((await set.json()).task.settings.confirm).toBe(fits);
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { name: "Edge again" } })).status).toBe(200);
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { confirm: fits } })).status).toBe(200);
+    // A judged watch's edit does not offer them.
+    expect(fieldsFor("wantjudge", "edit", "api").map((f) => f.name)).not.toContain("confirm");
+    expect(fieldsFor("wantlist", "edit", "api").map((f) => f.name)).toContain("confirm");
   });
 
   it("from the web: the form takes them, and the edit form shows and keeps them", async () => {

@@ -81,8 +81,9 @@ import { CURRENCY_LENGTH, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_TITLE, MAX_URL
  * form. A listing whose title has no `confirm` word is read in full where its source can (eBay's
  * getItem), then told if that has one, ruled out if its title or full listing has an `unconfirmed`
  * word, and otherwise told marked to check. Plain watches only: a judged watch's listings are the
- * model's to check. `unconfirmed` needs `confirm`; a `confirm` word that the watch searches for is
- * refused, since every listing it finds would confirm.
+ * model's to check (an eBay API watch is never judged, so it takes them whatever `judge` says).
+ * `unconfirmed` needs `confirm`; for a Shopify or eBay-API watch, a one-word `confirm` entry that it
+ * searches for is refused, since every listing it finds would confirm.
  */
 
 export const MAX_WANT_TASKS = 20;
@@ -191,10 +192,13 @@ export function excludePlan(text: string | undefined, words: string | null): Pla
  * One words field (`exclude`, `confirm`, `unconfirmed`) by `excludePlan`'s rules; `every` says why a
  * searched word is refused, or is null where one is allowed.
  */
-function wordsPlan(field: string, text: string | undefined, max: number, words: string | null, example: string, every: string | null): Plan<{ words: string[] }> {
+function wordsPlan(field: string, text: string | undefined, max: number, words: string | null, example: string, every: string | null, kept = false): Plan<{ words: string[] }> {
   const raw = (text ?? "").trim();
   if (raw === "" || raw === "-") return { ok: true, words: [] };
-  if (raw.length > max) return { ok: false, error: `\`${field}\` is longer than ${max} characters.` };
+  // `kept` measures the words as they are kept and read back (joined by ", "), so a field that is
+  // accepted always fits again when an edit sends it back unchanged.
+  const length = kept ? parseExclude(raw).join(", ").length : raw.length;
+  if (raw.length > MAX_EXCLUDE_TEXT || length > max) return { ok: false, error: `\`${field}\` is longer than ${max} characters.` };
   const entries = raw.split(/[,\n]/).map((e) => e.trim()).filter((e) => e !== "");
   const long = entries.find((e) => e.length > EXCLUDE_CHARS);
   if (long !== undefined) return { ok: false, error: `Each word or phrase in \`${field}\` is at most ${EXCLUDE_CHARS} characters.` };
@@ -219,9 +223,9 @@ export const UNCONFIRMED_ALONE = "`unconfirmed` rules out listings that `confirm
 
 /** A watch's `confirm` and `unconfirmed` words, by `wordsPlan`; `judged` refuses either. */
 export function confirmPlan(confirm: string | undefined, unconfirmed: string | undefined, words: string | null, judged: boolean): Plan<{ confirm: string[]; unconfirmed: string[] }> {
-  const c = wordsPlan("confirm", confirm, MAX_CONFIRM_TEXT, words, "campaign", "so every listing it finds would confirm");
+  const c = wordsPlan("confirm", confirm, MAX_CONFIRM_TEXT, words, "campaign", "so every listing it finds would confirm", true);
   if (!c.ok) return c;
-  const u = wordsPlan("unconfirmed", unconfirmed, MAX_CONFIRM_TEXT, words, "investigator", null);
+  const u = wordsPlan("unconfirmed", unconfirmed, MAX_CONFIRM_TEXT, words, "investigator", null, true);
   if (!u.ok) return u;
   if (judged && (c.words.length > 0 || u.words.length > 0)) return { ok: false, error: CONFIRM_JUDGED };
   if (u.words.length > 0 && c.words.length === 0) return { ok: false, error: UNCONFIRMED_ALONE };
