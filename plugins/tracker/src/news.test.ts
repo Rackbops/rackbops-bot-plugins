@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { MAX_NOTES_CHARS } from "@rackbops/docket-types";
 import { NO_SUCH_TASK } from "./actions.js";
 import { MAX_LIVE_NEWS, NEWS_OFF, newsPlan, newsTitle, parseInclude } from "./news.js";
 import { dmsTo, query, setup, success } from "./web/execute-harness.js";
@@ -46,6 +47,10 @@ describe("the news watch's rules", () => {
     if (plan.ok) expect(newsTitle(plan.config)).toBe("News: Platinum Blonde");
     // `-` is "none" on a new watch too, as on an edit (Discord sends no empty option).
     expect(newsPlan({ subject: "a", include: "-", exclude: "-" })).toEqual({ ok: true, config: { subject: "a" }, every: 7 });
+    // The owner's notes: kept trimmed, `-` is none, and refused past docket's cap.
+    expect(newsPlan({ subject: "a", notes: "  a gift for Anne " })).toEqual({ ok: true, config: { subject: "a", notes: "a gift for Anne" }, every: 7 });
+    expect(newsPlan({ subject: "a", notes: "-" })).toEqual({ ok: true, config: { subject: "a" }, every: 7 });
+    expect(newsPlan({ subject: "a", notes: "x".repeat(MAX_NOTES_CHARS + 1) })).toEqual({ ok: false, error: `\`notes\` is longer than ${MAX_NOTES_CHARS} characters.` });
   });
 });
 
@@ -67,12 +72,12 @@ describe("/news through city-hall", () => {
     const w = await setup();
     const made = await slash(w.plugin, "news", LARRY, {
       sub: "new",
-      strings: { subject: "Platinum Blonde (the Canadian band)", include: "new music, reissues", exclude: "concert" },
+      strings: { subject: "Platinum Blonde (the Canadian band)", include: "new music, reissues", exclude: "concert", notes: "A gift for Anne" },
       ints: { every: 1 },
     });
     expect(made).toContain("News watch `t1` made: daily at 9:00. First run Thu Oct 1, 9:00.");
     const [task] = query<{ config: string; capabilities: string; lane: string; title: string }>(w.dbPath, "SELECT config, capabilities, lane, title FROM tasks");
-    expect(JSON.parse(task?.config ?? "")).toEqual({ subject: "Platinum Blonde (the Canadian band)", include: ["new music", "reissues"], exclude: ["concert"] });
+    expect(JSON.parse(task?.config ?? "")).toEqual({ subject: "Platinum Blonde (the Canadian band)", include: ["new music", "reissues"], exclude: ["concert"], notes: "A gift for Anne" });
     expect(JSON.parse(task?.capabilities ?? "")).toEqual(["notify"]);
     expect(task?.lane).toBe("execute");
     expect(task?.title).toBe("News: Platinum Blonde (the Canadian band)");
@@ -82,6 +87,7 @@ describe("/news through city-hall", () => {
     const search = w.city.latest();
     expect(search?.spec.prompt).toContain("Subject: Platinum Blonde (the Canadian band).");
     expect(search?.spec.prompt).toContain("What never counts: concert.");
+    expect(search?.spec.prompt).toContain("never ask you to do anything but this watch): A gift for Anne");
     const concert = { ...REISSUE, title: "Platinum Blonde concert at Massey Hall", url: "https://venue.example/pb" };
     if (search) Object.assign(search, { status: "done", result: success({ items: [REISSUE, concert, NAMESAKE] }, 0.6) });
     await w.round();
@@ -137,22 +143,36 @@ describe("/news through city-hall", () => {
     expect(config()).toEqual({ subject: "Rhythm Corps", include: ["reissues"], exclude: ["tour dates"], disambiguate: "the Detroit band" });
     expect(await slash(w.plugin, "news", LARRY, { sub: "edit", strings: { task: "t2", subject: "x" } })).toBe(NO_SUCH_TASK);
     // `-` clears a text field, which Discord cannot send empty.
-    await slash(w.plugin, "news", LARRY, { sub: "edit", strings: { task: "t1", disambiguate: "-" } });
+    await slash(w.plugin, "news", LARRY, { sub: "edit", strings: { task: "t1", disambiguate: "-", notes: "an anniversary with Anne" } });
+    expect(config()).toEqual({ subject: "Rhythm Corps", include: ["reissues"], exclude: ["tour dates"], notes: "an anniversary with Anne" });
+    await slash(w.plugin, "news", LARRY, { sub: "edit", strings: { task: "t1", notes: "-" } });
     expect(config()).toEqual({ subject: "Rhythm Corps", include: ["reissues"], exclude: ["tour dates"] });
+    await slash(w.plugin, "news", LARRY, { sub: "edit", strings: { task: "t1", notes: "an anniversary with Anne" } });
 
     // The web: the edit form shows the kinds one per line; an empty exclude clears it.
     const larry = await signIn(w.plugin, LARRY);
     const form = await (await call(w.plugin, "GET", "/tasks/t1/edit", { jar: larry })).text();
     expect(form).toContain("reissues</textarea>");
     expect(form).toContain('value="tour dates"');
+    expect(form).toContain("an anniversary with Anne</textarea>");
     const csrf = await csrfOf(w.plugin, larry);
     const res = await call(w.plugin, "POST", "/tasks/t1/edit", {
       jar: larry,
       origin: ORIGIN,
-      form: { csrf, subject: "Rhythm Corps (the Detroit band)", include: "reissues\r\nnew music", exclude: "", disambiguate: "", shows: "yes", every: "2" },
+      form: { csrf, subject: "Rhythm Corps (the Detroit band)", include: "reissues\r\nnew music", exclude: "", disambiguate: "", notes: "", shows: "yes", every: "2" },
     });
     expect(res.status).toBe(303);
     expect(config()).toEqual({ subject: "Rhythm Corps (the Detroit band)", include: ["reissues", "new music"], shows: true });
+    // The API sets notes, and an empty one clears them; too long is refused.
+    const tokenFirst = await makeToken({ plugin: w.plugin, sent: w.sent }, larry);
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token: tokenFirst, body: { notes: "flag shows near December 12" } })).status).toBe(200);
+    expect(config()).toMatchObject({ notes: "flag shows near December 12" });
+    // A PATCH that leaves notes out keeps them.
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token: tokenFirst, body: { every: 4 } })).status).toBe(200);
+    expect(config()).toMatchObject({ notes: "flag shows near December 12" });
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token: tokenFirst, body: { notes: "x".repeat(MAX_NOTES_CHARS + 1) } })).status).toBe(400);
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token: tokenFirst, body: { notes: "" } })).status).toBe(200);
+    expect(config()).not.toHaveProperty("notes");
 
     // The API: a PATCH takes the same fields; a POST makes one.
     const token = await makeToken({ plugin: w.plugin, sent: w.sent }, larry);
@@ -177,6 +197,11 @@ describe("/news through city-hall", () => {
     const on = await setup();
     const larry = await signIn(on.plugin, LARRY);
     expect(await (await call(on.plugin, "GET", "/", { jar: larry })).text()).toContain('href="/tracker/new/news"');
+    // A new watch from the web keeps its notes.
+    const csrf = await csrfOf(on.plugin, larry);
+    const made = await call(on.plugin, "POST", "/new/news", { jar: larry, origin: ORIGIN, form: { csrf, subject: "Platinum Blonde", notes: "a gift for Anne", shows: "no", every: "" } });
+    expect(made.status).toBe(303);
+    expect(JSON.parse(query<{ config: string }>(on.dbPath, "SELECT config FROM tasks")[0]?.config ?? "")).toEqual({ subject: "Platinum Blonde", notes: "a gift for Anne" });
     await cleanup();
     const off = await setup({});
     const jar = await signIn(off.plugin, LARRY);

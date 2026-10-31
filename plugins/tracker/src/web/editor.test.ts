@@ -866,9 +866,10 @@ describe("the gates", () => {
     const worst = (fields: readonly Field[]) =>
       new URLSearchParams({ csrf: "x".repeat(43), ...Object.fromEntries(fields.map((f) => [f.name, "あ".repeat(f.maxlength ?? 32)])) }).toString().length;
     const forms = [...NEW_TYPES.map((t) => fieldsFor(t, "new")), ...EDITOR_TYPES.map((t) => fieldsFor(t, "edit"))];
-    // Research (a question and its context) is the longest; were docket-types to raise its limits
-    // past the cap, a legitimate request would get a bare "Bad request" and lose what was typed.
-    expect(Math.max(...forms.map(worst))).toBe(worst(fieldsFor("research", "new")));
+    // The news watch (its kinds, how to tell it apart and its notes) is the longest since 0.41.0;
+    // were docket-types to raise its limits past the cap, a legitimate request would get a bare
+    // "Bad request" and lose what was typed.
+    expect(Math.max(...forms.map(worst))).toBe(worst(fieldsFor("news", "new")));
     for (const fields of forms) expect(worst(fields)).toBeLessThanOrEqual(MAX_FORM_BYTES);
   });
 

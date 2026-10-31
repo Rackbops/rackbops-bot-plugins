@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-30T04:39:36.213Z",
+  "generatedAt": "2026-10-30T21:31:49.506Z",
   "plugins": [
     {
       "name": "mcp",
@@ -200,7 +200,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.40.0",
+      "version": "0.41.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout and a news watch (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, eBay through eBay's own Browse API once its keys are set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /news, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, a JSON task API with personal API tokens, and a plain-language intake: DM Clerk what you want in your own words, answer its questions, and press Save on the draft it shows",
       "hostApiVersion": 1,
       "intents": [
@@ -379,6 +379,12 @@
       ],
       "releases": [
         {
+          "version": "0.41.0",
+          "publishedAt": "2026-10-30T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.41.0",
+          "notes": "### Added\n\n- Notes on a news watch (docket#86, for the Platinum Blonde and Rhythm Corps pilots of #368). `/news new` and `/news edit` take `notes`: in your own words, what is worth sending -- who it is for, what to skip, what to point out -- at most 500 characters; `-` clears it on an edit. Both the search and the review read it. The web editor and the task API take it on a new watch and an edit (an empty one clears it), `settings.notes` reads it back, and `GET /types` lists it.\n- A news DM shows each item's release date, price and availability when the search finds them, and a Note: line for what your notes ask to point out; the review drops an item with a detail its page does not bear out.\n\n### Changed\n\n- A news DM shows no link but each item's page and a show's tickets: a summary, date, detail or show field holding a link is left out, and an item whose title holds one is not sent. Needs docket 0.21.0.\n\n### Schema\n\n- No change. Still at 13."
+        },
+        {
           "version": "0.40.0",
           "publishedAt": "2026-10-30T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.40.0",
@@ -431,12 +437,6 @@
           "publishedAt": "2026-10-20T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.33.0",
           "notes": "### Added\n\n- `/want source: ebay` searches eBay through eBay's own Browse API when `TRACKER_EBAY_CLIENT_ID` and `TRACKER_EBAY_CLIENT_SECRET` are set (an eBay developer Production keyset's App ID and Cert ID). Each look is one search of eBay US, the newest fifty listings, at or under your top price, and a listing counts only when its title has every word you are watching for. The DM shows the price (an auction's current bid, or its Buy It Now price when it has one), the condition and the seller's name, feedback percentage and score. It looks every hour by default. eBay US prices in USD, so such a watch takes no other `currency`.\n- Such a watch keeps no eBay data: no listing is stored in its history, the stored copy of each DM is cleared six hours after the run, and it is never checked by the model, whatever `judge` says. A DM still owed after six hours keeps its first line and links eBay's own search instead of the listings. That lets the eBay keyset opt out of eBay's account-deletion notices, which eBay allows only for apps that keep no eBay data. No eBay page is ever opened, and a judged inbox eBay watch opens none either. Without the keys, `source: ebay` is an inbox watch as before, and a watch made before the keys were set stays one. On docket 0.13.0.\n\n### Schema\n\n- No change. Still at 11."
-        },
-        {
-          "version": "0.32.0",
-          "publishedAt": "2026-10-19T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.32.0",
-          "notes": "### Added\n\n- `/want source: shopify` watches Shopify stores for new copies in stock, at or under your top price, and DMs the new ones like any watch. `target` is the words to search for (the name when empty), and a product counts only when its title has every word. It looks once a day by default and never more often, since each look is one Firecrawl search (5 credits). It needs `TRACKER_FIRECRAWL_KEY`; without it, `source: shopify` is refused. The web editor and the task API take `shopify` as a source too. Not published on its own: it ships in 0.33.1, on docket 0.13.0.\n\n### Schema\n\n- No change. Still at 11."
         }
       ]
     },
