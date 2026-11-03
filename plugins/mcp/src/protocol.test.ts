@@ -134,12 +134,12 @@ describe("validateCreateRequest: post target", () => {
   test("refuses an undeclared destination", () => {
     expect(validateCreateRequest(validPost({ target: { guild_id: GUILD, destination: "spam" } }))).toEqual({
       ok: false,
-      reason: "target.destination must be one of alerts, deals, digest, ops",
+      reason: "target.destination must be one of alerts, deals, digest, ops, agent-chat",
     });
   });
 
   test("accepts every declared destination", () => {
-    for (const destination of ["alerts", "deals", "digest", "ops"]) {
+    for (const destination of ["alerts", "deals", "digest", "ops", "agent-chat"]) {
       expect(validateCreateRequest(validPost({ target: { guild_id: GUILD, destination } }))).toMatchObject({ ok: true });
     }
   });
@@ -260,6 +260,7 @@ describe("capabilitiesResponse", () => {
     { destination: "deals", description: "Notable deals or opportunities" },
     { destination: "digest", description: "Periodic summaries" },
     { destination: "ops", description: "Operational status and infrastructure notices" },
+    { destination: "agent-chat", description: "Agent-to-agent conversation (read back with discord-mcp's read_messages)" },
   ];
 
   test("matches the literal wire shape, full JSON, for every combination of flags", () => {

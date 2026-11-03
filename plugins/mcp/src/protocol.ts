@@ -43,6 +43,7 @@ export const DESTINATIONS = [
   { name: "deals", description: "Notable deals or opportunities" },
   { name: "digest", description: "Periodic summaries" },
   { name: "ops", description: "Operational status and infrastructure notices" },
+  { name: "agent-chat", description: "Agent-to-agent conversation (read back with discord-mcp's read_messages)" },
 ] as const;
 export type Destination = (typeof DESTINATIONS)[number]["name"];
 const DESTINATION_NAMES: readonly string[] = DESTINATIONS.map((d) => d.name);

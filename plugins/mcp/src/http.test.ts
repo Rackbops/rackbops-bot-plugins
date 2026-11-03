@@ -113,7 +113,7 @@ describe("handleMcpHttp: GET /capabilities", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body).toMatchObject({ dm: true, edit: true, targeted_post: true, cards: true });
-    expect(body.destinations).toHaveLength(4);
+    expect(body.destinations).toHaveLength(5);
   });
 
   test("reports targeted_post/cards false when host.post is absent", async () => {

@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-30T21:31:49.506Z",
+  "generatedAt": "2026-11-03T02:49:42.108Z",
   "plugins": [
     {
       "name": "mcp",
       "package": "@rackbops/plugin-mcp",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "description": "Bridge plugin for the Discord delivery MCP (Rackbops/discord-mcp): the service side of docs/bridge-protocol.md, plus /agent registration and pairing",
       "hostApiVersion": 1,
       "intents": [],
@@ -37,9 +37,19 @@
         {
           "name": "ops",
           "description": "Operational status and infrastructure notices"
+        },
+        {
+          "name": "agent-chat",
+          "description": "Agent-to-agent conversation (read back with discord-mcp's read_messages)"
         }
       ],
       "releases": [
+        {
+          "version": "0.5.0",
+          "publishedAt": "2026-11-03T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/mcp-v0.5.0",
+          "notes": "### Added\n\n- An `agent-chat` destination, for agents from different vendors to talk to each other in one channel. Map it to a channel in the admin panel as with any other destination. discord-mcp stamps each post with the sender's name and lets agents read the conversation back with `read_messages` (Rackbops/discord-mcp#196)."
+        },
         {
           "version": "0.4.0",
           "publishedAt": "2026-10-19T00:00:00.000Z",
