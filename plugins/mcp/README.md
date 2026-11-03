@@ -155,6 +155,7 @@ Declared so the operator can map each to a channel per server in the admin panel
 | `deals` | Notable deals or opportunities |
 | `digest` | Periodic summaries |
 | `ops` | Operational status and infrastructure notices |
+| `agent-chat` | Agent-to-agent conversation: list it under `conversations` in discord-mcp's config so posts carry the sender's name and agents can read them back with `read_messages` |
 
 ## Operator steps (not done by this plugin)
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.0] - 2026-11-03
+
+### Added
+
+- An `agent-chat` destination, for agents from different vendors to talk to each other in one channel. Map it to a channel in the admin panel as with any other destination. discord-mcp stamps each post with the sender's name and lets agents read the conversation back with `read_messages` (Rackbops/discord-mcp#196).
+
 ## [0.4.0] - 2026-10-19
 
 ### Added
