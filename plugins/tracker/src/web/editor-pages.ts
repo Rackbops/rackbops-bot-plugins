@@ -185,7 +185,7 @@ export function fieldsFor(type: NewType, mode: Mode, surface: Surface = "web"): 
             label: "Check listings with the model",
             kind: "select",
             options: JUDGE_OPTIONS,
-            help: "Each check counts against your daily model budget. Needs the model runner; fixed once the watch is made. When unset, yes whenever the model runner is set up, and no when you give words to double-check.",
+            help: "Each check counts against your daily model budget. Needs the model runner; fixed once the watch is made. Choose no to give words to double-check below.",
           } as const,
         ]
         : []),

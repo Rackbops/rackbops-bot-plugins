@@ -238,7 +238,7 @@ describe("a judged eBay watch (tracker 0.42.0: city-hall forgets its Job, Rackbo
     const w = await ebayJudged();
     const notes = "Only a campaign expansion; an investigator deck alone is not a match.";
     const made = await slash(w.plugin, "want", LARRY, { strings: { name: "Dunwich", source: "ebay", notes } });
-    expect(made).toContain("the model checks each new listing from what eBay's API says, and city-hall erases that check's Job once it ends, within 6 hours");
+    expect(made).toContain("the model checks each new listing from what eBay's API says, and city-hall erases that check's Job soon after it ends, within 6 hours");
     const [task] = query<{ type: string; config: string }>(w.dbPath, "SELECT type, config FROM tasks");
     expect(task?.type).toBe("wantjudge");
     expect(JSON.parse(task?.config ?? "{}")).toMatchObject({ source: "ebay", notes });
@@ -265,5 +265,33 @@ describe("a judged eBay watch (tracker 0.42.0: city-hall forgets its Job, Rackbo
     expect(config()[0]?.notes).toBeUndefined();
     // A plain watch's edit has no notes field at all.
     expect((await api(w.plugin, "PATCH", "/tasks/t2", { token, body: { notes: "x" } })).status).toBe(400);
+  });
+
+  it("against a city-hall that does not forget: one Job lands there, then runs are held and nothing goes out unchecked", async () => {
+    const city = fakeCityHall();
+    const old = (async (input: string | URL | Request, init?: RequestInit) => {
+      const r = await city.fetchImpl(input, init);
+      const b = (await r.json()) as { job?: Record<string, unknown> };
+      if (b.job) delete b.job.forgottenAt;
+      return Response.json(b, { status: r.status });
+    }) as typeof fetch;
+    const { ebayFetch } = ebayApi([{ id: "123456789012", title: "Arkham Horror Dunwich Legacy Campaign Expansion", price: "39.99", seller: "boardgame_bin" }]);
+    const work: Promise<void>[] = [];
+    const w = await world({
+      env: { ...CITY_HALL, TRACKER_EBAY_CLIENT_ID: "app-id", TRACKER_EBAY_CLIENT_SECRET: "cert-id" },
+      cityHallFetch: old,
+      ebayFetch,
+      executeStarted: (p) => void work.push(p),
+      fetch: shop([]).fetch,
+    });
+    await people(w.plugin);
+    await slash(w.plugin, "want", LARRY, { strings: { name: "Dunwich", source: "ebay" } });
+    for (let i = 0; i < 30; i++) {
+      for (const t of w.plugin.ticks ?? []) await t.run(new AbortController().signal);
+      await Promise.all(work.splice(0));
+      w.clock.advance(i === 15 ? 3600_000 : 61_000);
+    }
+    expect(city.jobs.size).toBe(1);
+    expect(dmsTo(w.sent, LARRY).filter((c) => c.startsWith("Dunwich"))).toEqual([]);
   });
 });

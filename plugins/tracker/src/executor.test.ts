@@ -726,12 +726,16 @@ describe("a Job city-hall must forget (a judged eBay watch's, Rackbops/city-hall
     expect(w.seen[1]?.body).not.toHaveProperty("forgetAfterSeconds");
   });
 
-  it("refuses to go on when city-hall does not forget (no forgottenAt), and tells the admins", async () => {
-    const w = setup(() => json(201, { job: job("queued") }), false, undefined, forgetO7);
-    const err = await thrown(w.executor.run(SPEC, "o7", "o7"));
-    expect(err).toBeInstanceOf(Error);
-    expect(err).not.toBeInstanceOf(JobPendingError);
-    expect(err).not.toBeInstanceOf(ExecutorUnavailableError);
+  it("holds the run when city-hall does not forget (no forgottenAt), tells the admins, and sends no such Job again", async () => {
+    const forgetAll = (id: string) => (id === "o9" ? undefined : 21_600);
+    const w = setup(() => json(201, { job: job("queued") }), false, undefined, forgetAll);
+    expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    // The next Job that must be forgotten (the retry, or the next batch) never reaches city-hall.
+    expect(await thrown(w.executor.run(SPEC, "o8", "o8"))).toBeInstanceOf(ExecutorUnavailableError);
+    expect(w.seen).toHaveLength(1);
+    // A Job that need not be forgotten still goes.
+    expect(await thrown(w.executor.run(SPEC, "o9", "o9"))).toBeInstanceOf(JobPendingError);
+    expect(w.seen).toHaveLength(2);
     expect(w.notices.map((n) => n.key)).toEqual(["city-hall:no-forget"]);
     expect(w.logs.some((l) => l.startsWith("error ") && l.includes("does not forget"))).toBe(true);
     expect(w.logs.join("\n")).not.toContain(PROMPT);
@@ -744,7 +748,19 @@ describe("a Job city-hall must forget (a judged eBay watch's, Rackbops/city-hall
   });
 
   it("reads forgottenAt as city-hall's say that it forgets, null included", () => {
-    expect(readJob({ job: job("done", { forgottenAt: null }) })?.forgets).toBe(true);
-    expect(readJob({ job: job("done") })?.forgets).toBe(false);
+    expect(readJob({ job: job("done", { forgottenAt: null }) })).toMatchObject({ forgets: true, forgotten: false });
+    expect(readJob({ job: job("done") })).toMatchObject({ forgets: false, forgotten: false });
+    expect(readJob({ job: job("done", { forgottenAt: "2026-11-08T00:15:00.000Z" }) })?.forgotten).toBe(true);
+  });
+
+  it("names a job city-hall forgot: a result read too late, and a resubmit under its key", async () => {
+    const records = new JobRecords(openDatabase(":memory:"));
+    const gone = job("done", { forgottenAt: "2026-11-08T00:15:00.000Z", spec: { prompt: "" } });
+    const late = setup(() => json(200, { job: gone }), false, records);
+    records.put("o7", "o7", "j-1", NOW.toISOString());
+    expect(await late.executor.run(null, "o7", "o7")).toMatchObject({ kind: "error", detail: "city-hall forgot the job before the tracker read its result" });
+    const again = setup(() => json(200, { job: gone }), false, undefined, forgetO7);
+    expect(String(await thrown(again.executor.run(SPEC, "o7", "o7")))).toContain("city-hall already forgot the job for o7");
+    expect(again.logs.some((l) => l.includes("whose prompt is not this one"))).toBe(false);
   });
 });

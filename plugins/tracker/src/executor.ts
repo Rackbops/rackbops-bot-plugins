@@ -357,6 +357,8 @@ export interface RemoteJob {
    * Rackbops/city-hall#6 does, and only that one honours `forgetAfterSeconds`.
    */
   forgets: boolean;
+  /** Whether city-hall has erased the job (`forgottenAt` set): its spec and result are gone. */
+  forgotten: boolean;
 }
 
 function lastRunOutcome(runs: unknown): string | null {
@@ -386,6 +388,7 @@ export function readJob(body: unknown): RemoteJob | null {
     lastOutcome,
     attempts: num(j.attempts) ?? null,
     forgets: "forgottenAt" in j,
+    forgotten: typeof j.forgottenAt === "string",
   };
 }
 
@@ -424,7 +427,12 @@ export function answerFor(job: RemoteJob): JobResult {
   if (job.status === "queued" || job.status === "running") throw new JobPendingError(`city-hall job is ${job.status}`);
   const result = readJobResult(job.result);
   if (job.status === "done") {
-    return result ?? { kind: "error", detail: "city-hall returned a result the tracker could not read", durationMs: 0 };
+    if (result) return result;
+    return {
+      kind: "error",
+      detail: job.forgotten ? "city-hall forgot the job before the tracker read its result" : "city-hall returned a result the tracker could not read",
+      durationMs: 0,
+    };
   }
   if (result && result.kind !== "success") return result;
   return { kind: "error", detail: clipDetail(`city-hall: ${job.error ?? "the job failed"}`), durationMs: 0 };
@@ -460,6 +468,8 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
   const fetchImpl = o.fetchImpl ?? fetch;
   const timeoutMs = o.timeoutMs ?? CITY_HALL_TIMEOUT_MS;
   const lastLogged = new Map<string, number>();
+  /** city-hall answered a Job that must be forgotten without `forgottenAt`: it does not forget. */
+  let noForget = false;
 
   /** A credential, edge or network problem, logged once an hour per reason. */
   function warnOnce(reason: string, text: string) {
@@ -593,6 +603,9 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
     async run(spec: JobSpec | null, occurrenceId: string, jobKey: string): Promise<JobResult> {
       if (spec !== null) {
         const forget = o.forgetSeconds?.(occurrenceId);
+        // Once city-hall has shown it does not forget, no Job that must be forgotten is sent again
+        // until the bot restarts: the run is held (unavailable, uncharged), never sent unchecked.
+        if (forget !== undefined && noForget) throw new ExecutorUnavailableError("city-hall does not forget Jobs");
         const { job, status } = await call("POST", "/api/execute/jobs", "POST /api/execute/jobs", jobKey, {
           key: jobKeyFor(o.databaseId, jobKey),
           capability: o.config.capability,
@@ -600,16 +613,22 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
           responder: RESPONDER,
           ...(forget !== undefined ? { forgetAfterSeconds: forget } : {}),
         });
-        // A city-hall from before city-hall#6 ignores the field and keeps the Job: say so loudly and
-        // fail this run, so no judged eBay watch goes on as if its listings were forgotten.
+        // A city-hall from before city-hall#6 ignores the field and keeps this one Job: say so loudly,
+        // and hold this run and every later one that must be forgotten (`noForget`) until the bot
+        // restarts, so no second Job goes there and no listing is sent unchecked for it.
         if (forget !== undefined && !job.forgets) {
-          const text = `city-hall does not forget Jobs (it sent no forgottenAt): job ${job.id} for ${jobKey} carries eBay listings it will keep; deploy Rackbops/city-hall#6 before judged eBay watches run`;
+          noForget = true;
+          const text = `city-hall does not forget Jobs (it sent no forgottenAt): job ${job.id} for ${jobKey} carries eBay listings it will keep; judged eBay watches wait until Rackbops/city-hall#6 is deployed and the bot restarted`;
           o.log.error(`execute: ${text}`);
           await tellAdmins("city-hall:no-forget", text);
-          throw new Error(`city-hall cannot forget the Job for ${jobKey}`);
+          throw new ExecutorUnavailableError("city-hall does not forget Jobs");
         }
         // A key city-hall already knew: it must be this Job, the same prompt, or it is someone else's.
         if (status === 200 && job.prompt !== spec.prompt) {
+          if (job.forgotten) {
+            o.log.warn(`execute: city-hall already forgot its job ${job.id} for ${jobKey}; refusing it`);
+            throw new Error(`city-hall already forgot the job for ${jobKey}`);
+          }
           o.log.error(`execute: city-hall answered ${jobKey} with an existing job ${job.id} whose prompt is not this one; refusing it`);
           throw new Error(`city-hall's job for ${jobKey} is not this Job (another prompt under the same key)`);
         }
