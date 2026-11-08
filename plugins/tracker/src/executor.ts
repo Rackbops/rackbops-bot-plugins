@@ -619,9 +619,9 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
         // and send no other Job that must be forgotten (`noForget`) until the bot restarts.
         if (forget !== undefined && !job.forgets) {
           noForget = true;
-          const text = `city-hall does not forget Jobs (it sent no forgottenAt): job ${job.id} for ${jobKey} carries eBay listings it will keep, so remove it from city-hall's database by hand; until Rackbops/city-hall#6 is deployed and the bot restarted, judged eBay watches send their listings unchecked`;
+          const text = `city-hall does not forget Jobs (it sent no forgottenAt): job ${job.id} for ${jobKey} carries eBay listings it will keep, so remove it from city-hall's database by hand before a runner takes it; until Rackbops/city-hall#6 is deployed and the bot restarted, judged eBay watches send their listings unchecked`;
           o.log.error(`execute: ${text}`);
-          await tellAdmins("city-hall:no-forget", text);
+          await tellAdmins(`city-hall:no-forget:${job.id}`, text);
           throw new Error("city-hall does not forget Jobs");
         }
         // A key city-hall already knew: it must be this Job, the same prompt, or it is someone else's.

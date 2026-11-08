@@ -741,7 +741,7 @@ describe("a Job city-hall must forget (a judged eBay watch's, Rackbops/city-hall
     // A Job that need not be forgotten still goes.
     expect(await thrown(w.executor.run(SPEC, "o9", "o9"))).toBeInstanceOf(JobPendingError);
     expect(w.seen).toHaveLength(2);
-    expect(w.notices.map((n) => n.key)).toEqual(["city-hall:no-forget"]);
+    expect(w.notices.map((n) => n.key)).toEqual(["city-hall:no-forget:j-1"]);
     expect(w.logs.some((l) => l.startsWith("error ") && l.includes("does not forget"))).toBe(true);
     expect(w.logs.join("\n")).not.toContain(PROMPT);
   });
