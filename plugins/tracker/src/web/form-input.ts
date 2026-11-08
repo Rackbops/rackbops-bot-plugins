@@ -126,7 +126,7 @@ export function newsEdit(form: URLSearchParams): NewsEdit {
   };
 }
 
-/** `/want`'s options: an empty target, max, currency, exclude, confirm, unconfirmed or hours is left out, as an unset option is. */
+/** `/want`'s options: an empty target, max, currency, exclude, confirm, unconfirmed, notes or hours is left out, as an unset option is. */
 export function wantInput(form: URLSearchParams): WantInput {
   const target = opt(form, "target");
   const exclude = opt(form, "exclude");
@@ -136,6 +136,7 @@ export function wantInput(form: URLSearchParams): WantInput {
   const currency = opt(form, "currency");
   const hours = int(form, "hours");
   const judge = opt(form, "judge");
+  const notes = lines(opt(form, "notes"));
   return {
     name: str(form, "name"),
     source: str(form, "source") || "page",
@@ -147,11 +148,12 @@ export function wantInput(form: URLSearchParams): WantInput {
     ...(exclude !== undefined ? { exclude } : {}),
     ...(confirm !== undefined ? { confirm } : {}),
     ...(unconfirmed !== undefined ? { unconfirmed } : {}),
+    ...(notes !== undefined ? { notes } : {}),
     ...(hours !== undefined ? { hours } : {}),
   };
 }
 
-/** A watch's edit: an empty name or hours keeps the watch's; a sent empty `max`, `currency`, `exclude`, `confirm` or `unconfirmed` clears it. */
+/** A watch's edit: an empty name or hours keeps the watch's; a sent empty `max`, `currency`, `exclude`, `confirm`, `unconfirmed` or `notes` clears it. */
 export function wantEdit(form: URLSearchParams): WantEdit {
   const name = opt(form, "name");
   const hours = int(form, "hours");
@@ -162,6 +164,7 @@ export function wantEdit(form: URLSearchParams): WantEdit {
     ...(form.has("exclude") ? { exclude: str(form, "exclude") } : {}),
     ...(form.has("confirm") ? { confirm: str(form, "confirm") } : {}),
     ...(form.has("unconfirmed") ? { unconfirmed: str(form, "unconfirmed") } : {}),
+    ...(form.has("notes") ? { notes: lines(str(form, "notes")) ?? "" } : {}),
     ...(hours !== undefined ? { hours } : {}),
   };
 }
@@ -271,7 +274,7 @@ export function editValues(d: Pick<TrackerDeps, "clock">, user: User, task: Task
     const c = task.config as WantConfig;
     const every = task.schedule?.kind === "poll" ? task.schedule.every : "";
     const exclude = Array.isArray(c.exclude) ? c.exclude.filter((e) => typeof e === "string").join(", ") : "";
-    return { name: task.title, max: c.maxPrice !== undefined ? String(c.maxPrice) : "", currency: c.currency ?? "", exclude, confirm: wordsText(c.confirm), unconfirmed: wordsText(c.unconfirmed), hours: String(every) };
+    return { name: task.title, max: c.maxPrice !== undefined ? String(c.maxPrice) : "", currency: c.currency ?? "", exclude, confirm: wordsText(c.confirm), unconfirmed: wordsText(c.unconfirmed), notes: typeof c.notes === "string" ? c.notes : "", hours: String(every) };
   }
   if (task.type !== "price") return {};
   const c = task.config as PriceConfig;

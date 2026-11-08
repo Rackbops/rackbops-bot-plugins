@@ -21,7 +21,7 @@ import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./resear
 import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
 import { createNews, DEFAULT_NEWS_EVERY, editNews, MAX_INCLUDE_TEXT, MAX_NEWS_EVERY, type NewsInput } from "./news.js";
 import { createScout, DEFAULT_SCOUT_EVERY, editScout, MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "./scout.js";
-import { type BaselineRule, MAX_DISAMBIGUATE_CHARS, MAX_FOR_CHARS, MAX_NOTES_CHARS, MAX_SCOUT_NOTES, MAX_SUBJECT_CHARS, type RenewalDecision } from "@rackbops/docket-types";
+import { type BaselineRule, MAX_DISAMBIGUATE_CHARS, MAX_FOR_CHARS, MAX_NOTES_CHARS, MAX_SCOUT_NOTES, MAX_SUBJECT_CHARS, MAX_WANT_NOTES, type RenewalDecision } from "@rackbops/docket-types";
 import {
   EPHEMERAL,
   FAILED,
@@ -477,6 +477,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           .addStringOption((o) => o.setName("exclude").setDescription("Leave out listings whose title has any of these words, separated by commas").setMaxLength(MAX_EXCLUDE_TEXT))
           .addStringOption((o) => o.setName("confirm").setDescription("Double-check a listing whose title has none of these words, e.g. campaign").setMaxLength(MAX_CONFIRM_TEXT))
           .addStringOption((o) => o.setName("unconfirmed").setDescription("Then leave it out if it has any of these, e.g. investigator").setMaxLength(MAX_CONFIRM_TEXT))
+          .addStringOption((o) => o.setName("notes").setDescription("For a model-checked watch: what counts, what to skip, in your words").setMaxLength(MAX_WANT_NOTES))
           .addIntegerOption((o) =>
             o
               .setName("hours")
@@ -494,6 +495,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
           const exclude = interaction.options.getString("exclude");
           const confirm = interaction.options.getString("confirm");
           const unconfirmed = interaction.options.getString("unconfirmed");
+          const notes = interaction.options.getString("notes");
           const hours = interaction.options.getInteger("hours");
           return wantCommand(d, user, {
             name: interaction.options.getString("name", true),
@@ -504,6 +506,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             ...(exclude !== null ? { exclude } : {}),
             ...(confirm !== null ? { confirm } : {}),
             ...(unconfirmed !== null ? { unconfirmed } : {}),
+            ...(notes !== null ? { notes } : {}),
             ...(hours !== null ? { hours } : {}),
             ...(judge !== null ? { judge } : {}),
           });

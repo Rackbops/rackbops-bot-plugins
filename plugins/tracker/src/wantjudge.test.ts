@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
-import { JUDGE_OFF } from "./want.js";
+import { JUDGE_OFF, NOTES_LONG, NOTES_PLAIN } from "./want.js";
 import { shopSearch } from "./want-fixtures.js";
 import { CITY_HALL, dmsTo, fakeCityHall, query, success } from "./web/execute-harness.js";
 import { api, call, cleanup, csrfOf, LARRY, makeToken, ORIGIN, people, signIn, slash, world } from "./web/harness.js";
@@ -185,5 +185,85 @@ describe("/want with the model runner", () => {
     const offToken = await makeToken(off, await signIn(off.plugin, LARRY));
     const refused = await api(off.plugin, "POST", "/tasks", { token: offToken, body: { type: "wantlist", name: "Oceania", source: "page", target: SHOP, judge: "yes" } });
     expect(refused.status).toBe(503);
+  });
+});
+
+/** eBay's Browse API with the given listings: the token, the search, and getItem by item id. */
+function ebayApi(listings: { id: string; title: string; price: string; seller: string }[]) {
+  const calls: string[] = [];
+  const summary = (l: (typeof listings)[number]) => ({
+    itemId: `v1|${l.id}|0`,
+    title: l.title,
+    price: { value: l.price, currency: "USD" },
+    condition: "New",
+    itemWebUrl: `https://www.ebay.com/itm/${l.id}`,
+    seller: { username: l.seller, feedbackPercentage: "99.6", feedbackScore: 4821 },
+    buyingOptions: ["FIXED_PRICE"],
+  });
+  const ebayFetch = (async (url: string) => {
+    calls.push(url);
+    if (url.endsWith("/identity/v1/oauth2/token")) return new Response(JSON.stringify({ access_token: "app-token", expires_in: 7200 }), { status: 200 });
+    const m = /\/buy\/browse\/v1\/item\/v1%7C(\d+)%7C0/.exec(url);
+    if (m) {
+      const l = listings.find((x) => x.id === m[1]);
+      return l ? new Response(JSON.stringify(summary(l)), { status: 200 }) : new Response("{}", { status: 404 });
+    }
+    return new Response(JSON.stringify({ total: listings.length, itemSummaries: listings.map(summary) }), { status: 200 });
+  }) as unknown as typeof fetch;
+  return { calls, ebayFetch };
+}
+
+describe("a judged eBay watch (tracker 0.42.0: city-hall forgets its Job, Rackbops/city-hall#6)", () => {
+  async function ebayJudged() {
+    const city = fakeCityHall();
+    const { ebayFetch } = ebayApi([{ id: "123456789012", title: "Arkham Horror Card Game Dunwich Legacy Campaign Expansion", price: "39.99", seller: "boardgame_bin" }]);
+    const work: Promise<void>[] = [];
+    const w = await world({
+      env: { ...CITY_HALL, TRACKER_EBAY_CLIENT_ID: "app-id", TRACKER_EBAY_CLIENT_SECRET: "cert-id" },
+      cityHallFetch: city.fetchImpl,
+      ebayFetch,
+      executeStarted: (p) => void work.push(p),
+      fetch: shop([]).fetch,
+    });
+    await people(w.plugin);
+    const round = async () => {
+      for (const t of w.plugin.ticks ?? []) await t.run(new AbortController().signal);
+      await Promise.all(work.splice(0));
+      w.clock.advance(61_000);
+    };
+    return { ...w, city, round };
+  }
+
+  it("is judged by default, asks city-hall to forget its Job within six hours, and gives the model its notes", async () => {
+    const w = await ebayJudged();
+    const notes = "Only a campaign expansion; an investigator deck alone is not a match.";
+    const made = await slash(w.plugin, "want", LARRY, { strings: { name: "Dunwich", source: "ebay", notes } });
+    expect(made).toContain("the model checks each new listing from what eBay's API says, and city-hall erases that check's Job once it ends, within 6 hours");
+    const [task] = query<{ type: string; config: string }>(w.dbPath, "SELECT type, config FROM tasks");
+    expect(task?.type).toBe("wantjudge");
+    expect(JSON.parse(task?.config ?? "{}")).toMatchObject({ source: "ebay", notes });
+    for (let i = 0; i < 6 && w.city.jobs.size === 0; i++) await w.round();
+    const job = w.city.latest();
+    expect(job?.forgetAfterSeconds).toBe(21_600);
+    expect(job?.spec.prompt).toContain(notes);
+    expect(job?.spec.prompt).toContain("Dunwich Legacy Campaign Expansion");
+  });
+
+  it("refuses notes on a plain watch and past their limit, and edits and clears them on a judged one", async () => {
+    const w = await ebayJudged();
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "D", source: "ebay", notes: "x" }, booleans: { judge: false } })).toBe(NOTES_PLAIN);
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "D", source: "ebay", notes: "x".repeat(501) } })).toBe(NOTES_LONG);
+    await slash(w.plugin, "want", LARRY, { strings: { name: "D", source: "ebay", notes: "first" } });
+    await slash(w.plugin, "want", LARRY, { strings: { name: "P", source: "ebay" }, booleans: { judge: false } });
+    const token = await makeToken(w, await signIn(w.plugin, LARRY));
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { notes: "second" } })).status).toBe(200);
+    const config = () => query<{ config: string }>(w.dbPath, "SELECT config FROM tasks ORDER BY seq").map((r) => JSON.parse(r.config) as { notes?: string });
+    expect(config()[0]?.notes).toBe("second");
+    const read = (await (await api(w.plugin, "GET", "/tasks/t1", { token })).json()) as { task: { settings: Record<string, unknown> } };
+    expect(read.task.settings.notes).toBe("second");
+    expect((await api(w.plugin, "PATCH", "/tasks/t1", { token, body: { notes: "-" } })).status).toBe(200);
+    expect(config()[0]?.notes).toBeUndefined();
+    // A plain watch's edit has no notes field at all.
+    expect((await api(w.plugin, "PATCH", "/tasks/t2", { token, body: { notes: "x" } })).status).toBe(400);
   });
 });

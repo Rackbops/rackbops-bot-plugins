@@ -34,6 +34,30 @@ export function ebayForgottenText(firstLine: string, words: string, max?: number
   );
 }
 
+/**
+ * How long city-hall may keep a judged eBay watch's Job, in seconds: its prompt carries the
+ * listings for the model to check, so city-hall erases it once it ends and never past eBay's six
+ * hours (Rod, 2026-11-08: "Queue wipes eBay jobs"; Rackbops/city-hall#6 `forgetAfterSeconds`).
+ */
+export const EBAY_JOB_FORGET_SECONDS = EBAY_KEEP_MS / 1000;
+
+/**
+ * `EBAY_JOB_FORGET_SECONDS` when occurrence `occurrenceId` (`o<seq>`) is a run of a judged eBay
+ * watch, else undefined. A plain watch sends no Job. A judged `ebay` watch fed through the inbox
+ * (no eBay keys) is forgotten the same way: the rule is kept by source, not by route.
+ */
+export function ebayJobForgetSeconds(db: Database, occurrenceId: string): number | undefined {
+  const m = /^o(\d+)$/.exec(occurrenceId);
+  if (!m) return undefined;
+  const row = db
+    .query(
+      `SELECT 1 AS one FROM occurrences o JOIN tasks t ON o.task_id = 't' || t.seq
+         WHERE o.seq = ? AND t.type = 'wantjudge' AND json_extract(t.config, '$.source') = 'ebay'`,
+    )
+    .get(Number(m[1])) as { one: number } | null;
+  return row ? EBAY_JOB_FORGET_SECONDS : undefined;
+}
+
 interface Row {
   seq: number;
   record: string;

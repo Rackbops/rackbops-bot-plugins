@@ -3,6 +3,7 @@ import {
   EXCLUDE_CHARS,
   isEbayHost,
   MAX_EXCLUDE,
+  MAX_WANT_NOTES,
   money,
   pageSource,
   parseBggThingId,
@@ -65,8 +66,8 @@ import { CURRENCY_LENGTH, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_TITLE, MAX_URL
  *
  * A watch is judged (docket-types' `wantjudge`: the model looks at each new listing before it is DMed)
  * whenever the model runner is set up (`d.research`), unless the owner says `judge: false`; without
- * the runner it is a plain watch, and `judge: true` is refused. An eBay API watch is never judged (see
- * `startWant`). Which it is stays fixed once made,
+ * the runner it is a plain watch, and `judge: true` is refused. An eBay API watch may be judged since
+ * tracker 0.42.0: city-hall erases its Job once it ends (`startWant`). Which it is stays fixed once made,
  * since a task's type is: to change it, make a new watch.
  *
  * `exclude` (docket#77, the Arkham pilot of rackbops-bot-plugins#368): words or phrases, one
@@ -81,7 +82,11 @@ import { CURRENCY_LENGTH, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_TITLE, MAX_URL
  * form. A listing whose title has no `confirm` word is read in full where its source can (eBay's
  * getItem), then told if that has one, ruled out if its title or full listing has an `unconfirmed`
  * word, and otherwise told marked to check. Plain watches only: a judged watch's listings are the
- * model's to check (an eBay API watch is never judged, so it takes them whatever `judge` says).
+ * model's to check; a watch with them is plain unless `judge` is given.
+ *
+ * `notes` (docket 0.22.0, L3 of #368): a judged watch's notes for the model, in the owner's words
+ * (`notesPlan`): what counts, what to skip. Editable, cleared by an empty field or `-`; refused on a
+ * plain watch.
  * `unconfirmed` needs `confirm`; for a Shopify or eBay-API watch, a one-word `confirm` entry that it
  * searches for is refused, since every listing it finds would confirm.
  */
@@ -134,6 +139,8 @@ export interface WantInput {
   unconfirmed?: string;
   /** Whether the model looks at each new listing first; left out, it does whenever it can. */
   judge?: boolean;
+  /** A judged watch's notes for the model, in the owner's words: what counts, what to skip. */
+  notes?: string;
 }
 
 /** Every field optional: one left out keeps the task's own; an empty `max`, `currency`, `exclude`, `confirm` or `unconfirmed`, or `-`, clears it. */
@@ -145,6 +152,8 @@ export interface WantEdit {
   exclude?: string;
   confirm?: string;
   unconfirmed?: string;
+  /** A judged watch's notes; an empty field or `-` clears them. */
+  notes?: string;
 }
 
 function plural(n: number, word: string): string {
@@ -219,6 +228,22 @@ function wordsPlan(field: string, text: string | undefined, max: number, words: 
 }
 
 export const CONFIRM_JUDGED = "`confirm` and `unconfirmed` are for a plain watch: the model checks a judged watch's listings itself. Leave them out, or make the watch with `judge: false`.";
+export const NOTES_PLAIN = "`notes` are for the model, so only a judged watch takes them. Leave them out, or make the watch with `judge: true`.";
+export const NOTES_LONG = `\`notes\` is longer than ${MAX_WANT_NOTES} characters.`;
+
+/**
+ * A judged watch's notes (docket 0.22.0 `WantConfig.notes`, L3 of #368: "an investigator bundle with
+ * no campaign is not a match"): trimmed, "" for none (an empty field or `-`); refused on a plain
+ * watch, which has no model to read them, and past `MAX_WANT_NOTES`.
+ */
+export function notesPlan(notes: string | undefined, judged: boolean): Plan<{ notes: string }> {
+  const n = notes === undefined || notes.trim() === "-" ? "" : notes.trim();
+  if (n === "") return { ok: true, notes: "" };
+  if (!judged) return { ok: false, error: NOTES_PLAIN };
+  if (n.length > MAX_WANT_NOTES) return { ok: false, error: NOTES_LONG };
+  return { ok: true, notes: n };
+}
+
 export const UNCONFIRMED_ALONE = "`unconfirmed` rules out listings that `confirm` did not confirm, so it needs `confirm` words too.";
 
 /** A watch's `confirm` and `unconfirmed` words, by `wordsPlan`; `judged` refuses either. */
@@ -346,11 +371,12 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   if (!planned.ok) return planned;
   const { limits } = planned;
   if (source === "ebay" && d.ebay === true && limits.currency && limits.currency !== "USD") return { ok: false, error: EBAY_USD };
-  // An eBay API watch keeps no eBay data (ebay-forget.ts), and a judged one would hand its listings to
-  // city-hall's queue: it is never judged, whatever `judge` says (the web form always sends one).
+  // An eBay API watch keeps no eBay data (ebay-forget.ts). A judged one hands its listings to
+  // city-hall's queue in its Job, which city-hall erases once it ends and never past six hours
+  // (`ebayJobForgetSeconds`, Rackbops/city-hall#6; Rod, 2026-11-08), so it may be judged like any watch.
   // Confirm words make a plain watch unless the owner asked for the model, which `confirmPlan` refuses.
   const confirming = [input.confirm, input.unconfirmed].some((v) => v !== undefined && v.trim() !== "" && v.trim() !== "-");
-  const judged = (searched && source === "ebay") || (confirming && input.judge !== true) ? ({ ok: true, judge: false } as const) : judgePlan(d, input.judge);
+  const judged = confirming && input.judge !== true ? ({ ok: true, judge: false } as const) : judgePlan(d, input.judge);
   if (!judged.ok) return judged;
   const target = (input.target ?? "").trim();
   let inbox: { search: string; game: number | null } | null = null;
@@ -386,6 +412,8 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   if (!excluded.ok) return excluded;
   const confirmed = confirmPlan(input.confirm, input.unconfirmed, words, judged.judge);
   if (!confirmed.ok) return confirmed;
+  const noted = notesPlan(input.notes, judged.judge);
+  if (!noted.ok) return noted;
   const where: WatchConfig =
     words !== null
       ? { source: source === "ebay" ? "ebay" : "shopify", target: words }
@@ -399,6 +427,7 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
     ...(excluded.exclude.length > 0 ? { exclude: excluded.exclude } : {}),
     ...(confirmed.confirm.length > 0 ? { confirm: confirmed.confirm } : {}),
     ...(confirmed.unconfirmed.length > 0 ? { unconfirmed: confirmed.unconfirmed } : {}),
+    ...(noted.notes ? { notes: noted.notes } : {}),
   };
   return { ok: true, start: { title: limits.name, hours: limits.hours, config, judge: judged.judge } };
 }
@@ -466,7 +495,7 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
           ? ["Shopify's search finds new copies at Shopify stores only (not eBay or used copies), and I keep a product only when its title has every word you are watching for. Each look is a Firecrawl search (5 credits)."]
           : []),
         ...(c.source === "ebay"
-          ? ["I search eBay US through eBay's own API, newest listings first, new and used, an auction at its current bid (or its Buy It Now price), and count a listing only when its title has every word you are watching for. I never open an eBay page, and the model does not check these listings. eBay's terms let me keep its listings only briefly, so they are in the DM alone, and my own copy of it is cleared after 6 hours."]
+          ? [`I search eBay US through eBay's own API, newest listings first, new and used, an auction at its current bid (or its Buy It Now price), and count a listing only when its title has every word you are watching for. I never open an eBay page${start.judge ? "; the model checks each new listing from what eBay's API says, and city-hall erases that check's Job once it ends, within 6 hours" : ", and the model does not check these listings"}. eBay's terms let me keep its listings only briefly, so they are in the DM alone, and my own copy of it is cleared after 6 hours.`]
           : []),
         // Last, so a long list is what the reply's length cap cuts, never how listings reach the watch.
         ...(c.exclude && c.exclude.length > 0 ? [`I leave out any listing whose title has ${c.exclude.map((e) => `"${e}"`).join(", ")}.`] : []),
@@ -531,6 +560,8 @@ async function editWantLocked(d: TrackerDeps, user: User, taskId: string, input:
     task.type === "wantjudge",
   );
   if (!confirmed.ok) return confirmed;
+  const noted = notesPlan(input.notes !== undefined ? input.notes : (config.notes ?? ""), task.type === "wantjudge");
+  if (!noted.ok) return noted;
   // Where it looks stays: the source, the target (an inbox watch's key) and an inbox watch's words and game.
   const nextConfig: WatchConfig = {
     source: config.source,
@@ -542,6 +573,7 @@ async function editWantLocked(d: TrackerDeps, user: User, taskId: string, input:
     ...(excluded.exclude.length > 0 ? { exclude: excluded.exclude } : {}),
     ...(confirmed.confirm.length > 0 ? { confirm: confirmed.confirm } : {}),
     ...(confirmed.unconfirmed.length > 0 ? { unconfirmed: confirmed.unconfirmed } : {}),
+    ...(noted.notes ? { notes: noted.notes } : {}),
   };
   const patch: Omit<TaskPatch, "at"> = {};
   if (limits.name !== task.title) patch.title = limits.name;

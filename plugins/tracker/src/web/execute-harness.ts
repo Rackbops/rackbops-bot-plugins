@@ -23,6 +23,10 @@ export interface FakeJob {
   status: "queued" | "running" | "done" | "failed";
   result: unknown;
   error: string | null;
+  /** What the tracker asked city-hall to forget the job after, when it did (Rackbops/city-hall#6). */
+  forgetAfterSeconds?: number;
+  /** city-hall#6 sends it on every job, null until the job is forgotten. */
+  forgottenAt: string | null;
 }
 
 /** city-hall's source pair in memory: `jobs` by id, `posts` and `gets` counted, `auth` the bearer it checks. */
@@ -36,10 +40,10 @@ export function fakeCityHall() {
     calls.push({ method: init?.method ?? "GET", path: url.pathname, auth });
     if (auth !== `Bearer ${accepted}`) return Response.json({ error: "unauthorized" }, { status: 401 });
     if (init?.method === "POST" && url.pathname === "/api/execute/jobs") {
-      const b = JSON.parse(String(init.body)) as { key: string; capability: string; spec: FakeJob["spec"]; responder: unknown };
+      const b = JSON.parse(String(init.body)) as { key: string; capability: string; spec: FakeJob["spec"]; responder: unknown; forgetAfterSeconds?: number };
       const known = [...jobs.values()].find((j) => j.key === b.key);
       if (known) return Response.json({ job: known }, { status: 200 });
-      const job: FakeJob = { id: `j${jobs.size + 1}`, key: b.key, capability: b.capability, spec: b.spec, responder: b.responder, status: "queued", result: null, error: null };
+      const job: FakeJob = { id: `j${jobs.size + 1}`, key: b.key, capability: b.capability, spec: b.spec, responder: b.responder, status: "queued", result: null, error: null, forgottenAt: null, ...(b.forgetAfterSeconds !== undefined ? { forgetAfterSeconds: b.forgetAfterSeconds } : {}) };
       jobs.set(job.id, job);
       return Response.json({ job }, { status: 201 });
     }

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.42.0] - 2026-11-08
+
+### Added
+
+- Judged eBay API watches (L1 of #368). An eBay API watch is judged like any watch since this release (default yes while the model runner is set up; `judge: false` keeps it plain). Its judge Job carries the listings to city-hall, so the tracker sends that Job with `forgetAfterSeconds: 21600`, and city-hall erases its prompt and answer once it ends, never later than six hours after it was submitted (Rackbops/city-hall#6, Rod's choice of 2026-11-08: "Queue wipes eBay jobs"). A city-hall that answers without `forgottenAt` does not forget: the run fails, the error is logged and the admins are told once (`city-hall:no-forget`). Deploy city-hall#6 first. The watch keeps only the item numbers it holds for its next look and re-reads each through eBay's getItem (docket 0.22.0).
+- Notes on a judged watch (L3 of #368). `/want` takes `notes`: in your own words, what counts and what to skip, at most 500 characters, given to the model with each look. Refused on a plain watch. The web editor and the task API take it on a new watch and on a judged watch's edit (an empty one or `-` clears it), `settings.notes` reads it back, and `GET /types` lists it.
+
+### Changed
+
+- The `/want` confirmation for an eBay API watch says whether the model checks its listings.
+- Needs docket 0.22.0: a judged eBay watch's held item numbers, and a news watch re-alerting on a changed detail (docket#104).
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.41.0] - 2026-10-30
 
 ### Added

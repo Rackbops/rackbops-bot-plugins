@@ -5,7 +5,7 @@ import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
 import { DEFAULT_NEWS_EVERY, MAX_INCLUDE_TEXT, MAX_NEWS_EVERY, NEWS_COST_TEXT } from "../news.js";
 import { MAX_INTERESTS_TEXT, MAX_SCOUT_EVERY } from "../scout.js";
-import { LOOKBACK_DAYS, MAX_DISAMBIGUATE_CHARS, MAX_FOR_CHARS, MAX_INCLUDE, MAX_NOTES_CHARS, MAX_SCOUT_NOTES, MAX_SUBJECT_CHARS } from "@rackbops/docket-types";
+import { LOOKBACK_DAYS, MAX_DISAMBIGUATE_CHARS, MAX_WANT_NOTES, MAX_FOR_CHARS, MAX_INCLUDE, MAX_NOTES_CHARS, MAX_SCOUT_NOTES, MAX_SUBJECT_CHARS } from "@rackbops/docket-types";
 import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, MIN_SHOPIFY_HOURS } from "../want.js";
 import { MAX_EVERY, MAX_LEAD_DAYS } from "../tracked.js";
 import { html, type Html } from "./html.js";
@@ -131,12 +131,25 @@ const CONFIRM_FIELDS: readonly Field[] = [
   { name: "unconfirmed", label: "Then leave out ones with", kind: "text", maxlength: MAX_CONFIRM_TEXT, help: "Words or phrases, separated by commas: a listing that the words above did not confirm is left out when its title or full listing has any of them, such as investigator. Needs the words above. Leave it empty to leave none out." }
 ];
 
-/** A judged watch's edit leaves out `confirm` and `unconfirmed`, which only a plain watch takes. */
+/** A judged watch's notes for the model (docket 0.22.0). */
+const WANT_NOTES_FIELD: Field = {
+  name: "notes",
+  label: "Notes for the model",
+  kind: "textarea",
+  maxlength: MAX_WANT_NOTES,
+  help: "In your own words, what counts and what to skip, such as \"only complete copies; an investigator bundle with no campaign is not a match\". It goes to the model with each look, so only a checked watch (judge: yes) takes it. Leave it empty for none.",
+};
+
+/**
+ * A judged watch's edit leaves out `confirm` and `unconfirmed`, which only a plain watch takes, and
+ * shows its notes; a plain watch's edit has no notes. A new watch shows all of them.
+ */
 const wantLimits = (mode: Mode, surface: Surface, judged = false): readonly Field[] => [
   { name: "max", label: "Top price", kind: "text", decimal: true, help: "Only listings at or under it, and so only listings that show a price. Leave it empty for any price." },
   { name: "currency", label: "Currency", kind: "text", maxlength: CURRENCY_LENGTH, help: "Only listings in it, such as USD. Leave it empty for any." },
   { name: "exclude", label: "Leave out titles with", kind: "text", maxlength: MAX_EXCLUDE_TEXT, help: "Words or phrases, separated by commas: a listing whose title has any of them is left out, such as investigator for a campaign box. At most 20. Leave it empty to leave nothing out." },
   ...(judged ? [] : CONFIRM_FIELDS),
+  ...(mode === "new" || judged ? [WANT_NOTES_FIELD] : []),
   { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}, and at least ${MIN_SHOPIFY_HOURS} for Shopify, since each Shopify look is a paid Firecrawl search. ${empty(mode, `When empty, ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG, ${DEFAULT_EBAY_HOURS} for eBay, ${DEFAULT_INBOX_HOURS} for BGG when this bot has no BGG access, whose listings are sent in, and ${DEFAULT_SHOPIFY_HOURS} for Shopify.`, surface)}` },
 ];
 
@@ -172,7 +185,7 @@ export function fieldsFor(type: NewType, mode: Mode, surface: Surface = "web"): 
             label: "Check listings with the model",
             kind: "select",
             options: JUDGE_OPTIONS,
-            help: "Each check counts against your daily model budget. Needs the model runner; fixed once the watch is made. An eBay watch that searches eBay itself is never checked, whatever this says.",
+            help: "Each check counts against your daily model budget. Needs the model runner; fixed once the watch is made. When unset, yes whenever the model runner is set up, and no when you give words to double-check.",
           } as const,
         ]
         : []),
