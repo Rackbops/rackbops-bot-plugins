@@ -726,12 +726,17 @@ describe("a Job city-hall must forget (a judged eBay watch's, Rackbops/city-hall
     expect(w.seen[1]?.body).not.toHaveProperty("forgetAfterSeconds");
   });
 
-  it("holds the run when city-hall does not forget (no forgottenAt), tells the admins, and sends no such Job again", async () => {
+  it("fails the run when city-hall does not forget (no forgottenAt), tells the admins, and sends no such Job again", async () => {
     const forgetAll = (id: string) => (id === "o9" ? undefined : 21_600);
     const w = setup(() => json(201, { job: job("queued") }), false, undefined, forgetAll);
-    expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(ExecutorUnavailableError);
+    // A plain error (an uncharged failure), never unavailable: a held run would block the lane.
+    const first = await thrown(w.executor.run(SPEC, "o7", "o7"));
+    expect(first).toBeInstanceOf(Error);
+    expect(first).not.toBeInstanceOf(ExecutorUnavailableError);
+    expect(first).not.toBeInstanceOf(JobPendingError);
     // The next Job that must be forgotten (the retry, or the next batch) never reaches city-hall.
-    expect(await thrown(w.executor.run(SPEC, "o8", "o8"))).toBeInstanceOf(ExecutorUnavailableError);
+    const second = await thrown(w.executor.run(SPEC, "o8", "o8"));
+    expect(second).not.toBeInstanceOf(ExecutorUnavailableError);
     expect(w.seen).toHaveLength(1);
     // A Job that need not be forgotten still goes.
     expect(await thrown(w.executor.run(SPEC, "o9", "o9"))).toBeInstanceOf(JobPendingError);

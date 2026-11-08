@@ -267,7 +267,7 @@ describe("a judged eBay watch (tracker 0.42.0: city-hall forgets its Job, Rackbo
     expect((await api(w.plugin, "PATCH", "/tasks/t2", { token, body: { notes: "x" } })).status).toBe(400);
   });
 
-  it("against a city-hall that does not forget: one Job lands there, then runs are held and nothing goes out unchecked", async () => {
+  it("against a city-hall that does not forget: one Job lands there, the listings go out unchecked, and other model runs go on", async () => {
     const city = fakeCityHall();
     const old = (async (input: string | URL | Request, init?: RequestInit) => {
       const r = await city.fetchImpl(input, init);
@@ -282,16 +282,26 @@ describe("a judged eBay watch (tracker 0.42.0: city-hall forgets its Job, Rackbo
       cityHallFetch: old,
       ebayFetch,
       executeStarted: (p) => void work.push(p),
-      fetch: shop([]).fetch,
+      fetch: shop([OCEANIA]).fetch,
     });
     await people(w.plugin);
     await slash(w.plugin, "want", LARRY, { strings: { name: "Dunwich", source: "ebay" } });
-    for (let i = 0; i < 30; i++) {
+    const round = async () => {
       for (const t of w.plugin.ticks ?? []) await t.run(new AbortController().signal);
       await Promise.all(work.splice(0));
-      w.clock.advance(i === 15 ? 3600_000 : 61_000);
-    }
-    expect(city.jobs.size).toBe(1);
-    expect(dmsTo(w.sent, LARRY).filter((c) => c.startsWith("Dunwich"))).toEqual([]);
+      w.clock.advance(61_000);
+    };
+    for (let i = 0; i < 6; i++) await round();
+    await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan", source: "page", target: SHOP } });
+    for (let i = 0; i < 20; i++) await round();
+    w.clock.advance(3600_000);
+    for (let i = 0; i < 10; i++) await round();
+    const keys = [...city.jobs.values()];
+    // One eBay Job (which an old city-hall keeps), and the page watch's own Job: the lane went on.
+    expect(keys.filter((j) => j.spec.prompt.includes("Dunwich"))).toHaveLength(1);
+    expect(keys.some((j) => j.spec.prompt.includes("Wingspan"))).toBe(true);
+    const dm = dmsTo(w.sent, LARRY).filter((c) => c.startsWith("Dunwich"));
+    expect(dm).toHaveLength(1);
+    expect(dm[0]).toContain("unchecked");
   });
 });

@@ -604,8 +604,10 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
       if (spec !== null) {
         const forget = o.forgetSeconds?.(occurrenceId);
         // Once city-hall has shown it does not forget, no Job that must be forgotten is sent again
-        // until the bot restarts: the run is held (unavailable, uncharged), never sent unchecked.
-        if (forget !== undefined && noForget) throw new ExecutorUnavailableError("city-hall does not forget Jobs");
+        // until the bot restarts. The run fails uncharged (a plain error: docket's retry, then the
+        // judge sends the listings unchecked, as a plain eBay watch does); never held, since a held
+        // run would stay first in the execute lane and stop every other model run behind it.
+        if (forget !== undefined && noForget) throw new Error("city-hall does not forget Jobs");
         const { job, status } = await call("POST", "/api/execute/jobs", "POST /api/execute/jobs", jobKey, {
           key: jobKeyFor(o.databaseId, jobKey),
           capability: o.config.capability,
@@ -614,14 +616,13 @@ export function createCityHallExecutor(o: CityHallExecutorOptions): Executor {
           ...(forget !== undefined ? { forgetAfterSeconds: forget } : {}),
         });
         // A city-hall from before city-hall#6 ignores the field and keeps this one Job: say so loudly,
-        // and hold this run and every later one that must be forgotten (`noForget`) until the bot
-        // restarts, so no second Job goes there and no listing is sent unchecked for it.
+        // and send no other Job that must be forgotten (`noForget`) until the bot restarts.
         if (forget !== undefined && !job.forgets) {
           noForget = true;
-          const text = `city-hall does not forget Jobs (it sent no forgottenAt): job ${job.id} for ${jobKey} carries eBay listings it will keep; judged eBay watches wait until Rackbops/city-hall#6 is deployed and the bot restarted`;
+          const text = `city-hall does not forget Jobs (it sent no forgottenAt): job ${job.id} for ${jobKey} carries eBay listings it will keep, so remove it from city-hall's database by hand; until Rackbops/city-hall#6 is deployed and the bot restarted, judged eBay watches send their listings unchecked`;
           o.log.error(`execute: ${text}`);
           await tellAdmins("city-hall:no-forget", text);
-          throw new ExecutorUnavailableError("city-hall does not forget Jobs");
+          throw new Error("city-hall does not forget Jobs");
         }
         // A key city-hall already knew: it must be this Job, the same prompt, or it is someone else's.
         if (status === 200 && job.prompt !== spec.prompt) {
