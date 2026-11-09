@@ -60,7 +60,12 @@ const json = (status: number, body: unknown) => new Response(JSON.stringify(body
 
 const DB_ID = "0123456789abcdef0123456789abcdef";
 
-function setup(answer: (req: Seen) => Response | Promise<Response>, access = false, records = new JobRecords(openDatabase(":memory:"))) {
+function setup(
+  answer: (req: Seen) => Response | Promise<Response>,
+  access = false,
+  records = new JobRecords(openDatabase(":memory:")),
+  forgetSeconds?: (occurrenceId: string) => number | undefined,
+) {
   const { seen, fetchImpl } = fakeCityHall(answer);
   // noticeOnce's contract: one send per key, ever.
   const notices: { key: string; text: string }[] = [];
@@ -79,6 +84,7 @@ function setup(answer: (req: Seen) => Response | Promise<Response>, access = fal
     notice,
     fetchImpl,
     timeoutMs: 50,
+    ...(forgetSeconds ? { forgetSeconds } : {}),
   });
   return { seen, records, logs, notices, executor, later: (ms: number) => (now = new Date(now.getTime() + ms)) };
 }
@@ -706,5 +712,60 @@ describe("a Job once paused stays held until it finishes, for at most 48 h (revi
     expect(await thrown(w.executor.run(null, "o7", "o7"))).toBeInstanceOf(JobPendingError);
     expect(w.notices.filter((n) => n.key.startsWith("city-hall:paused-cap:"))).toHaveLength(1);
     expect(w.notices.find((n) => n.key.startsWith("city-hall:paused-cap:"))?.text).toContain("for over 48 h;");
+  });
+});
+
+describe("a Job city-hall must forget (a judged eBay watch's, Rackbops/city-hall#6)", () => {
+  const forgetO7 = (id: string) => (id === "o7" ? 21_600 : undefined);
+
+  it("sends forgetAfterSeconds for the occurrence that asks, and nothing for one that does not", async () => {
+    const w = setup(() => json(201, { job: job("queued", { forgottenAt: null }) }), false, undefined, forgetO7);
+    expect(await thrown(w.executor.run(SPEC, "o7", "o7"))).toBeInstanceOf(JobPendingError);
+    expect(await thrown(w.executor.run(SPEC, "o8", "o8"))).toBeInstanceOf(JobPendingError);
+    expect((w.seen[0]?.body as Record<string, unknown>).forgetAfterSeconds).toBe(21_600);
+    expect(w.seen[1]?.body).not.toHaveProperty("forgetAfterSeconds");
+  });
+
+  it("fails the run when city-hall does not forget (no forgottenAt), tells the admins, and sends no such Job again", async () => {
+    const forgetAll = (id: string) => (id === "o9" ? undefined : 21_600);
+    const w = setup(() => json(201, { job: job("queued") }), false, undefined, forgetAll);
+    // A plain error (an uncharged failure), never unavailable: a held run would block the lane.
+    const first = await thrown(w.executor.run(SPEC, "o7", "o7"));
+    expect(first).toBeInstanceOf(Error);
+    expect(first).not.toBeInstanceOf(ExecutorUnavailableError);
+    expect(first).not.toBeInstanceOf(JobPendingError);
+    // The next Job that must be forgotten (the retry, or the next batch) never reaches city-hall.
+    const second = await thrown(w.executor.run(SPEC, "o8", "o8"));
+    expect(second).not.toBeInstanceOf(ExecutorUnavailableError);
+    expect(w.seen).toHaveLength(1);
+    // A Job that need not be forgotten still goes.
+    expect(await thrown(w.executor.run(SPEC, "o9", "o9"))).toBeInstanceOf(JobPendingError);
+    expect(w.seen).toHaveLength(2);
+    expect(w.notices.map((n) => n.key)).toEqual(["city-hall:no-forget:j-1"]);
+    expect(w.logs.some((l) => l.startsWith("error ") && l.includes("does not forget"))).toBe(true);
+    expect(w.logs.join("\n")).not.toContain(PROMPT);
+  });
+
+  it("a Job that does not ask goes on with an older city-hall as before", async () => {
+    const w = setup(() => json(201, { job: job("queued") }), false, undefined, forgetO7);
+    expect(await thrown(w.executor.run(SPEC, "o8", "o8"))).toBeInstanceOf(JobPendingError);
+    expect(w.notices).toEqual([]);
+  });
+
+  it("reads forgottenAt as city-hall's say that it forgets, null included", () => {
+    expect(readJob({ job: job("done", { forgottenAt: null }) })).toMatchObject({ forgets: true, forgotten: false });
+    expect(readJob({ job: job("done") })).toMatchObject({ forgets: false, forgotten: false });
+    expect(readJob({ job: job("done", { forgottenAt: "2026-11-08T00:15:00.000Z" }) })?.forgotten).toBe(true);
+  });
+
+  it("names a job city-hall forgot: a result read too late, and a resubmit under its key", async () => {
+    const records = new JobRecords(openDatabase(":memory:"));
+    const gone = job("done", { forgottenAt: "2026-11-08T00:15:00.000Z", spec: { prompt: "" } });
+    const late = setup(() => json(200, { job: gone }), false, records);
+    records.put("o7", "o7", "j-1", NOW.toISOString());
+    expect(await late.executor.run(null, "o7", "o7")).toMatchObject({ kind: "error", detail: "city-hall forgot the job before the tracker read its result" });
+    const again = setup(() => json(200, { job: gone }), false, undefined, forgetO7);
+    expect(String(await thrown(again.executor.run(SPEC, "o7", "o7")))).toContain("city-hall already forgot the job for o7");
+    expect(again.logs.some((l) => l.includes("whose prompt is not this one"))).toBe(false);
   });
 });

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.42.0] - 2026-11-08
+
+### Added
+
+- Judged eBay API watches (L1 of #368). An eBay API watch is judged like any watch since this release (default yes while the model runner is set up; `judge: false` keeps it plain). Its judge Job carries the listings to city-hall, so the tracker sends that Job with `forgetAfterSeconds: 21600`, and city-hall erases its prompt and answer 15 minutes after it ends, never later than six hours after it was submitted (Rackbops/city-hall#6, Rod's choice of 2026-11-08: "Queue wipes eBay jobs"). A city-hall that answers without `forgottenAt` does not forget: it keeps that one Job, the error is logged, and the admins are told once for each such job (`city-hall:no-forget:<job id>`) to remove it by hand before a runner takes it; after a restart another may land the same way. Until the bot restarts, no other judged eBay Job is sent: those looks fail uncharged and, after docket's one retry, send their listings unchecked, as a plain eBay watch does; other model runs go on. Deploy city-hall#6 first. The watch keeps only the item numbers it holds for its next look and re-reads each through eBay's getItem (docket 0.22.0).
+- Notes on a judged watch (L3 of #368). `/want` takes `notes`: in your own words, what counts and what to skip, at most 500 characters, given to the model with each look. Refused on a plain watch. The web editor and the task API take it on a new watch and on a judged watch's edit (an empty one or `-` clears it), `settings.notes` reads it back, and `GET /types` lists it.
+
+### Changed
+
+- The `/want` confirmation for an eBay API watch says whether the model checks its listings.
+- A judged look whose result city-hall erased before the tracker read it, or a resubmit under a key city-hall already forgot, says so instead of an unreadable result or another prompt.
+- On the web, a new eBay API watch with words to double-check needs judge set to no, as a page or Shopify watch always has (the form sends judge, preset to yes); before, an eBay API watch was made plain whatever it said.
+- Needs docket 0.22.0: a judged eBay watch's held item numbers, and a news watch re-alerting on a changed detail (docket#104).
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.41.0] - 2026-10-30
 
 ### Added

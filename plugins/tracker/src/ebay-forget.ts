@@ -6,8 +6,9 @@ import { ebaySearchUrl } from "./want.js";
  * eBay API watches keep no eBay data (Rod, 2026-10-20, the account-deletion card): eBay's API
  * License wants shown listing data at most six hours old and seller names gone on eBay's notice,
  * and the keyset may opt out of those notices only when the app keeps no eBay data. docket-types
- * stores no findings for such a watch (`keepsFindings`) and its state holds only digests of the
- * listings told; what is left is each run's recorded DM (docket-core's `Occurrence.record`, kept
+ * stores no findings for such a watch (`keepsFindings`); its state holds digests of the listings
+ * told and, for a judged one, the item numbers it holds for its next look (docket 0.22.0), and
+ * city-hall erases its judge Job (`ebayJobForgetSeconds`); what is left is each run's recorded DM (docket-core's `Occurrence.record`, kept
  * so an owed send can be retried). Six hours after a run of an `ebay` watch fired, a recorded DM
  * that lists listings keeps its first line (the watch's name and how many, no eBay data) and the
  * rest becomes a note with eBay's own search, so a send still owed never carries an old listing.
@@ -32,6 +33,31 @@ export function ebayForgottenText(firstLine: string, words: string, max?: number
       "Press Done once you have it, and I stop looking.",
     ].join("\n"),
   );
+}
+
+/**
+ * How long city-hall may keep a judged eBay watch's Job, in seconds: its prompt carries the
+ * listings for the model to check, so city-hall erases it once it ends and never past eBay's six
+ * hours (Rod, 2026-11-08: "Queue wipes eBay jobs"; Rackbops/city-hall#6 `forgetAfterSeconds`).
+ */
+export const EBAY_JOB_FORGET_SECONDS = EBAY_KEEP_MS / 1000;
+
+/**
+ * `EBAY_JOB_FORGET_SECONDS` when occurrence `occurrenceId` (`o<seq>`) is a run of a judged eBay
+ * watch, else undefined. A plain watch sends no Job. An inbox eBay watch (no eBay keys) is stored
+ * as `source: "inbox"`, so its Jobs are kept as before: its listings come from its owner's own
+ * browser or alert emails, not eBay's API, and are kept as findings.
+ */
+export function ebayJobForgetSeconds(db: Database, occurrenceId: string): number | undefined {
+  const m = /^o(\d+)$/.exec(occurrenceId);
+  if (!m) return undefined;
+  const row = db
+    .query(
+      `SELECT 1 AS one FROM occurrences o JOIN tasks t ON o.task_id = 't' || t.seq
+         WHERE o.seq = ? AND t.type = 'wantjudge' AND json_extract(t.config, '$.source') = 'ebay'`,
+    )
+    .get(Number(m[1])) as { one: number } | null;
+  return row ? EBAY_JOB_FORGET_SECONDS : undefined;
 }
 
 interface Row {

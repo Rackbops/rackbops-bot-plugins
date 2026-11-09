@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
 import { bggSource, ebaySource, inboxSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, news, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
 import { createEbayBrowse, parseEbayKeys } from "./ebay.js";
-import { forgetEbayMessages } from "./ebay-forget.js";
+import { ebayJobForgetSeconds, forgetEbayMessages } from "./ebay-forget.js";
 import { createFirecrawlScrape, parseFirecrawlKey } from "./firecrawl.js";
 import type { HostApi, Plugin } from "../../../packages/api/contract.js";
 import { parseGuildIds, parseGuildRoles } from "./access.js";
@@ -496,6 +496,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
             log: host.log,
             now: () => clock.now(),
             notice: async (key, text) => void (await noticeOnce(openedStore, notifier, key, clock.now(), { text })),
+            forgetSeconds: (occurrenceId) => ebayJobForgetSeconds(opened, occurrenceId),
             ...(options.cityHallFetch ? { fetchImpl: options.cityHallFetch } : {}),
           });
         }

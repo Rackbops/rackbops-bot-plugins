@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Database } from "bun:sqlite";
-import { EBAY_KEEP_MS, forgetEbayMessages } from "./ebay-forget.js";
+import { EBAY_JOB_FORGET_SECONDS, EBAY_KEEP_MS, ebayJobForgetSeconds, forgetEbayMessages } from "./ebay-forget.js";
 import { openDatabase } from "./schema.js";
 
 const NOW = new Date("2026-10-20T12:00:00.000Z");
@@ -77,5 +77,20 @@ describe("forgetEbayMessages", () => {
     expect(forgetEbayMessages(d, NOW, true)).toBe(2);
     expect(textOf(d, ancient)).not.toContain("boardgame_bin");
     expect(textOf(d, unstarted)).not.toContain("boardgame_bin");
+  });
+});
+
+describe("how long city-hall may keep a run's Job (ebayJobForgetSeconds, Rackbops/city-hall#6)", () => {
+  it("six hours for a judged eBay watch's run; nothing for any other run or an unknown id", () => {
+    const d = db();
+    const judged = run(d, task(d, "wantjudge", { source: "ebay", target: "wingspan" }), 0, null);
+    const plain = run(d, task(d, "wantlist", { source: "ebay", target: "wingspan" }), 0, null);
+    const shopify = run(d, task(d, "wantjudge", { source: "shopify", target: "wingspan" }), 0, null);
+    expect(EBAY_JOB_FORGET_SECONDS).toBe(21_600);
+    expect(ebayJobForgetSeconds(d, `o${judged}`)).toBe(21_600);
+    expect(ebayJobForgetSeconds(d, `o${plain}`)).toBeUndefined();
+    expect(ebayJobForgetSeconds(d, `o${shopify}`)).toBeUndefined();
+    expect(ebayJobForgetSeconds(d, "o999999")).toBeUndefined();
+    expect(ebayJobForgetSeconds(d, `x${judged}`)).toBeUndefined();
   });
 });
