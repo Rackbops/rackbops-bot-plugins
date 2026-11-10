@@ -104,13 +104,15 @@ export function parseSinceDay(text: string, now: Date, zone: string): Date | nul
   const raw = text.trim().toLowerCase().replace(/\s+/g, " ");
   const [y, m, d] = todayIn(now, zone);
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
-  const ago = /^(a|an|one|\d{1,4}) (day|week|month|year)s? ago$/.exec(raw);
+  const ago = /^(a|an|one|\d{1,3}) (day|week|month|year)s? ago$/.exec(raw);
   let at: Date;
   if (iso) {
     const [year, month, day] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
-    at = new Date(Date.UTC(year, month - 1, day));
+    // `setUTCFullYear` keeps the year as typed; `Date.UTC` would read `0026` as 1926.
+    at = new Date(0);
+    at.setUTCFullYear(year, month - 1, day);
     // A date that does not exist (2026-02-30) rolls over; refuse it rather than read a day nobody typed.
-    if (at.getUTCMonth() !== month - 1 || at.getUTCDate() !== day) return null;
+    if (at.getUTCFullYear() !== year || at.getUTCMonth() !== month - 1 || at.getUTCDate() !== day) return null;
   } else if (ago) {
     const count = /^\d/.test(String(ago[1])) ? Number(ago[1]) : 1;
     const unit = ago[2];
@@ -131,7 +133,7 @@ function names(platforms: readonly SocialPlatform[]): string {
   return list.length <= 1 ? (list[0] ?? "") : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
 }
 
-/** `/research question [context] [deadline] [at]`: one request, answered once by DM after a reviewer checks it. */
+/** `/research question [context] [deadline] [at] [sources] [social] [since]`: one request, answered once by DM after a reviewer checks it. */
 export async function createResearch(d: TrackerDeps, user: User, input: ResearchInput): Promise<TaskResult> {
   const type = d.types.research;
   if (!type || !d.research) return { ok: false, error: RESEARCH_OFF };
@@ -150,11 +152,12 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
   // runs search no platform, so neither option goes with it.
   const socialRaw = input.social?.trim() ?? "";
   const sinceRaw = input.since?.trim() ?? "";
-  if (browser && (socialRaw !== "" || sinceRaw !== "")) return { ok: false, error: BROWSER_SOCIAL };
   if (socialRaw.length > MAX_SOCIAL) return { ok: false, error: `\`social\` is longer than ${MAX_SOCIAL} characters.` };
   const social = parseSocial(socialRaw);
   if (!social) return { ok: false, error: SOCIAL_VALUES };
   if (sinceRaw.length > MAX_WHEN) return { ok: false, error: `\`since\` is longer than ${MAX_WHEN} characters.` };
+  // `auto` is the default and asks for nothing, so it passes with browser pages; a choice or a day does not.
+  if (browser && (social.mode !== "auto" || sinceRaw !== "")) return { ok: false, error: BROWSER_SOCIAL };
   const now = d.clock.now();
   const since = sinceRaw === "" ? null : parseSinceDay(sinceRaw, now, user.timeZone);
   if (sinceRaw !== "" && !since) return { ok: false, error: SINCE_FORMAT };
@@ -212,7 +215,7 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
   const starts = at ? `Starts ${formatInstant(at, user.timeZone, now)}` : "Starts within a minute or two";
   const by = deadline ? `; past ${formatInstant(deadline, user.timeZone, now)} nothing is run` : "";
   const posts = social.mode === "none" ? "; no social posts" : social.mode === "only" ? `; social posts from ${names(social.platforms)}` : "";
-  const from = since ? `; posts from ${since.toISOString().slice(0, 10)} on` : "";
+  const from = since ? `; posts dated before ${since.toISOString().slice(0, 10)} do not count` : "";
   return {
     ok: true,
     task,

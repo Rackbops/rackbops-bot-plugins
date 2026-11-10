@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import { TASK_BUSY } from "../locks.js";
+import { MAX_SOCIAL } from "../limits.js";
 import { BROWSER_SOCIAL, MAX_CONTEXT_CHARS, MAX_LIVE_RESEARCH, MAX_QUESTION_CHARS, RESEARCH_OFF, SHORT_QUESTION, SOCIAL_VALUES } from "../research.js";
 import { NOT_EDITABLE, NOT_FOUND_MESSAGE, refusal } from "./api-tasks.js";
 import { researchInput } from "./form-input.js";
@@ -228,7 +229,7 @@ describe("research from the task API", () => {
     ]);
     expect(research.create[0].maxLength).toBe(MAX_QUESTION_CHARS);
     expect(research.create[4].enum).toEqual(["web", "browser"]);
-    expect(research.create[5].maxLength).toBe(60);
+    expect(research.create[5].maxLength).toBe(MAX_SOCIAL);
     expect(research.edit).toEqual([]);
     const bad = await body(await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "auction" } }));
     expect(bad.error.message).toBe("`type` is one of reminder, renewal, price, research, scout, news, wantlist.");

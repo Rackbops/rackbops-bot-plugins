@@ -272,13 +272,13 @@ describe("/research through city-hall", () => {
     // A list, aliases resolved and kept as platform ids; the reply names them and the day.
     const listed = await slash(w.plugin, "research", LARRY, { strings: { question: "Is the pumpkin bread mix any good?", social: "yt, Bluesky", since: "2026-09-01" } });
     expect(listed).toContain("social posts from YouTube and Bluesky");
-    expect(listed).toContain("posts from 2026-09-01 on");
+    expect(listed).toContain("posts dated before 2026-09-01 do not count");
     // `none` is kept; `auto` is the type's default and is not written; today counts.
-    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?", social: "none", since: "2026-10-01" } })).toContain("no social posts; posts from 2026-10-01 on");
-    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is R?", social: "auto", since: "3 months ago" } })).toContain("posts from 2026-07-01 on");
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?", social: "none", since: "2026-10-01" } })).toContain("no social posts; posts dated before 2026-10-01 do not count");
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is R?", social: "auto", since: "3 months ago" } })).toContain("posts dated before 2026-07-01 do not count");
     // Late evening in New York is already tomorrow in UTC: "a day ago" is the person's yesterday.
     w.clock.set("2026-10-02T02:00:00.000Z");
-    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is T?", since: "a day ago" } })).toContain("posts from 2026-09-30 on");
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is T?", since: "a day ago" } })).toContain("posts dated before 2026-09-30 do not count");
     const configs = query<{ config: string }>(w.dbPath, "SELECT config FROM tasks ORDER BY seq").map((r) => JSON.parse(r.config));
     expect(configs[0]).toMatchObject({ social: "youtube,bluesky", since: "2026-09-01T00:00:00.000Z" });
     expect(configs[1]).toMatchObject({ social: "none", since: "2026-10-01T00:00:00.000Z" });
@@ -292,7 +292,10 @@ describe("/research through city-hall", () => {
     }
     expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is S?", sources: "browser", social: "none" } })).toBe(BROWSER_SOCIAL);
     expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is S?", sources: "browser", since: "2026-09-01" } })).toBe(BROWSER_SOCIAL);
-    expect(query(w.dbPath, "SELECT seq FROM tasks")).toHaveLength(4);
+    // Reddit is refused by name before the browser rule; `auto` is the default and passes with browser pages.
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is S?", sources: "browser", social: "reddit" } })).toBe(SOCIAL_VALUES);
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is U?", sources: "browser", social: "auto" } })).toContain("is waiting for pages");
+    expect(query(w.dbPath, "SELECT seq FROM tasks")).toHaveLength(5);
   });
 
   it("city-hall refusing the credential holds the run without failing it, and the run goes once the key is right", async () => {
@@ -337,7 +340,9 @@ describe("parseSinceDay (0.43.0)", () => {
     expect(day("2026-10-30")).toBe("2026-10-30T00:00:00.000Z");
     // Tomorrow in New York, though already today in UTC.
     expect(day("2026-10-31")).toBeNull();
-    for (const bad of ["2026-02-30", "yesterday", "3 months", "in 3 months", "", "09/01/2026", "1 fortnight ago"]) expect(day(bad)).toBeNull();
+    for (const bad of ["2026-02-30", "yesterday", "3 months", "in 3 months", "", "09/01/2026", "1 fortnight ago", "9999 years ago"]) expect(day(bad)).toBeNull();
+    // A year under 100 is kept as typed, not read as 19xx; still a day on or before today.
+    expect(day("0026-09-01")).toBe("0026-09-01T00:00:00.000Z");
     // 31 March less one month is 28 February, not 3 March.
     expect(parseSinceDay("1 month ago", new Date("2026-03-31T12:00:00.000Z"), "UTC")?.toISOString()).toBe("2026-02-28T00:00:00.000Z");
   });
