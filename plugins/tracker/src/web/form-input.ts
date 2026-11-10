@@ -49,18 +49,22 @@ function lines(v: string | undefined): string | undefined {
   return v?.replace(/\r\n?/g, "\n");
 }
 
-/** `/research`'s options: an empty `context`, `deadline`, `at` or `sources` is left out, as an unset option is. */
+/** `/research`'s options: an empty `context`, `deadline`, `at`, `sources`, `social` or `since` is left out, as an unset option is. */
 export function researchInput(form: URLSearchParams): ResearchInput {
   const context = lines(opt(form, "context"));
   const deadline = opt(form, "deadline");
   const at = opt(form, "at");
   const sources = opt(form, "sources");
+  const social = opt(form, "social");
+  const since = opt(form, "since");
   return {
     question: lines(str(form, "question")) ?? "",
     ...(context !== undefined ? { context } : {}),
     ...(deadline !== undefined ? { deadline } : {}),
     ...(at !== undefined ? { at } : {}),
     ...(sources !== undefined ? { sources } : {}),
+    ...(social !== undefined ? { social } : {}),
+    ...(since !== undefined ? { since } : {}),
   };
 }
 

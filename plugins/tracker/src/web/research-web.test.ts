@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Plugin } from "../../../../packages/api/contract.js";
 import { TASK_BUSY } from "../locks.js";
-import { MAX_CONTEXT_CHARS, MAX_LIVE_RESEARCH, MAX_QUESTION_CHARS, RESEARCH_OFF, SHORT_QUESTION } from "../research.js";
+import { BROWSER_SOCIAL, MAX_CONTEXT_CHARS, MAX_LIVE_RESEARCH, MAX_QUESTION_CHARS, RESEARCH_OFF, SHORT_QUESTION, SOCIAL_VALUES } from "../research.js";
 import { NOT_EDITABLE, NOT_FOUND_MESSAGE, refusal } from "./api-tasks.js";
 import { researchInput } from "./form-input.js";
 import { api, call, cleanup, csrfOf, CURLY, hidden, type Jar, LARRY, makeToken, ORIGIN, people, signIn, slash, world } from "./harness.js";
@@ -106,8 +106,11 @@ describe("research from the web editor", () => {
     expect(hidden(page, "csrf")).toBe(w.csrf);
     expect(page).toContain(`<textarea class="rb-textarea" id="question" name="question" rows="4" maxlength="${MAX_QUESTION_CHARS}" required>`);
     expect(page).toContain(`maxlength="${MAX_CONTEXT_CHARS}"`);
+    // Social platforms (0.43.0): two more fields, empty by default.
+    expect(page).toContain('name="social"');
+    expect(page).toContain('name="since"');
 
-    const fields = { question: "What is X?", context: "larry-private-context", deadline: "tomorrow 17:00", at: "" };
+    const fields = { question: "What is X?", context: "larry-private-context", deadline: "tomorrow 17:00", at: "", social: "", since: "" };
     const res = await post(w.plugin, w.larry, w.csrf, "/new/research", fields);
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/tracker/tasks/t1?done=created");
@@ -185,6 +188,22 @@ describe("research from the task API", () => {
     expect(tasks(w.dbPath)).toEqual([]);
   });
 
+  it("POST /tasks takes social and since by /research's rules, and settings read them back (0.43.0)", async () => {
+    const w = await setup();
+    const made = await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: "Is the pumpkin bread mix any good?", social: "tiktok, ig", since: "2026-09-01" } });
+    expect(made.status).toBe(201);
+    expect((await body(made)).task.settings).toMatchObject({ social: "tiktok,instagram", since: "2026-09-01T00:00:00.000Z", sources: "web" });
+    const plain = await body(await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: "What is X?" } }));
+    expect(plain.task.settings).not.toHaveProperty("social");
+    expect(plain.task.settings).not.toHaveProperty("since");
+    const reddit = await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: "What is X?", social: "reddit" } });
+    expect(reddit.status).toBe(400);
+    expect((await body(reddit)).error.message).toBe(SOCIAL_VALUES);
+    const browser = await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: "What is X?", sources: "browser", since: "2026-09-01" } });
+    expect(browser.status).toBe(400);
+    expect((await body(browser)).error.message).toBe(BROWSER_SOCIAL);
+  });
+
   it("GET /types describes research's create fields, and says it takes no edit", async () => {
     const w = await setup();
     const types = await body(await api(w.plugin, "GET", "/types", { token: w.token }));
@@ -204,9 +223,12 @@ describe("research from the task API", () => {
       ["deadline", "string", false],
       ["at", "string", false],
       ["sources", "string", false],
+      ["social", "string", false],
+      ["since", "string", false],
     ]);
     expect(research.create[0].maxLength).toBe(MAX_QUESTION_CHARS);
     expect(research.create[4].enum).toEqual(["web", "browser"]);
+    expect(research.create[5].maxLength).toBe(60);
     expect(research.edit).toEqual([]);
     const bad = await body(await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "auction" } }));
     expect(bad.error.message).toBe("`type` is one of reminder, renewal, price, research, scout, news, wantlist.");

@@ -15,7 +15,7 @@ import {
   withNotice,
 } from "./actions.js";
 import { resumeTask } from "./manage.js";
-import { CURRENCY_LENGTH, DATE_LENGTH, MAX_AMOUNT, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
+import { CURRENCY_LENGTH, DATE_LENGTH, MAX_AMOUNT, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_SOCIAL, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
 import { remind, type Repeat } from "./reminders.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./research.js";
 import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
@@ -338,19 +338,27 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .setName("sources")
               .setDescription("Where the pages come from (default: the web)")
               .addChoices({ name: "the web: the research searches", value: "web" }, { name: "my browser: pages it sends in", value: "browser" }),
-          ),
+          )
+          .addStringOption((o) =>
+            o.setName("social").setDescription("Social posts: auto (default), none, or platforms to search, e.g. youtube, bluesky").setMaxLength(MAX_SOCIAL),
+          )
+          .addStringOption((o) => o.setName("since").setDescription('Only posts from this day on, e.g. "2026-09-01" or "3 months ago"').setMaxLength(MAX_WHEN)),
       handle: (interaction) =>
         run(interaction, "registered", (d, user) => {
           const context = interaction.options.getString("context");
           const deadline = interaction.options.getString("deadline");
           const at = interaction.options.getString("at");
           const sources = interaction.options.getString("sources");
+          const social = interaction.options.getString("social");
+          const since = interaction.options.getString("since");
           return researchCommand(d, user, {
             question: interaction.options.getString("question", true),
             ...(context !== null ? { context } : {}),
             ...(deadline !== null ? { deadline } : {}),
             ...(at !== null ? { at } : {}),
             ...(sources !== null ? { sources } : {}),
+            ...(social !== null ? { social } : {}),
+            ...(since !== null ? { since } : {}),
           });
         }),
     },

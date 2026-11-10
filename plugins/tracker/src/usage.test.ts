@@ -126,7 +126,8 @@ describe("the execute lane with budgets off", () => {
     const w = await laneWorld(true);
     await w.lane.tick();
     expect(w.specs).toHaveLength(1);
-    expect(w.specs[0]).toMatchObject({ maxTurns: 15, maxBudgetUsd: 1 });
+    // 20 turns since docket 0.23.0: a web first pass carries the social rules (tracker 0.43.0); the 1 USD cap is unchanged.
+    expect(w.specs[0]).toMatchObject({ maxTurns: 20, maxBudgetUsd: 1 });
     expect(w.dms.filter((t) => t.includes("reached today's limit"))).toEqual([]);
     const charged = await w.store.listUsage({ userId: w.larry.id });
     expect(charged.map((u) => [u.calls, u.costUsd])).toEqual([

@@ -169,6 +169,9 @@ export async function taskJson(d: TrackerDeps, user: User, task: Task) {
     if (c.context !== undefined) settings.context = c.context;
     if (c.deadline !== undefined) settings.deadline = c.deadline;
     settings.sources = sentResearch(task) ? "browser" : "web";
+    // Social platforms (0.43.0): the list or `none` as made (`auto` is unwritten), and the day as an instant.
+    if (c.social !== undefined) settings.social = c.social;
+    if (c.since !== undefined) settings.since = c.since;
   }
   if (type) {
     for (const f of fieldsFor(type, "edit")) {

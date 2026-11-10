@@ -1,5 +1,5 @@
 import type { Task } from "@rackbops/docket-core";
-import { CURRENCY_LENGTH, MAX_AMOUNT, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
+import { CURRENCY_LENGTH, MAX_AMOUNT, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_SOCIAL, MAX_TITLE, MAX_URL, MAX_WHEN } from "../limits.js";
 import { backOn } from "../delivery-health.js";
 import { MAX_POLL_HOURS } from "../price.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS } from "../research.js";
@@ -91,6 +91,14 @@ const RESEARCH_FIELDS: readonly Field[] = [
     options: RESEARCH_SOURCE_OPTIONS,
     help: "Your browser: the research waits for the pages your own browser gathers, such as Claude in Chrome, sent in through the task API (for a BoardGameGeek page that refuses the research, or eBay, which the research never opens).",
   },
+  {
+    name: "social",
+    label: "Social posts",
+    kind: "text",
+    maxlength: MAX_SOCIAL,
+    help: "Leave it empty to let the research decide: it searches YouTube, TikTok, Instagram and Bluesky when the question asks what people recommend, think or experienced. none searches no platform; or name the platforms to search, separated by commas. Reddit is never read. Not with pages from your browser.",
+  },
+  { name: "since", label: "Posts since", kind: "text", maxlength: MAX_WHEN, help: 'A day, as "2026-09-01" or "3 months ago": posts before it do not count. Not with pages from your browser.' },
 ];
 
 const LENS_OPTIONS = [

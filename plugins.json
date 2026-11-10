@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-08T23:08:17.277Z",
+  "generatedAt": "2026-11-10T18:28:00.942Z",
   "plugins": [
     {
       "name": "mcp",
@@ -210,7 +210,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.42.0",
+      "version": "0.43.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout and a news watch (through city-hall, with their findings), a want-list watcher (listing pages you paste, BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, eBay through eBay's own Browse API once its keys are set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /news, /want, /tasks, /task, /settings, /web), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, a JSON task API with personal API tokens, and a plain-language intake: DM Clerk what you want in your own words, answer its questions, and press Save on the draft it shows",
       "hostApiVersion": 1,
       "intents": [
@@ -389,6 +389,12 @@
       ],
       "releases": [
         {
+          "version": "0.43.0",
+          "publishedAt": "2026-11-10T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.43.0",
+          "notes": "### Added\n\n- Social platforms for research (Rackbops/docket#107; docket 0.23.0). `/research` takes `social` and `since`. `social` is `auto` (the default: the research searches YouTube, TikTok, Instagram and Bluesky for what people say when the question asks what people recommend, think or experienced), `none`, or the platforms to search, separated by commas (`youtube`, `tiktok`, `instagram`, `bluesky`; `yt`, `ig`, `insta` and `bsky` are read too). Reddit is never read and is refused by name. `since` is a day (`2026-09-01`, `3 months ago`, `a week ago`), on or before today in your own zone: posts before it do not count. Neither goes with `sources: browser`, whose pages come from your browser and search no platform. The web form and the task API take both on a new request (`GET /types` lists them), and `settings.social` (the list or `none`; `auto` is not written) and `settings.since` (the day, as an instant) read them back. The confirmation names the platforms, or none, and the day.\n\n### Changed\n\n- Needs docket 0.23.0. Every web research request's first pass now gets 20 turns in place of 15 and the social rules (`social: none` restores 15 and the old prompt); its DM may carry a \"Social:\" line naming each platform searched, empty, unavailable or skipped, Reddit always unavailable; a finding from a post shows its platform, date and whether the post was opened; a stock, price or availability claim resting on posts alone moves to the DM's uncertain list. The 1 USD cap per run is unchanged. A request made with `sources: browser` searches no platform, as before.\n\n### Schema\n\n- No change. Still at 13."
+        },
+        {
           "version": "0.42.0",
           "publishedAt": "2026-11-08T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.42.0",
@@ -441,12 +447,6 @@
           "publishedAt": "2026-10-21T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.34.0",
           "notes": "### Added\n\n- The plain-language intake (plan E10). With `TRACKER_INTAKE` set to `admins` (or `everyone`), a person DMs Clerk what they want in their own words; Clerk asks one question at a time, then shows a draft with Save, Change and Cancel. Only Save makes the task, through the task API's own create, as that person and under the same rules; its history reads `created: in conversation`. The card shows every value whole, and only one press acts on it. A turn whose Job hits a usage limit or a refused credential tells the person at once that the assistant is busy, uncharged. Each turn is a `claude -p` Job with no tools through city-hall, on `TRACKER_INTAKE_CAPABILITY`'s tag when set. The conversation is kept in the tracker, deleted seven days after it ends and at once by forget-me. Off by default. Needs a bot host with the DM seam (rackbops-discord-bot#620), and declares the `DirectMessages` intent. On docket 0.14.0.\n- A person can change one of their own tasks the same way: Clerk is shown the ids, types and titles of their newest 30 active or paused tasks it could make (not research, not judged watches), the card names the task and what changes, and Save goes through the task API's own edit; the history rows it writes read `edited: in conversation` or `schedule changed: in conversation`.\n- `GET /types` marks the one field an edit clears with `null` (a watch's `max`) with `\"nullable\": true`.\n\n### Schema\n\n- 12: adds `intake_conversations`, purely additive. A database at 12 is refused by 0.33.1 and older, so going back to 0.33.1 needs the database backup taken before the upgrade."
-        },
-        {
-          "version": "0.33.1",
-          "publishedAt": "2026-10-20T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.33.1",
-          "notes": "### Fixed\n\n- A test of the history page could fail by chance, about one run in a hundred, when the page's random sign-out token happened to hold the id it checks is absent; the page itself named no one. 0.33.0 was tagged but never published because of it, so this is the first release with the eBay and Shopify watches of 0.32.0 and 0.33.0. On docket 0.13.0.\n\n### Schema\n\n- No change. Still at 11."
         }
       ]
     },

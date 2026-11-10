@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { NO_SUCH_TASK } from "./actions.js";
 import { KEY_PREFIX } from "./executor.js";
 import { ANSWER, CITY_HALL, dmsTo, query, setup, success } from "./web/execute-harness.js";
-import { MAX_LIVE_RESEARCH, RESEARCH_OFF, SHORT_QUESTION } from "./research.js";
+import { BROWSER_SOCIAL, MAX_LIVE_RESEARCH, parseSinceDay, RESEARCH_OFF, SHORT_QUESTION, SINCE_FORMAT, SOCIAL_VALUES } from "./research.js";
 import { ADMIN, api, call, cleanup, csrfOf, CURLY, LARRY, makeToken, ORIGIN, people, press, signIn, slash, world } from "./web/harness.js";
 
 /**
@@ -267,6 +267,34 @@ describe("/research through city-hall", () => {
     expect(dmsTo(w.sent, LARRY).some((c) => c.includes("passed before the research could start"))).toBe(true);
   });
 
+  it("social and since (0.43.0): kept in the config as docket reads them, named in the reply, refused by name or with browser pages", async () => {
+    const w = await setup();
+    // A list, aliases resolved and kept as platform ids; the reply names them and the day.
+    const listed = await slash(w.plugin, "research", LARRY, { strings: { question: "Is the pumpkin bread mix any good?", social: "yt, Bluesky", since: "2026-09-01" } });
+    expect(listed).toContain("social posts from YouTube and Bluesky");
+    expect(listed).toContain("posts from 2026-09-01 on");
+    // `none` is kept; `auto` is the type's default and is not written; today counts.
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?", social: "none", since: "2026-10-01" } })).toContain("no social posts; posts from 2026-10-01 on");
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is R?", social: "auto", since: "3 months ago" } })).toContain("posts from 2026-07-01 on");
+    // Late evening in New York is already tomorrow in UTC: "a day ago" is the person's yesterday.
+    w.clock.set("2026-10-02T02:00:00.000Z");
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is T?", since: "a day ago" } })).toContain("posts from 2026-09-30 on");
+    const configs = query<{ config: string }>(w.dbPath, "SELECT config FROM tasks ORDER BY seq").map((r) => JSON.parse(r.config));
+    expect(configs[0]).toMatchObject({ social: "youtube,bluesky", since: "2026-09-01T00:00:00.000Z" });
+    expect(configs[1]).toMatchObject({ social: "none", since: "2026-10-01T00:00:00.000Z" });
+    expect(configs[2]).toEqual({ question: "What is R?", since: "2026-07-01T00:00:00.000Z" });
+    expect(configs[3]).toEqual({ question: "What is T?", since: "2026-09-30T00:00:00.000Z" });
+    // Refused, nothing made: Reddit, an unknown name, a day that is not one or lies ahead, and either option with browser pages.
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is S?", social: "reddit" } })).toBe(SOCIAL_VALUES);
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is S?", social: "youtube, myspace" } })).toBe(SOCIAL_VALUES);
+    for (const since of ["last tuesday", "2026-02-30", "2026-10-03", "tomorrow", "in 3 months"]) {
+      expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is S?", since } })).toBe(SINCE_FORMAT);
+    }
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is S?", sources: "browser", social: "none" } })).toBe(BROWSER_SOCIAL);
+    expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is S?", sources: "browser", since: "2026-09-01" } })).toBe(BROWSER_SOCIAL);
+    expect(query(w.dbPath, "SELECT seq FROM tasks")).toHaveLength(4);
+  });
+
   it("city-hall refusing the credential holds the run without failing it, and the run goes once the key is right", async () => {
     const w = await setup({ ...CITY_HALL, TRACKER_CITY_HALL_KEY: "wrong-key" });
     await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?" } });
@@ -291,5 +319,26 @@ describe("/research through city-hall", () => {
     await w.round();
     expect(query<{ status: string }>(w.dbPath, "SELECT status FROM occurrences WHERE seq = 1")).toEqual([{ status: "done" }]);
     expect(told()).toHaveLength(1);
+  });
+});
+
+describe("parseSinceDay (0.43.0)", () => {
+  // 03:00Z on 31 October is 23:00 on 30 October in New York: today is the 30th there.
+  const now = new Date("2026-10-31T03:00:00.000Z");
+  const day = (text: string) => parseSinceDay(text, now, "America/New_York")?.toISOString() ?? null;
+
+  it("counts from today in the person's zone, clamps a month's end, and refuses what is not a day on or before today", () => {
+    expect(day("2026-09-01")).toBe("2026-09-01T00:00:00.000Z");
+    expect(day("1 day ago")).toBe("2026-10-29T00:00:00.000Z");
+    expect(day("a week ago")).toBe("2026-10-23T00:00:00.000Z");
+    expect(day("one month ago")).toBe("2026-09-30T00:00:00.000Z");
+    expect(day("2 years ago")).toBe("2024-10-30T00:00:00.000Z");
+    expect(day(" 3  Months  Ago ")).toBe("2026-07-30T00:00:00.000Z");
+    expect(day("2026-10-30")).toBe("2026-10-30T00:00:00.000Z");
+    // Tomorrow in New York, though already today in UTC.
+    expect(day("2026-10-31")).toBeNull();
+    for (const bad of ["2026-02-30", "yesterday", "3 months", "in 3 months", "", "09/01/2026", "1 fortnight ago"]) expect(day(bad)).toBeNull();
+    // 31 March less one month is 28 February, not 3 March.
+    expect(parseSinceDay("1 month ago", new Date("2026-03-31T12:00:00.000Z"), "UTC")?.toISOString()).toBe("2026-02-28T00:00:00.000Z");
   });
 });
