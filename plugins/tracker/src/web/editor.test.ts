@@ -866,10 +866,10 @@ describe("the gates", () => {
     const worst = (fields: readonly Field[]) =>
       new URLSearchParams({ csrf: "x".repeat(43), ...Object.fromEntries(fields.map((f) => [f.name, "あ".repeat(f.maxlength ?? 32)])) }).toString().length;
     const forms = [...NEW_TYPES.map((t) => fieldsFor(t, "new")), ...EDITOR_TYPES.map((t) => fieldsFor(t, "edit"))];
-    // A new want-list watch (its words, its confirm words and, since 0.42.0, its notes for the
-    // model) is the longest; were docket-types to raise its limits past the cap, a legitimate
-    // request would get a bare "Bad request" and lose what was typed.
-    expect(Math.max(...forms.map(worst))).toBe(worst(fieldsFor("wantlist", "new")));
+    // A new research request (its question, its context and, since 0.43.0, its social platforms and
+    // since day) is the longest, just past a new want-list watch; were docket-types to raise its
+    // limits past the cap, a legitimate request would get a bare "Bad request" and lose what was typed.
+    expect(Math.max(...forms.map(worst))).toBe(worst(fieldsFor("research", "new")));
     for (const fields of forms) expect(worst(fields)).toBeLessThanOrEqual(MAX_FORM_BYTES);
   });
 

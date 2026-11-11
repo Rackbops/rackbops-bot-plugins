@@ -1,7 +1,7 @@
 import { type Actor, createTask, formatInstant, parseWhen, type User } from "@rackbops/docket-core";
-import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, type ResearchConfig, SOURCES_DEADLINE_MARGIN_MINUTES, SOURCES_WAIT_DAYS, sourcesExpiry } from "@rackbops/docket-types";
+import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, parseSocial, platformName, type ResearchConfig, SOURCES_DEADLINE_MARGIN_MINUTES, SOURCES_WAIT_DAYS, type SocialPlatform, sourcesExpiry } from "@rackbops/docket-types";
 import { clip, liveTaskCap, said, type TaskResult, type TrackerDeps } from "./actions.js";
-import { MAX_TITLE, MAX_WHEN } from "./limits.js";
+import { MAX_SOCIAL, MAX_TITLE, MAX_WHEN } from "./limits.js";
 import { awaitingPages, MAX_SOURCES_PER_TASK } from "./research-sources.js";
 
 /** The least time a browser request leaves its browser to gather pages before its run, when a deadline brings that run forward. */
@@ -65,6 +65,14 @@ export const BROWSER_AT =
 export const BROWSER_OFF =
   "Research on pages your browser gathers needs this bot's web area: the pages are sent in through its task API, and this bot has no web area set up. Leave `sources` out to have the research search the web.";
 
+export const SOCIAL_VALUES =
+  "`social` is `auto`, `none`, or the platforms to search, separated by commas: `youtube`, `tiktok`, `instagram`, `bluesky`. Reddit is not one: the research never reads it.";
+
+export const BROWSER_SOCIAL =
+  "`social` and `since` do not go with `sources: browser`: the research answers from the pages your browser sends in and searches no platform.";
+
+export const SINCE_FORMAT = "`since` is a day, as `2026-09-01` or `3 months ago`, on or before today.";
+
 export interface ResearchInput {
   question: string;
   context?: string;
@@ -72,9 +80,60 @@ export interface ResearchInput {
   deadline?: string;
   /** `web` when unset. */
   sources?: string;
+  /** docket-types 0.23.0's `social`: `auto` when unset, `none`, or the platforms to search. */
+  social?: string;
+  /** A day: posts before it do not count (0.43.0). */
+  since?: string;
 }
 
-/** `/research question [context] [deadline] [at]`: one request, answered once by DM after a reviewer checks it. */
+/** Today's calendar date in `zone`: year, month (1 to 12), day. */
+function todayIn(now: Date, zone: string): [number, number, number] {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const get = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value);
+  return [get("year"), get("month"), get("day")];
+}
+
+/**
+ * `since` as a day: `YYYY-MM-DD`, or `N days|weeks|months|years ago` (`a`, `an` or `one` for 1),
+ * counted from today in the person's zone. The day's UTC midnight, since docket counts whole UTC
+ * days (`sinceOf`); so a person's own date never slips a day because their evening is already
+ * tomorrow in UTC. Null when the text is not one of those, the date does not exist, or the day
+ * lies after today. `parseWhen` is not used: it resolves only to an instant after now.
+ */
+export function parseSinceDay(text: string, now: Date, zone: string): Date | null {
+  const raw = text.trim().toLowerCase().replace(/\s+/g, " ");
+  const [y, m, d] = todayIn(now, zone);
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  const ago = /^(a|an|one|\d{1,3}) (day|week|month|year)s? ago$/.exec(raw);
+  let at: Date;
+  if (iso) {
+    const [year, month, day] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+    // `setUTCFullYear` keeps the year as typed; `Date.UTC` would read `0026` as 1926.
+    at = new Date(0);
+    at.setUTCFullYear(year, month - 1, day);
+    // A date that does not exist (2026-02-30) rolls over; refuse it rather than read a day nobody typed.
+    if (at.getUTCFullYear() !== year || at.getUTCMonth() !== month - 1 || at.getUTCDate() !== day) return null;
+  } else if (ago) {
+    const count = /^\d/.test(String(ago[1])) ? Number(ago[1]) : 1;
+    const unit = ago[2];
+    if (unit === "day" || unit === "week") at = new Date(Date.UTC(y, m - 1, d - count * (unit === "week" ? 7 : 1)));
+    else {
+      const months = unit === "month" ? count : count * 12;
+      const lastDay = new Date(Date.UTC(y, m - months, 0)).getUTCDate();
+      at = new Date(Date.UTC(y, m - 1 - months, Math.min(d, lastDay)));
+    }
+  } else return null;
+  if (Number.isNaN(at.getTime())) return null;
+  return at.getTime() <= Date.UTC(y, m - 1, d) ? at : null;
+}
+
+/** Platform names in a sentence: "YouTube, TikTok and Bluesky". */
+function names(platforms: readonly SocialPlatform[]): string {
+  const list = platforms.map(platformName);
+  return list.length <= 1 ? (list[0] ?? "") : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
+}
+
+/** `/research question [context] [deadline] [at] [sources] [social] [since]`: one request, answered once by DM after a reviewer checks it. */
 export async function createResearch(d: TrackerDeps, user: User, input: ResearchInput): Promise<TaskResult> {
   const type = d.types.research;
   if (!type || !d.research) return { ok: false, error: RESEARCH_OFF };
@@ -89,7 +148,19 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
   const browser = sources === "browser";
   if (browser && !d.webEditor) return { ok: false, error: BROWSER_OFF };
   if (browser && input.at !== undefined && input.at.trim() !== "") return { ok: false, error: BROWSER_AT };
+  // Social platforms (0.43.0, docket-types 0.23.0): which count, and from when. A browser request's
+  // runs search no platform, so neither option goes with it.
+  const socialRaw = input.social?.trim() ?? "";
+  const sinceRaw = input.since?.trim() ?? "";
+  if (socialRaw.length > MAX_SOCIAL) return { ok: false, error: `\`social\` is longer than ${MAX_SOCIAL} characters.` };
+  const social = parseSocial(socialRaw);
+  if (!social) return { ok: false, error: SOCIAL_VALUES };
+  if (sinceRaw.length > MAX_WHEN) return { ok: false, error: `\`since\` is longer than ${MAX_WHEN} characters.` };
+  // `auto` is the default and asks for nothing, so it passes with browser pages; a choice or a day does not.
+  if (browser && (social.mode !== "auto" || sinceRaw !== "")) return { ok: false, error: BROWSER_SOCIAL };
   const now = d.clock.now();
+  const since = sinceRaw === "" ? null : parseSinceDay(sinceRaw, now, user.timeZone);
+  if (sinceRaw !== "" && !since) return { ok: false, error: SINCE_FORMAT };
   const when = (raw: string | undefined, name: string): Date | null | string => {
     if (raw === undefined || raw.trim() === "") return null;
     if (raw.trim().length > MAX_WHEN) return `\`${name}\` is longer than ${MAX_WHEN} characters.`;
@@ -120,6 +191,9 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
     ...(context.length > 0 ? { context } : {}),
     ...(deadline ? { deadline: deadline.toISOString() } : {}),
     ...(browser ? { sources: "sent" as const } : {}),
+    // `auto` is the type's default and is not written; a list is kept as the platform ids, aliases resolved.
+    ...(social.mode === "none" ? { social: "none" } : social.mode === "only" ? { social: social.platforms.join(",") } : {}),
+    ...(since ? { since: since.toISOString() } : {}),
   };
   // A browser request's run waits as long as it may; `sources/ready` moves it to now.
   const expiry = sourcesExpiry(now, deadline);
@@ -140,11 +214,13 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
   }
   const starts = at ? `Starts ${formatInstant(at, user.timeZone, now)}` : "Starts within a minute or two";
   const by = deadline ? `; past ${formatInstant(deadline, user.timeZone, now)} nothing is run` : "";
+  const posts = social.mode === "none" ? "; no social posts" : social.mode === "only" ? `; social posts from ${names(social.platforms)}` : "";
+  const from = since ? `; posts dated before ${since.toISOString().slice(0, 10)} do not count` : "";
   return {
     ok: true,
     task,
     text: clip(
-      `Research \`${task.id}\` queued: ${clip(question, 200)}\n${starts}${by}. A second run checks the answer against its sources before I DM it to you, so it can take a while; ` +
+      `Research \`${task.id}\` queued: ${clip(question, 200)}\n${starts}${by}${posts}${from}. A second run checks the answer against its sources before I DM it to you, so it can take a while; ` +
         "an answer that does not pass the check is not sent. Requests share a daily budget.",
     ),
   };

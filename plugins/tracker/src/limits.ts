@@ -14,6 +14,8 @@ export const MAX_TITLE = 100;
 export const MAX_REMINDER_TEXT = 1500;
 /** A `when` or an `until`: docket's parseWhen grammar is short. */
 export const MAX_WHEN = 100;
+/** The most characters `/research`'s `social` takes: `auto`, `none`, or a short list of platforms. */
+export const MAX_SOCIAL = 60;
 /** A renewal's note, carried on every ask. */
 export const MAX_NOTE = 300;
 /** A price's page. */
