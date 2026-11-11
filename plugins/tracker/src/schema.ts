@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { ensureGiftTables } from "./gift-store.js";
 
 /**
  * The tracker's own SQLite schema (plan 5.2, rev17): a fresh store in the plugin's data file,
@@ -493,6 +494,9 @@ export function openDatabase(path: string): Database {
     // Forget-me (roster.ts): a deleted row's bytes are overwritten, not left in a free page.
     db.exec("PRAGMA secure_delete = ON");
     migrate(db);
+    // The gift tables sit outside the numbered schema, so a tracker from before gifts still opens the
+    // database after a rollback (gift-store.ts).
+    ensureGiftTables(db);
     return db;
   } catch (err) {
     db.close();

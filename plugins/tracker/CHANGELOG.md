@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.44.0] - 2026-11-11
+
+### Added
+
+- The gift ledger's store (Rackbops/docket#94, #382; docket 0.24.0): docket's `GiftStore` port on the tracker's SQLite database, passing every `GIFT_STORE_CONTRACT` case. Nothing reads or writes it yet: the task API, the web page and the `/gift` commands come in later releases. Forget-me erases a person's gift records, their history and their idempotency keys.
+
+### Changed
+
+- Needs docket 0.24.0.
+
+### Schema
+
+- Still at 13. Three new tables, `gift_records`, `gift_events` and `gift_idempotency`, are made on start when absent, outside the numbered schema, so 0.43.0 and older still start against the database after a rollback (they never read the gift tables, and their forget-me does not erase them). No existing table, index or row changes.
+
 ## [0.43.0] - 2026-11-10
 
 ### Added
