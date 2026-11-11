@@ -23,7 +23,8 @@ import {
  * docket's `MemoryGiftStore` is the reference and `GIFT_STORE_CONTRACT` the proof (gift-store.test.ts
  * runs every case on a fresh database). Every check-and-write is one `bun:sqlite` transaction with no
  * `await` inside, so a revision check, an idempotency key and the one-row-per-occasion-and-recipient
- * rule hold against a second write sent at once, and across connections too.
+ * rule hold against a second write sent at once. Writes take the lock first (`immediate`), so a second
+ * connection waits for the first write and then sees it, rather than failing on a stale read.
  *
  * The tables are not a numbered migration: `ensureGiftTables` makes them `IF NOT EXISTS` on every
  * open, and `PRAGMA user_version` stays at 13. So a tracker from before gifts (0.43.0 and older),
@@ -94,8 +95,8 @@ export function ensureGiftTables(db: Database): void {
 
 /**
  * Erases every gift record, event and idempotency key of one owner; returns the records and events
- * erased (docket's `forgetOwner` count). Synchronous, so forget-me (roster.ts) runs it inside its own
- * transaction.
+ * erased (docket's `forgetOwner` count). `forgetOwner` runs it in a transaction; forget-me (roster.ts)
+ * deletes from `GIFT_TABLES` with its own statements inside its own transaction, to count each table.
  */
 export function deleteGiftsOf(db: Database, ownerId: string): number {
   const events = db.query("DELETE FROM gift_events WHERE owner_id = ?").run(ownerId).changes;
@@ -213,7 +214,7 @@ export class SqliteGiftStore implements GiftStore {
       this.log(kind, meta, null, record);
       this.remember(meta, request, record);
       return record;
-    })();
+    }).immediate();
   }
 
   async update<K extends GiftKind>(
@@ -247,7 +248,7 @@ export class SqliteGiftStore implements GiftStore {
       this.log(kind, meta, prior, next);
       this.remember(meta, request, next);
       return next;
-    })();
+    }).immediate();
   }
 
   async get<K extends GiftKind>(kind: K, ownerId: string, id: string): Promise<GiftRecord<K> | null> {
@@ -311,6 +312,6 @@ export class SqliteGiftStore implements GiftStore {
   }
 
   async forgetOwner(ownerId: string): Promise<number> {
-    return this.db.transaction(() => deleteGiftsOf(this.db, ownerId))();
+    return this.db.transaction(() => deleteGiftsOf(this.db, ownerId)).immediate();
   }
 }
