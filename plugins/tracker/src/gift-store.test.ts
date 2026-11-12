@@ -76,9 +76,10 @@ describe("the gift tables are added without a schema version", () => {
       const db = openDatabase(path);
       try {
         expect(snapshot(db, before)).toBe(rows);
-        const now = db.query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE '%gift_%' ORDER BY name").all();
+        // The shop tables (shop-checks.ts) arrive the same way, and are tested there.
+        const now = db.query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE '%gift_%' AND name NOT LIKE '%shop_check%' ORDER BY name").all();
         expect(JSON.stringify(now)).toBe(schema);
-        expect(tablesOf(db).filter((t) => !before.includes(t)).sort()).toEqual([...GIFT_TABLES].sort());
+        expect(tablesOf(db).filter((t) => !before.includes(t) && !t.startsWith("shop_check")).sort()).toEqual([...GIFT_TABLES].sort());
         expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(13);
       } finally {
         db.close();

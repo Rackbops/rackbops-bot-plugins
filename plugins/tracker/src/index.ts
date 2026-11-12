@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
-import { bggSource, ebaySource, inboxSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, news, scout, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
+import { bggSource, ebaySource, inboxSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, news, scout, type ShopVet, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
 import { createEbayBrowse, parseEbayKeys } from "./ebay.js";
 import { ebayJobForgetSeconds, forgetEbayMessages } from "./ebay-forget.js";
 import { createFirecrawlScrape, parseFirecrawlKey } from "./firecrawl.js";
@@ -22,6 +22,7 @@ import { decideHealth, type HealthState, healthResponse } from "./health.js";
 import { WantInbox } from "./inbox.js";
 import { createIntake, INTAKE_CAPABILITY_KEY, INTAKE_KEY, IntakeJobIds, parseIntakeCapability, parseIntakeMode } from "./intake.js";
 import { IntakeConversations } from "./intake-store.js";
+import { ShopChecks, stepShopCheck } from "./shop-checks.js";
 import { parseIntakeId } from "./buttons.js";
 import { ResearchSources } from "./research-sources.js";
 import { TaskLocks } from "./locks.js";
@@ -110,8 +111,9 @@ export const TRACKER_TYPES: Readonly<Record<string, TaskType<unknown>>> = Object
  * The want-list pair over `sources`: docket-types' `wantlist` and `wantjudge`, which read a watch's
  * listings through whichever source its config names (a page, BGG, or its inbox).
  */
-export function wantTypes(sources: Partial<Record<SourceId, Source>>): { wantlist: TaskType<unknown>; wantjudge: TaskType<unknown> } {
-  return { wantlist: wantlistType(sources) as TaskType<unknown>, wantjudge: wantjudgeType(sources) as TaskType<unknown> };
+export function wantTypes(sources: Partial<Record<SourceId, Source>>, shops?: ShopVet): { wantlist: TaskType<unknown>; wantjudge: TaskType<unknown> } {
+  const o = shops ? { shops } : {};
+  return { wantlist: wantlistType(sources, o) as TaskType<unknown>, wantjudge: wantjudgeType(sources, o) as TaskType<unknown> };
 }
 
 /** `TRACKER_BGG_TOKEN`: BGG's Bearer token for a registered application, or null when unset or empty. */
@@ -158,6 +160,8 @@ export interface TrackerOptions {
   tickWaitMs?: number;
   /** Test seam: an Executor for the intake's turns (intake.ts) in place of the city-hall one; `executor` otherwise. */
   intakeExecutor?: Executor;
+  /** Test seam: the shop checks' Executor (shop-checks.ts); defaults to `executor`, then city-hall's. */
+  shopExecutor?: Executor;
   /** Test seams for the intake's wait on a turn: its sleep, its poll interval and its limit, in ms. */
   intakeSleep?: (ms: number) => Promise<void>;
   intakePollMs?: number;
@@ -230,12 +234,25 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   // as none the same way: a run that finds none makes no model call and tells the owner.
   let sources: ResearchSources | null = null;
   const readSources: ReadSources = async (taskId) => sources?.read(taskId) ?? [];
+  // The shop list (shop-checks.ts, docket#120) lives there too. Until it is open a read fails, so a
+  // Shopify listing is held, never told unvetted. Only with the execute lane, which runs the checks:
+  // without it a Shopify watch tells as before (no check could ever run, and every listing would wait).
+  let shopChecks: ShopChecks | null = null;
+  const shopVet: ShopVet = {
+    get: async (domains) => {
+      if (!shopChecks) throw new Error("the shop list is not open");
+      return shopChecks.get(domains);
+    },
+    request: async (domain, from) => void (await shopChecks?.request(domain, from)),
+  };
+  const shopIds = new IntakeJobIds();
+  let shopExecutor: Executor | null = null;
   // Only with the web area, whose task API is the one way pages arrive: without it, docket-types
   // 0.9.0 would DM a first answer asking for pages nobody could send and wait 14 days for them.
   const types = options.types ?? {
     ...TRACKER_TYPES,
     research: researchType(webOrigin ? { readSources } : {}) as TaskType<unknown>,
-    ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}), ...(shopify ? { shopify } : {}), ...(ebay ? { ebay } : {}) }),
+    ...wantTypes({ page: pageSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}), ...(shopify ? { shopify } : {}), ...(ebay ? { ebay } : {}) }, executeOn ? shopVet : undefined),
   };
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };
@@ -361,6 +378,10 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       try {
         const r = await lane.tick();
         if (r.failed > 0) host.log.warn(`execute lane: ${r.ran} ran, ${r.failed} failed`);
+        // Then one step of the oldest shop check (shop-checks.ts): after the lane, never before it.
+        if (shopChecks && shopExecutor && store && deps) {
+          await stepShopCheck({ checks: shopChecks, store, executor: shopExecutor, ids: shopIds, clock, locks, budget: executeBudget(deps.ceilings, budgetUnlimited), log: host.log });
+        }
         // The record of a Job whose run is gone, or finished a month ago, goes (executor.ts).
         if (records && store) records.prune(clock.now());
         // So do the gathered pages of a research request that has ended (research-sources.ts).
@@ -471,6 +492,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         const openedInbox = new WantInbox(opened);
         const openedSources = new ResearchSources(opened);
         const openedConversations = new IntakeConversations(opened);
+        const openedShops = new ShopChecks(opened, clock);
         // The owner of a task a recipient's failures paused is told once, by a plain DM: not counted
         // toward the owner's own pause (they may simply be offline), and `/tasks` shows it regardless.
         const openedDelivery = new DeliveryHealth(opened, openedStore, {
@@ -511,6 +533,18 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
             now: () => clock.now(),
             // No admin notices: every turn is a new Job key, so they would come once per DM. The person
             // hears that the assistant is busy, and the execute lane's own Executor tells the admins.
+            ...(options.cityHallFetch ? { fetchImpl: options.cityHallFetch } : {}),
+          });
+        }
+        // The shop checks' Jobs: their own city-hall Executor with ids in memory, as the intake's turns.
+        let shopRuns: Executor | null = options.shopExecutor ?? options.executor ?? null;
+        if (!shopRuns && cityHallConfig) {
+          shopRuns = createCityHallExecutor({
+            config: cityHallConfig,
+            records: shopIds,
+            databaseId: databaseId(opened),
+            log: host.log,
+            now: () => clock.now(),
             ...(options.cityHallFetch ? { fetchImpl: options.cityHallFetch } : {}),
           });
         }
@@ -582,6 +616,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
         sources = openedSources;
         conversations = openedConversations;
         intakeExecutor = turns;
+        shopChecks = openedShops;
+        shopExecutor = shopRuns;
         delivery = openedDelivery;
         jobRecords = records;
         executeLane = lane;
@@ -607,6 +643,8 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       sources = null;
       conversations = null;
       intakeExecutor = null;
+      shopChecks = null;
+      shopExecutor = null;
       const closing = db;
       db = null;
       // A tick already running (notify, poll or execute: each is `tracked`) keeps the store it read,

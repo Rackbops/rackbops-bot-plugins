@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.45.0] - 2026-11-12
+
+### Added
+
+- Shop checks for Shopify watches (Rackbops/docket#120, plan item 162; docket 0.25.0). Before a Shopify watch tells a listing, its shop needs a fresh verdict from one web search, "is <shop> a legitimate website", run as a `claude -p` Job through city-hall on the execute lane (WebSearch only, 4 turns, 0.10 USD, charged to the owner of the watch that asked first; a usage limit or a refused credential is not charged). A shop that passes is told for 6 months, then checked again. A flagged shop's listings are not DMed: each is kept as a finding marked `shop-flagged`, and the shop is checked again after 6 months. A shop the search says too little about is DMed marked "unvetted shop -- check before buying" and checked again after 30 days. A listing whose shop has no verdict yet is held, and its watch runs again as soon as the verdict lands (that run does not count against the owner's own run-now allowance). At most 5 checks are asked for per look, one runs at a time. While the execute lane is off, Shopify watches send as before, unchecked.
+
+### Changed
+
+- Needs docket 0.25.0.
+
+### Schema
+
+- Still at 13. Three new tables, `shop_checks`, `shop_check_requests` and `shop_check_waiters`, are made on start when absent, outside the numbered schema, so 0.44.0 and older still start against the database after a rollback (they never read them). Forget-me erases a person's check requests and waiting watches; the verdicts name no one and stay. No existing table, index or row changes.
+
 ## [0.44.0] - 2026-11-11
 
 ### Added
