@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.45.0] - 2026-11-12
+## [0.46.0] - 2026-11-12
 
 ### Added
 
@@ -12,7 +12,7 @@
 
 ### Schema
 
-- Still at 13. Three new tables, `shop_checks`, `shop_check_requests` and `shop_check_waiters`, are made on start when absent, outside the numbered schema, so 0.44.0 and older still start against the database after a rollback (they never read them). Forget-me erases a person's check requests and waiting watches; the verdicts name no one and stay. No existing table, index or row changes. After a rollback, 0.44.0's forget-me does not erase the two new tables' rows (a later 0.45.0 drops a request whose owner is gone), and a waiting watch's queued shop run counts against its owner's run-now allowance.
+- Still at 13. Three new tables, `shop_checks`, `shop_check_requests` and `shop_check_waiters`, are made on start when absent, outside the numbered schema, so 0.45.0 and older still start against the database after a rollback (they never read them). Forget-me erases a person's check requests and waiting watches; the verdicts name no one and stay. No existing table, index or row changes. After a rollback, an older forget-me does not erase the two new tables' rows (a later 0.46.0 drops a request whose owner is gone), and a waiting watch's queued shop run counts against its owner's run-now allowance.
 
 ## [0.44.0] - 2026-11-11
 
