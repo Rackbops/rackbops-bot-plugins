@@ -22,7 +22,7 @@ import { decideHealth, type HealthState, healthResponse } from "./health.js";
 import { WantInbox } from "./inbox.js";
 import { createIntake, INTAKE_CAPABILITY_KEY, INTAKE_KEY, IntakeJobIds, parseIntakeCapability, parseIntakeMode } from "./intake.js";
 import { IntakeConversations } from "./intake-store.js";
-import { ShopChecks, stepShopCheck } from "./shop-checks.js";
+import { ShopChecks, ShopJobIds, stepShopCheck } from "./shop-checks.js";
 import { parseIntakeId } from "./buttons.js";
 import { ResearchSources } from "./research-sources.js";
 import { TaskLocks } from "./locks.js";
@@ -245,7 +245,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     },
     request: async (domain, from) => void (await shopChecks?.request(domain, from)),
   };
-  const shopIds = new IntakeJobIds();
+  const shopIds = new ShopJobIds();
   let shopExecutor: Executor | null = null;
   // Only with the web area, whose task API is the one way pages arrive: without it, docket-types
   // 0.9.0 would DM a first answer asking for pages nobody could send and wait 14 days for them.

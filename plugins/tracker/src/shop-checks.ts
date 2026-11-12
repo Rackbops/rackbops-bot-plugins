@@ -41,12 +41,13 @@ export const SHOP_TABLES = ["shop_check_waiters", "shop_check_requests"] as cons
 /** The request id a shop check's run of a waiting watch starts with (`runNowKey`). */
 export const SHOP_RUN_PREFIX = "shop-";
 
-/** How many waiting checks one tick looks at: past one whose owner is at a budget ceiling, to the next. */
-export const SHOP_WAITING_LOOKED_AT = 20;
+/** How many waiting checks one tick looks at: past every one whose owner is at a budget ceiling. */
+export const SHOP_WAITING_LOOKED_AT = 1000;
 
 /**
- * How long a check may wait on city-hall before it is given up (48 h, the executor's paused-runner cap,
- * PAUSED_CAP_MS): its listings stay held, and the watch's next look asks again under a new key.
+ * How long a check may wait on city-hall, counted from when it was sent, before it is given up (48 h,
+ * the executor's paused-runner cap, PAUSED_CAP_MS): its listings stay held, and the watch's next look
+ * asks again under a new key.
  */
 export const SHOP_CHECK_GIVE_UP_MS = 48 * 3_600_000;
 
@@ -176,11 +177,47 @@ export class ShopChecks implements ShopVet {
   }
 }
 
+/**
+ * The shop checks' Job ids, in memory like the intake's, plus when each was first sent, which the
+ * 48 h give-up counts from. A restart forgets both: the check is sent again under the same key (city-hall
+ * hands back the same job) and its 48 h start again.
+ */
+export class ShopJobIds implements JobIdRecords {
+  // Not the intake's IntakeJobIds, whose module imports the roster, which imports this file.
+  private readonly ids = new Map<string, { remoteId: string; pausedAt: string | null; sentAt: number }>();
+
+  get(jobKey: string): string | null {
+    return this.ids.get(jobKey)?.remoteId ?? null;
+  }
+
+  put(jobKey: string, _occurrenceId: string, remoteId: string, at: string): void {
+    const was = this.ids.get(jobKey);
+    this.ids.set(jobKey, { remoteId, pausedAt: was?.pausedAt ?? null, sentAt: was?.sentAt ?? Date.parse(at) });
+  }
+
+  pausedAt(jobKey: string): string | null {
+    return this.ids.get(jobKey)?.pausedAt ?? null;
+  }
+
+  markPaused(jobKey: string, at: string): void {
+    const r = this.ids.get(jobKey);
+    if (r && r.pausedAt === null) r.pausedAt = at;
+  }
+
+  sentAt(jobKey: string): number | null {
+    return this.ids.get(jobKey)?.sentAt ?? null;
+  }
+
+  forget(jobKey: string): void {
+    this.ids.delete(jobKey);
+  }
+}
+
 export interface ShopCheckerDeps {
   checks: ShopChecks;
   store: Store;
   executor: Executor;
-  ids: JobIdRecords & { forget(jobKey: string): void };
+  ids: ShopJobIds;
   clock: Clock;
   locks: TaskLocks;
   budget: BudgetPolicy;
@@ -241,7 +278,8 @@ async function stepOne(d: ShopCheckerDeps, req: ShopRequest): Promise<ShopStep> 
     if (err instanceof JobPendingError || err instanceof ExecutorUnavailableError) {
       // The executor's own give-up on a runner paused too long, said as a pending answer.
       if (err instanceof JobPendingError && err.message.includes("past the paused-runner cap")) return giveUp(d, req, key, "the runner stayed paused");
-      if (d.clock.now().getTime() - Date.parse(req.requestedAt) > SHOP_CHECK_GIVE_UP_MS) return giveUp(d, req, key, "no answer in 48 h");
+      const sentAt = d.ids.sentAt(key);
+      if (sentAt !== null && d.clock.now().getTime() - sentAt > SHOP_CHECK_GIVE_UP_MS) return giveUp(d, req, key, "no answer in 48 h");
       // Waiting in city-hall's queue, unreachable, or put back after a usage limit: asked again next tick.
       if (err instanceof ExecutorUnavailableError && requeuedAfter(err) !== null) d.log.info(`shop check ${req.domain}: waiting (${requeuedAfter(err)})`);
       return "pending";

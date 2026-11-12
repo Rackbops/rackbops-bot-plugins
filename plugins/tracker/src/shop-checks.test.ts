@@ -6,11 +6,10 @@ import { Database } from "bun:sqlite";
 import { type Clock, createTask, type Executor, ExecutorUnavailableError, JobPendingError, type JobResult, type JobSpec, runNowKey, type User } from "@rackbops/docket-core";
 import { type ShopCheck, type SourceId, shopifySource, wantlistType } from "@rackbops/docket-types";
 import { Ceilings } from "./ceilings.js";
-import { IntakeJobIds } from "./intake.js";
 import { TaskLocks } from "./locks.js";
 import { Roster } from "./roster.js";
 import { migrate, openDatabase } from "./schema.js";
-import { SHOP_RUN_PREFIX, SHOP_TABLES, ShopChecks, stepShopCheck } from "./shop-checks.js";
+import { SHOP_RUN_PREFIX, SHOP_TABLES, ShopChecks, ShopJobIds, stepShopCheck } from "./shop-checks.js";
 import { SqliteStore } from "./store.js";
 import { removeDir } from "./test-dirs.js";
 import { executeBudget } from "./usage.js";
@@ -104,7 +103,7 @@ describe("stepShopCheck", () => {
   async function wired(answers: (JobResult | Error)[]) {
     const s = await setup();
     const { executor, calls } = fakeExecutor(answers);
-    const ids = new IntakeJobIds();
+    const ids = new ShopJobIds();
     const deps = { checks: s.checks, store: s.store, executor, ids, clock, locks: new TaskLocks(), budget: s.budget, log };
     return { ...s, deps, calls, ids };
   }
@@ -189,7 +188,7 @@ describe("stepShopCheck, several waiting", () => {
     const { executor, calls } = fakeExecutor([success(FLAGGED)]);
     // Rod is at his ceiling (0 calls a day); Bea is not.
     const budget = { ...s.budget, personFor: (u: User) => (u.id === s.owner.id ? { usd: null, calls: 0 } : null) };
-    const deps = { checks: s.checks, store: s.store, executor, ids: new IntakeJobIds(), clock, locks: new TaskLocks(), budget, log };
+    const deps = { checks: s.checks, store: s.store, executor, ids: new ShopJobIds(), clock, locks: new TaskLocks(), budget, log };
     await s.checks.request("first.us", { taskId: "t1", ownerId: s.owner.id });
     at = new Date(NOW.getTime() + 60_000);
     await s.checks.request("second.us", { taskId: "t2", ownerId: other.id });
@@ -207,7 +206,7 @@ describe("stepShopCheck, several waiting", () => {
       new ExecutorUnavailableError("city-hall requeued the job after usage_limit"),
       new JobPendingError("city-hall job is queued, past the paused-runner cap"),
     ]);
-    const ids = new IntakeJobIds();
+    const ids = new ShopJobIds();
     const deps = { checks: s.checks, store: s.store, executor, ids, clock, locks: new TaskLocks(), budget: s.budget, log };
     await s.checks.request("slow.us", { taskId: "t1", ownerId: s.owner.id });
     ids.put(`shop:slow.us:${NOW.toISOString()}`, "x", "remote-1", NOW.toISOString());
@@ -224,10 +223,33 @@ describe("stepShopCheck, several waiting", () => {
     expect((await s.checks.get(["slow.us"])).size).toBe(0);
   });
 
+  it("counts the 48 h from when a check was sent, not from when it was asked for", async () => {
+    const s = await setup();
+    const ids = new ShopJobIds();
+    // A fake that records the id as the city-hall Executor does, then answers that the Job is queued.
+    const executor: Executor = {
+      run: async (_spec, _occ, key) => {
+        ids.put(key, key, "remote-1", clock.now().toISOString());
+        throw new JobPendingError("city-hall job is queued");
+      },
+    };
+    const deps = { checks: s.checks, store: s.store, executor, ids, clock, locks: new TaskLocks(), budget: s.budget, log };
+    await s.checks.request("old.us", { taskId: "t1", ownerId: s.owner.id });
+    // Asked three days ago and held since; sent only now.
+    at = new Date(NOW.getTime() + 72 * 3_600_000);
+    expect(await stepShopCheck(deps)).toBe("pending");
+    expect(s.checks.waiting().map((r) => r.domain)).toEqual(["old.us"]);
+    at = new Date(at.getTime() + 47 * 3_600_000);
+    expect(await stepShopCheck(deps)).toBe("pending");
+    at = new Date(at.getTime() + 2 * 3_600_000);
+    expect(await stepShopCheck(deps)).toBe("failed");
+    expect(s.checks.waiting()).toEqual([]);
+  });
+
   it("drops a check whose owner is gone, and one the executor threw on", async () => {
     const s = await setup();
     const { executor, calls } = fakeExecutor([new Error("bad spec")]);
-    const deps = { checks: s.checks, store: s.store, executor, ids: new IntakeJobIds(), clock, locks: new TaskLocks(), budget: s.budget, log };
+    const deps = { checks: s.checks, store: s.store, executor, ids: new ShopJobIds(), clock, locks: new TaskLocks(), budget: s.budget, log };
     await s.checks.request("gone.us", { taskId: "t1", ownerId: "nobody" });
     expect(await stepShopCheck(deps)).toBe("failed");
     expect(calls).toHaveLength(0);
@@ -264,7 +286,7 @@ describe("a Shopify watch over the shop list", () => {
     expect(first?.notify).toBeUndefined();
     expect(first?.summary).toContain("1 held for a shop check");
     const { executor } = fakeExecutor([success({ verdict: "ok", reasons: ["established store"], sources: ["https://www.trustpilot.com/review/good.com"] })]);
-    await stepShopCheck({ checks: s.checks, store: s.store, executor, ids: new IntakeJobIds(), clock, locks: new TaskLocks(), budget: s.budget, log });
+    await stepShopCheck({ checks: s.checks, store: s.store, executor, ids: new ShopJobIds(), clock, locks: new TaskLocks(), budget: s.budget, log });
     const second = await type.run?.(ctx(first?.state));
     expect(second?.notify?.text).toContain("<https://good.com/p?variant=1>");
   });
