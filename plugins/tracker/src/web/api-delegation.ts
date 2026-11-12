@@ -7,7 +7,7 @@
  * `verifyDelegation`) and takes it only from the services `TRACKER_API_DELEGATES` names.
  *
  * Every route answers one operation (`OPERATIONS`), and a token must carry `<app>:<operation>` for
- * it, so one minted to list tasks cannot delete one. The names are shipped once a service asks usr
+ * it, so one minted to list tasks cannot delete one, and one minted to read gifts cannot change them. The names are shipped once a service asks usr
  * for them: a rename is a change on both sides.
  */
 
@@ -28,15 +28,22 @@ export function parseDelegates(env: Readonly<Record<string, string | undefined>>
   return new Set(raw.split(",").map((id) => `key:${Number(id)}`));
 }
 
+import { type GiftRoute, giftMethods } from "./api-gifts.js";
+
 /** The route shapes `operationOf` reads (api.ts's `Route`). */
 export type RouteKind =
   | { kind: "me" | "types" | "tasks" | "capabilities" | "validate" }
   | { kind: "task"; id: string }
   | { kind: "act"; id: string; action: "pause" | "resume" }
   | { kind: "run"; id: string }
-  | { kind: "listings" | "sources" | "ready"; id: string };
+  | { kind: "listings" | "sources" | "ready"; id: string }
+  | { kind: "gift"; gift: GiftRoute };
 
-/** Every operation a delegation token can name, one per route and method. */
+/**
+ * Every operation a delegation token can name: one per task route and method, and two for the whole
+ * gift ledger (#383) -- `read_gifts` for every gift read, `write_gifts` for every gift write -- so a
+ * service can be let read a person's gifts without changing them.
+ */
 export const OPERATIONS = [
   "whoami",
   "list_task_types",
@@ -53,6 +60,8 @@ export const OPERATIONS = [
   "send_listings",
   "send_sources",
   "sources_ready",
+  "read_gifts",
+  "write_gifts",
 ] as const;
 export type Operation = (typeof OPERATIONS)[number];
 
@@ -81,5 +90,7 @@ export function operationOf(r: RouteKind, method: string): Operation | null {
       return method === "POST" ? "send_sources" : null;
     case "ready":
       return method === "POST" ? "sources_ready" : null;
+    case "gift":
+      return giftMethods(r.gift).includes(method) ? (method === "GET" ? "read_gifts" : "write_gifts") : null;
   }
 }

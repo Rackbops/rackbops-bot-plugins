@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.45.0] - 2026-11-12
+
+### Added
+
+- Gift routes in the task API (Rackbops/docket#94, #383): the owner's gift ledger under `/api/v1/gifts/` -- recipients, groups and their members, occasions and their rosters, items, purchases and allocations, the reviewed roster sync with an occasion's groups, an occasion's coverage, budget and cost, and spend per currency, plus a batch of up to 25 writes with an outcome per row. Writes take an `expectedRevision` (a stale one is 409 and changes nothing) and `Idempotency-Key`. Another person's ids are the unknown record's 404, and sharing a task gives no gift access. Two new usr delegation operations, `read_gifts` and `write_gifts`, cover every gift read and every gift write; a service link made before 0.45.0 does not cover them until it is made again. `GET /capabilities` lists them under `gifts`. No model call and no runner.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.44.0] - 2026-11-11
 
 ### Added

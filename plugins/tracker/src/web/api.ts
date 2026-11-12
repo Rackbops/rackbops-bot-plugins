@@ -2,6 +2,7 @@ import type { User } from "@rackbops/docket-core";
 import type { TrackerDeps, UsrLink } from "../actions.js";
 import type { UsrDelegation } from "../usr-identity.js";
 import { operationOf } from "./api-delegation.js";
+import { type GiftRoute, giftMethods, giftRead, giftRoute, giftWrite, MAX_GIFT_BATCH_BYTES } from "./api-gifts.js";
 import type { Queue } from "../discord-common.js";
 import { type ApiToken, TOKEN_PREFIX } from "./api-tokens.js";
 import {
@@ -57,6 +58,10 @@ export { canonicalJson };
  *   the pages the owner's browser gathered in to their research request made with `sources:
  *   browser`, then start its run on them (body up to `MAX_SOURCES_BYTES`: ten pages of text);
  *   `GET /tasks` shows such a request's `sources: "browser"`, its `pages` and `waitingForPages`.
+ * - `/gifts/...` (0.45.0, api-gifts.ts, #383): the owner's gift ledger -- recipients, groups,
+ *   occasions and their rosters, items, purchases, allocations, the roster sync and the coverage
+ *   and spend summaries. A gift write takes `Idempotency-Key` as any write does; its revision check
+ *   is the body's `expectedRevision`, never `If-Match`.
  */
 
 export const API_PREFIX = "/api/v1";
@@ -162,7 +167,8 @@ type Route =
   | { kind: "act"; id: string; action: "pause" | "resume" }
   | { kind: "run"; id: string }
   | { kind: "listings"; id: string }
-  | { kind: "sources" | "ready"; id: string };
+  | { kind: "sources" | "ready"; id: string }
+  | { kind: "gift"; gift: GiftRoute };
 
 const ACT = /^\/tasks\/([^/]+)\/(pause|resume)$/;
 const RUN = /^\/tasks\/([^/]+)\/run$/;
@@ -183,6 +189,10 @@ function route(rest: string): Route | null {
   if (rest === "/types") return { kind: "types" };
   if (rest === "/capabilities") return { kind: "capabilities" };
   if (rest === "/tasks") return { kind: "tasks" };
+  if (rest.startsWith("/gifts/")) {
+    const gift = giftRoute(rest);
+    return gift ? { kind: "gift", gift } : null;
+  }
   // Before `/tasks/<id>`: a task id is `t<seq>`, never `validate`.
   if (rest === "/tasks/validate") return { kind: "validate" };
   const act = ACT.exec(rest);
@@ -198,6 +208,7 @@ function route(rest: string): Route | null {
 }
 
 function allowedMethods(r: Route): string {
+  if (r.kind === "gift") return giftMethods(r.gift).join(", ");
   if (r.kind === "tasks") return "GET, POST";
   if (r.kind === "task") return "GET, PATCH, DELETE";
   if (r.kind === "validate" || r.kind === "act" || r.kind === "run" || r.kind === "listings" || r.kind === "sources" || r.kind === "ready") return "POST";
@@ -296,6 +307,7 @@ async function authenticateDelegation(w: ApiWiring, usr: UsrLink, delegates: Rea
 
 /** One write -- create, edit, pause, resume, run now, delete, listings, sources -- as its answer. */
 async function write(writer: Writer, user: User, r: Route, method: string, body: Record<string, unknown>, base: string): Promise<ApiAnswer> {
+  if (r.kind === "gift") return giftWrite(writer, user, r.gift, body);
   if (method === "DELETE") return actAnswer(writer, user, (r as { id: string }).id, "delete");
   if (r.kind === "tasks") return createAnswer(writer, user, body, base);
   if (r.kind === "task") return editAnswer(writer, user, r.id, body, base);
@@ -367,7 +379,7 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
     if (key !== null && !isIdempotencyKey(key)) return json(problem(400, "invalid_idempotency_key", "Idempotency-Key is 8 to 128 letters, digits, '-', '_', '.' or ':'; a UUID will do."));
     let body: Record<string, unknown> = {};
     if (method !== "DELETE") {
-      const read = await readJson(request, r.kind === "listings" ? MAX_LISTINGS_BYTES : r.kind === "sources" ? MAX_SOURCES_BYTES : MAX_API_BYTES);
+      const read = await readJson(request, r.kind === "listings" ? MAX_LISTINGS_BYTES : r.kind === "sources" ? MAX_SOURCES_BYTES : r.kind === "gift" && r.gift.kind === "batch" ? MAX_GIFT_BATCH_BYTES : MAX_API_BYTES);
       if (!read.ok) return json(read.answer);
       body = read.body;
     }
@@ -392,6 +404,7 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
     w.d.apiIdempotency.finish(user.id, key, begun.claim, { status: answer.status, body: answer.body, headers: answer.headers ?? {} });
     return json(answer);
   }
+  if (r.kind === "gift") return json(await giftRead(w.d, user, r.gift, new URL(request.url).searchParams));
   if (r.kind === "types") return json(typesAnswer(w.d));
   if (r.kind === "tasks") return json(await listAnswer(w.d, user, new URL(request.url).searchParams));
   if (r.kind === "capabilities") return json(capabilitiesAnswer(w.d, user, { burst: RATE_BURST, perSecond: RATE_PER_SECOND }));

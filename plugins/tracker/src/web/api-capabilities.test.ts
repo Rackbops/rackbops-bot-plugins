@@ -6,6 +6,7 @@ import { MAX_LIVE_NEWS } from "../news.js";
 import { MAX_LIVE_SCOUTS } from "../scout.js";
 import { MAX_WANT_TASKS } from "../want.js";
 import { RATE_BURST, RATE_PER_SECOND } from "./api.js";
+import { MAX_GIFT_BATCH } from "./api-gifts.js";
 import { MAX_PAGE } from "./api-tasks.js";
 import { api, cleanup, LARRY, makeToken, people, signIn, slash, world } from "./harness.js";
 
@@ -97,6 +98,7 @@ describe("GET /capabilities", () => {
       owner: { timeZone: string };
       limits: Record<string, number>;
       sources: Record<string, boolean>;
+      gifts: unknown;
     };
     expect(body.types.map((t) => t.type)).toContain("reminder");
     expect(typeof body.owner.timeZone).toBe("string");
@@ -113,5 +115,11 @@ describe("GET /capabilities", () => {
     });
     expect(body.sources).toEqual({ runner: false, bgg: false, ebay: false, shopify: true, mail: false, webArea: true });
     for (const v of Object.values(body.sources)) expect(typeof v).toBe("boolean");
+    // The gift ledger (#383): the delegation operations its routes need, its collections and its batch cap.
+    expect(body.gifts).toEqual({
+      operations: ["read_gifts", "write_gifts"],
+      collections: ["recipients", "groups", "occasions", "occasion-recipients", "items", "purchases", "allocations"],
+      batchMax: MAX_GIFT_BATCH,
+    });
   });
 });

@@ -1,3 +1,4 @@
+import { GIFT_COLLECTIONS, MAX_GIFT_BATCH } from "./api-gifts.js";
 import { describeSchedule, hasFired, type Task, type User } from "@rackbops/docket-core";
 import type { IntakeType, PriceConfig, ResearchConfig } from "@rackbops/docket-types";
 import { NO_LONGER_LISTED, NO_SUCH_TASK, ownTask, type TrackerDeps } from "../actions.js";
@@ -310,6 +311,12 @@ export function capabilitiesAnswer(d: TrackerDeps, user: User, rate: { burst: nu
         mail: d.mail != null,
         // The web area (`TRACKER_WEB_URL`), which browser research (`sources: "browser"`) needs; not web research.
         webArea: d.webEditor,
+      },
+      // The gift ledger's routes (#383): what a usr delegation token needs for them, and their limits.
+      gifts: {
+        operations: ["read_gifts", "write_gifts"],
+        collections: Object.keys(GIFT_COLLECTIONS),
+        batchMax: MAX_GIFT_BATCH,
       },
     },
   };
