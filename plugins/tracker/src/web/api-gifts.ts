@@ -27,6 +27,9 @@ import { problem } from "./api-tasks.js";
 import type { Writer } from "./editor.js";
 import { sha256 } from "./secrets.js";
 import { canonicalJson } from "./task-version.js";
+import { GIFT_COLLECTIONS, type GiftCollection, MAX_GIFT_BATCH } from "./api-gift-names.js";
+
+export { GIFT_COLLECTIONS, type GiftCollection, MAX_GIFT_BATCH, MAX_GIFT_BATCH_BYTES } from "./api-gift-names.js";
 
 /**
  * The gift organizer's routes in the task API (rackbops-bot-plugins#383, epic Rackbops/docket#94),
@@ -56,23 +59,6 @@ import { canonicalJson } from "./task-version.js";
  * and its write are never split by another API or web write (`GiftLedger`'s own note). Nothing here
  * waits on city-hall or calls a model.
  */
-
-/** The record kind each collection holds, by its path name. */
-export const GIFT_COLLECTIONS = {
-  recipients: "recipient",
-  groups: "group",
-  occasions: "occasion",
-  "occasion-recipients": "occasionRecipient",
-  items: "item",
-  purchases: "purchase",
-  allocations: "allocation",
-} as const satisfies Record<string, GiftKind>;
-export type GiftCollection = keyof typeof GIFT_COLLECTIONS;
-
-/** Rows in one `POST /gifts/batch`. */
-export const MAX_GIFT_BATCH = 25;
-/** A batch's body: `MAX_GIFT_BATCH` records' fields, each up to docket's notes length. */
-export const MAX_GIFT_BATCH_BYTES = 128 * 1024;
 
 export type GiftRoute =
   | { kind: "collection"; collection: GiftCollection }
@@ -150,7 +136,7 @@ function refusal(err: unknown): ApiAnswer {
   throw err;
 }
 
-/** The record as the API shows it: its fields, `kind` and the base fields. */
+/** The record as the API shows it: its fields, the base fields, and `recordKind` (a recipient has its own `kind`). */
 const shown = <K extends GiftKind>(kind: K, record: GiftRecord<K>) => ({ ...record, recordKind: kind });
 
 type Revision = { ok: true; revision: number; fields: Record<string, unknown> } | { ok: false; answer: ApiAnswer };
@@ -295,6 +281,8 @@ async function members(gifts: GiftLedger, meta: GiftWriteMeta, id: string, body:
   if (typeof dryRun !== "boolean") return invalid("`dryRun` is true or false.");
   const group = await gifts.get("group", meta.ownerId, id);
   if (!group) return notFound();
+  // Every id added is checked as the write would check it, so a preview never promises what the write refuses.
+  for (const recipientId of add) if (!(await gifts.get("recipient", meta.ownerId, recipientId))) return notFound();
   const edit = editGroupMembers(group, add, remove);
   if (dryRun) return { status: 200, body: { ...edit, revision: group.revision } };
   const split = splitRevision({ expectedRevision: rest.expectedRevision });
@@ -307,9 +295,22 @@ async function members(gifts: GiftLedger, meta: GiftWriteMeta, id: string, body:
   }
 }
 
+/**
+ * Each decision exactly as docket reads it, or null: `planGroupSync` takes anything that is not
+ * keep or reassign as unassign, so a misspelt action must be refused here, never planned.
+ */
 function decisionsOf(v: unknown): Record<string, GiftSyncDecision> | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
-  return v as Record<string, GiftSyncDecision>;
+  const out: Record<string, GiftSyncDecision> = {};
+  for (const [id, d] of Object.entries(v)) {
+    if (typeof d !== "object" || d === null || Array.isArray(d)) return null;
+    const { action, recipientIds, ...rest } = d as Record<string, unknown>;
+    if (Object.keys(rest).length > 0) return null;
+    if ((action === "keep" || action === "unassign") && recipientIds === undefined) out[id] = { action };
+    else if (action === "reassign" && isIdList(recipientIds)) out[id] = { action, recipientIds };
+    else return null;
+  }
+  return out;
 }
 
 /** `POST /gifts/occasions/<id>/sync`: applies the preview the owner reviewed, named by its token, with their decisions. */
@@ -318,15 +319,25 @@ async function sync(gifts: GiftLedger, meta: GiftWriteMeta, id: string, body: Re
   if (Object.keys(rest).length > 0) return invalid(`Unknown field(s): ${Object.keys(rest).join(", ")}. Send previewToken and decisions.`);
   if (typeof previewToken !== "string") return invalid("`previewToken` is the token the sync preview gave.");
   const chosen = decisionsOf(decisions);
-  if (!chosen) return invalid("`decisions` maps each affected allocation id to keep, reassign or unassign.");
+  if (!chosen) return invalid('`decisions` maps each affected allocation id to {"action": "keep"}, {"action": "unassign"} or {"action": "reassign", "recipientIds": [...]}.');
   const now = await previewOrRefusal(gifts, meta.ownerId, id);
   if ("status" in now) return now;
   // The roster, the groups or a gift moved since the preview: the owner reviews again.
   if (now.previewToken !== previewToken) return problem(409, "stale_preview", "The occasion, its groups or its gifts changed since that preview; preview again.");
+  let plan: ReturnType<typeof planGroupSync>;
   try {
-    await gifts.applyGiftSync(meta, planGroupSync(now.preview, chosen));
+    plan = planGroupSync(now.preview, chosen);
   } catch (err) {
-    return refusal(err);
+    return refusal(err); // nothing planned, nothing written
+  }
+  try {
+    await gifts.applyGiftSync(meta, plan);
+  } catch (err) {
+    // docket writes a sync step by step: a refusal part way leaves the steps before it made.
+    const answer = refusal(err);
+    const e = (answer.body as { error: { message: string } }).error;
+    e.message += " Earlier steps of this sync may have been made; preview again before deciding.";
+    return answer;
   }
   const occasion = await gifts.get("occasion", meta.ownerId, id);
   const roster = await gifts.list("occasionRecipient", meta.ownerId, { occasionId: id });
@@ -340,7 +351,13 @@ async function batch(gifts: GiftLedger, meta: GiftWriteMeta, body: Record<string
   if (!Array.isArray(writes) || writes.length === 0 || writes.length > MAX_GIFT_BATCH) return invalid(`\`writes\` is a list of 1 to ${MAX_GIFT_BATCH} writes.`);
   const results: { index: number; status: number; body: unknown }[] = [];
   for (const [index, row] of writes.entries()) {
-    const answer = await batchRow(gifts, meta, row);
+    let answer: ApiAnswer;
+    try {
+      answer = await batchRow(gifts, meta, row);
+    } catch {
+      // Not a ledger refusal (those are answers already): this row's outcome is unknown, and the rows after it still run.
+      answer = problem(500, "internal", "This write failed unexpectedly; it may or may not have been made. Read the record before trying again.");
+    }
     results.push({ index, status: answer.status, body: answer.body });
   }
   return { status: 200, body: { results } };

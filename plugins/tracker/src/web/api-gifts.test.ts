@@ -173,17 +173,38 @@ describe("the gift routes", () => {
       // A write naming the owner's records is refused as not found too: nothing of theirs can be pointed at.
       const pointing = await api(w.plugin, "POST", "/gifts/groups", { token, body: { name: "Mine", memberIds: [l.ann.id] } });
       expect(pointing.status).toBe(404);
+      // Their own item, occasion and person, with one of Larry's ids swapped in at a time.
+      const mine = {
+        itemId: (await create(w, "items", item("Mine"), token)).id,
+        occasionId: (await create(w, "occasions", christmas(), token)).id,
+        recipientIds: [(await create(w, "recipients", person("Kin"), token)).id],
+        quantity: 1,
+        shared: false,
+        purchaseId: null,
+        handoff: "none",
+        givenOn: null,
+      };
+      expect((await api(w.plugin, "POST", "/gifts/allocations", { token, body: mine })).status).toBe(201);
+      for (const swap of [{ itemId: l.scarf.id }, { occasionId: l.xmas.id }, { recipientIds: [l.ann.id] }, { purchaseId: l.bought.id }]) {
+        const res = await api(w.plugin, "POST", "/gifts/allocations", { token, body: { ...mine, ...swap } });
+        expect(`${Object.keys(swap)[0]} ${res.status}`).toBe(`${Object.keys(swap)[0]} 404`);
+      }
+      expect((await api(w.plugin, "POST", "/gifts/purchases", { token, body: purchase(l.scarf.id, 1) })).status).toBe(404);
       const batch = await read(
         await api(w.plugin, "POST", "/gifts/batch", { token, body: { writes: [{ op: "update", collection: "recipients", id: l.ann.id, expectedRevision: 1, fields: { notes: "mine" } }] } }),
       );
       expect(batch.results[0].status).toBe(404);
       for (const collection of Object.keys(GIFT_COLLECTIONS)) {
         const list = await read(await api(w.plugin, "GET", `/gifts/${collection}?includeArchived=true`, { token }));
-        expect(`${collection} ${list.records.length}`).toBe(`${collection} 0`);
+        const larrys = list.records.filter((r: { ownerId: string }) => r.ownerId === l.ann.ownerId);
+        expect(`${collection} ${larrys.length}`).toBe(`${collection} 0`);
       }
-      expect((await read(await api(w.plugin, "GET", "/gifts/spend", { token }))).spend).toEqual([]);
+      // Their spend is their own planned allocation only: Larry's 2000 bought never shows.
+      expect((await read(await api(w.plugin, "GET", "/gifts/spend", { token }))).spend).toMatchObject([{ currency: "USD", plannedMinor: 2500, spentMinor: 0 }]);
     }
-    expect(giftRows(w.dbPath)).toBe(before);
+    // The others' own records were written; Larry's rows are exactly as they were.
+    const larryRows = (dump: string) => JSON.stringify(JSON.parse(dump).map(([t, rows]: [string, { owner_id: string }[]]) => [t, rows.filter((r) => r.owner_id === l.ann.ownerId)]));
+    expect(larryRows(giftRows(w.dbPath))).toBe(larryRows(before));
   });
 
   it("a task's notification recipient gets no gift access through the task they were shared", async () => {
@@ -223,6 +244,8 @@ describe("the gift routes", () => {
     const path = `/gifts/groups/${l.aunts.id}/members`;
     const dry = await read(await api(w.plugin, "POST", path, { token: w.larry, body: { add: [cal.id, l.ann.id], remove: [l.bea.id], dryRun: true } }));
     expect(dry).toEqual({ added: [cal.id], removed: [l.bea.id], memberIds: [l.ann.id, cal.id], revision: 1 });
+    // A preview refuses what the write would: an id that is no recipient of Larry's.
+    expect((await api(w.plugin, "POST", path, { token: w.larry, body: { add: ["gr999"], dryRun: true } })).status).toBe(404);
     expect((await read(await api(w.plugin, "GET", `/gifts/groups/${l.aunts.id}`, { token: w.larry }))).record.revision).toBe(1);
     const done = await read(await api(w.plugin, "POST", path, { token: w.larry, body: { expectedRevision: 1, add: [cal.id], remove: [l.bea.id] } }));
     expect(done.record).toMatchObject({ revision: 2, memberIds: [l.ann.id, cal.id] });
@@ -238,6 +261,13 @@ describe("the gift routes", () => {
     expect(shown.preview.removed.map((r: { row: { id: string } }) => r.row.id)).toEqual([l.annRow.id]);
     expect(shown.preview.affected).toEqual([{ allocationId: l.gift.id, revision: 1, recipientIds: [l.ann.id], dropped: [l.ann.id], bought: true }]);
     const path = `/gifts/occasions/${l.xmas.id}/sync`;
+    // A decision docket would read as unassign unless refused here: a bare word, a misspelt action, an empty one, a reassign to nobody.
+    const unchanged = giftRows(w.dbPath);
+    for (const bad of ["keep", { action: "KEEP" }, {}, null, { action: "reassign" }, { action: "keep", recipientIds: [] }]) {
+      const res = await api(w.plugin, "POST", `/gifts/occasions/${l.xmas.id}/sync`, { token: w.larry, body: { previewToken: shown.previewToken, decisions: { [l.gift.id]: bad } } });
+      expect(`${JSON.stringify(bad)} ${res.status}`).toBe(`${JSON.stringify(bad)} 400`);
+    }
+    expect(giftRows(w.dbPath)).toBe(unchanged);
     // No decision for the bought scarf: nothing is planned or written.
     const undecided = await api(w.plugin, "POST", path, { token: w.larry, body: { previewToken: shown.previewToken, decisions: {} } });
     expect(undecided.status).toBe(400);
@@ -269,6 +299,24 @@ describe("the gift routes", () => {
     expect(s.cost).toEqual([{ currency: "USD", minor: 2000 }]);
     const spend = await read(await api(w.plugin, "GET", "/gifts/spend", { token: w.larry }));
     expect(spend.spend).toEqual([{ currency: "USD", plannedMinor: 0, spentMinor: 2000, pendingRefundMinor: 0, refundedMinor: 0, netMinor: 2000, incomplete: false }]);
+  });
+
+  it("splits one purchase line over two occasions' gifts, in the order they were made, never counting it whole twice", async () => {
+    const w = await setup();
+    const l = await ledger(w); // one scarf bought for Ann at Christmas
+    const birthday = await create(w, "occasions", { ...christmas(), kind: "birthday", title: "Bea's birthday", date: "2027-03-01", year: 2027, groupIds: [] });
+    await create(w, "occasion-recipients", { occasionId: birthday.id, recipientId: l.bea.id, target: null, budgetMinor: null, decision: "planning", skipReason: null });
+    await api(w.plugin, "PATCH", `/gifts/purchases/${l.bought.id}`, { token: w.larry, body: { expectedRevision: 1, ordered: 3, taxMinor: 300 } }); // 3 x 2000 + 300
+    await create(w, "allocations", { itemId: l.scarf.id, occasionId: birthday.id, recipientIds: [l.bea.id], quantity: 2, shared: false, purchaseId: l.bought.id, handoff: "none", givenOn: null });
+    const xmas = await read(await api(w.plugin, "GET", `/gifts/occasions/${l.xmas.id}/summary`, { token: w.larry }));
+    const bday = await read(await api(w.plugin, "GET", `/gifts/occasions/${birthday.id}/summary`, { token: w.larry }));
+    expect([xmas.cost, bday.cost]).toEqual([[{ currency: "USD", minor: 2100 }], [{ currency: "USD", minor: 4200 }]]);
+    // A return empties the last bucket filled: the birthday's second unit, not Christmas's.
+    await api(w.plugin, "PATCH", `/gifts/purchases/${l.bought.id}`, { token: w.larry, body: { expectedRevision: 2, returned: 1 } });
+    const after = await read(await api(w.plugin, "GET", `/gifts/occasions/${l.xmas.id}/summary`, { token: w.larry }));
+    expect(after.coverage[0]).toMatchObject({ recipientId: l.ann.id, status: "awaiting", bought: 1 });
+    const bea = await read(await api(w.plugin, "GET", `/gifts/occasions/${birthday.id}/summary`, { token: w.larry }));
+    expect(bea.coverage[0]).toMatchObject({ recipientId: l.bea.id, bought: 1 });
   });
 
   it("a batch writes each row in order with its own outcome; a refused row leaves the others as they went", async () => {

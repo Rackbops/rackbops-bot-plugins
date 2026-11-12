@@ -1,3 +1,4 @@
+import { type GiftRoute, giftMethods } from "./api-gifts.js";
 /**
  * The task API's second credential (rackbops-bot-plugins#370, for the ChatGPT client of #368): a usr
  * delegation token, which a service such as tracker-mcp gets from usr to call the task API for one
@@ -27,8 +28,6 @@ export function parseDelegates(env: Readonly<Record<string, string | undefined>>
   if (!new RegExp(DELEGATES_FORMAT).test(raw)) throw new Error(`${DELEGATES_ENV} is usr API key ids separated by commas, such as 12,31`);
   return new Set(raw.split(",").map((id) => `key:${Number(id)}`));
 }
-
-import { type GiftRoute, giftMethods } from "./api-gifts.js";
 
 /** The route shapes `operationOf` reads (api.ts's `Route`). */
 export type RouteKind =

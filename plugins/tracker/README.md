@@ -696,14 +696,17 @@ change without making it); the people themselves never change. `GET /gifts/occas
 previews the roster against the occasion's groups as they are now, with each affected gift and a
 `previewToken`; `POST` there with that token and a decision for each affected allocation
 (`{"action": "keep"}`, `{"action": "reassign", "recipientIds": [...]}` or `{"action": "unassign"}`)
-applies exactly it, and anything that moved since is `409 stale_preview`.
+applies it, and anything that moved since is `409 stale_preview`. The steps are written one by one,
+so a step refused part way (`400`/`409`) leaves the steps before it made: preview again. An
+archived occasion is never synced (`409 archived`).
 `GET /gifts/occasions/<id>/summary` gives each live roster row's coverage, the budget and what the
-occasion's gifts cost (each purchase line split over the gifts it filled); `GET /gifts/spend`
+occasion's gifts cost (each purchase line split over the gifts it filled; gross, before refunds); `GET /gifts/spend`
 gives spent, planned, refunded and net per currency, never summed across currencies.
 `POST /gifts/batch` takes `writes`, up to 25 of `{"op": "create", "collection", "fields"}` or
 `{"op": "update", "collection", "id", "expectedRevision", "fields"}`, and answers each with its own
 `status` and body in order; a refused row writes nothing and the others go on (a batch is not
-atomic). Another person's id, an id of another collection and an unknown one are the same `404`,
+atomic; a row that fails unexpectedly is `500` and the rest go on). Every record answered carries
+`recordKind`, its kind. Another person's id, an id of another collection and an unknown one are the same `404`,
 whoever asks, an admin included; a list holds only the caller's rows. A gift recipient is a name in
 the owner's ledger, never a tracker person: sharing a task with someone gives them nothing here.
 Gift writes take `Idempotency-Key` as any write does (a batch's or a sync's whole request is the one

@@ -1,4 +1,4 @@
-import { GIFT_COLLECTIONS, MAX_GIFT_BATCH } from "./api-gifts.js";
+import { GIFT_COLLECTIONS, MAX_GIFT_BATCH } from "./api-gift-names.js";
 import { describeSchedule, hasFired, type Task, type User } from "@rackbops/docket-core";
 import type { IntakeType, PriceConfig, ResearchConfig } from "@rackbops/docket-types";
 import { NO_LONGER_LISTED, NO_SUCH_TASK, ownTask, type TrackerDeps } from "../actions.js";
