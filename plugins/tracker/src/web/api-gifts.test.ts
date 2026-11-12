@@ -312,11 +312,13 @@ describe("the gift routes", () => {
     const bday = await read(await api(w.plugin, "GET", `/gifts/occasions/${birthday.id}/summary`, { token: w.larry }));
     expect([xmas.cost, bday.cost]).toEqual([[{ currency: "USD", minor: 2100 }], [{ currency: "USD", minor: 4200 }]]);
     // A return empties the last bucket filled: the birthday's second unit, not Christmas's.
-    await api(w.plugin, "PATCH", `/gifts/purchases/${l.bought.id}`, { token: w.larry, body: { expectedRevision: 2, returned: 1 } });
+    // (Only an arrived unit can be returned.) Ann's bucket filled first keeps its unit; Bea's two-unit gift, short one, is back to planning.
+    const returned = await api(w.plugin, "PATCH", `/gifts/purchases/${l.bought.id}`, { token: w.larry, body: { expectedRevision: 2, received: 3, returned: 1 } });
+    expect(returned.status).toBe(200);
     const after = await read(await api(w.plugin, "GET", `/gifts/occasions/${l.xmas.id}/summary`, { token: w.larry }));
-    expect(after.coverage[0]).toMatchObject({ recipientId: l.ann.id, status: "awaiting", bought: 1 });
+    expect(after.coverage[0]).toMatchObject({ recipientId: l.ann.id, bought: 1 });
     const bea = await read(await api(w.plugin, "GET", `/gifts/occasions/${birthday.id}/summary`, { token: w.larry }));
-    expect(bea.coverage[0]).toMatchObject({ recipientId: l.bea.id, bought: 1 });
+    expect(bea.coverage[0]).toMatchObject({ recipientId: l.bea.id, bought: 0, status: "planned" });
   });
 
   it("a batch writes each row in order with its own outcome; a refused row leaves the others as they went", async () => {

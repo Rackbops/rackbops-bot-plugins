@@ -301,7 +301,8 @@ async function members(gifts: GiftLedger, meta: GiftWriteMeta, id: string, body:
  */
 function decisionsOf(v: unknown): Record<string, GiftSyncDecision> | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
-  const out: Record<string, GiftSyncDecision> = {};
+  // No prototype: a "__proto__" key is an entry like any other (and then refused by docket as no affected gift).
+  const out: Record<string, GiftSyncDecision> = Object.create(null);
   for (const [id, d] of Object.entries(v)) {
     if (typeof d !== "object" || d === null || Array.isArray(d)) return null;
     const { action, recipientIds, ...rest } = d as Record<string, unknown>;
@@ -345,7 +346,7 @@ async function sync(gifts: GiftLedger, meta: GiftWriteMeta, id: string, body: Re
 }
 
 /** `POST /gifts/batch`: each row its own write, in order, each with its own outcome. */
-async function batch(gifts: GiftLedger, meta: GiftWriteMeta, body: Record<string, unknown>): Promise<ApiAnswer> {
+async function batch(gifts: GiftLedger, meta: GiftWriteMeta, body: Record<string, unknown>, warn: (text: string) => void): Promise<ApiAnswer> {
   const { writes, ...rest } = body;
   if (Object.keys(rest).length > 0) return invalid(`Unknown field(s): ${Object.keys(rest).join(", ")}. Send writes.`);
   if (!Array.isArray(writes) || writes.length === 0 || writes.length > MAX_GIFT_BATCH) return invalid(`\`writes\` is a list of 1 to ${MAX_GIFT_BATCH} writes.`);
@@ -354,7 +355,8 @@ async function batch(gifts: GiftLedger, meta: GiftWriteMeta, body: Record<string
     let answer: ApiAnswer;
     try {
       answer = await batchRow(gifts, meta, row);
-    } catch {
+    } catch (err) {
+      warn(`api: gift batch row ${index} for ${meta.ownerId} failed: ${err instanceof Error ? err.message : String(err)}`);
       // Not a ledger refusal (those are answers already): this row's outcome is unknown, and the rows after it still run.
       answer = problem(500, "internal", "This write failed unexpectedly; it may or may not have been made. Read the record before trying again.");
     }
@@ -399,7 +401,7 @@ export function giftWrite(w: Writer, user: User, r: GiftRoute, body: Record<stri
       case "sync":
         return sync(gifts, meta, r.id, body);
       case "batch":
-        return batch(gifts, meta, body);
+        return batch(gifts, meta, body, (text) => w.d.log.warn(text));
       default:
         return problem(405, "method_not_allowed", "Not a write.");
     }
