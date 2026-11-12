@@ -82,6 +82,16 @@ describe("ShopChecks", () => {
     expect(checks.list().map((c) => c.domain)).toEqual(["tradingcardgame.us"]);
   });
 
+  it("asks nothing for a shop whose verdict is fresh, and asks again once it is stale", async () => {
+    const { checks } = await setup();
+    checks.record({ domain: "good.com", verdict: "ok", reasons: [], sources: ["https://x.example/"], checkedAt: NOW.toISOString() });
+    await checks.request("good.com", { taskId: "t1", ownerId: "u1" });
+    expect(checks.next()).toBeNull();
+    at = new Date("2027-05-13T00:00:00.000Z");
+    await checks.request("good.com", { taskId: "t1", ownerId: "u1" });
+    expect(checks.next()?.domain).toBe("good.com");
+  });
+
   it("refuses a name that is not a shop's", async () => {
     const { checks } = await setup();
     await checks.request("10.0.0.1", { taskId: "t1", ownerId: "u1" });
@@ -169,6 +179,62 @@ describe("stepShopCheck", () => {
     }
     // Two charged (a turn cap and a bad answer ran); a usage limit is not.
     expect((await w.store.listUsage({ userId: w.owner.id })).length).toBe(2);
+  });
+});
+
+describe("stepShopCheck, several waiting", () => {
+  it("passes over a check whose owner is at a ceiling, so another person's runs", async () => {
+    const s = await setup();
+    const other = await s.store.createUser({ discordId: null, displayName: "Bea", timeZone: "UTC", preferredHour: 9, admin: false, at: NOW.toISOString() });
+    const { executor, calls } = fakeExecutor([success(FLAGGED)]);
+    // Rod is at his ceiling (0 calls a day); Bea is not.
+    const budget = { ...s.budget, personFor: (u: User) => (u.id === s.owner.id ? { usd: null, calls: 0 } : null) };
+    const deps = { checks: s.checks, store: s.store, executor, ids: new IntakeJobIds(), clock, locks: new TaskLocks(), budget, log };
+    await s.checks.request("first.us", { taskId: "t1", ownerId: s.owner.id });
+    at = new Date(NOW.getTime() + 60_000);
+    await s.checks.request("second.us", { taskId: "t2", ownerId: other.id });
+    expect(await stepShopCheck(deps)).toBe("recorded");
+    expect(calls[0]?.spec?.prompt).toContain("is second.us a legitimate website");
+    expect(s.checks.waiting().map((r) => r.domain)).toEqual(["first.us"]);
+    expect(await stepShopCheck(deps)).toBe("held");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("gives a check up after 48 h without an answer, or when the executor gives up on a paused runner", async () => {
+    const s = await setup();
+    const { executor } = fakeExecutor([
+      new JobPendingError("city-hall job is queued"),
+      new ExecutorUnavailableError("city-hall requeued the job after usage_limit"),
+      new JobPendingError("city-hall job is queued, past the paused-runner cap"),
+    ]);
+    const ids = new IntakeJobIds();
+    const deps = { checks: s.checks, store: s.store, executor, ids, clock, locks: new TaskLocks(), budget: s.budget, log };
+    await s.checks.request("slow.us", { taskId: "t1", ownerId: s.owner.id });
+    ids.put(`shop:slow.us:${NOW.toISOString()}`, "x", "remote-1", NOW.toISOString());
+    expect(await stepShopCheck(deps)).toBe("pending");
+    at = new Date(NOW.getTime() + 48 * 3_600_000 + 1);
+    expect(await stepShopCheck(deps)).toBe("failed");
+    expect(s.checks.waiting()).toEqual([]);
+    expect(ids.get(`shop:slow.us:${NOW.toISOString()}`)).toBeNull();
+    // Asked again by the next look: a paused-cap answer gives it up at once.
+    await s.checks.request("slow.us", { taskId: "t1", ownerId: s.owner.id });
+    ids.put(`shop:slow.us:${at.toISOString()}`, "x", "remote-2", at.toISOString());
+    expect(await stepShopCheck(deps)).toBe("failed");
+    expect(s.checks.waiting()).toEqual([]);
+    expect((await s.checks.get(["slow.us"])).size).toBe(0);
+  });
+
+  it("drops a check whose owner is gone, and one the executor threw on", async () => {
+    const s = await setup();
+    const { executor, calls } = fakeExecutor([new Error("bad spec")]);
+    const deps = { checks: s.checks, store: s.store, executor, ids: new IntakeJobIds(), clock, locks: new TaskLocks(), budget: s.budget, log };
+    await s.checks.request("gone.us", { taskId: "t1", ownerId: "nobody" });
+    expect(await stepShopCheck(deps)).toBe("failed");
+    expect(calls).toHaveLength(0);
+    await s.checks.request("throws.us", { taskId: "t1", ownerId: s.owner.id });
+    expect(await stepShopCheck(deps)).toBe("failed");
+    expect(s.checks.waiting()).toEqual([]);
+    expect((await s.store.listUsage({ userId: s.owner.id })).length).toBe(0);
   });
 });
 

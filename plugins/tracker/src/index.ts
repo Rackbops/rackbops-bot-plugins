@@ -378,9 +378,14 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
       try {
         const r = await lane.tick();
         if (r.failed > 0) host.log.warn(`execute lane: ${r.ran} ran, ${r.failed} failed`);
-        // Then one step of the oldest shop check (shop-checks.ts): after the lane, never before it.
+        // Then one step of the shop checks (shop-checks.ts): after the lane, never before it. Its own
+        // failure is logged here, so the cleanup below still runs.
         if (shopChecks && shopExecutor && store && deps) {
-          await stepShopCheck({ checks: shopChecks, store, executor: shopExecutor, ids: shopIds, clock, locks, budget: executeBudget(deps.ceilings, budgetUnlimited), log: host.log });
+          try {
+            await stepShopCheck({ checks: shopChecks, store, executor: shopExecutor, ids: shopIds, clock, locks, budget: executeBudget(deps.ceilings, budgetUnlimited), log: host.log });
+          } catch (err) {
+            host.log.error("shop check step failed", err);
+          }
         }
         // The record of a Job whose run is gone, or finished a month ago, goes (executor.ts).
         if (records && store) records.prune(clock.now());

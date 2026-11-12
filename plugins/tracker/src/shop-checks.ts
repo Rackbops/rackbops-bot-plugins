@@ -12,7 +12,7 @@ import {
   runNowKey,
   type Store,
 } from "@rackbops/docket-core";
-import { parseShopCheck, type ShopCheck, type ShopVerdict, type ShopVet, shopDomain, shopJob } from "@rackbops/docket-types";
+import { parseShopCheck, type ShopCheck, type ShopVerdict, type ShopVet, shopDomain, shopJob, shopStanding } from "@rackbops/docket-types";
 import type { PluginLog } from "../../../packages/api/contract.js";
 import { type JobIdRecords, requeuedAfter } from "./executor.js";
 import type { TaskLocks } from "./locks.js";
@@ -40,6 +40,15 @@ export const SHOP_TABLES = ["shop_check_waiters", "shop_check_requests"] as cons
 
 /** The request id a shop check's run of a waiting watch starts with (`runNowKey`). */
 export const SHOP_RUN_PREFIX = "shop-";
+
+/** How many waiting checks one tick looks at: past one whose owner is at a budget ceiling, to the next. */
+export const SHOP_WAITING_LOOKED_AT = 20;
+
+/**
+ * How long a check may wait on city-hall before it is given up (48 h, the executor's paused-runner cap,
+ * PAUSED_CAP_MS): its listings stay held, and the watch's next look asks again under a new key.
+ */
+export const SHOP_CHECK_GIVE_UP_MS = 48 * 3_600_000;
 
 /** Makes the shop tables when absent. Idempotent; run on every open (schema.ts `openDatabase`). */
 export function ensureShopTables(db: Database): void {
@@ -97,10 +106,15 @@ export class ShopChecks implements ShopVet {
     return out;
   }
 
-  /** Asks for a check (once: a waiting one stays) and remembers the watch, to run it again after. */
+  /**
+   * Asks for a check (once: a waiting one stays) and remembers the watch, to run it again after. A shop
+   * whose verdict landed since the look read the list is not asked again; the look's next run tells it.
+   */
   async request(domain: string, from: { taskId: string; ownerId: string }): Promise<void> {
     if (shopDomain(`https://${domain}/`) !== domain) return;
-    const at = this.clock.now().toISOString();
+    const now = this.clock.now();
+    if (shopStanding((await this.get([domain])).get(domain), now) !== "check") return;
+    const at = now.toISOString();
     this.db.transaction(() => {
       this.db.query("INSERT OR IGNORE INTO shop_check_requests (domain, owner_id, requested_at) VALUES (?, ?, ?)").run(domain, from.ownerId, at);
       this.db.query("INSERT OR IGNORE INTO shop_check_waiters (domain, task_id, owner_id) VALUES (?, ?, ?)").run(domain, from.taskId, from.ownerId);
@@ -109,12 +123,18 @@ export class ShopChecks implements ShopVet {
 
   /** The oldest check waiting to run, or null. */
   next(): ShopRequest | null {
-    const r = this.db.query("SELECT domain, owner_id, requested_at FROM shop_check_requests ORDER BY requested_at, domain LIMIT 1").get() as {
-      domain: string;
-      owner_id: string;
-      requested_at: string;
-    } | null;
-    return r ? { domain: r.domain, ownerId: r.owner_id, requestedAt: r.requested_at } : null;
+    return this.waiting(1)[0] ?? null;
+  }
+
+  /** The checks waiting to run, oldest first. */
+  waiting(limit = SHOP_WAITING_LOOKED_AT): ShopRequest[] {
+    return (
+      this.db.query("SELECT domain, owner_id, requested_at FROM shop_check_requests ORDER BY requested_at, domain LIMIT ?").all(limit) as {
+        domain: string;
+        owner_id: string;
+        requested_at: string;
+      }[]
+    ).map((r) => ({ domain: r.domain, ownerId: r.owner_id, requestedAt: r.requested_at }));
   }
 
   /** Stores a verdict, ends its request, and hands back the watches that waited for it. */
@@ -170,14 +190,42 @@ export interface ShopCheckerDeps {
 export type ShopStep = "idle" | "pending" | "held" | "recorded" | "failed";
 
 /**
- * One step of the oldest check: submit it, or ask city-hall about it, and on an answer record the
- * verdict (or drop the request when it failed) and run the waiting watches again now. A check whose
- * owner is at a budget ceiling waits; one city-hall put back after a usage limit waits too.
+ * One step of the shop checks, on the execute tick. Every check already sent is asked about; when none
+ * is, the oldest whose owner is not at a budget ceiling is sent, so one person at a ceiling never holds
+ * up another's checks. On an answer the verdict is recorded (or the request dropped when the check
+ * failed) and the waiting watches run again now. One city-hall put back after a usage limit waits; one
+ * waiting past `SHOP_CHECK_GIVE_UP_MS`, or past the executor's paused-runner cap, is given up.
  */
 export async function stepShopCheck(d: ShopCheckerDeps): Promise<ShopStep> {
-  const req = d.checks.next();
-  if (!req) return "idle";
-  const key = `shop:${req.domain}:${req.requestedAt}`;
+  const waiting = d.checks.waiting();
+  if (waiting.length === 0) return "idle";
+  const sent = waiting.filter((r) => d.ids.get(keyOf(r)) !== null);
+  if (sent.length > 0) {
+    let step: ShopStep = "pending";
+    for (const r of sent) {
+      const s = await stepOne(d, r);
+      if (step === "pending") step = s;
+    }
+    return step;
+  }
+  for (const r of waiting) {
+    const s = await stepOne(d, r);
+    if (s !== "held") return s;
+  }
+  return "held";
+}
+
+const keyOf = (r: ShopRequest): string => `shop:${r.domain}:${r.requestedAt}`;
+
+function giveUp(d: ShopCheckerDeps, req: ShopRequest, key: string, why: string): ShopStep {
+  d.ids.forget(key);
+  d.checks.drop(req.domain);
+  d.log.warn(`shop check ${req.domain} given up (${why}); its listings stay held and the next look asks again`);
+  return "failed";
+}
+
+async function stepOne(d: ShopCheckerDeps, req: ShopRequest): Promise<ShopStep> {
+  const key = keyOf(req);
   const owner = await d.store.getUser(req.ownerId);
   if (!owner) {
     // The person was forgotten after asking: their request should be gone with them; drop it if not.
@@ -190,10 +238,12 @@ export async function stepShopCheck(d: ShopCheckerDeps): Promise<ShopStep> {
   try {
     result = await d.executor.run(submitted ? null : shopJob(req.domain), key, key);
   } catch (err) {
-    if (err instanceof JobPendingError) return "pending";
-    if (err instanceof ExecutorUnavailableError) {
-      // Unreachable, or put back after a usage limit: asked again on the next tick, never given up.
-      if (requeuedAfter(err) !== null) d.log.info(`shop check ${req.domain}: waiting (${requeuedAfter(err)})`);
+    if (err instanceof JobPendingError || err instanceof ExecutorUnavailableError) {
+      // The executor's own give-up on a runner paused too long, said as a pending answer.
+      if (err instanceof JobPendingError && err.message.includes("past the paused-runner cap")) return giveUp(d, req, key, "the runner stayed paused");
+      if (d.clock.now().getTime() - Date.parse(req.requestedAt) > SHOP_CHECK_GIVE_UP_MS) return giveUp(d, req, key, "no answer in 48 h");
+      // Waiting in city-hall's queue, unreachable, or put back after a usage limit: asked again next tick.
+      if (err instanceof ExecutorUnavailableError && requeuedAfter(err) !== null) d.log.info(`shop check ${req.domain}: waiting (${requeuedAfter(err)})`);
       return "pending";
     }
     d.ids.forget(key);
