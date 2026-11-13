@@ -2,11 +2,13 @@ import {
   GiftNotFoundError,
   GiftRevisionError,
   GiftValidationError,
+  type GiftItem,
   type GiftOccasion,
   type GiftRecipient,
   type GiftWriteMeta,
   type User,
   allocationUnits,
+  findGiftDuplicates,
 } from "@rackbops/docket-core";
 import type { TrackerDeps } from "./actions.js";
 import { loadLedger, minorDigits, overview, STAGE_COLUMNS, type Ledger } from "./web/gift-overview.js";
@@ -116,6 +118,8 @@ function refusal(err: unknown): string {
   throw err;
 }
 
+const titleOf = (l: Ledger, itemId: string) => l.items.find((i) => i.id === itemId)?.title ?? itemId;
+
 /** `/gift idea`: an idea for a person; with an occasion, a gift planned for them on it. */
 export async function giftIdea(d: Deps, user: User, input: GiftIdeaInput, web: WebLocation | null): Promise<string> {
   const l = await loadLedger(d.gifts, user.id);
@@ -131,23 +135,38 @@ export async function giftIdea(d: Deps, user: User, input: GiftIdeaInput, web: W
     if (estimate === null) return `The estimate is not an amount in ${currency}.`;
   }
   const m = meta(d, user);
+  const fields = {
+    title: input.title.trim(),
+    url: null,
+    productKey: null,
+    variant: null,
+    notes: occasion ? null : `For ${person.displayName}`,
+    source: { kind: "manual" as const, ref: null },
+    planning: occasion ? ("selected" as const) : ("idea" as const),
+    estimateMinor: estimate,
+    currency: estimate === null ? null : currency,
+  };
+  // Duplicate warnings (docket#100), asked with the item as it would be made, before anything is
+  // written: a warning plans nothing here (accepting one is the web page's "Give it anyway"); a
+  // possible duplicate is only named in the answer. The item made here has no link or product key,
+  // so docket can only match it by title (a possible duplicate) today; the warning branch stays so
+  // a future docket matching more never has /gift plan a repeat unasked.
+  const NEW = "(new)";
+  const report = occasion
+    ? findGiftDuplicates({ ...l, items: [...l.items, { ...fields, id: NEW } as GiftItem], allocation: { itemId: NEW, occasionId: occasion.id, recipientIds: [person.id] } })
+    : { warnings: [], possible: [] };
+  const seen = (x: { itemId: string; occasionId: string }) => `${titleOf(l, x.itemId)} (${l.occasions.find((o) => o.id === x.occasionId)?.title ?? x.occasionId})`;
+  if (report.warnings.length > 0) {
+    return `Not planned: ${person.displayName} already has ${report.warnings.map(seen).join(", ")}. To give it anyway, add it on the web page and confirm there.${giftsLink(web, occasion?.id)}`;
+  }
   let itemId: string | null = null;
   try {
-    const item = await d.gifts.create("item", m, {
-      title: input.title.trim(),
-      url: null,
-      productKey: null,
-      variant: null,
-      notes: occasion ? null : `For ${person.displayName}`,
-      source: { kind: "manual", ref: null },
-      planning: occasion ? "selected" : "idea",
-      estimateMinor: estimate,
-      currency: estimate === null ? null : currency,
-    });
+    const item = await d.gifts.create("item", m, fields);
     itemId = item.id;
     if (!occasion) return `Saved ${item.title} as an idea, noted "For ${person.displayName}".${giftsLink(web)}`;
     await d.gifts.create("allocation", m, { itemId: item.id, occasionId: occasion.id, recipientIds: [person.id], quantity: 1, shared: false, purchaseId: null, handoff: "none", givenOn: null });
-    return `Planned ${item.title} for ${person.displayName} for ${occasion.title}.${giftsLink(web, occasion.id)}`;
+    const maybe = report.possible.length > 0 ? ` Perhaps the same as ${report.possible.map(seen).join(", ")}.` : "";
+    return `Planned ${item.title} for ${person.displayName} for ${occasion.title}.${maybe}${giftsLink(web, occasion.id)}`;
   } catch (err) {
     const left = itemId ? await undo(d, "item", itemId, m) : "";
     return refusal(err) + left;

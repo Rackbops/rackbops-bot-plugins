@@ -15,6 +15,7 @@ import {
   giftBuckets,
   giftCoverage,
   giftSpend,
+  groupMembers,
   occasionBudget,
   type GiftOccasionBudget,
 } from "@rackbops/docket-core";
@@ -132,18 +133,20 @@ export function overview(l: Ledger, f: OverviewFilter): Overview {
     return (chosen?.kind === "household" && chosen.memberIds.includes(id)) || (row?.kind === "household" && row.memberIds.includes(f.person));
   };
   const group = f.group ? l.groups.find((g) => g.id === f.group) : undefined;
+  // A filter group's members are the recipients its labels match now (docket#98); a static group's, its list.
+  const members = new Map(l.groups.map((g) => [g.id, groupMembers(g, l.recipients)]));
   const rows: OverviewRow[] = [];
   for (const row of l.rows) {
     if (row.occasionId !== occasion.id || row.archived) continue;
     const recipient = byId.get(row.recipientId);
     if (!recipient || !matchesPerson(row.recipientId)) continue;
-    if (f.group && !group?.memberIds.includes(row.recipientId)) continue;
+    if (f.group && !(group && members.get(group.id)?.includes(row.recipientId))) continue;
     const coverage = giftCoverage(row, l.buckets);
     const column = columnOf(coverage.status);
     // The counts keep every column under the other filters, so a stage filter narrows the rows, not the counts.
     counts[column] += 1;
     if (f.stage && column !== f.stage) continue;
-    const groups = l.groups.filter((g) => !g.archived && g.memberIds.includes(row.recipientId)).map((g) => g.name);
+    const groups = l.groups.filter((g) => !g.archived && members.get(g.id)?.includes(row.recipientId)).map((g) => g.name);
     rows.push({ recipient, coverage, column, groups });
   }
   const items = new Map(l.items.map((i) => [i.id, i]));

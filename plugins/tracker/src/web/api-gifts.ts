@@ -1,5 +1,7 @@
 import {
+  type GiftAllocationFields,
   GiftDuplicateError,
+  type GiftDuplicateReport,
   GiftIdempotencyError,
   type GiftKind,
   type GiftLedger,
@@ -11,6 +13,7 @@ import {
   GiftValidationError,
   type GiftWriteMeta,
   editGroupMembers,
+  giftProblems,
   giftBuckets,
   giftCoverage,
   giftSpend,
@@ -28,6 +31,7 @@ import type { Writer } from "./editor.js";
 import { sha256 } from "./secrets.js";
 import { canonicalJson } from "./task-version.js";
 import { GIFT_COLLECTIONS, type GiftCollection, MAX_GIFT_BATCH } from "./api-gift-names.js";
+import { rollover, rolloverPreview, rolloverQuery } from "./api-gift-rollover.js";
 
 export { GIFT_COLLECTIONS, type GiftCollection, MAX_GIFT_BATCH, MAX_GIFT_BATCH_BYTES } from "./api-gift-names.js";
 
@@ -45,10 +49,20 @@ export { GIFT_COLLECTIONS, type GiftCollection, MAX_GIFT_BATCH, MAX_GIFT_BATCH_B
  *   `expectedRevision` the caller read (`archived: true|false` archives or restores; nothing is
  *   deleted). A stale revision is 409 and changes nothing.
  * - `POST /gifts/groups/<id>/members`: add and remove members (`dryRun: true` shows the change).
+ *   A filter group (docket#98, `filter: {labels}`) has no list: it is refused (409 `filter_group`),
+ *   and its labels are changed with a PATCH of the group instead.
  * - `GET|POST /gifts/occasions/<id>/sync`: the reviewed roster sync with the occasion's groups as
  *   they are now (docket's `previewGroupSync`), then applying it with a decision for every
  *   affected gift and the `previewToken` the preview gave, so nothing the owner did not see is
  *   written.
+ * - `GET|POST /gifts/occasions/<id>/rollover` (api-gift-rollover.ts, docket#99): "set up next
+ *   year", previewed (with `previewToken`) and then made from the preview the owner reviewed.
+ * - `POST /gifts/allocations` (and a batch create of an allocation) asks docket's
+ *   `giftDuplicates` first (docket#100). Docket refuses no write for a warning; this route is the
+ *   host's "shown when allocating" step: a warning the body's `repeatOf` does not name is 409
+ *   `possible_duplicate` with the report, and nothing is written. Resending with `repeatOf`
+ *   naming the warned allocations is the owner accepting them. A possible duplicate alone never
+ *   refuses: it rides on the 201 answer as `duplicates`.
  * - `GET /gifts/occasions/<id>/summary`: coverage of each live roster row, the budget and what the
  *   occasion's gifts cost; `GET /gifts/spend`: spend per currency over the whole ledger.
  * - `POST /gifts/batch`: up to `MAX_GIFT_BATCH` creates and updates, each with its own outcome, in
@@ -63,13 +77,13 @@ export { GIFT_COLLECTIONS, type GiftCollection, MAX_GIFT_BATCH, MAX_GIFT_BATCH_B
 export type GiftRoute =
   | { kind: "collection"; collection: GiftCollection }
   | { kind: "record"; collection: GiftCollection; id: string }
-  | { kind: "members" | "sync" | "summary"; id: string }
+  | { kind: "members" | "sync" | "summary" | "rollover"; id: string }
   | { kind: "spend" | "batch" };
 
 const COLLECTION = /^\/gifts\/([a-z-]+)$/;
 const RECORD = /^\/gifts\/([a-z-]+)\/([^/]+)$/;
 const MEMBERS = /^\/gifts\/groups\/([^/]+)\/members$/;
-const OCCASION_VIEW = /^\/gifts\/occasions\/([^/]+)\/(sync|summary)$/;
+const OCCASION_VIEW = /^\/gifts\/occasions\/([^/]+)\/(sync|summary|rollover)$/;
 
 const isCollection = (name: string | undefined): name is GiftCollection => name !== undefined && Object.hasOwn(GIFT_COLLECTIONS, name);
 
@@ -88,7 +102,7 @@ export function giftRoute(rest: string): GiftRoute | null {
   const members = MEMBERS.exec(rest);
   if (members) return { kind: "members", id: segment(members[1]) };
   const view = OCCASION_VIEW.exec(rest);
-  if (view) return { kind: view[2] as "sync" | "summary", id: segment(view[1]) };
+  if (view) return { kind: view[2] as "sync" | "summary" | "rollover", id: segment(view[1]) };
   const collection = COLLECTION.exec(rest);
   if (collection) return isCollection(collection[1]) ? { kind: "collection", collection: collection[1] } : null;
   const record = RECORD.exec(rest);
@@ -104,6 +118,7 @@ export function giftMethods(r: GiftRoute): string[] {
     case "record":
       return ["GET", "PATCH"];
     case "sync":
+    case "rollover":
       return ["GET", "POST"];
     case "members":
     case "batch":
@@ -115,14 +130,14 @@ export function giftMethods(r: GiftRoute): string[] {
 }
 
 const NOT_FOUND = "No such gift record.";
-const notFound = (): ApiAnswer => problem(404, "not_found", NOT_FOUND);
-const invalid = (message: string, problems?: string[]): ApiAnswer => ({
+export const notFound = (): ApiAnswer => problem(404, "not_found", NOT_FOUND);
+export const invalid = (message: string, problems?: string[]): ApiAnswer => ({
   status: 400,
   body: { error: { code: "invalid", message, ...(problems ? { problems } : {}) } },
 });
 
 /** A ledger refusal as its answer; anything else is thrown on (api.ts keeps the key as outcome unknown). */
-function refusal(err: unknown): ApiAnswer {
+export function refusal(err: unknown): ApiAnswer {
   if (err instanceof GiftNotFoundError) return notFound();
   if (err instanceof GiftRevisionError) {
     return {
@@ -137,7 +152,7 @@ function refusal(err: unknown): ApiAnswer {
 }
 
 /** The record as the API shows it: its fields, the base fields, and `recordKind` (a recipient has its own `kind`). */
-const shown = <K extends GiftKind>(kind: K, record: GiftRecord<K>) => ({ ...record, recordKind: kind });
+export const shown = <K extends GiftKind>(kind: K, record: GiftRecord<K>) => ({ ...record, recordKind: kind });
 
 type Revision = { ok: true; revision: number; fields: Record<string, unknown> } | { ok: false; answer: ApiAnswer };
 
@@ -165,9 +180,15 @@ async function preview(gifts: GiftLedger, ownerId: string, id: string): Promise<
   const groups = (await gifts.list("group", ownerId, all)).filter((g) => occasion.groupIds.includes(g.id));
   const roster = await gifts.list("occasionRecipient", ownerId, { ...all, occasionId: occasion.id });
   const { allocations, buckets } = await wholeLedger(gifts, ownerId);
-  const p = previewGroupSync(occasion, groups, roster, allocations, buckets);
-  return { preview: p, previewToken: sha256(canonicalJson(p)).slice(0, 32) };
+  // Every recipient of the owner, archived ones too: the list a filter group (docket#98) is
+  // resolved over, here and again in `applyGiftSync`, so a preview and its apply agree.
+  const recipients = await gifts.list("recipient", ownerId, all);
+  const p = previewGroupSync(occasion, groups, roster, allocations, buckets, recipients);
+  return { preview: p, previewToken: previewToken(p) };
 }
+
+/** The token that names exactly one preview (a sync's or a rollover's). */
+export const previewToken = (p: unknown): string => sha256(canonicalJson(p)).slice(0, 32);
 
 const LIST_FILTERS: Record<string, readonly GiftKind[]> = {
   occasionId: ["occasionRecipient", "allocation"],
@@ -203,6 +224,10 @@ export async function giftRead(d: TrackerDeps, user: User, r: GiftRoute, params:
     return "status" in p ? p : { status: 200, body: p };
   }
   if (r.kind === "summary") return summary(gifts, user.id, r.id);
+  if (r.kind === "rollover") {
+    const p = await rolloverPreview(gifts, user.id, r.id, rolloverQuery(params));
+    return "status" in p ? p : { status: 200, body: p };
+  }
   if (r.kind === "spend") {
     const { allocations, purchases } = await wholeLedger(gifts, user.id);
     const items = await gifts.list("item", user.id, { includeArchived: true });
@@ -258,8 +283,22 @@ async function writeOne(gifts: GiftLedger, meta: GiftWriteMeta, collection: Gift
   const kind = GIFT_COLLECTIONS[collection];
   try {
     if (id === null) {
+      const report = kind === "allocation" ? await duplicatesFirst(gifts, meta.ownerId, body) : null;
+      if (report?.warnings.some((w) => !w.accepted)) {
+        return {
+          status: 409,
+          body: {
+            error: {
+              code: "possible_duplicate",
+              message: "This may repeat a gift already planned or given to the same person. To give it anyway, send it again with `repeatOf` naming every allocation in `warnings`.",
+              warnings: report.warnings,
+              possible: report.possible,
+            },
+          },
+        };
+      }
       const record = await gifts.create(kind, meta, body as never);
-      return { status: 201, body: { record: shown(kind, record) } };
+      return { status: 201, body: { record: shown(kind, record), ...(report && report.possible.length > 0 ? { duplicates: report.possible } : {}) } };
     }
     const split = splitRevision(body);
     if (!split.ok) return split.answer;
@@ -268,6 +307,25 @@ async function writeOne(gifts: GiftLedger, meta: GiftWriteMeta, collection: Gift
   } catch (err) {
     return refusal(err);
   }
+}
+
+/**
+ * docket's duplicate report for an allocation about to be made (docket#100), or null when the
+ * create would refuse it anyway -- a field docket refuses, or an id that is not the owner's -- so
+ * it refuses as it always did (400, then 404), never with a warning first.
+ */
+async function duplicatesFirst(gifts: GiftLedger, ownerId: string, body: Record<string, unknown>): Promise<GiftDuplicateReport | null> {
+  if (giftProblems("allocation", body as never).length > 0) return null;
+  const a = body as unknown as GiftAllocationFields;
+  const refs: [GiftKind, string][] = [
+    ["item", a.itemId],
+    ["occasion", a.occasionId],
+    ...a.recipientIds.map((id): [GiftKind, string] => ["recipient", id]),
+    ...(a.purchaseId === null ? [] : [["purchase", a.purchaseId] as [GiftKind, string]]),
+    ...(a.repeatOf ?? []).map((id): [GiftKind, string] => ["allocation", id]),
+  ];
+  for (const [kind, id] of refs) if (!(await gifts.get(kind, ownerId, id))) return null;
+  return gifts.giftDuplicates(ownerId, { itemId: a.itemId, occasionId: a.occasionId, recipientIds: a.recipientIds, repeatOf: a.repeatOf ?? null });
 }
 
 const isIdList = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
@@ -281,6 +339,10 @@ async function members(gifts: GiftLedger, meta: GiftWriteMeta, id: string, body:
   if (typeof dryRun !== "boolean") return invalid("`dryRun` is true or false.");
   const group = await gifts.get("group", meta.ownerId, id);
   if (!group) return notFound();
+  // A filter group (docket#98) has no list to edit, so neither a dry run nor a write is tried.
+  if (group.filter !== undefined && group.filter !== null) {
+    return problem(409, "filter_group", "This group is a saved filter over your labels; change its labels instead.");
+  }
   // Every id added is checked as the write would check it, so a preview never promises what the write refuses.
   for (const recipientId of add) if (!(await gifts.get("recipient", meta.ownerId, recipientId))) return notFound();
   const edit = editGroupMembers(group, add, remove);
@@ -400,6 +462,8 @@ export function giftWrite(w: Writer, user: User, r: GiftRoute, body: Record<stri
         return members(gifts, meta, r.id, body);
       case "sync":
         return sync(gifts, meta, r.id, body);
+      case "rollover":
+        return rollover(gifts, meta, r.id, body);
       case "batch":
         return batch(gifts, meta, body, (text) => w.d.log.warn(text));
       default:
