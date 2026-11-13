@@ -1,5 +1,5 @@
 import { type Actor, createTask, formatInstant, parseWhen, type User } from "@rackbops/docket-core";
-import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, parseSocial, platformName, type ResearchConfig, SOURCES_DEADLINE_MARGIN_MINUTES, SOURCES_WAIT_DAYS, type SocialPlatform, sourcesExpiry } from "@rackbops/docket-types";
+import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, parseSocial, platformName, type ResearchConfig, SOURCES_DEADLINE_MARGIN_MINUTES, SOURCES_WAIT_DAYS, type SocialPlatform, socialPlatforms, sourcesExpiry } from "@rackbops/docket-types";
 import { clip, liveTaskCap, said, type TaskResult, type TrackerDeps } from "./actions.js";
 import { MAX_SOCIAL, MAX_TITLE, MAX_WHEN } from "./limits.js";
 import { awaitingPages, MAX_SOURCES_PER_TASK } from "./research-sources.js";
@@ -66,7 +66,8 @@ export const BROWSER_OFF =
   "Research on pages your browser gathers needs this bot's web area: the pages are sent in through its task API, and this bot has no web area set up. Leave `sources` out to have the research search the web.";
 
 export const SOCIAL_VALUES =
-  "`social` is `auto`, `none`, or the platforms to search, separated by commas: `youtube`, `tiktok`, `instagram`, `bluesky`. Reddit is not one: the research never reads it.";
+  "`social` is `auto`, `none`, or the platforms to search, separated by commas: `youtube`, `tiktok`, `instagram` (`bluesky` is accepted but not searched until a Bluesky service exists). Reddit is not one: the research never reads it.";
+
 
 export const BROWSER_SOCIAL =
   "`social` and `since` do not go with `sources: browser`: the research answers from the pages your browser sends in and searches no platform.";
@@ -127,7 +128,7 @@ export function parseSinceDay(text: string, now: Date, zone: string): Date | nul
   return at.getTime() <= Date.UTC(y, m - 1, d) ? at : null;
 }
 
-/** Platform names in a sentence: "YouTube, TikTok and Bluesky". */
+/** Platform names in a sentence: "YouTube, TikTok and Instagram". */
 function names(platforms: readonly SocialPlatform[]): string {
   const list = platforms.map(platformName);
   return list.length <= 1 ? (list[0] ?? "") : `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}`;
@@ -214,7 +215,13 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
   }
   const starts = at ? `Starts ${formatInstant(at, user.timeZone, now)}` : "Starts within a minute or two";
   const by = deadline ? `; past ${formatInstant(deadline, user.timeZone, now)} nothing is run` : "";
-  const posts = social.mode === "none" ? "; no social posts" : social.mode === "only" ? `; social posts from ${names(social.platforms)}` : "";
+  // The reply names what docket will search (`socialPlatforms`: Bluesky parses but is not searched, Rackbops/docket#125)
+  // and, by docket's own filter, what the list named that it will not; the stored value keeps the whole list, as docket reads it.
+  const searched = social.mode === "only" ? socialPlatforms(social) : [];
+  const unsearched = social.mode === "only" ? social.platforms.filter((p) => !searched.includes(p)) : [];
+  const dropped = unsearched.length > 0 ? ` (${names(unsearched)} ${unsearched.length === 1 ? "is" : "are"} not searched)` : "";
+  const posts =
+    social.mode === "none" ? "; no social posts" : social.mode === "only" ? (searched.length > 0 ? `; social posts from ${names(searched)}` : "; no social posts") + dropped : "";
   const from = since ? `; posts dated before ${since.toISOString().slice(0, 10)} do not count` : "";
   return {
     ok: true,

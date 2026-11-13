@@ -341,7 +341,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .addChoices({ name: "the web: the research searches", value: "web" }, { name: "my browser: pages it sends in", value: "browser" }),
           )
           .addStringOption((o) =>
-            o.setName("social").setDescription("Social posts: auto (default), none, or platforms to search, e.g. youtube, bluesky").setMaxLength(MAX_SOCIAL),
+            o.setName("social").setDescription("Social posts: auto (default), none, or platforms to search, e.g. youtube, tiktok").setMaxLength(MAX_SOCIAL),
           )
           .addStringOption((o) => o.setName("since").setDescription('Only posts from this day on, e.g. "2026-09-01" or "3 months ago"').setMaxLength(MAX_WHEN)),
       handle: (interaction) =>
