@@ -80,4 +80,12 @@ describe("findDuplicates", () => {
     expect((await findDuplicates({ store }, larry, "price", fields({ url: "https://shop.example/lamp" }))).map((f) => f.id)).toEqual([price.id]);
     expect(await findDuplicates({ store }, larry, "reminder", fields({ text: "water the plants", when: "2026-10-02 09:00" }))).toEqual([]);
   });
+  it("matches a Noble Knight watch by its product, whatever form of its address", async () => {
+    const { store, larry, make } = await setup();
+    const t = await make(larry.id, "wantlist", "Edge", { source: "nobleknight", target: "https://www.nobleknight.com/P/2147942033" });
+    const again = await findDuplicates({ store }, larry, "wantlist", fields({ name: "Edge again", source: "nobleknight", target: "https://uk.nobleknight.com/P/2147942033/Edge-of-the-Earth/?awid=1" }));
+    expect(again.map((f) => f.id)).toEqual([t.id]);
+    expect(await findDuplicates({ store }, larry, "wantlist", fields({ name: "Hemlock", source: "nobleknight", target: "https://www.nobleknight.com/P/2148112695" }))).toEqual([]);
+    expect(await findDuplicates({ store }, larry, "wantlist", fields({ name: "Edge page", source: "page", target: "https://www.nobleknight.com/P/2147942033" }))).toEqual([]);
+  });
 });

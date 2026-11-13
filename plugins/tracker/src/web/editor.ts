@@ -150,8 +150,8 @@ export async function makeTask(w: Writer, type: NewType, form: URLSearchParams):
 }
 
 /**
- * `/want`'s rules, a page read outside the queue as a new price's is. Only a `page` watch has a first
- * read (a BGG or inbox watch reads nothing when it is made), so only it takes the
+ * `/want`'s rules, a page read outside the queue as a new price's is. Only a `page` or `nobleknight`
+ * watch has a first read (a BGG or inbox watch reads nothing when it is made), so only it takes the
  * one-read-per-person guard, and only once `startWant` has said which it is. Its read gets what is
  * left of `WEB_READ_MS` from the request's arrival, so `startWant`'s queue wait counts against it; a
  * BGG or inbox watch awaits only the queue, as a reminder does, and reads nothing to bound.
@@ -160,7 +160,7 @@ async function makeWant(w: Writer, form: URLSearchParams): Promise<Written> {
   const started = await asUser(w, (u) => startWant(w.d, u, wantInput(form)));
   if (!started.ok) return started;
   const { start } = started;
-  if (start.config.source !== "page") return asUser(w, (u) => finishWant(w.d, u, start, { ok: true, text: "" }));
+  if (start.config.source !== "page" && start.config.source !== "nobleknight") return asUser(w, (u) => finishWant(w.d, u, start, { ok: true, text: "" }));
   if (w.reading.has(w.userId)) return { ok: false, error: READING };
   w.reading.add(w.userId);
   let late: Promise<unknown> | null = null;
@@ -254,6 +254,7 @@ function wantWhere(c: WatchConfig): string {
   }
   if (c.source === "shopify") return `Shopify stores' search for "${c.target}"`;
   if (c.source === "ebay") return `eBay's search for "${c.target}"`;
+  if (c.source === "nobleknight") return `Noble Knight's page ${c.target}`;
   return c.source === "bgg" ? `BoardGameGeek game ${c.target}` : c.target;
 }
 

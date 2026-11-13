@@ -476,10 +476,11 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
                 { name: "BoardGameGeek's marketplace", value: "bgg" },
                 { name: "eBay (through eBay's own API when set up, else from listings you send in)", value: "ebay" },
                 { name: "Shopify stores (new copies in stock, at most once a day)", value: "shopify" },
+                { name: "Noble Knight Games (a product page you paste)", value: "nobleknight" },
               ),
           )
           .addStringOption((o) =>
-            o.setName("target").setDescription("The page's address, or the BGG game's address or id; for eBay or Shopify, the words to search").setMaxLength(MAX_URL),
+            o.setName("target").setDescription("The page's or Noble Knight product's address, the BGG game's address or id, or eBay/Shopify words").setMaxLength(MAX_URL),
           )
           .addNumberOption((o) => o.setName("max").setDescription("Only listings at or under this price").setMinValue(0.01))
           .addStringOption((o) => o.setName("currency").setDescription("Only listings in this currency, e.g. USD").setMinLength(CURRENCY_LENGTH).setMaxLength(CURRENCY_LENGTH))

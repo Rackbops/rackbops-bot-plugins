@@ -1,5 +1,5 @@
 import type { Task, User } from "@rackbops/docket-core";
-import { parseBggThingId } from "@rackbops/docket-types";
+import { nobleKnightProduct, parseBggThingId } from "@rackbops/docket-types";
 import type { TrackerDeps } from "./actions.js";
 import { WANT_TYPES, type WatchConfig, watchSite } from "./want.js";
 
@@ -56,6 +56,10 @@ function wantKeyFromFields(form: URLSearchParams): Key {
     return id === null ? `bgg-words:${words(target)}` : `bgg:${id}`;
   }
   if (source === "page") return target ? `page:${target}` : null;
+  if (source === "nobleknight") {
+    const product = nobleKnightProduct(target);
+    return product ? `nobleknight:${product.id}` : null;
+  }
   return null;
 }
 
@@ -67,6 +71,10 @@ function wantKeyFromConfig(c: WatchConfig): Key {
   if (c.source === "ebay" || c.source === "shopify") return `${c.source}:${words(c.target)}`;
   if (c.source === "bgg") return `bgg:${c.target}`;
   if (c.source === "page") return `page:${String(c.target).trim()}`;
+  if (c.source === "nobleknight") {
+    const product = nobleKnightProduct(String(c.target));
+    return product ? `nobleknight:${product.id}` : null;
+  }
   return null;
 }
 

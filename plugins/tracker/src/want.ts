@@ -5,6 +5,8 @@ import {
   MAX_EXCLUDE,
   MAX_WANT_NOTES,
   money,
+  nobleKnightProduct,
+  nobleKnightSource,
   pageSource,
   parseBggThingId,
   parseExclude,
@@ -103,7 +105,7 @@ export const DEFAULT_EBAY_HOURS = 1;
 export const MIN_SHOPIFY_HOURS = 24;
 export const MAX_WANT_HOURS = 168;
 export const MAX_WANT_PRICE = 10_000_000;
-export const WANT_SOURCES = ["page", "bgg", "ebay", "shopify"] as const;
+export const WANT_SOURCES = ["page", "bgg", "ebay", "shopify", "nobleknight"] as const;
 export type WantSource = (typeof WANT_SOURCES)[number];
 
 export const WANT_OFF = "The want-list watcher is not available on this bot.";
@@ -112,7 +114,9 @@ export const INBOX_OFF =
 export const SHOPIFY_OFF = "Searching Shopify stores needs a Firecrawl key, and this bot has none set up. A listing page (`source: page`) works now.";
 export const JUDGE_OFF = "Checking listings with the model needs the model runner, which this bot does not have set up. Leave `judge` out for a plain watch.";
 export const EBAY_USD = "eBay's search here is eBay US, which prices in USD: leave `currency` out, or make it USD.";
+export const NOBLE_KNIGHT_USD = "I read Noble Knight's prices in USD: leave `currency` out, or make it USD.";
 export const WANT_TYPES: ReadonlySet<string> = new Set(["wantlist", "wantjudge"]);
+export const NOBLE_KNIGHT_TARGET = "a Noble Knight product page's address, such as `https://www.nobleknight.com/P/2148112695` (its search pages are closed to bots)";
 export const EBAY_PAGE = "A want-list watch never opens eBay's pages. Use `source: ebay` instead: it searches eBay through eBay's own API when this bot has eBay keys, and otherwise makes a watch that the eBay listings you send in reach; either way I DM you the new ones.";
 
 /** A watch's config as the host keeps it: docket's, plus an inbox watch's words and BGG game (see above). */
@@ -294,6 +298,7 @@ export function watchWhere(c: WantConfig): string {
   if (c.source === "inbox") return "what is sent in";
   if (c.source === "shopify") return `Shopify stores' search for "${c.target}"`;
   if (c.source === "ebay") return `eBay's search for "${c.target}"`;
+  if (c.source === "nobleknight") return "Noble Knight's page for it";
   return c.source === "bgg" ? "BoardGameGeek's marketplace" : "that page";
 }
 
@@ -361,7 +366,7 @@ export interface PendingWant {
 export async function startWant(d: TrackerDeps, user: User, input: WantInput): Promise<Plan<{ start: PendingWant }>> {
   if (!d.types.wantlist) return { ok: false, error: WANT_OFF };
   const source = input.source.trim().toLowerCase();
-  if (!(WANT_SOURCES as readonly string[]).includes(source)) return { ok: false, error: "`source` is page, bgg, ebay or shopify." };
+  if (!(WANT_SOURCES as readonly string[]).includes(source)) return { ok: false, error: "`source` is page, bgg, ebay, shopify or nobleknight." };
   if (source === "shopify" && !d.shopify) return { ok: false, error: SHOPIFY_OFF };
   // eBay without the eBay keys, and BGG while the bot has no BGG API access, are inbox watches.
   const site: InboxSite | null = source === "ebay" && !d.ebay ? "ebay" : source === "bgg" && !d.bgg ? "bgg" : null;
@@ -371,6 +376,7 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   if (!planned.ok) return planned;
   const { limits } = planned;
   if (source === "ebay" && d.ebay === true && limits.currency && limits.currency !== "USD") return { ok: false, error: EBAY_USD };
+  if (source === "nobleknight" && limits.currency && limits.currency !== "USD") return { ok: false, error: NOBLE_KNIGHT_USD };
   // An eBay API watch keeps no eBay data (ebay-forget.ts). A judged one hands its listings to
   // city-hall's queue in its Job, which city-hall erases once it ends and never past six hours
   // (`ebayJobForgetSeconds`, Rackbops/city-hall#6; Rod, 2026-11-08), so it may be judged like any watch.
@@ -394,13 +400,19 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
     if (search.length > MAX_TITLE) return { ok: false, error: `The words to search for are longer than ${MAX_TITLE} characters.` };
     inbox = { search, game };
   } else {
-    if (target.length === 0) return { ok: false, error: source === "page" ? "`target` is the listing page's address." : "`target` is the BGG game: its address or its id." };
+    if (target.length === 0) {
+      const what = source === "page" ? "the listing page's address" : source === "nobleknight" ? NOBLE_KNIGHT_TARGET : "the BGG game: its address or its id";
+      return { ok: false, error: `\`target\` is ${what}.` };
+    }
     if (target.length > MAX_URL) return { ok: false, error: `That address is longer than ${MAX_URL} characters.` };
     if (source === "page") {
       if (!d.fetch) return { ok: false, error: WANT_OFF };
       const problem = urlProblem(target);
       if (problem) return { ok: false, error: problem };
       if (isEbayHost(new URL(target).hostname)) return { ok: false, error: EBAY_PAGE };
+    } else if (source === "nobleknight") {
+      if (!d.fetch) return { ok: false, error: WANT_OFF };
+      if (nobleKnightProduct(target) === null) return { ok: false, error: `That is not a Noble Knight product page. \`target\` is ${NOBLE_KNIGHT_TARGET}.` };
     } else if (parseBggThingId(target) === null) {
       return { ok: false, error: "That is not a BGG game. Paste its address, such as `https://boardgamegeek.com/boardgame/266192/wingspan`, or its id." };
     }
@@ -419,7 +431,10 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
       ? { source: source === "ebay" ? "ebay" : "shopify", target: words }
       : site && inbox
         ? { source: "inbox", target: newInboxKey(site), search: inbox.search, ...(inbox.game !== null ? { game: String(inbox.game) } : {}) }
-        : { source: source as SourceId, target: source === "bgg" ? String(parseBggThingId(target)) : target };
+        : {
+            source: source as SourceId,
+            target: source === "bgg" ? String(parseBggThingId(target)) : source === "nobleknight" ? (nobleKnightProduct(target)?.url ?? target) : target,
+          };
   const config: WatchConfig = {
     ...where,
     ...(limits.maxPrice !== undefined ? { maxPrice: limits.maxPrice } : {}),
@@ -436,6 +451,7 @@ export type WantPreview = { ok: true; text: string } | { ok: false; error: strin
 
 /** A page's first read, outside the queue: how many listings it carries now, or why it cannot be watched. A BGG game is not read here. */
 export async function previewWant(d: TrackerDeps, start: PendingWant): Promise<WantPreview> {
+  if (start.config.source === "nobleknight") return previewNobleKnight(d, start);
   if (start.config.source !== "page") return { ok: true, text: "" };
   try {
     const listings = await pageSource.search(start.config.target, d.fetch ?? undefined);
@@ -453,6 +469,27 @@ export async function previewWant(d: TrackerDeps, start: PendingWant): Promise<W
       };
     }
     return { ok: false, error: "I could not read that page just now; try again later." };
+  }
+}
+
+/** A Noble Knight product page's first read: how many copies it has in stock now, or why it cannot be watched. */
+async function previewNobleKnight(d: TrackerDeps, start: PendingWant): Promise<WantPreview> {
+  try {
+    const copies = await nobleKnightSource.search(start.config.target, d.fetch ?? undefined);
+    const within = copies.filter((l) => wanted(l, start.config)).length;
+    const c = start.config;
+    const limited = c.maxPrice !== undefined || c.currency || (c.exclude?.length ?? 0) > 0 ? `, ${within} within your limits` : "";
+    return { ok: true, text: `Noble Knight has ${copies.length} ${copies.length === 1 ? "copy" : "copies"} in stock now${limited}.` };
+  } catch (err) {
+    const cause = err instanceof Error ? err.cause : undefined;
+    if (cause instanceof FetchRefusedError) return { ok: false, error: `I cannot read that page: ${cause.message}.` };
+    if (err instanceof SourceMiss && err.message.includes("not the product's page")) {
+      return { ok: false, error: "That address did not give me a Noble Knight product page I can read. Paste the page of one product, such as `https://www.nobleknight.com/P/2148112695`." };
+    }
+    if (err instanceof SourceMiss && err.message.includes("not US dollars")) {
+      return { ok: false, error: "Noble Knight showed me its prices in another currency, not US dollars, so I could not check them against your limits; try again later." };
+    }
+    return { ok: false, error: "I could not read Noble Knight's page just now; try again later." };
   }
 }
 
@@ -494,6 +531,9 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
         ...(c.source === "shopify"
           ? ["Shopify's search finds new copies at Shopify stores only (not eBay or used copies), and I keep a product only when its title has every word you are watching for. Each look is a Firecrawl search (5 credits)."]
           : []),
+        ...(c.source === "nobleknight"
+          ? ["I read that one Noble Knight product page, and each copy it has in stock is a listing: its grade, note and price. Noble Knight is a trusted seller, so no shop check runs. A copy I have shown you is not shown again, even at a lower price."]
+          : []),
         ...(c.source === "ebay"
           ? [`I search eBay US through eBay's own API, newest listings first, new and used, an auction at its current bid (or its Buy It Now price), and count a listing only when its title has every word you are watching for. I never open an eBay page${start.judge ? "; the model checks each new listing from what eBay's API says, and city-hall erases that check's Job soon after it ends, within 6 hours" : ", and the model does not check these listings"}. eBay's terms let me keep its listings only briefly, so they are in the DM alone, and my own copy of it is cleared after 6 hours.`]
           : []),
@@ -521,7 +561,7 @@ export async function wantCommand(d: TrackerDeps, user: User, input: WantInput):
   const started = await startWant(d, user, input);
   if (!started.ok) return started.error;
   const { start } = started;
-  if (start.config.source !== "page") return said(await finishWant(d, user, start, { ok: true, text: "" }));
+  if (start.config.source !== "page" && start.config.source !== "nobleknight") return said(await finishWant(d, user, start, { ok: true, text: "" }));
   return {
     outside: () => previewWant(d, start),
     finish: async (result) => said(await finishWant(d, user, start, result as WantPreview)),
@@ -550,6 +590,7 @@ async function editWantLocked(d: TrackerDeps, user: User, taskId: string, input:
   if (!planned.ok) return planned;
   const { limits } = planned;
   if (config.source === "ebay" && limits.currency && limits.currency !== "USD") return { ok: false, error: EBAY_USD };
+  if (config.source === "nobleknight" && limits.currency && limits.currency !== "USD") return { ok: false, error: NOBLE_KNIGHT_USD };
   const searchedBy = config.source === "shopify" || config.source === "ebay" ? config.target : null;
   const excluded = input.exclude === undefined ? ({ ok: true, exclude: config.exclude ?? [] } as const) : excludePlan(input.exclude, searchedBy);
   if (!excluded.ok) return excluded;

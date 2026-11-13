@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.52.0] - 2026-11-13
+
+### Added
+
+- `/want source: nobleknight` (Rod, 2026-11-13: "make sure that https://www.nobleknight.com/ is a trusted seller and is included in board game want tasks"; docket 0.26.0's `nobleKnightSource`, Rackbops/docket#133). `target` is a Noble Knight product page's address, kept in its one form `https://www.nobleknight.com/P/<id>`; the page is read once at once ("Noble Knight has N copies in stock now"), and each look reads it in USD. Each copy in stock is a listing with its grade, note and sale price, Noble Knight Games named as the seller, so a new copy is told once; no shop check runs. A `currency` other than USD is refused, on the create and on an edit. The web editor offers it ("Noble Knight Games: a product page I paste"), the edit page shows "Noble Knight's page <address>", and the duplicate check (#390) matches two watches of one product whatever form of its address each was given.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.50.0] - 2026-11-13
 
 ### Added
