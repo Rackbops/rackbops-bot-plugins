@@ -105,6 +105,16 @@ describe("/want source: nobleknight", () => {
     expect(made.status).toBe(303);
     const edit = await (await call(w.plugin, "GET", "/tasks/t1/edit", { jar })).text();
     expect(edit).toContain(`Looking at: Noble Knight&#39;s page ${PAGE}.`);
+    // The web form reads the page once at once too, so a page that is not the product's is refused.
+    const { s: other, fetch: otherFetch } = noble([SW]);
+    other.body = "<html>Access denied</html>";
+    const w2 = await world({ fetch: otherFetch });
+    await people(w2.plugin);
+    const jar2 = await signIn(w2.plugin, LARRY);
+    const refused = await call(w2.plugin, "POST", "/new/wantlist", { jar: jar2, origin: ORIGIN, form: { csrf: await csrfOf(w2.plugin, jar2), name: "Edge", source: "nobleknight", target: PAGE, max: "", currency: "", hours: "" } });
+    expect(refused.status).not.toBe(303);
+    expect(await refused.text()).toContain("did not give me a Noble Knight product page");
+    expect(other.reads).toEqual([`${PAGE}?SS=USD`]);
     const gbp = await call(w.plugin, "POST", "/tasks/t1/edit", { jar, origin: ORIGIN, form: { csrf, name: "Edge", max: "", currency: "gbp", hours: "" } });
     expect(gbp.status).not.toBe(303);
     expect(await gbp.text()).toContain("I read Noble Knight&#39;s prices in USD");
