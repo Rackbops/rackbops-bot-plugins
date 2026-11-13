@@ -11,8 +11,8 @@
     "directory": "plugins/tracker"
   },
   "devDependencies": {
-    "@rackbops/docket-core": "^0.25.0",
-    "@rackbops/docket-types": "^0.25.0",
+    "@rackbops/docket-core": "^0.26.0",
+    "@rackbops/docket-types": "^0.26.0",
     "@rackbops/styles": "^0.2.42"
   },
   "peerDependencies": {
