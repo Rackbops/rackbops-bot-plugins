@@ -211,7 +211,7 @@ export async function giftRead(d: TrackerDeps, user: User, r: GiftRoute, params:
   return problem(405, "method_not_allowed", "Not a read.");
 }
 
-async function previewOrRefusal(gifts: GiftLedger, ownerId: string, id: string): Promise<ApiAnswer | { preview: GiftSyncPreview; previewToken: string }> {
+export async function previewOrRefusal(gifts: GiftLedger, ownerId: string, id: string): Promise<ApiAnswer | { preview: GiftSyncPreview; previewToken: string }> {
   const occasion = await gifts.get("occasion", ownerId, id);
   if (!occasion) return notFound();
   if (occasion.archived) return problem(409, "archived", "That occasion is archived: it keeps the roster it had. Restore it to sync.");
@@ -314,8 +314,8 @@ function decisionsOf(v: unknown): Record<string, GiftSyncDecision> | null {
   return out;
 }
 
-/** `POST /gifts/occasions/<id>/sync`: applies the preview the owner reviewed, named by its token, with their decisions. */
-async function sync(gifts: GiftLedger, meta: GiftWriteMeta, id: string, body: Record<string, unknown>): Promise<ApiAnswer> {
+/** `POST /gifts/occasions/<id>/sync` (and the web page's sync review, gifts-web.ts): applies the preview the owner reviewed, named by its token, with their decisions. */
+export async function sync(gifts: GiftLedger, meta: GiftWriteMeta, id: string, body: Record<string, unknown>): Promise<ApiAnswer> {
   const { previewToken, decisions = {}, ...rest } = body;
   if (Object.keys(rest).length > 0) return invalid(`Unknown field(s): ${Object.keys(rest).join(", ")}. Send previewToken and decisions.`);
   if (typeof previewToken !== "string") return invalid("`previewToken` is the token the sync preview gave.");

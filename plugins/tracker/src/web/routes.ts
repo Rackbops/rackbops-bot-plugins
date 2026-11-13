@@ -1,5 +1,6 @@
 import type { TaskAction } from "./editor.js";
 import { NEW_TYPES, type NewType } from "./editor-pages.js";
+import { GIFT_FORMS, type GiftForm } from "./gifts-web.js";
 
 /**
  * The web area's signed-in paths (rackbops-bot-plugins#80) and the methods each takes. A task id
@@ -13,6 +14,8 @@ const PERSON_PATH = /^\/admin\/people\/([^/]+)$/;
 const PERSON_ACTION = /^\/admin\/people\/([^/]+)\/(grant|revoke|resume-delivery|forget)$/;
 const PERSON_CEILING = /^\/admin\/people\/([^/]+)\/ceiling$/;
 const BLOCK_LIFT = /^\/admin\/blocks\/([^/]+)\/lift$/;
+const GIFT_FORM = /^\/gifts\/new\/([a-z]+)$/;
+const GIFT_SYNC = /^\/gifts\/occasions\/([^/]+)\/sync$/;
 const TOKEN_REVOKE = /^\/tokens\/([^/]+)\/revoke$/;
 const ADMIN_TOKEN_REVOKE = /^\/admin\/tokens\/([^/]+)\/revoke$/;
 
@@ -27,6 +30,9 @@ export type Route =
   | { kind: "new"; type: NewType }
   | { kind: "forget" }
   | { kind: "tokens" }
+  | { kind: "gifts" }
+  | { kind: "gift-form"; form: GiftForm }
+  | { kind: "gift-sync"; id: string }
   | { kind: "token-revoke"; id: string }
   | { kind: "admin-token-revoke"; id: string }
   | { kind: "admin" | "admin-tasks" | "admin-deliveries" | "admin-usage" | "admin-allow" | "admin-usr-link" | "admin-usr-refresh" }
@@ -57,6 +63,11 @@ export function route(path: string): Route | null {
   if (path === "/resume-dms") return { kind: "resume-dms" };
   if (path === "/forget") return { kind: "forget" };
   if (path === "/tokens") return { kind: "tokens" };
+  if (path === "/gifts") return { kind: "gifts" };
+  const giftForm = GIFT_FORM.exec(path);
+  if (giftForm) return (GIFT_FORMS as readonly string[]).includes(giftForm[1] ?? "") ? { kind: "gift-form", form: giftForm[1] as GiftForm } : null;
+  const giftSync = GIFT_SYNC.exec(path);
+  if (giftSync) return { kind: "gift-sync", id: segment(giftSync[1]) };
   const revoke = TOKEN_REVOKE.exec(path);
   if (revoke) return { kind: "token-revoke", id: segment(revoke[1]) };
   const adminRevoke = ADMIN_TOKEN_REVOKE.exec(path);
@@ -107,6 +118,6 @@ export function methodsOf(r: Route): "GET" | "POST" | "GET, POST" {
   ) {
     return "POST";
   }
-  if (r.kind === "settings" || r.kind === "edit" || r.kind === "new" || r.kind === "forget" || r.kind === "tokens") return "GET, POST";
+  if (r.kind === "settings" || r.kind === "edit" || r.kind === "new" || r.kind === "forget" || r.kind === "tokens" || r.kind === "gift-form" || r.kind === "gift-sync") return "GET, POST";
   return "GET";
 }
