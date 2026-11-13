@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { NO_SUCH_TASK } from "./actions.js";
 import { KEY_PREFIX } from "./executor.js";
 import { ANSWER, CITY_HALL, dmsTo, query, setup, success } from "./web/execute-harness.js";
-import { BROWSER_SOCIAL, MAX_LIVE_RESEARCH, NOT_SEARCHED, parseSinceDay, RESEARCH_OFF, SHORT_QUESTION, SINCE_FORMAT, SOCIAL_VALUES } from "./research.js";
+import { BROWSER_SOCIAL, MAX_LIVE_RESEARCH, parseSinceDay, RESEARCH_OFF, SHORT_QUESTION, SINCE_FORMAT, SOCIAL_VALUES } from "./research.js";
 import { ADMIN, api, call, cleanup, csrfOf, CURLY, LARRY, makeToken, ORIGIN, people, press, signIn, slash, world } from "./web/harness.js";
 
 /**
@@ -272,7 +272,7 @@ describe("/research through city-hall", () => {
     // A list, aliases resolved and kept as platform ids; the reply names them and the day.
     const listed = await slash(w.plugin, "research", LARRY, { strings: { question: "Is the pumpkin bread mix any good?", social: "yt, Bluesky", since: "2026-09-01" } });
     // Bluesky is kept in the value but not searched (docket-types 0.27.0, Rackbops/docket#125): the reply names what is.
-    expect(listed).toContain(`social posts from YouTube${NOT_SEARCHED}; posts dated before 2026-09-01 do not count`);
+    expect(listed).toContain("social posts from YouTube (Bluesky is not searched); posts dated before 2026-09-01 do not count");
     // `none` is kept; `auto` is the type's default and is not written; today counts.
     expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is Q?", social: "none", since: "2026-10-01" } })).toContain("no social posts; posts dated before 2026-10-01 do not count");
     expect(await slash(w.plugin, "research", LARRY, { strings: { question: "What is R?", social: "auto", since: "3 months ago" } })).toContain("posts dated before 2026-07-01 do not count");
@@ -299,7 +299,7 @@ describe("/research through city-hall", () => {
     // Bluesky alone is accepted (an older request keeps working) and searches nothing; the reply says so.
     // Curly asks: Larry already holds the most live requests one person may.
     const alone = await slash(w.plugin, "research", CURLY, { strings: { question: "What is V?", social: "bluesky" } });
-    expect(alone).toContain(`; no social posts${NOT_SEARCHED}`);
+    expect(alone).toContain("; no social posts (Bluesky is not searched). A second run");
     expect(alone).not.toContain("social posts from");
     expect(await slash(w.plugin, "research", CURLY, { strings: { question: "What is W?", social: "tiktok, instagram" } })).toContain("; social posts from TikTok and Instagram. ");
     const later = query<{ config: string }>(w.dbPath, "SELECT config FROM tasks ORDER BY seq").map((r) => JSON.parse(r.config));
