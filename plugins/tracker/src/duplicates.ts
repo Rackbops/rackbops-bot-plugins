@@ -51,8 +51,9 @@ function wantKeyFromFields(form: URLSearchParams): Key {
       const w = words(form.get("name"));
       return w ? `bgg-words:${w}` : null;
     }
+    // A BGG inbox watch named by words in `target` keeps them as its `search` (want.ts).
     const id = parseBggThingId(target);
-    return id === null ? null : `bgg:${id}`;
+    return id === null ? `bgg-words:${words(target)}` : `bgg:${id}`;
   }
   if (source === "page") return target ? `page:${target}` : null;
   return null;

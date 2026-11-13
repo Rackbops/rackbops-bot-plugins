@@ -64,6 +64,9 @@ describe("findDuplicates", () => {
     expect((await findDuplicates({ store }, larry, "wantlist", fields({ name: "wingspan", source: "ebay" }))).map((f) => f.id)).toEqual([inbox.id]);
     expect((await findDuplicates({ store }, larry, "wantlist", fields({ name: "x", source: "bgg", target: "https://boardgamegeek.com/boardgame/224517/brass-birmingham" }))).map((f) => f.id)).toEqual([bgg.id]);
     expect((await findDuplicates({ store }, larry, "wantlist", fields({ name: "x", source: "page", target: "https://shop.example/arkham" }))).map((f) => f.id)).toEqual([page.id]);
+    // A BGG inbox watch named by words in its target is found by them.
+    const words = await make(larry.id, "wantlist", "Brass words", { source: "inbox", target: `bgg-${"b".repeat(24)}`, search: "Brass Birmingham" });
+    expect((await findDuplicates({ store }, larry, "wantlist", fields({ name: "x", source: "bgg", target: "brass  birmingham" }))).map((f) => f.id)).toEqual([words.id]);
     // A BGG inbox watch named by words is not the same as one for a game id.
     expect(await findDuplicates({ store }, larry, "wantlist", fields({ name: "Brass", source: "bgg" }))).toEqual([]);
   });

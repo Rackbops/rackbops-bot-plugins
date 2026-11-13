@@ -70,6 +70,7 @@ describe("duplicate tasks over the task API", () => {
     for (const path of ["/tasks", "/tasks/validate"]) {
       const res = await api(w.plugin, "POST", path, { token: w.token, body: { ...WATCH, allowDuplicate: "yes" } });
       expect(res.status).toBe(400);
+      expect(((await res.json()) as Refused).error).toEqual({ code: "invalid", message: "`allowDuplicate` must be true or false." });
     }
   });
 });
