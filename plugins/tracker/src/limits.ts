@@ -10,6 +10,8 @@
 
 /** A task's name, and a renewal's or a price's name option. */
 export const MAX_TITLE = 100;
+/** A gift-list name or title (docket's `GIFT_TEXT_MAX`): `/gift` takes any the ledger holds. */
+export const MAX_GIFT_TEXT = 200;
 /** A reminder's text: it goes out as the DM itself. */
 export const MAX_REMINDER_TEXT = 1500;
 /** A `when` or an `until`: docket's parseWhen grammar is short. */
