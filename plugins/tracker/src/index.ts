@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { DeliveryFailedError, type Executor, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
+import { DeliveryFailedError, type Executor, GiftLedger, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
 import { bggSource, ebaySource, inboxSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, news, scout, type ShopVet, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
 import { createEbayBrowse, parseEbayKeys } from "./ebay.js";
 import { ebayJobForgetSeconds, forgetEbayMessages } from "./ebay-forget.js";
@@ -31,6 +31,7 @@ import { type NotifyTickKind, runNotifyTick } from "./notify-lane.js";
 import { runDigests } from "./digest.js";
 import { parseAdminIds, seedAdmins } from "./people.js";
 import { openDatabase, vacuumOnce } from "./schema.js";
+import { SqliteGiftStore } from "./gift-store.js";
 import { Roster } from "./roster.js";
 import { SqliteStore } from "./store.js";
 import { createWebHandler } from "./web/app.js";
@@ -584,6 +585,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
           apiTokens: new ApiTokens(opened),
           apiIdempotency: new ApiIdempotency(opened),
           roster: new Roster(opened),
+          gifts: new GiftLedger(new SqliteGiftStore(opened)),
           ceilings,
           budgetUnlimited,
           configuredAdmins: new Set(adminIds),

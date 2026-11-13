@@ -1,4 +1,5 @@
 import {
+  type GiftLedger,
   formatInstant,
   formatTaskList,
   hasFired,
@@ -79,6 +80,8 @@ export interface TrackerDeps {
   lanes: TickGate;
   /** Test seam: forget-me's wait for the ticks, in ms (admin.ts `TICK_WAIT_MS` when absent). */
   tickWaitMs?: number;
+  /** The owners' gift ledgers (gift-store.ts through docket's `GiftLedger`): the task API's gift routes (web/api-gifts.ts). */
+  gifts: GiftLedger;
   /** People, blocks and forget-me's erasure: the SQL docket's Store has no method for (roster.ts). */
   roster: Roster;
   /** People's own daily ceilings, raised by an admin (ceilings.ts; plan 5.7). */

@@ -674,10 +674,43 @@ see a revocation: a token minted before the person unlinked the service, or lost
 until it expires (5 minutes by default, 30 at most). It does only what its `scope` names, one operation per route:
 `whoami` (`GET /me`), `list_task_types`, `get_capabilities`, `list_tasks`, `create_task`, `validate_task`, `get_task`, `update_task`
 (PATCH), `delete_task`, `pause_task`, `resume_task`, `run_task`, `send_listings`, `send_sources`,
-`sources_ready`, each as `<app>:<operation>`; a missing one is `403 insufficient_scope`. `get_capabilities`,
+`sources_ready`, and for the whole gift ledger (0.47.0) `read_gifts` (every gift `GET`) and `write_gifts` (every gift write),
+each as `<app>:<operation>`; a missing one is `403 insufficient_scope`. `get_capabilities`,
 `validate_task` and `run_task` are new in 0.37.0, so a service link made before it does not cover them until it is made again. usr's keys
 out of reach is `503 usr_unavailable`, never a pass. Its rate limit is the person's, shared by every
 service acting for them; each write is logged with the acting key and the token's `jti`.
+
+**Gifts** (0.47.0, #383). The owner's gift ledger (docket's `GiftLedger`, epic Rackbops/docket#94)
+lives under `/api/v1/gifts/`, in seven collections: `recipients`, `groups`, `occasions`,
+`occasion-recipients` (an occasion's roster), `items`, `purchases` and `allocations`.
+`GET /gifts/<collection>` lists the owner's live records (`?includeArchived=true` adds archived
+ones; `?occasionId=` filters `occasion-recipients` and `allocations`, `?itemId=` `purchases` and
+`allocations`); `POST` creates one from every field of its kind (`201`, the record read back);
+`GET /gifts/<collection>/<id>` reads one; `PATCH` changes the fields sent at the
+`expectedRevision` the body names, the record's `revision` as read -- a stale one is
+`409 revision_conflict` with `currentRevision`, and nothing changes. `archived: true` archives and
+`false` restores; nothing is ever deleted (forget-me erases the whole ledger). A refused write is
+`400 invalid` with every problem in `error.problems`. `POST /gifts/groups/<id>/members` takes `add`
+and `remove` lists of recipient ids and the group's `expectedRevision` (`dryRun: true` answers the
+change without making it); the people themselves never change. `GET /gifts/occasions/<id>/sync`
+previews the roster against the occasion's groups as they are now, with each affected gift and a
+`previewToken`; `POST` there with that token and a decision for each affected allocation
+(`{"action": "keep"}`, `{"action": "reassign", "recipientIds": [...]}` or `{"action": "unassign"}`)
+applies it, and anything that moved since is `409 stale_preview`. The steps are written one by one,
+so a step refused part way (`400`/`409`) leaves the steps before it made: preview again. An
+archived occasion is never synced (`409 archived`).
+`GET /gifts/occasions/<id>/summary` gives each live roster row's coverage, the budget and what the
+occasion's gifts cost (each purchase line split over the gifts it filled; gross, before refunds); `GET /gifts/spend`
+gives spent, planned, refunded and net per currency, never summed across currencies.
+`POST /gifts/batch` takes `writes`, up to 25 of `{"op": "create", "collection", "fields"}` or
+`{"op": "update", "collection", "id", "expectedRevision", "fields"}`, and answers each with its own
+`status` and body in order; a refused row writes nothing and the others go on (a batch is not
+atomic; a row that fails unexpectedly is `500` and the rest go on). Every record answered carries
+`recordKind`, its kind. Another person's id, an id of another collection and an unknown one are the same `404`,
+whoever asks, an admin included; a list holds only the caller's rows. A gift recipient is a name in
+the owner's ledger, never a tracker person: sharing a task with someone gives them nothing here.
+Gift writes take `Idempotency-Key` as any write does (a batch's or a sync's whole request is the one
+write), but never `If-Match`. Nothing here waits on the runner or uses model budget.
 
 **Browsers.** No answer carries a CORS header, and a request with an `Origin` header -- which a
 browser adds to every cross-origin request and to any same-origin one that is not a GET -- is
