@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.50.0] - 2026-11-13
+
+### Added
+
+- `/gift` (Rackbops/docket#94, #385): quick capture on your own gift list from Discord. `/gift idea` plans a gift for a person on an open occasion, or saves it as an idea noted "For <name>"; `/gift bought` records a planned gift as bought, found by its title (and person or occasion when more than one matches), priced in the occasion's own currency digits and dated in your time zone; `/gift needs` says who on an occasion still needs a gift, by the same coverage rules as the web page and the task API. Every answer is ephemeral, with a link to `/gifts` when the web area is set up. A new command name: the bot registers it on the next start.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.49.0] - 2026-11-13
 
 ### Added
