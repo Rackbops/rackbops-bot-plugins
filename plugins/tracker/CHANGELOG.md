@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.48.0] - 2026-11-13
+
+### Added
+
+- Duplicate check on the task API (#390). `POST /tasks` refuses with `409 duplicate` a new task that looks for the same thing as one of the owner's active or paused tasks, naming them in the message and in a `duplicates` list (`id`, `title`, `status`, `type`), unless the body carries `allowDuplicate: true`. The same thing means a want-list watch (plain or judged) with the same source and search: an eBay or Shopify search's words (the name when no target is given), a BGG game's id, a page's address, or an inbox eBay or BGG watch's words; a news watch with the same subject; or a price with the same page. Words are compared trimmed, lower-cased and with runs of space as one. `POST /tasks/validate` takes `allowDuplicate` too and answers `duplicates` (empty when none), saying so in its message, without refusing. Reminders, renewals, scouts and research requests are not compared. On 2026-11-11 a setup prompt run a second time through the ChatGPT connector made six copies of existing watches, each of which DMed every current listing again. The check is read outside the write queue, so two creates sent at the same instant can both pass it. Discord and the web editor do not check yet.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.47.0] - 2026-11-13
 
 ### Added

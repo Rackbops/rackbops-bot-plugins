@@ -16,6 +16,7 @@ import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_
 import { editValues } from "./form-input.js";
 import { etag, taskVersion, VERSION_MISMATCH } from "./task-version.js";
 import { MAX_LIVE_TASKS } from "../limits.js";
+import { duplicatesSentence, findDuplicates } from "../duplicates.js";
 import { MAX_PRICE_TASKS } from "../price.js";
 import { MAX_LIVE_RESEARCH } from "../research.js";
 import { MAX_LIVE_SCOUTS } from "../scout.js";
@@ -363,8 +364,24 @@ export async function createAnswer(w: Writer, user: User, body: Record<string, u
   if (type === "research" && !w.d.research) return refusal(RESEARCH_OFF);
   if (type === "scout" && !w.d.research) return refusal(SCOUT_OFF);
   if (type === "news" && !w.d.research) return refusal(NEWS_OFF);
-  const form = asFields(body, type as NewType, "new");
+  const allow = body.allowDuplicate;
+  if (allow !== undefined && typeof allow !== "boolean") return problem(400, "invalid", "`allowDuplicate` must be true or false.");
+  const { allowDuplicate: _allow, ...fields } = body;
+  const form = asFields(fields, type as NewType, "new");
   if (!(form instanceof URLSearchParams)) return form;
+  // #390: a task the person already has, made again by mistake, is refused unless the caller says so.
+  if (allow !== true) {
+    const duplicates = await findDuplicates(w.d, user, type, form);
+    if (duplicates.length > 0) {
+      return {
+        status: 409,
+        body: {
+          error: { code: "duplicate", message: `${duplicatesSentence(duplicates)} Send \`allowDuplicate: true\` to make another anyway.` },
+          duplicates,
+        },
+      };
+    }
+  }
   return written(w, user, await makeTask(w, type as NewType, form), 201, base);
 }
 

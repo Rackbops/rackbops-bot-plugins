@@ -3,6 +3,7 @@ import { liveTaskCap, type TrackerDeps } from "../actions.js";
 import { reminderPlan } from "../reminders.js";
 import { liveNews, MAX_LIVE_NEWS, NEWS_CAP, NEWS_OFF, newsPlan, newsSchedule } from "../news.js";
 import { RESEARCH_OFF } from "../research.js";
+import { duplicatesSentence, findDuplicates } from "../duplicates.js";
 import { liveScouts, MAX_LIVE_SCOUTS, SCOUT_CAP, SCOUT_OFF, scoutPlan, scoutSchedule } from "../scout.js";
 import { renewalPlan } from "../tracked.js";
 import { type ApiAnswer, asFields, offeredTypes, problem, refusal } from "./api-tasks.js";
@@ -58,7 +59,10 @@ export async function validateAnswer(d: TrackerDeps, user: User, body: Record<st
   // The create's own "not available" refusals for the types it checks in full (reminders.ts, tracked.ts).
   if (type === "reminder" && !d.types.reminder) return refusal("Reminders are not available on this bot.");
   if (type === "renewal" && !d.types.renewal) return refusal("Renewals are not available on this bot.");
-  const form = asFields(body, type as NewType, "new");
+  const allow = body.allowDuplicate;
+  if (allow !== undefined && typeof allow !== "boolean") return problem(400, "invalid", "`allowDuplicate` must be true or false.");
+  const { allowDuplicate: _allow, ...fields } = body;
+  const form = asFields(fields, type as NewType, "new");
   if (!(form instanceof URLSearchParams)) return form;
   const now = d.clock.now();
 
@@ -88,6 +92,10 @@ export async function validateAnswer(d: TrackerDeps, user: User, body: Record<st
   }
   if (type === "news" && (await liveNews(d, user)) >= MAX_LIVE_NEWS) return refusal(NEWS_CAP);
 
+  // #390: the person's live tasks looking for the same thing. Not a refusal here: the create refuses
+  // them unless it carries `allowDuplicate: true`, which a caller sends once the person has said yes.
+  const duplicates = await findDuplicates(d, user, type, form);
+  const twice = duplicates.length > 0 ? ` ${duplicatesSentence(duplicates)} Making it needs \`allowDuplicate: true\`.` : "";
   if (schedule === null) {
     return {
       status: 200,
@@ -95,7 +103,8 @@ export async function validateAnswer(d: TrackerDeps, user: User, body: Record<st
         valid: true,
         type,
         checked: "fields",
-        message: `The fields of that ${type} are right, and you are under the live-task cap. The rest is checked when it is made: ${type === "research" ? "the model runner takes it then" : "its page or source is read then"}. Nothing was made.`,
+        duplicates,
+        message: `The fields of that ${type} are right, and you are under the live-task cap. The rest is checked when it is made: ${type === "research" ? "the model runner takes it then" : "its page or source is read then"}.${twice} Nothing was made.`,
       },
     };
   }
@@ -113,9 +122,10 @@ export async function validateAnswer(d: TrackerDeps, user: User, body: Record<st
       cadence,
       firstAt: first?.toISOString() ?? null,
       thenAt: then?.toISOString() ?? null,
+      duplicates,
       message: first
-        ? `That ${type} would first run ${first.getTime() <= now.getTime() ? "at once" : formatInstant(first.toISOString(), user.timeZone, now)}${then ? `, then ${formatInstant(then.toISOString(), user.timeZone, now)}` : ""} (${cadence}). Nothing was made.`
-        : `That ${type} would never run: its time has no next run. Nothing was made.`,
+        ? `That ${type} would first run ${first.getTime() <= now.getTime() ? "at once" : formatInstant(first.toISOString(), user.timeZone, now)}${then ? `, then ${formatInstant(then.toISOString(), user.timeZone, now)}` : ""} (${cadence}).${twice} Nothing was made.`
+        : `That ${type} would never run: its time has no next run.${twice} Nothing was made.`,
     },
   };
 }
