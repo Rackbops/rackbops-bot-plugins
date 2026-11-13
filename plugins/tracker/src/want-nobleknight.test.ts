@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../packages/api/contract.js";
+import { FetchRefusedError } from "./fetch.js";
 import { NOBLE_KNIGHT_USD } from "./want.js";
 import { call, cleanup, csrfOf, LARRY, ORIGIN, people, signIn, slash, world } from "./web/harness.js";
 
@@ -30,11 +31,12 @@ function productPage(copies: Copy[]): string {
 }
 
 function noble(copies: Copy[]) {
-  const s = { copies, reads: [] as string[], body: null as string | null };
+  const s = { copies, reads: [] as string[], body: null as string | null, status: 200, refuse: null as string | null };
   const fetch: Fetch = {
     async get(url: string): Promise<FetchResponse> {
       s.reads.push(url);
-      return { status: 200, body: s.body ?? productPage(s.copies), headers: {} };
+      if (s.refuse) throw new FetchRefusedError(s.refuse);
+      return { status: s.status, body: s.body ?? productPage(s.copies), headers: {} };
     },
   };
   return { s, fetch };
@@ -81,6 +83,12 @@ describe("/want source: nobleknight", () => {
     s.body = productPage([{ ...SW, price: "£259.98" }]);
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "nobleknight", target: PAGE } })).toContain("in another currency, not US dollars");
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "nobleknight", target: PAGE, currency: "gbp" } })).toBe(NOBLE_KNIGHT_USD);
+    s.body = null;
+    s.status = 503;
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "nobleknight", target: PAGE } })).toContain("I could not read Noble Knight's page just now");
+    s.status = 200;
+    s.refuse = "www.nobleknight.com is not on the public internet";
+    expect(await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "nobleknight", target: PAGE } })).toBe("I cannot read that page: www.nobleknight.com is not on the public internet.");
     const none = await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "bogus", target: PAGE } });
     expect(none).toBe("`source` is page, bgg, ebay, shopify or nobleknight.");
   });
@@ -97,6 +105,9 @@ describe("/want source: nobleknight", () => {
     expect(made.status).toBe(303);
     const edit = await (await call(w.plugin, "GET", "/tasks/t1/edit", { jar })).text();
     expect(edit).toContain(`Looking at: Noble Knight&#39;s page ${PAGE}.`);
+    const gbp = await call(w.plugin, "POST", "/tasks/t1/edit", { jar, origin: ORIGIN, form: { csrf, name: "Edge", max: "", currency: "gbp", hours: "" } });
+    expect(gbp.status).not.toBe(303);
+    expect(await gbp.text()).toContain("I read Noble Knight&#39;s prices in USD");
 
   });
 });
