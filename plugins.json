@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-13T22:31:45.538Z",
+  "generatedAt": "2026-11-13T22:32:30.247Z",
   "plugins": [
     {
       "name": "mcp",
@@ -210,7 +210,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.54.0",
+      "version": "0.56.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout and a news watch (through city-hall, with their findings), a want-list watcher (listing pages you paste, Noble Knight Games product pages you paste (a trusted seller, each copy in stock its own listing), BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, each shop first checked by one web search through city-hall, eBay through eBay's own Browse API once its keys are set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /news, /want, /tasks, /task, /settings, /web, /gift), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, a JSON task API with personal API tokens, and a plain-language intake: DM Clerk what you want in your own words, answer its questions, and press Save on the draft it shows",
       "hostApiVersion": 1,
       "intents": [
@@ -390,6 +390,12 @@
       ],
       "releases": [
         {
+          "version": "0.56.0",
+          "publishedAt": "2026-11-13T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.56.0",
+          "notes": "### Changed\n\n- The research help texts stop offering Bluesky as a searched platform (#400; Rackbops/docket#125, roshne's decision of 2026-11-13: Bluesky's public search refuses automated readers, so docket 0.27.0 leaves it out of the `auto` set and searches it for nobody until a Bluesky service exists). `social`'s error text, the `/research` option's example, the web form's help and the README name YouTube, TikTok and Instagram; `bluesky` is still accepted, so an older request keeps working, and the confirmation reply names only what docket will search (\"social posts from YouTube (Bluesky is not searched)\"; a list of Bluesky alone reads \"no social posts (Bluesky is not searched)\"). The stored value is unchanged. Needs docket-types 0.27.0 or later for the reply to be true, which 0.54.0 pins.\n\n### Schema\n\n- No change. Still at 13."
+        },
+        {
           "version": "0.54.0",
           "publishedAt": "2026-11-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.54.0",
@@ -442,12 +448,6 @@
           "publishedAt": "2026-11-11T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.44.0",
           "notes": "### Added\n\n- The gift ledger's store (Rackbops/docket#94, #382; docket 0.24.0): docket's `GiftStore` port on the tracker's SQLite database, passing every `GIFT_STORE_CONTRACT` case. Nothing reads or writes it yet: the task API, the web page and the `/gift` commands come in later releases. Forget-me erases a person's gift records, their history and their idempotency keys.\n\n### Changed\n\n- Needs docket 0.24.0.\n\n### Schema\n\n- Still at 13. Three new tables, `gift_records`, `gift_events` and `gift_idempotency`, are made on start when absent, outside the numbered schema, so 0.43.0 and older still start against the database after a rollback (they never read the gift tables, and their forget-me does not erase them). No existing table, index or row changes."
-        },
-        {
-          "version": "0.43.0",
-          "publishedAt": "2026-11-10T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.43.0",
-          "notes": "### Added\n\n- Social platforms for research (Rackbops/docket#107; docket 0.23.0). `/research` takes `social` and `since`. `social` is `auto` (the default: the research searches YouTube, TikTok, Instagram and Bluesky for what people say when the question asks what people recommend, think or experienced), `none`, or the platforms to search, separated by commas (`youtube`, `tiktok`, `instagram`, `bluesky`; `yt`, `ig`, `insta` and `bsky` are read too; `off` and `no` mean `none`). Reddit is never read and is refused by name. `since` is a day (`2026-09-01`, `3 months ago`, `a week ago`), on or before today in your own zone: posts before it do not count. Neither goes with `sources: browser`, whose pages come from your browser and search no platform (`auto`, the default, passes). The web form and the task API take both on a new request (`GET /types` lists them), and `settings.social` (the list or `none`; `auto` is not written) and `settings.since` (the day, as an instant) read them back. The confirmation names the platforms, or none, when `social` was given, and the day when `since` was.\n\n### Changed\n\n- Needs docket 0.23.0. Every web research request's first pass now gets 20 turns in place of 15 and the social rules (`social: none` restores 15 turns and the 0.42.0 prompt text; the Job's result schema carries the post fields for every run); its DM may carry a \"Social:\" line naming each platform searched, empty, unavailable or skipped, Reddit always unavailable; a finding from a post shows its platform, date and whether the post was opened; a stock, price or availability claim resting on posts alone moves to the DM's uncertain list. The 1 USD cap per run is unchanged. A request made with `sources: browser` searches no platform, as before.\n\n### Schema\n\n- No change. Still at 13."
         }
       ]
     },
