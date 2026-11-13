@@ -235,6 +235,27 @@ describe("research from the task API", () => {
     expect(bad.error.message).toBe("`type` is one of reminder, renewal, price, research, scout, news, wantlist.");
   });
 
+  it("shows a finding's tags on the task's page, escaped, and returns them from the task API (#396)", async () => {
+    const w = await setup();
+    const made = await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: "What is X?" } });
+    expect(made.status).toBe(201);
+    const tags = ["research", "approve", "social", "tiktok", "published:2026-10-02", "snippet", "<b>x</b>"];
+    const db = new Database(w.dbPath);
+    const owner = db.query("SELECT owner_id FROM tasks WHERE seq = 1").get() as { owner_id: string };
+    db.query("INSERT INTO findings (task_id, owner_id, occurrence_id, key, type, text, tags, source, at) VALUES ('t1', ?, NULL, 'k1', 'research', 'A post says X', ?, 'https://www.tiktok.com/@a/video/1', '2026-11-11T23:57:00.000Z')").run(
+      owner.owner_id,
+      JSON.stringify(tags),
+    );
+    db.close();
+
+    const read = await body(await api(w.plugin, "GET", "/tasks/t1", { token: w.token }));
+    expect(read.findings).toEqual([{ claim: "A post says X", source: "https://www.tiktok.com/@a/video/1", at: "2026-11-11T23:57:00.000Z", tags }]);
+
+    const page = await (await call(w.plugin, "GET", "/tasks/t1", { jar: w.larry })).text();
+    expect(page).toContain("[research, approve, social, tiktok, published:2026-10-02, snippet, &lt;b&gt;x&lt;/b&gt;]");
+    expect(page).not.toContain("<b>x</b>");
+  });
+
   it("POST makes one by /research's rules; it reads back to its owner only, and a PATCH answers 409", async () => {
     const w = await setup();
     const res = await api(w.plugin, "POST", "/tasks", { token: w.token, body: { type: "research", question: "What is X?", context: "larry-private-context", deadline: "tomorrow 17:00" } });

@@ -158,7 +158,8 @@ ${paused}
  */
 function findingRow(f: FindingView): Html {
   const source = f.source ? html`<a class="rb-link" href="${f.source}" rel="noopener noreferrer nofollow">${f.source}</a>` : html`<span class="rb-muted">no source</span>`;
-  return html`<li>${f.claim}<br><span class="rb-muted">${source} -- ${f.at}</span></li>`;
+  const tags = f.tags.length > 0 ? html` <span class="rb-muted">[${f.tags.join(", ")}]</span>` : null;
+  return html`<li>${f.claim}<br><span class="rb-muted">${source} -- ${f.at}</span>${tags}</li>`;
 }
 
 const EMPTY_FINDINGS: Readonly<Record<string, string>> = {
