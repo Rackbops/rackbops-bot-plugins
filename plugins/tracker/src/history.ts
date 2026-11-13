@@ -184,6 +184,12 @@ export interface FindingView {
   at: string;
   /** The same instant, ISO-8601 (the API's). */
   atIso: string;
+  /**
+   * The finding's tags as docket stored them (#396): for a social post finding, `social`, its
+   * platform, `published:<day>` and `read` or `snippet` (docket#124). Model-derived text, shown
+   * escaped, never as markup.
+   */
+  tags: string[];
 }
 
 /** Findings shown on a task's page; the API returns them all. */
@@ -193,7 +199,7 @@ const HTTP_URL = /^https?:\/\/[^\s<>"]+$/i;
 
 export function findingView(f: StoredFinding, viewer: User, now: Date): FindingView {
   const source = f.source !== null && HTTP_URL.test(f.source) ? f.source : null;
-  return { claim: f.text, source, at: formatInstant(f.at, viewer.timeZone, now), atIso: f.at };
+  return { claim: f.text, source, at: formatInstant(f.at, viewer.timeZone, now), atIso: f.at, tags: [...f.tags] };
 }
 
 /**

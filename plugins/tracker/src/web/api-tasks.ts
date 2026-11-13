@@ -336,7 +336,8 @@ export async function getAnswer(d: TrackerDeps, user: User, id: string): Promise
       task: await taskJson(d, user, view.task),
       history: { next: view.next, runs: view.runs, earlierRuns: view.earlierRuns, changes: view.changes, earlierChanges: view.earlierChanges },
       // docket 0.5.0 (#82): a research request's stored claims, oldest first; empty for other types.
-      findings: view.findings.map((f) => ({ claim: f.claim, source: f.source, at: f.atIso })),
+      // `tags` since 0.50.0 (#396), additive.
+      findings: view.findings.map((f) => ({ claim: f.claim, source: f.source, at: f.atIso, tags: f.tags })),
     },
   };
 }
