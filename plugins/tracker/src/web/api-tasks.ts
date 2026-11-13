@@ -337,7 +337,7 @@ export async function getAnswer(d: TrackerDeps, user: User, id: string): Promise
       history: { next: view.next, runs: view.runs, earlierRuns: view.earlierRuns, changes: view.changes, earlierChanges: view.earlierChanges },
       // docket 0.5.0 (#82): the task's stored findings, oldest first (research, scout, news and
       // want-list watches keep them; an eBay API watch keeps none).
-      // `tags` since 0.50.0 (#396), additive.
+      // `tags` since 0.51.0 (#396), additive.
       findings: view.findings.map((f) => ({ claim: f.claim, source: f.source, at: f.atIso, tags: f.tags })),
     },
   };
