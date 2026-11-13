@@ -15,7 +15,7 @@ import {
   withNotice,
 } from "./actions.js";
 import { resumeTask } from "./manage.js";
-import { CURRENCY_LENGTH, DATE_LENGTH, MAX_AMOUNT, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_SOCIAL, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
+import { CURRENCY_LENGTH, DATE_LENGTH, MAX_AMOUNT, MAX_GIFT_TEXT, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_NEAR, MAX_NOTE, MAX_REMINDER_TEXT, MAX_SOCIAL, MAX_TASK_ID, MAX_TITLE, MAX_URL, MAX_WHEN, MAX_ZONE } from "./limits.js";
 import { remind, type Repeat } from "./reminders.js";
 import { MAX_CONTEXT_CHARS, MAX_QUESTION_CHARS, researchCommand } from "./research.js";
 import { DEFAULT_BGG_HOURS, DEFAULT_EBAY_HOURS, DEFAULT_INBOX_HOURS, DEFAULT_PAGE_HOURS, DEFAULT_SHOPIFY_HOURS, MAX_WANT_HOURS, wantCommand } from "./want.js";
@@ -640,9 +640,9 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             s
               .setName("idea")
               .setDescription("Note a gift idea for someone on your gift list")
-              .addStringOption((o) => o.setName("person").setDescription("Who it is for, as named on your gift list").setRequired(true).setMaxLength(MAX_TITLE))
-              .addStringOption((o) => o.setName("title").setDescription("The gift").setRequired(true).setMaxLength(MAX_TITLE))
-              .addStringOption((o) => o.setName("occasion").setDescription("Plan it for this open occasion (by its title)").setMaxLength(MAX_TITLE))
+              .addStringOption((o) => o.setName("person").setDescription("Who it is for, as named on your gift list").setRequired(true).setMaxLength(MAX_GIFT_TEXT))
+              .addStringOption((o) => o.setName("title").setDescription("The gift").setRequired(true).setMaxLength(MAX_GIFT_TEXT))
+              .addStringOption((o) => o.setName("occasion").setDescription("Plan it for this open occasion (by its title)").setMaxLength(MAX_GIFT_TEXT))
               .addNumberOption((o) => o.setName("estimate").setDescription("What it might cost").setMinValue(0).setMaxValue(MAX_AMOUNT))
               .addStringOption((o) => o.setName("currency").setDescription("The estimate's currency (default: the occasion's)").setMinLength(CURRENCY_LENGTH).setMaxLength(CURRENCY_LENGTH)),
           )
@@ -650,17 +650,18 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
             s
               .setName("bought")
               .setDescription("Record that you bought a planned gift")
-              .addStringOption((o) => o.setName("gift").setDescription("The gift's title").setRequired(true).setMaxLength(MAX_TITLE))
+              .addStringOption((o) => o.setName("gift").setDescription("The gift's title").setRequired(true).setMaxLength(MAX_GIFT_TEXT))
               .addNumberOption((o) => o.setName("price").setDescription("The price of one, in the occasion's currency").setRequired(true).setMinValue(0).setMaxValue(MAX_AMOUNT))
-              .addStringOption((o) => o.setName("person").setDescription("Who it is for, when more than one gift has that title").setMaxLength(MAX_TITLE))
-              .addStringOption((o) => o.setName("merchant").setDescription("Where you bought it").setMaxLength(MAX_TITLE))
+              .addStringOption((o) => o.setName("person").setDescription("Who it is for, when more than one gift has that title").setMaxLength(MAX_GIFT_TEXT))
+              .addStringOption((o) => o.setName("occasion").setDescription("The open occasion, when more than one gift has that title").setMaxLength(MAX_GIFT_TEXT))
+              .addStringOption((o) => o.setName("merchant").setDescription("Where you bought it").setMaxLength(MAX_GIFT_TEXT))
               .addBooleanOption((o) => o.setName("arrived").setDescription("It has already arrived")),
           )
           .addSubcommand((s) =>
             s
               .setName("needs")
               .setDescription("Who on an occasion still needs a gift")
-              .addStringOption((o) => o.setName("occasion").setDescription("The open occasion's title (default: the first)").setMaxLength(MAX_TITLE)),
+              .addStringOption((o) => o.setName("occasion").setDescription("The open occasion's title (default: the first)").setMaxLength(MAX_GIFT_TEXT)),
           ),
       handle: (interaction) => {
         const o = interaction.options;
@@ -683,6 +684,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
                 gift: o.getString("gift", true),
                 price: o.getNumber("price", true),
                 ...(opt("person") !== undefined ? { person: opt("person") as string } : {}),
+                ...(opt("occasion") !== undefined ? { occasion: opt("occasion") as string } : {}),
                 ...(opt("merchant") !== undefined ? { merchant: opt("merchant") as string } : {}),
                 ...(arrived !== null ? { arrived } : {}),
               }, w.web);

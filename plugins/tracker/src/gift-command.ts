@@ -11,6 +11,7 @@ import {
 import type { TrackerDeps } from "./actions.js";
 import { loadLedger, minorDigits, overview, STAGE_COLUMNS, type Ledger } from "./web/gift-overview.js";
 import type { WebLocation } from "./web/command.js";
+import { money } from "./web/gift-pages.js";
 
 /**
  * `/gift` (rackbops-bot-plugins#385, epic Rackbops/docket#94): quick capture from Discord on the
@@ -21,6 +22,9 @@ import type { WebLocation } from "./web/command.js";
  */
 
 type Deps = Pick<TrackerDeps, "gifts" | "clock">;
+
+/** How many matches an ambiguous `/gift bought` lists before counting the rest. */
+const MAX_LISTED = 10;
 
 export interface GiftIdeaInput {
   person: string;
@@ -34,6 +38,7 @@ export interface GiftBoughtInput {
   gift: string;
   price: number;
   person?: string;
+  occasion?: string;
   merchant?: string;
   arrived?: boolean;
 }
@@ -69,10 +74,35 @@ function findOccasion(l: Ledger, raw: string): GiftOccasion | string {
   return `No open occasion called ${raw.trim()} is on your gift list.`;
 }
 
-/** An amount in whole currency units as minor units, by the currency's own digits; null when not one. */
-function toMinor(amount: number, currency: string): number | null {
-  const minor = Math.round(amount * 10 ** minorDigits(currency));
-  return Number.isSafeInteger(minor) && minor >= 0 ? minor : null;
+/**
+ * An amount in whole currency units as minor units, by the currency's own digits (19.99 USD is
+ * 1999, 1250 JPY is 1250); null for more decimals than the currency has, or not an amount.
+ */
+export function toMinor(amount: number, currency: string): number | null {
+  const digits = minorDigits(currency);
+  const m = /^(\d+)(?:\.(\d+))?$/.exec(String(amount));
+  if (!m || (m[2] ?? "").length > digits) return null;
+  const minor = Number(m[1]) * 10 ** digits + Number((m[2] ?? "").padEnd(digits, "0") || "0");
+  return Number.isSafeInteger(minor) ? minor : null;
+}
+
+/** Today's date in the person's own zone, as `YYYY-MM-DD`. */
+export function today(at: Date, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  } catch {
+    return at.toISOString().slice(0, 10);
+  }
+}
+
+/** Takes back a first write when the second is refused, so a refusal never leaves half a record. */
+async function undo(d: Deps, kind: "item" | "purchase", id: string, m: GiftWriteMeta): Promise<void> {
+  try {
+    const rec = await d.gifts.get(kind, m.ownerId, id);
+    if (rec && !rec.archived) await d.gifts.update(kind, id, m, rec.revision, { archived: true });
+  } catch {
+    // Left as it is: the answer still says so (the web page shows it).
+  }
 }
 
 function refusal(err: unknown): string {
@@ -94,9 +124,10 @@ export async function giftIdea(d: Deps, user: User, input: GiftIdeaInput, web: W
   if (input.estimate !== undefined) {
     if (currency === "") return "Give a currency with the estimate, or an occasion to take it from.";
     estimate = toMinor(input.estimate, currency);
-    if (estimate === null) return "The estimate is not an amount.";
+    if (estimate === null) return `The estimate is not an amount in ${currency}.`;
   }
   const m = meta(d, user);
+  let itemId: string | null = null;
   try {
     const item = await d.gifts.create("item", m, {
       title: input.title.trim(),
@@ -109,10 +140,12 @@ export async function giftIdea(d: Deps, user: User, input: GiftIdeaInput, web: W
       estimateMinor: estimate,
       currency: estimate === null ? null : currency,
     });
-    if (!occasion) return `Saved ${item.title} as an idea for ${person.displayName}.${giftsLink(web)}`;
+    itemId = item.id;
+    if (!occasion) return `Saved ${item.title} as an idea, noted "For ${person.displayName}".${giftsLink(web)}`;
     await d.gifts.create("allocation", m, { itemId: item.id, occasionId: occasion.id, recipientIds: [person.id], quantity: 1, shared: false, purchaseId: null, handoff: "none", givenOn: null });
     return `Planned ${item.title} for ${person.displayName} for ${occasion.title}.${giftsLink(web, occasion.id)}`;
   } catch (err) {
+    if (itemId) await undo(d, "item", itemId, m);
     return refusal(err);
   }
 }
@@ -126,24 +159,35 @@ export async function giftBought(d: Deps, user: User, input: GiftBoughtInput, we
     if (typeof person === "string") return person + giftsLink(web);
     personId = person.id;
   }
+  let occasionId: string | null = null;
+  if (input.occasion) {
+    const o = findOccasion(l, input.occasion);
+    if (typeof o === "string") return o + giftsLink(web);
+    occasionId = o.id;
+  }
   const want = fold(input.gift);
   const titles = new Map(l.items.map((i) => [i.id, i.title]));
   const names = new Map(l.recipients.map((r) => [r.id, r.displayName]));
   const occasions = new Map(l.occasions.map((o) => [o.id, o]));
   const open = l.allocations.filter(
-    (a) => !a.archived && a.purchaseId === null && fold(titles.get(a.itemId) ?? "") === want && (personId === null || a.recipientIds.includes(personId)) && occasions.get(a.occasionId)?.archived === false,
+    (a) => !a.archived && a.purchaseId === null && fold(titles.get(a.itemId) ?? "") === want && (personId === null || a.recipientIds.includes(personId)) && (occasionId === null || a.occasionId === occasionId) && occasions.get(a.occasionId)?.archived === false,
   );
   const label = (a: (typeof open)[number]) => `${titles.get(a.itemId)} for ${a.recipientIds.map((id) => names.get(id) ?? id).join(", ")} (${occasions.get(a.occasionId)?.title ?? ""})`;
   if (open.length === 0) return `No planned gift called ${input.gift.trim()}${input.person ? ` for ${input.person.trim()}` : ""} is waiting to be bought.${giftsLink(web)}`;
-  if (open.length > 1) return [`More than one planned gift matches; name the person too:`, ...open.map((a) => `- ${label(a)}`)].join("\n");
+  if (open.length > 1) {
+    const shown = open.slice(0, MAX_LISTED).map((a) => `- ${label(a)}`);
+    if (open.length > MAX_LISTED) shown.push(`- and ${open.length - MAX_LISTED} more`);
+    return [`More than one planned gift matches; name the person or the occasion too:`, ...shown].join("\n") + giftsLink(web);
+  }
   const allocation = open[0];
   if (!allocation) return "No planned gift matches.";
   const occasion = occasions.get(allocation.occasionId);
   const currency = occasion?.currency ?? "";
   const price = toMinor(input.price, currency);
-  if (price === null) return "The price is not an amount.";
+  if (price === null) return `The price is not an amount in ${currency}.`;
   const units = allocationUnits(allocation);
   const m = meta(d, user);
+  let purchaseId: string | null = null;
   try {
     const purchase = await d.gifts.create("purchase", m, {
       itemId: allocation.itemId,
@@ -159,14 +203,16 @@ export async function giftBought(d: Deps, user: User, input: GiftBoughtInput, we
       discountMinor: null,
       totalComplete: false,
       refundedMinor: 0,
-      purchasedOn: m.at.slice(0, 10),
+      purchasedOn: today(d.clock.now(), user.timeZone),
       reference: null,
     });
+    purchaseId = purchase.id;
     await d.gifts.update("allocation", allocation.id, m, allocation.revision, { purchaseId: purchase.id });
   } catch (err) {
+    if (purchaseId) await undo(d, "purchase", purchaseId, m);
     return refusal(err);
   }
-  return `Recorded: bought ${label(allocation)}, ${units} at ${input.price} ${currency} each${input.arrived ? ", arrived" : ", on its way"}.${giftsLink(web, allocation.occasionId)}`;
+  return `Recorded: bought ${label(allocation)}, ${units} at ${money(price, currency)} each${input.arrived ? ", arrived" : ", on its way"}.${giftsLink(web, allocation.occasionId)}`;
 }
 
 /** Names joined, at most about 700 characters of them (two lists fit one Discord message), then how many more. */
@@ -174,7 +220,7 @@ export function capped(names: readonly string[], max = 700): string {
   let out = "";
   for (const [i, n] of names.entries()) {
     const next = out === "" ? n : `${out}, ${n}`;
-    if (next.length > max) return `${out}, and ${names.length - i} more`;
+    if (next.length > max) return out === "" ? `${names.length} people` : `${out}, and ${names.length - i} more`;
     out = next;
   }
   return out;
@@ -194,7 +240,7 @@ export async function giftNeeds(d: Deps, user: User, occasionName: string | unde
   const label = (k: string) => STAGE_COLUMNS.find(([c]) => c === k)?.[1] ?? k;
   const still = (["needs-planning", "planned"] as const).map((k) => [k, view.rows.filter((r) => r.column === k).map((r) => r.recipient.displayName)] as const);
   const count = still.reduce((n, [, names]) => n + names.length, 0);
-  const lines = [count === 0 ? `${view.occasion.title}: everyone has a gift bought or on its way.` : `${view.occasion.title}: ${count} still need${count === 1 ? "s" : ""} a gift.`];
+  const lines = [view.rows.length === 0 ? `${view.occasion.title}: nobody is on it yet.` : count === 0 ? `${view.occasion.title}: nobody still needs a gift.` : `${view.occasion.title}: ${count} still need${count === 1 ? "s" : ""} a gift.`];
   for (const [k, names] of still) if (names.length > 0) lines.push(`${label(k)}: ${capped(names)}`);
   lines.push(STAGE_COLUMNS.map(([k, name]) => `${name} ${view.counts[k]}`).join(" | "));
   return lines.join("\n") + giftsLink(web, view.occasion.id);
