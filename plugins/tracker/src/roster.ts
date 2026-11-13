@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { BUSY_TIMEOUT_MS } from "./schema.js";
 import { GIFT_TABLES } from "./gift-store.js";
+import { SHOP_TABLES } from "./shop-checks.js";
 import { deleteDeliveriesOf, deleteFindingsOf } from "./store.js";
 
 /**
@@ -99,6 +100,7 @@ export const ERASED_TABLES = [
   "occurrences",
   "tasks",
   ...GIFT_TABLES,
+  ...SHOP_TABLES,
   "invite_blocks",
   "admissions",
   "delivery_health",
@@ -402,6 +404,9 @@ export class Roster {
       // Their gift ledger (gift-store.ts): every record, event and idempotency key they own. Another
       // owner's gift records name gift recipients, never a tracker person, so nothing else goes.
       for (const table of GIFT_TABLES) del(table, "owner_id = ?", userId);
+      // The shop checks they asked for and their watches waiting on one (shop-checks.ts); a shop's
+      // verdict names no person and stays.
+      for (const table of SHOP_TABLES) del(table, "owner_id = ?", userId);
 
       // What is left names them only in text, in the forms the code writes (historyNames,
       // eventNames, errorNames): those history rows and delivery events are theirs and go; a run's

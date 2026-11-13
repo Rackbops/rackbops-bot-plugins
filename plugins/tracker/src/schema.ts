@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { ensureGiftTables } from "./gift-store.js";
+import { ensureShopTables } from "./shop-checks.js";
 
 /**
  * The tracker's own SQLite schema (plan 5.2, rev17): a fresh store in the plugin's data file,
@@ -497,6 +498,8 @@ export function openDatabase(path: string): Database {
     // The gift tables sit outside the numbered schema, so a tracker from before gifts still opens the
     // database after a rollback (gift-store.ts).
     ensureGiftTables(db);
+    // So do the shop list's (shop-checks.ts), for the same reason.
+    ensureShopTables(db);
     return db;
   } catch (err) {
     db.close();
