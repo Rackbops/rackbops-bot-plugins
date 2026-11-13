@@ -213,6 +213,7 @@ describe("the route-to-operation table", () => {
       [{ kind: "gift", gift: { kind: "members", id: "gg1" } }, ["POST"]],
       [{ kind: "gift", gift: { kind: "sync", id: "go1" } }, ["GET", "POST"]],
       [{ kind: "gift", gift: { kind: "summary", id: "go1" } }, ["GET"]],
+      [{ kind: "gift", gift: { kind: "rollover", id: "go1" } }, ["GET", "POST"]],
       [{ kind: "gift", gift: { kind: "spend" } }, ["GET"]],
       [{ kind: "gift", gift: { kind: "batch" } }, ["POST"]],
     ];
