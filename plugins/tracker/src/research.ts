@@ -68,8 +68,6 @@ export const BROWSER_OFF =
 export const SOCIAL_VALUES =
   "`social` is `auto`, `none`, or the platforms to search, separated by commas: `youtube`, `tiktok`, `instagram` (`bluesky` is accepted but not searched until a Bluesky service exists). Reddit is not one: the research never reads it.";
 
-/** Said after the reply's social clause when the list named a platform docket does not search (Bluesky, Rackbops/docket#125). */
-export const NOT_SEARCHED = " (Bluesky is not searched)";
 
 export const BROWSER_SOCIAL =
   "`social` and `since` do not go with `sources: browser`: the research answers from the pages your browser sends in and searches no platform.";
@@ -217,10 +215,11 @@ export async function createResearch(d: TrackerDeps, user: User, input: Research
   }
   const starts = at ? `Starts ${formatInstant(at, user.timeZone, now)}` : "Starts within a minute or two";
   const by = deadline ? `; past ${formatInstant(deadline, user.timeZone, now)} nothing is run` : "";
-  // The reply names what docket will search (`socialPlatforms`: Bluesky parses but is not searched, Rackbops/docket#125),
-  // and says so when the list named it; the stored value keeps the whole list, as docket reads it.
+  // The reply names what docket will search (`socialPlatforms`: Bluesky parses but is not searched, Rackbops/docket#125)
+  // and, by docket's own filter, what the list named that it will not; the stored value keeps the whole list, as docket reads it.
   const searched = social.mode === "only" ? socialPlatforms(social) : [];
-  const dropped = social.mode === "only" && searched.length < social.platforms.length ? NOT_SEARCHED : "";
+  const unsearched = social.mode === "only" ? social.platforms.filter((p) => !searched.includes(p)) : [];
+  const dropped = unsearched.length > 0 ? ` (${names(unsearched)} ${unsearched.length === 1 ? "is" : "are"} not searched)` : "";
   const posts =
     social.mode === "none" ? "; no social posts" : social.mode === "only" ? (searched.length > 0 ? `; social posts from ${names(searched)}` : "; no social posts") + dropped : "";
   const from = since ? `; posts dated before ${since.toISOString().slice(0, 10)} do not count` : "";
