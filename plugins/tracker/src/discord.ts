@@ -41,6 +41,7 @@ import { historyWithSeries } from "./series.js";
 import { DEFAULT_POLL_HOURS, MAX_POLL_HOURS, trackPrice } from "./price.js";
 import { addRenewal, decideRenewal, DEFAULT_LEAD_DAYS, MAX_EVERY, MAX_LEAD_DAYS, type PeriodUnit } from "./tracked.js";
 import { type WebLocation, webLink } from "./web/command.js";
+import { giftBought, giftIdea, giftNeeds } from "./gift-command.js";
 
 export { lookupMembership, type Interactionish, STARTING, FAILED } from "./discord-common.js";
 
@@ -629,6 +630,70 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
               .addIntegerOption((o) => o.setName("hour").setDescription("0-23, in your time zone").setRequired(true).setMinValue(0).setMaxValue(23)),
           ),
       handle: (interaction) => run(interaction, "registered", (d, user) => setHour(d, user, interaction.options.getInteger("hour", true))),
+    },
+    {
+      name: "gift",
+      build: (b: SlashCommandBuilder) =>
+        b
+          .setDescription("Your gift list: note an idea, record a purchase, see who still needs a gift")
+          .addSubcommand((s) =>
+            s
+              .setName("idea")
+              .setDescription("Note a gift idea for someone on your gift list")
+              .addStringOption((o) => o.setName("person").setDescription("Who it is for, as named on your gift list").setRequired(true).setMaxLength(MAX_TITLE))
+              .addStringOption((o) => o.setName("title").setDescription("The gift").setRequired(true).setMaxLength(MAX_TITLE))
+              .addStringOption((o) => o.setName("occasion").setDescription("Plan it for this open occasion (by its title)").setMaxLength(MAX_TITLE))
+              .addNumberOption((o) => o.setName("estimate").setDescription("What it might cost").setMinValue(0).setMaxValue(MAX_AMOUNT))
+              .addStringOption((o) => o.setName("currency").setDescription("The estimate's currency (default: the occasion's)").setMinLength(CURRENCY_LENGTH).setMaxLength(CURRENCY_LENGTH)),
+          )
+          .addSubcommand((s) =>
+            s
+              .setName("bought")
+              .setDescription("Record that you bought a planned gift")
+              .addStringOption((o) => o.setName("gift").setDescription("The gift's title").setRequired(true).setMaxLength(MAX_TITLE))
+              .addNumberOption((o) => o.setName("price").setDescription("The price of one, in the occasion's currency").setRequired(true).setMinValue(0).setMaxValue(MAX_AMOUNT))
+              .addStringOption((o) => o.setName("person").setDescription("Who it is for, when more than one gift has that title").setMaxLength(MAX_TITLE))
+              .addStringOption((o) => o.setName("merchant").setDescription("Where you bought it").setMaxLength(MAX_TITLE))
+              .addBooleanOption((o) => o.setName("arrived").setDescription("It has already arrived")),
+          )
+          .addSubcommand((s) =>
+            s
+              .setName("needs")
+              .setDescription("Who on an occasion still needs a gift")
+              .addStringOption((o) => o.setName("occasion").setDescription("The open occasion's title (default: the first)").setMaxLength(MAX_TITLE)),
+          ),
+      handle: (interaction) => {
+        const o = interaction.options;
+        const opt = (k: string) => o.getString(k) ?? undefined;
+        return run(interaction, "registered", async (d, user): Promise<Step> => {
+          switch (o.getSubcommand()) {
+            case "idea": {
+              const estimate = o.getNumber("estimate");
+              return giftIdea(d, user, {
+                person: o.getString("person", true),
+                title: o.getString("title", true),
+                ...(opt("occasion") !== undefined ? { occasion: opt("occasion") as string } : {}),
+                ...(estimate !== null ? { estimate } : {}),
+                ...(opt("currency") !== undefined ? { currency: opt("currency") as string } : {}),
+              }, w.web);
+            }
+            case "bought": {
+              const arrived = o.getBoolean("arrived");
+              return giftBought(d, user, {
+                gift: o.getString("gift", true),
+                price: o.getNumber("price", true),
+                ...(opt("person") !== undefined ? { person: opt("person") as string } : {}),
+                ...(opt("merchant") !== undefined ? { merchant: opt("merchant") as string } : {}),
+                ...(arrived !== null ? { arrived } : {}),
+              }, w.web);
+            }
+            case "needs":
+              return giftNeeds(d, user, opt("occasion"), w.web);
+            default:
+              return "Unknown subcommand.";
+          }
+        }, undefined, true);
+      },
     },
     {
       name: "web",
