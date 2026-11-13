@@ -714,8 +714,9 @@ export class SqliteStore implements Store {
 
   async runsNowSince(ownerId: string, since: string): Promise<number> {
     // A task's id is `t<seq>` (`idOf`); a run now's key starts `now:` (docket-core `RUN_NOW_PREFIX`).
+    // A run a shop check queued for a waiting watch (shop-checks.ts, request id `shop-...`) is not the owner's.
     const row = this.one(
-      "SELECT COUNT(*) AS n FROM occurrences o JOIN tasks t ON o.task_id = 't' || t.seq WHERE t.owner_id = ? AND o.dedupe_key LIKE 'now:%' AND o.created_at >= ?",
+      "SELECT COUNT(*) AS n FROM occurrences o JOIN tasks t ON o.task_id = 't' || t.seq WHERE t.owner_id = ? AND o.dedupe_key LIKE 'now:%' AND o.dedupe_key NOT LIKE 'now:%:shop-%' AND o.created_at >= ?",
       ownerId,
       since,
     );

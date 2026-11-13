@@ -58,7 +58,7 @@ export { canonicalJson };
  *   the pages the owner's browser gathered in to their research request made with `sources:
  *   browser`, then start its run on them (body up to `MAX_SOURCES_BYTES`: ten pages of text);
  *   `GET /tasks` shows such a request's `sources: "browser"`, its `pages` and `waitingForPages`.
- * - `/gifts/...` (0.45.0, api-gifts.ts, #383): the owner's gift ledger -- recipients, groups,
+ * - `/gifts/...` (0.47.0, api-gifts.ts, #383): the owner's gift ledger -- recipients, groups,
  *   occasions and their rosters, items, purchases, allocations, the roster sync and the coverage
  *   and spend summaries. A gift write takes `Idempotency-Key` as any write does; its revision check
  *   is the body's `expectedRevision`, never `If-Match`.
