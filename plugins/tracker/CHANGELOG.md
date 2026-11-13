@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.56.0] - 2026-11-13
+
+### Changed
+
+- The research help texts stop offering Bluesky as a searched platform (#400; Rackbops/docket#125, roshne's decision of 2026-11-13: Bluesky's public search refuses automated readers, so docket 0.27.0 leaves it out of the `auto` set and searches it for nobody until a Bluesky service exists). `social`'s error text, the `/research` option's example, the web form's help and the README name YouTube, TikTok and Instagram; `bluesky` is still accepted, so an older request keeps working, and the confirmation reply names only what docket will search ("social posts from YouTube (Bluesky is not searched)"; a list of Bluesky alone reads "no social posts (Bluesky is not searched)"). The stored value is unchanged. Needs docket-types 0.27.0 or later for the reply to be true, which 0.54.0 pins.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.54.0] - 2026-11-13
 
 ### Added
