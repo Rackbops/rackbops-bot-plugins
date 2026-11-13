@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { money } from "./gift-pages.js";
 import { parseMoney } from "./gifts-web.js";
 import { api, call, cleanup, CURLY, csrfOf, type Jar, LARRY, makeToken, ORIGIN, people, signIn, world } from "./harness.js";
 
@@ -296,6 +297,7 @@ describe("parseMoney", () => {
   });
 
   it("uses the currency's own minor units: none for JPY, three for KWD", () => {
+    expect([money(1250, "USD"), money(1250, "JPY"), money(1234, "KWD"), money(-5, "USD")]).toEqual(["12.50 USD", "1250 JPY", "1.234 KWD", "-0.05 USD"]);
     expect([parseMoney("1250", "JPY"), parseMoney("12.5", "JPY"), parseMoney("1.234", "KWD"), parseMoney("1.5", "KWD")]).toEqual([1250, undefined, 1234, 1500]);
   });
 });

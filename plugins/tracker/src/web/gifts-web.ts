@@ -279,8 +279,12 @@ export async function syncPost(e: Editor, id: string, f: URLSearchParams): Promi
     }
     const to = v.slice("reassign:".length);
     const a = affected.get(allocationId);
-    const staying = a ? a.recipientIds.filter((r) => !a.dropped.includes(r) && r !== to) : [];
-    decisions[allocationId] = { action: "reassign", recipientIds: [...staying, to] };
+    // Not in the preview: left for docket to refuse as "not affected", never sent to `to` alone.
+    if (!a) {
+      decisions[allocationId] = { action: "keep" };
+      continue;
+    }
+    decisions[allocationId] = { action: "reassign", recipientIds: [...a.recipientIds.filter((r) => !a.dropped.includes(r) && r !== to), to] };
   }
   const answer = await e.queue(async () => {
     if (!(await e.d.store.getUser(e.v.user.id))) return null;

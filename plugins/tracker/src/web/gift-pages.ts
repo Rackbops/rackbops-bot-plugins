@@ -230,7 +230,7 @@ ${p.affected.map(
 <div class="tr-row">
 <label class="rb-choice"><input class="rb-radio" type="radio" name="decision-${a.allocationId}" value="keep" required> Keep as it is</label>
 <label class="rb-choice"><input class="rb-radio" type="radio" name="decision-${a.allocationId}" value="unassign"> Take ${a.dropped.map(names).join(", ")} off it</label>
-${p.roster.filter((id) => !a.recipientIds.includes(id)).map((id) => html`<label class="rb-choice"><input class="rb-radio" type="radio" name="decision-${a.allocationId}" value="reassign:${id}"> Give ${a.dropped.map(names).join(", ")}'s to ${names(id)}</label>`)}
+${p.roster.filter((id) => !a.recipientIds.includes(id)).map((id) => html`<label class="rb-choice"><input class="rb-radio" type="radio" name="decision-${a.allocationId}" value="reassign:${id}"> Give it to ${names(id)} instead of ${a.dropped.map(names).join(", ")}</label>`)}
 </div></fieldset>`,
     )}
 <div><button class="rb-btn rb-btn--primary" type="submit">Apply</button></div>
