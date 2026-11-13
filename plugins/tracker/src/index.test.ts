@@ -89,7 +89,7 @@ describe("createPlugin", () => {
   it("declares exactly the commands it registers, an interactions handler, the DM hook and its intent, and the env keys it reads", () => {
     const plugin = createPlugin(makeFakeHost({ name: "tracker" }));
     expect(plugin.commands?.map((c) => c.name)).toEqual(pkg.botPlugin.commands);
-    expect(pkg.botPlugin.commands).toEqual(["allow", "register", "remind", "renewal", "price", "research", "scout", "news", "want", "tasks", "task", "settings", "web"]);
+    expect(pkg.botPlugin.commands).toEqual(["allow", "register", "remind", "renewal", "price", "research", "scout", "news", "want", "tasks", "task", "settings", "gift", "web"]);
     expect(typeof plugin.interactions).toBe("function");
     // DirectMessages (1 << 12) only, for the intake's DM hook (intake.ts); nothing privileged.
     expect(pkg.botPlugin.intents).toEqual([4096]);
