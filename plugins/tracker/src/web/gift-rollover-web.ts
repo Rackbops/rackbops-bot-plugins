@@ -55,5 +55,8 @@ export async function rolloverPost(e: Editor, id: string, f: URLSearchParams): P
     return redirect(`${e.v.base}/gifts?${new URLSearchParams({ occasion: made, done: "rolled" }).toString()}`);
   }
   if (answer.status === 404) return htmlResponse(notFoundPage(e.v.base, e.v), 404);
+  // The posted token names another preview -- most often the picks were ticked without "Update the
+  // preview": nothing was written, so the review is shown again with those picks and a fresh token.
+  if ((answer.body as { error: { code: string } }).error.code === "stale_preview") return view(e, id, c, "Check the preview with your picks, then press Set it up again.", 409);
   return view(e, id, c, (answer.body as { error: { message: string } }).error.message, answer.status);
 }

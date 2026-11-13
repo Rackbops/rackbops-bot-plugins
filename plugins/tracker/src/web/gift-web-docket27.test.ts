@@ -110,14 +110,21 @@ describe("Roll over to next year", () => {
     expect(shown).toContain("New occasion: Christmas 2027, 2027-12-25.");
     expect(shown).toContain("25.00 USD");
     expect(shown).toContain(`value="${c.idea.id}"> Book for Bea`);
-    // A stale confirm (the token of the page before the pick) makes nothing and shows the page again.
+    // Ticked and confirmed without "Update the preview": the token names the page before the pick, so
+    // nothing is made and the review comes back with the pick, a fresh token and a plain note.
     const stale = await post(w, path, [["token", hidden(shown, "token")], ["idea", c.idea.id], ["step", "confirm"]]);
     expect(stale.status).toBe(409);
-    expect(await stale.text()).toContain("changed since that preview");
+    const restated = await stale.text();
+    expect(restated).toContain("Check the preview with your picks, then press Set it up again.");
+    expect(restated).not.toContain("changed since that preview");
+    expect(restated).toContain(`value="${c.idea.id}" checked`);
+    expect(hidden(restated, "token")).not.toBe(hidden(shown, "token"));
+    expect((await list(w, "occasions")).length).toBe(1);
     const picked = await post(w, path, [["token", hidden(shown, "token")], ["idea", c.idea.id], ["step", "preview"]]);
     expect(picked.status).toBe(200);
     const again = await picked.text();
     expect(again).toContain(`value="${c.idea.id}" checked`);
+    expect(hidden(again, "token")).toBe(hidden(restated, "token"));
     const made = await post(w, path, [["token", hidden(again, "token")], ["idea", c.idea.id], ["step", "confirm"]]);
     expect(made.status).toBe(303);
     const id = occasionOf(made);

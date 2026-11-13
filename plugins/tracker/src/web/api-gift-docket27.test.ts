@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { GiftLedger, type GiftRolloverPreview, GiftRevisionError, MemoryGiftStore } from "@rackbops/docket-core";
+import { rollover, rolloverPreview } from "./api-gift-rollover.js";
 import { api, cleanup, CURLY, LARRY, makeToken, people, signIn, world } from "./harness.js";
 
 /**
@@ -219,12 +221,48 @@ describe("rollover (docket#99)", () => {
     expect((await list(w, "occasions")).length).toBe(2);
     // The old occasion was never written.
     expect((await read(await api(w.plugin, "GET", `/gifts/occasions/${c.xmas.id}`, { token: w.larry }))).record.revision).toBe(1);
+    // A second rollover to the occasion now made is refused with or without a key (docket never sees the key), in our words.
+    const fresh = (await read(await api(w.plugin, "GET", path, { token: w.larry }))).previewToken;
+    for (const headers of [{}, { "idempotency-key": "rollover-2027-b" }] as Record<string, string>[]) {
+      const repeat = await api(w.plugin, "POST", path, { token: w.larry, body: { previewToken: fresh }, headers });
+      expect(repeat.status).toBe(409);
+      const e = (await read(repeat)).error;
+      expect(e).toEqual({ code: "occasion_exists", message: "That occasion already has a live one for next year: open it, or roll over with another date or title." });
+    }
+    expect((await list(w, "occasions")).length).toBe(2);
     // Something moved since a preview: its token no longer names what would be made.
     const before = await read(await api(w.plugin, "GET", path, { token: w.larry }));
     expect((await api(w.plugin, "PATCH", `/gifts/groups/${c.aunts.id}`, { token: w.larry, body: { expectedRevision: 1, name: "The aunts" } })).status).toBe(200);
     const moved = await api(w.plugin, "POST", path, { token: w.larry, body: { previewToken: before.previewToken } });
     expect(moved.status).toBe(409);
     expect((await read(moved)).error.code).toBe("stale_preview");
+  });
+
+  it("says earlier steps were made only when a refusal came after docket's first write", async () => {
+    const meta = { ownerId: "u1", actor: "u1", source: "api" as const, at: "2026-11-13T00:00:00.000Z" };
+    const store = new MemoryGiftStore();
+    // docket's own in-memory ledger, with a ledger that refuses its rollover before or after its first write.
+    const plain = new GiftLedger(store);
+    const ann = await plain.create("recipient", meta, person("Ann") as never);
+    const aunts = await plain.create("group", meta, { name: "Aunts", memberIds: [ann.id] });
+    const xmas = await plain.create("occasion", meta, occasion("Christmas 2026", "2026-12-25", [aunts.id]) as never);
+    class Failing extends GiftLedger {
+      constructor(private readonly afterWrite: boolean) {
+        super(store);
+      }
+      override async applyGiftRollover(m: typeof meta, p: GiftRolloverPreview): Promise<never> {
+        if (this.afterWrite) await this.create("occasion", m, p.occasion);
+        throw new GiftRevisionError("moved", 1);
+      }
+    }
+    for (const afterWrite of [false, true]) {
+      const gifts = new Failing(afterWrite);
+      const p = await rolloverPreview(gifts, meta.ownerId, xmas.id, {});
+      if ("status" in p) throw new Error("no preview");
+      const answer = await rollover(gifts, meta, xmas.id, { previewToken: p.previewToken });
+      expect(answer.status).toBe(409);
+      expect((answer.body as Json).error.message.includes("Earlier steps of this rollover were made")).toBe(afterWrite);
+    }
   });
 
   it("is the same 404 for another member, preview or make", async () => {
@@ -291,6 +329,54 @@ describe("duplicate warnings (docket#100)", () => {
     expect(batch.results.map((r: Json) => r.status)).toEqual([409, 201]);
     expect(batch.results[0].body.error.code).toBe("possible_duplicate");
     expect((await list(w, "allocations")).length).toBe(2);
+  });
+
+  it("keeps no refusal under an Idempotency-Key: the accepting resend is 201 under the same key or a new one", async () => {
+    for (const resendKey of ["dup-key-one", "dup-key-two"]) {
+      const w = await setup();
+      const s = await shop(w);
+      const again = allocation(s.lego.id, s.birthday.id, [s.ann.id]);
+      const first = await api(w.plugin, "POST", "/gifts/allocations", { token: w.larry, body: again, headers: { "idempotency-key": "dup-key-one" } });
+      expect(first.status).toBe(409);
+      expect((await read(first)).error.message).toContain("resend with repeatOf set to the warned ids");
+      const resent = await api(w.plugin, "POST", "/gifts/allocations", { token: w.larry, body: { ...again, repeatOf: [s.first.id] }, headers: { "idempotency-key": resendKey } });
+      expect(`${resendKey} ${resent.status}`).toBe(`${resendKey} 201`);
+      expect((await read(resent)).record.repeatOf).toEqual([s.first.id]);
+      await cleanup();
+    }
+  });
+
+  it("asks again on a PATCH or batch update that changes an allocation's item, occasion or people, and only then", async () => {
+    const w = await setup();
+    const s = await shop(w);
+    const book = await create(w, "items", item("Book"));
+    const other = await create(w, "allocations", allocation(book.id, s.birthday.id, [s.ann.id]));
+    const path = `/gifts/allocations/${other.id}`;
+    // Turning the birthday's book into the castle set Ann already has planned at Christmas: warned, nothing changed.
+    const swap = await api(w.plugin, "PATCH", path, { token: w.larry, body: { expectedRevision: 1, itemId: s.lego.id } });
+    expect(swap.status).toBe(409);
+    const e = (await read(swap)).error;
+    expect(e.code).toBe("possible_duplicate");
+    expect(e.warnings.map((x: Json) => x.allocationId)).toEqual([s.first.id]);
+    expect((await read(await api(w.plugin, "GET", path, { token: w.larry }))).record).toMatchObject({ revision: 1, itemId: book.id });
+    const batch = await read(
+      await api(w.plugin, "POST", "/gifts/batch", { token: w.larry, body: { writes: [{ op: "update", collection: "allocations", id: other.id, expectedRevision: 1, fields: { itemId: s.lego.id } }] } }),
+    );
+    expect(batch.results[0].status).toBe(409);
+    expect(batch.results[0].body.error.code).toBe("possible_duplicate");
+    const accepted = await api(w.plugin, "PATCH", path, { token: w.larry, body: { expectedRevision: 1, itemId: s.lego.id, repeatOf: [s.first.id] } });
+    expect(accepted.status).toBe(200);
+    expect((await read(accepted)).record).toMatchObject({ revision: 2, itemId: s.lego.id, repeatOf: [s.first.id] });
+    // A change to anything else is not asked again, though the gift now repeats one.
+    const other2 = await create(w, "allocations", allocation(s.lego.id, s.birthday.id, [s.ann.id], { repeatOf: [s.first.id] }));
+    expect((await api(w.plugin, "PATCH", `/gifts/allocations/${other2.id}`, { token: w.larry, body: { expectedRevision: 1, repeatOf: null, quantity: 2 } })).status).toBe(200);
+    // The same people again (unchanged) asks nothing either.
+    expect((await api(w.plugin, "PATCH", `/gifts/allocations/${other2.id}`, { token: w.larry, body: { expectedRevision: 2, recipientIds: [s.ann.id] } })).status).toBe(200);
+    // Checked as an edit: the Christmas gift, given Bea too, counts the birthday gifts that named it in their own repeatOf as accepted.
+    const bea = await create(w, "recipients", person("Bea"));
+    const widened = await api(w.plugin, "PATCH", `/gifts/allocations/${s.first.id}`, { token: w.larry, body: { expectedRevision: 1, recipientIds: [s.ann.id, bea.id] } });
+    expect(widened.status).toBe(409);
+    expect((await read(widened)).error.warnings.map((x: Json) => [x.allocationId, x.accepted])).toEqual([[other.id, true], [other2.id, false]]);
   });
 
   it("still refuses a bad or foreign allocation as before, never with a warning first", async () => {

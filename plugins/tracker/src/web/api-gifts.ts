@@ -57,8 +57,9 @@ export { GIFT_COLLECTIONS, type GiftCollection, MAX_GIFT_BATCH, MAX_GIFT_BATCH_B
  *   written.
  * - `GET|POST /gifts/occasions/<id>/rollover` (api-gift-rollover.ts, docket#99): "set up next
  *   year", previewed (with `previewToken`) and then made from the preview the owner reviewed.
- * - `POST /gifts/allocations` (and a batch create of an allocation) asks docket's
- *   `giftDuplicates` first (docket#100). Docket refuses no write for a warning; this route is the
+ * - `POST /gifts/allocations` (and a batch create of an allocation), and a PATCH or batch update
+ *   that changes an allocation's item, occasion or people, ask docket's `giftDuplicates` first
+ *   (docket#100); a sync's reassign decision does not (a known gap). Docket refuses no write for a warning; this route is the
  *   host's "shown when allocating" step: a warning the body's `repeatOf` does not name is 409
  *   `possible_duplicate` with the report, and nothing is written. Resending with `repeatOf`
  *   naming the warned allocations is the owner accepting them. A possible duplicate alone never
@@ -284,37 +285,66 @@ async function writeOne(gifts: GiftLedger, meta: GiftWriteMeta, collection: Gift
   try {
     if (id === null) {
       const report = kind === "allocation" ? await duplicatesFirst(gifts, meta.ownerId, body) : null;
-      if (report?.warnings.some((w) => !w.accepted)) {
-        return {
-          status: 409,
-          body: {
-            error: {
-              code: "possible_duplicate",
-              message: "This may repeat a gift already planned or given to the same person. To give it anyway, send it again with `repeatOf` naming every allocation in `warnings`.",
-              warnings: report.warnings,
-              possible: report.possible,
-            },
-          },
-        };
-      }
+      if (report?.warnings.some((w) => !w.accepted)) return warned(report);
       const record = await gifts.create(kind, meta, body as never);
-      return { status: 201, body: { record: shown(kind, record), ...(report && report.possible.length > 0 ? { duplicates: report.possible } : {}) } };
+      return { status: 201, body: { record: shown(kind, record), ...possibleOf(report) } };
     }
     const split = splitRevision(body);
     if (!split.ok) return split.answer;
+    const report = kind === "allocation" ? await editDuplicatesFirst(gifts, meta.ownerId, id, split.revision, split.fields) : null;
+    if (report?.warnings.some((w) => !w.accepted)) return warned(report);
     const record = await gifts.update(kind, id, meta, split.revision, split.fields as never);
-    return { status: 200, body: { record: shown(kind, record) } };
+    return { status: 200, body: { record: shown(kind, record), ...possibleOf(report) } };
   } catch (err) {
     return refusal(err);
   }
 }
 
 /**
- * docket's duplicate report for an allocation about to be made (docket#100), or null when the
- * create would refuse it anyway -- a field docket refuses, or an id that is not the owner's -- so
- * it refuses as it always did (400, then 404), never with a warning first.
+ * A duplicate warning not accepted yet: nothing is written. api.ts keeps only a 2xx answer under
+ * an Idempotency-Key (api-idempotency.ts `finish`), so the resend that accepts it may reuse the key.
  */
-async function duplicatesFirst(gifts: GiftLedger, ownerId: string, body: Record<string, unknown>): Promise<GiftDuplicateReport | null> {
+function warned(report: GiftDuplicateReport): ApiAnswer {
+  return {
+    status: 409,
+    body: {
+      error: {
+        code: "possible_duplicate",
+        message: "This may repeat a gift already planned or given to the same person. To give it anyway, resend with repeatOf set to the warned ids (a refusal is not kept under an Idempotency-Key, so the same key or a new one will do).",
+        warnings: report.warnings,
+        possible: report.possible,
+      },
+    },
+  };
+}
+
+/** Possible duplicates (never a refusal) as they ride on a write's answer. */
+const possibleOf = (report: GiftDuplicateReport | null) => (report && report.possible.length > 0 ? { duplicates: report.possible } : {});
+
+/** The fields that make an allocation another gift: changing one asks the duplicate check again. */
+const GIFT_IDENTITY = ["recipientIds", "occasionId", "itemId"] as const;
+
+/**
+ * The duplicate report for a PATCH of an allocation that changes who it is for, its occasion or its
+ * item, checked as an edit (`id` given, so docket skips the allocation itself and counts a gift
+ * whose own `repeatOf` names it as accepted); null when the patch changes none of them, or the
+ * update would be refused anyway (gone, stale, a field docket refuses, an id not the owner's).
+ */
+async function editDuplicatesFirst(gifts: GiftLedger, ownerId: string, id: string, revision: number, patch: Record<string, unknown>): Promise<GiftDuplicateReport | null> {
+  const current = await gifts.get("allocation", ownerId, id);
+  if (!current || current.revision !== revision || current.archived || patch.archived === true) return null;
+  if (!GIFT_IDENTITY.some((k) => Object.hasOwn(patch, k) && canonicalJson(patch[k]) !== canonicalJson(current[k]))) return null;
+  const { id: _id, ownerId: _owner, revision: _revision, archived: _archived, createdAt: _created, updatedAt: _updated, ...fields } = current;
+  const { archived: _a, ...changes } = patch;
+  return duplicatesFirst(gifts, ownerId, { ...fields, ...changes }, id);
+}
+
+/**
+ * docket's duplicate report for an allocation about to be made or changed (docket#100), or null
+ * when the write would refuse it anyway -- a field docket refuses, or an id that is not the
+ * owner's -- so it refuses as it always did (400, then 404), never with a warning first.
+ */
+async function duplicatesFirst(gifts: GiftLedger, ownerId: string, body: Record<string, unknown>, editing?: string): Promise<GiftDuplicateReport | null> {
   if (giftProblems("allocation", body as never).length > 0) return null;
   const a = body as unknown as GiftAllocationFields;
   const refs: [GiftKind, string][] = [
@@ -325,7 +355,7 @@ async function duplicatesFirst(gifts: GiftLedger, ownerId: string, body: Record<
     ...(a.repeatOf ?? []).map((id): [GiftKind, string] => ["allocation", id]),
   ];
   for (const [kind, id] of refs) if (!(await gifts.get(kind, ownerId, id))) return null;
-  return gifts.giftDuplicates(ownerId, { itemId: a.itemId, occasionId: a.occasionId, recipientIds: a.recipientIds, repeatOf: a.repeatOf ?? null });
+  return gifts.giftDuplicates(ownerId, { itemId: a.itemId, occasionId: a.occasionId, recipientIds: a.recipientIds, repeatOf: a.repeatOf ?? null, ...(editing !== undefined ? { id: editing } : {}) });
 }
 
 const isIdList = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");

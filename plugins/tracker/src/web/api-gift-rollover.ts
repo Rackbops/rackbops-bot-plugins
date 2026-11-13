@@ -9,8 +9,12 @@ import { problem } from "./api-tasks.js";
  * `previewToken` naming exactly that preview; `POST` makes it with `GiftLedger.applyGiftRollover`,
  * only when the token still names the preview made now from the same choices. The old occasion is
  * never written. A retry with the same `Idempotency-Key` is answered from api.ts's store of
- * answers, as every gift write is.
+ * answers, as every gift write is; the key is never passed to docket, so docket's own check refuses
+ * every second rollover to a live occasion of the same kind, title, year and date, key or not.
  */
+
+const EXISTS = "That occasion already has a live one for next year: open it, or roll over with another date or title.";
+
 
 /** The owner's choices for the new occasion; each left out takes docket's default. */
 export interface RolloverChoices {
@@ -85,15 +89,26 @@ export async function rollover(gifts: GiftLedger, meta: GiftWriteMeta, id: strin
   if ("status" in now) return now;
   // The occasion, its groups, its people or its gifts moved since the preview: the owner reviews again.
   if (now.previewToken !== token) return problem(409, "stale_preview", "The occasion, its groups, people or gifts changed since that preview; preview again.");
+  const o = now.preview.occasion;
+  const same = (x: { id: string; kind: string; title: string; year: number | null; date: string | null }) =>
+    x.id !== id && x.kind === o.kind && x.title === o.title && x.year === o.year && x.date === o.date;
+  // docket's own check (applyGiftRollover, unkeyed: the same test on the live occasions), asked first
+  // in the write queue so docket's wording, which asks for a key this API never passes, never reaches the caller.
+  if ((await gifts.list("occasion", meta.ownerId)).some(same)) return problem(409, "occasion_exists", EXISTS);
+  // Every refusal docket raises before its first write (the occasion not found, the re-preview moved,
+  // a picked item gone, the repeat check) leaves nothing made; its first write is the new occasion,
+  // so an occasion more after a refusal is the one sign that earlier steps were written.
+  const before = (await gifts.list("occasion", meta.ownerId, { includeArchived: true })).length;
   try {
     const made = await gifts.applyGiftRollover(meta, now.preview);
     const roster = await gifts.list("occasionRecipient", meta.ownerId, { occasionId: made.id });
     return { status: 201, body: { occasion: shown("occasion", made), roster: roster.map((x) => shown("occasionRecipient", x)) } };
   } catch (err) {
-    // docket writes a rollover step by step: a refusal part way leaves the steps before it made.
     const answer = refusal(err);
-    const e = (answer.body as { error: { message: string } }).error;
-    e.message += " Earlier steps of this rollover may have been made; look for the new occasion before trying again.";
+    if ((await gifts.list("occasion", meta.ownerId, { includeArchived: true })).length > before) {
+      const e = (answer.body as { error: { message: string } }).error;
+      e.message += " Earlier steps of this rollover were made (the new occasion is on your list); finish it there, or archive it and roll over again.";
+    }
     return answer;
   }
 }
