@@ -95,13 +95,17 @@ export function today(at: Date, timeZone: string): string {
   }
 }
 
-/** Takes back a first write when the second is refused, so a refusal never leaves half a record. */
-async function undo(d: Deps, kind: "item" | "purchase", id: string, m: GiftWriteMeta): Promise<void> {
+/**
+ * Takes back (archives) a first write when the second is refused, so a refusal leaves no live half
+ * record; when even that fails, the answer the caller gets says what was left and where to remove it.
+ */
+async function undo(d: Deps, kind: "item" | "purchase", id: string, m: GiftWriteMeta): Promise<string> {
   try {
     const rec = await d.gifts.get(kind, m.ownerId, id);
     if (rec && !rec.archived) await d.gifts.update(kind, id, m, rec.revision, { archived: true });
+    return "";
   } catch {
-    // Left as it is: the answer still says so (the web page shows it).
+    return `\nThe ${kind} it started (${id}) could not be taken back: archive it on the web page or through the task API.`;
   }
 }
 
@@ -145,8 +149,8 @@ export async function giftIdea(d: Deps, user: User, input: GiftIdeaInput, web: W
     await d.gifts.create("allocation", m, { itemId: item.id, occasionId: occasion.id, recipientIds: [person.id], quantity: 1, shared: false, purchaseId: null, handoff: "none", givenOn: null });
     return `Planned ${item.title} for ${person.displayName} for ${occasion.title}.${giftsLink(web, occasion.id)}`;
   } catch (err) {
-    if (itemId) await undo(d, "item", itemId, m);
-    return refusal(err);
+    const left = itemId ? await undo(d, "item", itemId, m) : "";
+    return refusal(err) + left;
   }
 }
 
@@ -173,7 +177,7 @@ export async function giftBought(d: Deps, user: User, input: GiftBoughtInput, we
     (a) => !a.archived && a.purchaseId === null && fold(titles.get(a.itemId) ?? "") === want && (personId === null || a.recipientIds.includes(personId)) && (occasionId === null || a.occasionId === occasionId) && occasions.get(a.occasionId)?.archived === false,
   );
   const label = (a: (typeof open)[number]) => `${titles.get(a.itemId)} for ${a.recipientIds.map((id) => names.get(id) ?? id).join(", ")} (${occasions.get(a.occasionId)?.title ?? ""})`;
-  if (open.length === 0) return `No planned gift called ${input.gift.trim()}${input.person ? ` for ${input.person.trim()}` : ""} is waiting to be bought.${giftsLink(web)}`;
+  if (open.length === 0) return `No planned gift called ${input.gift.trim()}${input.person ? ` for ${input.person.trim()}` : ""}${input.occasion ? ` on ${input.occasion.trim()}` : ""} is waiting to be bought.${giftsLink(web)}`;
   if (open.length > 1) {
     const shown = open.slice(0, MAX_LISTED).map((a) => `- ${label(a)}`);
     if (open.length > MAX_LISTED) shown.push(`- and ${open.length - MAX_LISTED} more`);
@@ -209,8 +213,8 @@ export async function giftBought(d: Deps, user: User, input: GiftBoughtInput, we
     purchaseId = purchase.id;
     await d.gifts.update("allocation", allocation.id, m, allocation.revision, { purchaseId: purchase.id });
   } catch (err) {
-    if (purchaseId) await undo(d, "purchase", purchaseId, m);
-    return refusal(err);
+    const left = purchaseId ? await undo(d, "purchase", purchaseId, m) : "";
+    return refusal(err) + left;
   }
   return `Recorded: bought ${label(allocation)}, ${units} at ${money(price, currency)} each${input.arrived ? ", arrived" : ", on its way"}.${giftsLink(web, allocation.occasionId)}`;
 }

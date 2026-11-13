@@ -69,6 +69,8 @@ describe("/gift", () => {
     expect(scarf).toMatchObject({ occasionId: f.xmas.id, recipientIds: [f.bea.id], quantity: 1, purchaseId: null });
 
     expect(await gift(w, "bought", { gift: "Mug" }, { numbers: { price: 5 } })).toContain("No planned gift called Mug is waiting to be bought.");
+    // 02:00 UTC on the 2nd is still the 1st in Larry's zone (America/New_York).
+    w.clock.set("2026-10-02T02:00:00.000Z");
     const bought = await gift(w, "bought", { gift: "scarf", merchant: "Corner Shop" }, { numbers: { price: 19.5 }, booleans: { arrived: true } });
     expect(bought).toContain("Recorded: bought Scarf for Bea (Christmas 2026), 1 at 19.50 USD each, arrived.");
     const [purchase] = await list(w, "purchases");
@@ -88,6 +90,7 @@ describe("/gift", () => {
     expect(both).toContain("- Calendar for Ann (Christmas 2026)");
     expect(both).toContain("- Calendar for Dee (Christmas 2026)");
     expect(await list(w, "purchases")).toEqual([]);
+    expect(await gift(w, "bought", { gift: "Calendar", occasion: "Christmas 2026", person: "Bea" }, { numbers: { price: 10 } })).toContain("No planned gift called Calendar for Bea on Christmas 2026 is waiting to be bought.");
     expect(await gift(w, "bought", { gift: "Calendar", person: "Dee" }, { numbers: { price: 10 } })).toContain("Recorded: bought Calendar for Dee (Christmas 2026), 1 at 10.00 USD each, on its way.");
     expect(await gift(w, "idea", { person: "Zed", title: "Book" })).toStartWith("No one called Zed is on your gift list.");
     expect(await gift(w, "idea", { person: "Ann", title: "Book", occasion: "Easter" })).toStartWith("No open occasion called Easter is on your gift list.");
@@ -162,6 +165,16 @@ describe("/gift's edges", () => {
     expect(await gift(w, "idea", { person: "Ann", title: "Pen" })).toStartWith("More than one person on your gift list is called Ann.");
   });
 
+  it("lists at most 10 matches, counting the rest", async () => {
+    const w = await setup();
+    const f = await family(w);
+    for (let i = 0; i < 12; i++) await gift(w, "idea", { person: ["Ann", "Bea", "Cal", "Dee"][i % 4] ?? "Ann", title: "Gift card", occasion: "Christmas 2026" });
+    const answer = await gift(w, "bought", { gift: "Gift card" }, { numbers: { price: 25 } });
+    expect(answer.split("\n").filter((l) => l.startsWith("- Gift card for"))).toHaveLength(10);
+    expect(answer).toContain("- and 2 more");
+    expect(f.xmas.title).toBe("Christmas 2026");
+  });
+
   it("says plainly when nobody is on an occasion, or nobody still needs a gift", async () => {
     const w = await setup();
     const f = await family(w);
@@ -216,6 +229,7 @@ describe("/gift's edges", () => {
 describe("capped", () => {
   it("keeps a long list of names to its length, saying how many more", () => {
     expect(capped(["Ann", "Bea"])).toBe("Ann, Bea");
+    expect(capped(["A".repeat(20), "Bea"], 10)).toBe("2 people");
     const many = Array.from({ length: 300 }, (_, i) => `Person ${i}`);
     const out = capped(many);
     expect(out.length).toBeLessThan(730);
