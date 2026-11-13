@@ -219,7 +219,7 @@ export type Jar = Map<string, string>;
 
 export interface Call {
   jar?: Jar;
-  form?: Record<string, string>;
+  form?: Record<string, string> | [string, string][];
   origin?: string | null;
   headers?: Record<string, string>;
 }

@@ -1,3 +1,4 @@
+import { giftFormGet, giftFormPost, giftsGet, syncGet, syncPost } from "./gifts-web.js";
 import type { User } from "@rackbops/docket-core";
 import { type Membership, NOT_MEMBER } from "../access.js";
 import type { PluginHttpInfo } from "../../../../packages/api/contract.js";
@@ -496,6 +497,10 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
         return tokensPost(d, v, auth.session, form, created);
       case "token-revoke":
         return tokenRevokePost(d, v, r.id);
+      case "gift-form":
+        return giftFormPost(e, r.form, form);
+      case "gift-sync":
+        return syncPost(e, r.id, form);
       case "admin-allow":
       case "admin-usr-link":
       case "admin-usr-refresh":
@@ -531,6 +536,12 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       return forgetRoute(a, method, null);
     case "tokens":
       return tokensGet(d, v);
+    case "gifts":
+      return giftsGet(e, url.searchParams);
+    case "gift-form":
+      return giftFormGet(e, r.form);
+    case "gift-sync":
+      return syncGet(e, r.id);
     case "admin":
     case "admin-tasks":
     case "admin-deliveries":

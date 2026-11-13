@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.49.0] - 2026-11-13
+
+### Added
+
+- Gifts in the web area (Rackbops/docket#94, #384): `/gifts`, the family overview of one occasion -- how many people are at each stage (needs planning, planned, purchased or awaiting, ready, given, skipped) by docket's coverage rules, each person with their groups, the budget and the occasion's gifts, and money per currency over every occasion -- filtered by occasion, person or household, group and stage. Forms add a person or household, a group, an occasion (previewing who it covers first), a gift and a purchase; `/gifts/occasions/<id>/sync` reviews and applies an occasion's sync with its groups, one choice per affected gift. Only the owner's own ledger is ever read or written; nothing is posted to Discord. A "Gifts" link joins the top bar.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.48.0] - 2026-11-13
 
 ### Added
@@ -19,6 +29,7 @@
 ### Schema
 
 - No change. Still at 13.
+
 ## [0.46.0] - 2026-11-12
 
 ### Added
@@ -31,7 +42,7 @@
 
 ### Schema
 
-- Still at 13. Three new tables, `shop_checks`, `shop_check_requests` and `shop_check_waiters`, are made on start when absent, outside the numbered schema, so 0.45.0 and older still start against the database after a rollback (they never read them). Forget-me erases a person's check requests and waiting watches; the verdicts name no one and stay. No existing table, index or row changes. After a rollback, an older forget-me does not erase the two new tables' rows (a later 0.46.0 drops a request whose owner is gone), and a waiting watch's queued shop run counts against its owner's run-now allowance.
+- Still at 13. Three new tables, `shop_checks`, `shop_check_requests` and `shop_check_waiters`, are made on start when absent, outside the numbered schema, so 0.44.0 and older still start against the database after a rollback (they never read them). Forget-me erases a person's check requests and waiting watches; the verdicts name no one and stay. No existing table, index or row changes. After a rollback, an older forget-me does not erase the two new tables' rows (a later 0.46.0 drops a request whose owner is gone), and a waiting watch's queued shop run counts against its owner's run-now allowance.
 
 ## [0.44.0] - 2026-11-11
 
