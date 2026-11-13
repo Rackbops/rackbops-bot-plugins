@@ -466,7 +466,7 @@ describe("/want", () => {
     expect(cleared.status).toBe(200);
     expect((await cleared.json()).task.settings.max).toBeUndefined();
     for (let i = 1; i < MAX_WANT_TASKS; i++) expect((await post({ type: "wantlist", name: `W${i}`, source: "page", target: `${SHOP}&p=${i}` })).status).toBe(201);
-    const capped = await post({ type: "wantlist", name: "More", source: "page", target: SHOP });
+    const capped = await post({ type: "wantlist", name: "More", source: "page", target: `${SHOP}&p=more` });
     expect(capped.status).toBe(409);
     expect((await capped.json()).error.code).toBe("limit_reached");
   });
