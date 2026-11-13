@@ -129,7 +129,7 @@ const newsFields = (mode: Mode, surface: Surface): readonly Field[] => [
   { name: "every", label: "Days between runs", kind: "number", min: 1, max: MAX_NEWS_EVERY, help: `1 to ${MAX_NEWS_EVERY}. ${empty(mode, `${DEFAULT_NEWS_EVERY} when empty.`, surface)} Each run is at your preferred hour.` },
 ];
 
-const SOURCE_OPTIONS = [["page", "a listing page I paste"], ["bgg", "BoardGameGeek's marketplace"], ["ebay", "eBay: its own API, or listings I send in"], ["shopify", "Shopify stores: new copies in stock"]] as const;
+const SOURCE_OPTIONS = [["page", "a listing page I paste"], ["bgg", "BoardGameGeek's marketplace"], ["ebay", "eBay: its own API, or listings I send in"], ["shopify", "Shopify stores: new copies in stock"], ["nobleknight", "Noble Knight Games: a product page I paste"]] as const;
 const JUDGE_OPTIONS = [["yes", "yes: the model checks each new listing and its seller first"], ["no", "no: DM me every new listing"]] as const;
 
 /** `/want`'s limits, the same on an edit (but for what an empty number means): where it looks is fixed once made. */

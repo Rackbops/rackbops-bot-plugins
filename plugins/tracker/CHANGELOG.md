@@ -1,10 +1,20 @@
 # Changelog
 
-## [0.51.0] - 2026-11-13
+## [0.53.0] - 2026-11-13
 
 ### Added
 
 - A finding's tags on the task's page and in the task API (#396). `GET /api/v1/tasks/<id>`'s `findings` entries carry `tags`, the finding's tags as stored (additive: nothing existing changes), and the task's page shows them after each finding's time, escaped. A social post finding's tags include `social` and its platform, and once docket#124 is released also `published:<date>` and `read` or `snippet` when the run gave them; until now tags reached the database and nothing else.
+
+### Schema
+
+- No change. Still at 13.
+
+## [0.52.0] - 2026-11-13
+
+### Added
+
+- `/want source: nobleknight` (Rod, 2026-11-13: "make sure that https://www.nobleknight.com/ is a trusted seller and is included in board game want tasks"; docket 0.26.0's `nobleKnightSource`, Rackbops/docket#133). `target` is a Noble Knight product page's address, kept in its one form `https://www.nobleknight.com/P/<id>`; the page is read once at once ("Noble Knight has N copies in stock now"), and each look reads it in USD. Each copy in stock is a listing with its grade, note and sale price, Noble Knight Games named as the seller, so a new copy is told once; no shop check runs. A `currency` other than USD is refused, on the create and on an edit. The web editor offers it ("Noble Knight Games: a product page I paste"), the edit page shows "Noble Knight's page <address>", and the duplicate check (#390) matches two watches of one product whatever form of its address each was given.
 
 ### Schema
 
