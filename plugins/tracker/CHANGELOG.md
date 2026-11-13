@@ -4,7 +4,7 @@
 
 ### Added
 
-- A finding's tags on the task's page and in the task API (#396). `GET /api/v1/tasks/<id>`'s `findings` entries carry `tags`, the finding's tags as stored (additive: nothing existing changes), and the task's page shows them after each finding's time, escaped. From the next docket release (docket#124) a social post finding's tags are `social`, its platform, `published:<day>` and `read` or `snippet`; until now they reached the database and nothing else.
+- A finding's tags on the task's page and in the task API (#396). `GET /api/v1/tasks/<id>`'s `findings` entries carry `tags`, the finding's tags as stored (additive: nothing existing changes), and the task's page shows them after each finding's time, escaped. A social post finding's tags include `social` and its platform, and once docket#124 is released also `published:<date>` and `read` or `snippet` when the run gave them; until now tags reached the database and nothing else.
 
 ### Schema
 

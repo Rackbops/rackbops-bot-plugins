@@ -185,9 +185,9 @@ export interface FindingView {
   /** The same instant, ISO-8601 (the API's). */
   atIso: string;
   /**
-   * The finding's tags as docket stored them (#396): for a social post finding, `social`, its
-   * platform, `published:<day>` and `read` or `snippet` (docket#124). Model-derived text, shown
-   * escaped, never as markup.
+   * The finding's tags as docket stored them (#396), such as a research finding's verdict or a
+   * social post's platform (and, once docket#124 ships, its `published:` date and `read` or
+   * `snippet`). Model-derived text, shown escaped, never as markup.
    */
   tags: string[];
 }
