@@ -254,6 +254,7 @@ function wantWhere(c: WatchConfig): string {
   }
   if (c.source === "shopify") return `Shopify stores' search for "${c.target}"`;
   if (c.source === "ebay") return `eBay's search for "${c.target}"`;
+  if (c.source === "nobleknight") return `Noble Knight's page ${c.target}`;
   return c.source === "bgg" ? `BoardGameGeek game ${c.target}` : c.target;
 }
 
