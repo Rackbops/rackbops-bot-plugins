@@ -154,8 +154,18 @@ describe("the family gift overview", () => {
     expect(rowsShown(await page(w, `/gifts?occasion=${occasionId}&group=${groupId.Aunts}`)).sort()).toEqual([id.Ann, id.Bea, id.Cal].sort());
     const planned = await page(w, `/gifts?occasion=${occasionId}&stage=planned`);
     expect(rowsShown(planned)).toEqual([id.Fay]);
-    expect(counts(planned).planned).toBe(1);
+    // The stage filter narrows the rows; the counts still show every column.
+    expect(counts(planned)).toEqual(counts(body));
     expect(rowsShown(await page(w, `/gifts?occasion=${occasionId}&person=${id.Hal}`))).toEqual([id["The Hills"]]);
+    // A household chosen finds its members' rows: Dee and Eve as one household.
+    expect((await post(w, "/gifts/new/person", [["name", "Dee and Eve"], ["kind", "household"], ["member", id.Dee ?? ""], ["member", id.Eve ?? ""]])).status).toBe(303);
+    const pair = (await idsByName(w))["Dee and Eve"];
+    expect(rowsShown(await page(w, `/gifts?occasion=${occasionId}&person=${pair}`)).sort()).toEqual([id.Dee, id.Eve].sort());
+    // An occasion id that is not on the list shows nothing, never another occasion.
+    const unknown = await page(w, "/gifts?occasion=go999");
+    expect(rowsShown(unknown)).toEqual([]);
+    expect(unknown).toContain("That occasion is not on your list.");
+    expect(await page(w, `/gifts?occasion=${occasionId}&done=constructor`)).not.toContain("rb-alert--success");
     // With no occasion named, the first open one is shown.
     expect(counts(await page(w, "/gifts")).bought).toBe(6);
   });
@@ -235,9 +245,57 @@ describe("the family gift overview", () => {
   });
 });
 
+describe("the gift forms' refusals", () => {
+  it("saves nothing of a gift whose allocation would be refused, and refuses buying a gift twice", async () => {
+    const w = await setup();
+    const { id, occasionId } = await family(w);
+    const items = async () => ((await (await api(w.plugin, "GET", "/gifts/items", { token: w.token })).json()) as Json).records.length;
+    const before = await items();
+    const zero = await post(w, "/gifts/new/gift", [["title", "Orphan"], ["estimate", ""], ["occasion", occasionId], ["for", id.Kim ?? ""], ["quantity", "0"]]);
+    expect(zero.status).toBe(400);
+    expect(await zero.text()).toContain("How many each is a whole number");
+    const stranger = await post(w, "/gifts/new/gift", [["title", "Orphan"], ["estimate", ""], ["occasion", occasionId], ["for", "gr999"], ["quantity", "1"]]);
+    expect(stranger.status).toBe(400);
+    expect(await items()).toBe(before);
+    const allocations = ((await (await api(w.plugin, "GET", "/gifts/allocations", { token: w.token })).json()) as Json).records as Json[];
+    const game = allocations.find((a) => a.shared);
+    const twice = await post(w, "/gifts/new/purchase", [["gift", game.id], ["currency", "USD"], ["price", "40"]]);
+    expect(twice.status).toBe(400);
+    expect(await twice.text()).toContain("That gift is already bought.");
+    const after = ((await (await api(w.plugin, "GET", `/gifts/allocations/${game.id}`, { token: w.token })).json()) as Json).record;
+    expect(after.purchaseId).toBe(game.purchaseId);
+  });
+
+  it("gives a leaving person's gift to someone on the roster, and says an archived occasion is not synced", async () => {
+    const w = await setup();
+    const { id, groupId, occasionId } = await family(w);
+    const cousins = ((await (await api(w.plugin, "GET", `/gifts/groups/${groupId.Cousins}`, { token: w.token })).json()) as Json).record;
+    await api(w.plugin, "PATCH", `/gifts/groups/${groupId.Cousins}`, { token: w.token, body: { expectedRevision: cousins.revision, memberIds: cousins.memberIds.filter((m: string) => m !== id.Fay) } });
+    const review = await page(w, `/gifts/occasions/${occasionId}/sync`);
+    const token = /name="token" value="([^"]+)"/.exec(review)?.[1] ?? "";
+    const field = /name="(decision-[^"]+)" value="reassign:/.exec(review)?.[1] ?? "";
+    expect((await post(w, `/gifts/occasions/${occasionId}/sync`, [["token", token], [field, `reassign:${id.Kim}`]])).status).toBe(303);
+    const after = await page(w, `/gifts?occasion=${occasionId}`);
+    expect(after).toMatch(new RegExp(`data-recipient="${id.Kim}"><td>Kim</td><td>Planned</td>`));
+    expect(after).toMatch(/<td>Calendar<\/td><td>Ann, Bea, Cal, Dee, Eve, Kim<\/td>/);
+    const occasion = ((await (await api(w.plugin, "GET", `/gifts/occasions/${occasionId}`, { token: w.token })).json()) as Json).record;
+    expect((await api(w.plugin, "PATCH", `/gifts/occasions/${occasionId}`, { token: w.token, body: { expectedRevision: occasion.revision, archived: true } })).status).toBe(200);
+    const archived = await call(w.plugin, "GET", `/gifts/occasions/${occasionId}/sync`, { jar: w.jar });
+    expect(archived.status).toBe(409);
+    expect(await archived.text()).toContain("archived");
+    const shown = await page(w, `/gifts?occasion=${occasionId}`);
+    expect(shown).toContain(`<option value="${occasionId}" selected>Christmas 2026 (archived)</option>`);
+  });
+});
+
 describe("parseMoney", () => {
   it("reads whole and two-place amounts, blank as none, anything else as not an amount", () => {
-    expect([parseMoney("12"), parseMoney("12.5"), parseMoney("12.50"), parseMoney(" "), parseMoney(null)]).toEqual([1200, 1250, 1250, null, null]);
-    for (const bad of ["12.505", "-3", "1,000", "abc", "1e3"]) expect(parseMoney(bad)).toBeUndefined();
+    const usd = (raw: string | null) => parseMoney(raw, "USD");
+    expect([usd("12"), usd("12.5"), usd("12.50"), usd(" "), usd(null)]).toEqual([1200, 1250, 1250, null, null]);
+    for (const bad of ["12.505", "-3", "1,000", "abc", "1e3", "12."]) expect(usd(bad)).toBeUndefined();
+  });
+
+  it("uses the currency's own minor units: none for JPY, three for KWD", () => {
+    expect([parseMoney("1250", "JPY"), parseMoney("12.5", "JPY"), parseMoney("1.234", "KWD"), parseMoney("1.5", "KWD")]).toEqual([1250, undefined, 1234, 1500]);
   });
 });

@@ -10,7 +10,7 @@ import {
 import { NO_LONGER_LISTED } from "../actions.js";
 import { previewOrRefusal, sync } from "./api-gifts.js";
 import type { Editor } from "./editor.js";
-import { loadLedger, isStageColumn, overview, type OverviewFilter } from "./gift-overview.js";
+import { loadLedger, isStageColumn, minorDigits, overview, type OverviewFilter } from "./gift-overview.js";
 import { type FormChoices, type FormState, giftFormPage, giftsPage, syncPage } from "./gift-pages.js";
 import { htmlResponse, redirect } from "./html.js";
 import { errorPage, notFoundPage } from "./pages.js";
@@ -51,7 +51,7 @@ export async function giftsGet(e: Editor, params: URLSearchParams): Promise<Resp
   const l = await loadLedger(e.d.gifts, e.v.user.id);
   const f = filterOf(params);
   const done = params.get("done");
-  return htmlResponse(giftsPage(e.v, overview(l, f), f, l.recipients, l.groups, done ? NOTICES[done] : undefined));
+  return htmlResponse(giftsPage(e.v, overview(l, f), f, l.recipients, l.groups, done && Object.hasOwn(NOTICES, done) ? NOTICES[done] : undefined));
 }
 
 async function choices(e: Editor): Promise<FormChoices> {
@@ -70,13 +70,17 @@ export async function giftFormGet(e: Editor, form: GiftForm): Promise<Response> 
   return htmlResponse(giftFormPage(e.v, form, await choices(e), { values: new URLSearchParams() }));
 }
 
-/** An amount typed as `12`, `12.5` or `12.50`, as minor units; null when blank, undefined when not an amount. */
-export function parseMoney(raw: string | null): number | null | undefined {
+/**
+ * An amount typed as `12`, `12.5` or `12.50` (as many decimals as the currency has, none for JPY),
+ * as the currency's minor units; null when blank, undefined when not an amount.
+ */
+export function parseMoney(raw: string | null, currency: string): number | null | undefined {
   const t = (raw ?? "").trim();
   if (t === "") return null;
-  const m = /^(\d{1,9})(?:\.(\d{1,2}))?$/.exec(t);
-  if (!m) return undefined;
-  return Number(m[1]) * 100 + Number((m[2] ?? "").padEnd(2, "0"));
+  const digits = minorDigits(currency);
+  const m = /^(\d{1,9})(?:\.(\d+))?$/.exec(t);
+  if (!m || (m[2] !== undefined && (digits === 0 || m[2].length > digits))) return undefined;
+  return Number(m[1]) * 10 ** digits + Number((m[2] ?? "").padEnd(digits, "0") || "0");
 }
 
 class Refused extends Error {
@@ -149,7 +153,7 @@ export async function giftFormPost(e: Editor, form: GiftForm, f: URLSearchParams
         await gifts.create("group", meta, { name: text(f.get("name")), memberIds: f.getAll("member") });
         return null;
       case "occasion": {
-        const budget = parseMoney(f.get("budget"));
+        const budget = parseMoney(f.get("budget"), text(f.get("currency")).toUpperCase());
         if (budget === undefined) throw new Refused("The budget is an amount, such as 500 or 500.00.");
         const date = orNull(f.get("date"));
         const groupIds = f.getAll("group");
@@ -175,12 +179,22 @@ export async function giftFormPost(e: Editor, form: GiftForm, f: URLSearchParams
         return occasion.id;
       }
       case "gift": {
-        const estimate = parseMoney(f.get("estimate"));
+        const estimate = parseMoney(f.get("estimate"), text(f.get("currency")).toUpperCase());
         if (estimate === undefined) throw new Refused("The estimate is an amount, such as 25 or 24.99.");
-        const quantity = Number(f.get("quantity") ?? "1");
+        const quantity = Number(text(f.get("quantity")) || "1");
         const occasionId = orNull(f.get("occasion"));
         const recipientIds = f.getAll("for");
-        if (occasionId && recipientIds.length === 0) throw new Refused("Choose who it is for, or no occasion to keep it as an idea.");
+        if (occasionId) {
+          // Everything the allocation needs is checked before the item is written, so a refusal leaves nothing half-saved.
+          if (recipientIds.length === 0) throw new Refused("Choose who it is for, or no occasion to keep it as an idea.");
+          if (!Number.isInteger(quantity) || quantity < 1) throw new Refused("How many each is a whole number, 1 or more.");
+          const occasion = await gifts.get("occasion", meta.ownerId, occasionId);
+          if (!occasion || occasion.archived) throw new Refused("Choose an open occasion.");
+          for (const id of recipientIds) {
+            const r = await gifts.get("recipient", meta.ownerId, id);
+            if (!r || r.archived) throw new Refused("Something it names is not on your list any more. Reload and try again.");
+          }
+        }
         const item = await gifts.create("item", meta, {
           title: text(f.get("title")),
           url: orNull(f.get("url")),
@@ -198,7 +212,7 @@ export async function giftFormPost(e: Editor, form: GiftForm, f: URLSearchParams
         return occasionId;
       }
       case "purchase": {
-        const price = parseMoney(f.get("price"));
+        const price = parseMoney(f.get("price"), text(f.get("currency")).toUpperCase());
         if (price === undefined || price === null) throw new Refused("The price is an amount, such as 24.99.");
         const allocation = await gifts.get("allocation", meta.ownerId, text(f.get("gift")));
         if (!allocation || allocation.archived) throw new Refused("Choose a gift.");
@@ -232,7 +246,9 @@ async function syncView(e: Editor, id: string, error?: string, status = 200): Pr
   const gifts = e.d.gifts;
   const occasion = await gifts.get("occasion", e.v.user.id, id);
   const p = occasion ? await previewOrRefusal(gifts, e.v.user.id, id) : null;
-  if (!occasion || !p || "status" in p) return htmlResponse(notFoundPage(e.v.base, e.v), 404);
+  if (!occasion || !p || ("status" in p && p.status === 404)) return htmlResponse(notFoundPage(e.v.base, e.v), 404);
+  // An archived occasion (409) keeps the roster it had: say so, as the task API does.
+  if ("status" in p) return htmlResponse(errorPage(e.v.base, "Not synced", (p.body as { error: { message: string } }).error.message), p.status);
   const l = await loadLedger(gifts, e.v.user.id);
   const name = (rid: string) => l.recipients.find((r) => r.id === rid)?.displayName ?? rid;
   const title = (aid: string) => {
@@ -249,11 +265,22 @@ export function syncGet(e: Editor, id: string): Promise<Response> {
 
 /** `POST /gifts/occasions/<id>/sync`: the form's choices, applied only to the preview the page showed (api-gifts.ts `sync`). */
 export async function syncPost(e: Editor, id: string, f: URLSearchParams): Promise<Response> {
-  const decisions: Record<string, unknown> = {};
+  // "Give it to <name>" swaps the leaving people for that one person and keeps everyone else on the
+  // gift; docket's reassign takes the whole new list, so it is built here from the preview.
+  const p = await previewOrRefusal(e.d.gifts, e.v.user.id, id);
+  const affected = new Map(p && !("status" in p) ? p.preview.affected.map((a) => [a.allocationId, a] as const) : []);
+  const decisions: Record<string, unknown> = Object.create(null);
   for (const [k, v] of f) {
     if (!k.startsWith("decision-")) continue;
     const allocationId = k.slice("decision-".length);
-    decisions[allocationId] = v.startsWith("reassign:") ? { action: "reassign", recipientIds: [v.slice("reassign:".length)] } : { action: v };
+    if (!v.startsWith("reassign:")) {
+      decisions[allocationId] = { action: v };
+      continue;
+    }
+    const to = v.slice("reassign:".length);
+    const a = affected.get(allocationId);
+    const staying = a ? a.recipientIds.filter((r) => !a.dropped.includes(r) && r !== to) : [];
+    decisions[allocationId] = { action: "reassign", recipientIds: [...staying, to] };
   }
   const answer = await e.queue(async () => {
     if (!(await e.d.store.getUser(e.v.user.id))) return null;

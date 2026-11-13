@@ -51,6 +51,15 @@ export async function loadLedger(gifts: GiftLedger, ownerId: string): Promise<Le
   return { recipients, groups, occasions, rows, items, purchases, allocations, buckets: giftBuckets(allocations, purchases) };
 }
 
+/** A currency's minor-unit digits (ISO 4217, as the runtime's Intl knows them: JPY 0, USD 2, KWD 3); 2 for a code it does not know. */
+export function minorDigits(currency: string): number {
+  try {
+    return new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions().maximumFractionDigits ?? 2;
+  } catch {
+    return 2;
+  }
+}
+
 /** The overview's columns, in the order a gift moves through them. Awaiting arrival and arrived share one. */
 export const STAGE_COLUMNS = [
   ["needs-planning", "Needs planning"],
@@ -131,8 +140,9 @@ export function overview(l: Ledger, f: OverviewFilter): Overview {
     if (f.group && !group?.memberIds.includes(row.recipientId)) continue;
     const coverage = giftCoverage(row, l.buckets);
     const column = columnOf(coverage.status);
-    if (f.stage && column !== f.stage) continue;
+    // The counts keep every column under the other filters, so a stage filter narrows the rows, not the counts.
     counts[column] += 1;
+    if (f.stage && column !== f.stage) continue;
     const groups = l.groups.filter((g) => !g.archived && g.memberIds.includes(row.recipientId)).map((g) => g.name);
     rows.push({ recipient, coverage, column, groups });
   }

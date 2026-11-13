@@ -1,6 +1,6 @@
 import type { GiftGroup, GiftOccasion, GiftRecipient, GiftSpend, GiftSyncPreview } from "@rackbops/docket-core";
 import type { GiftForm } from "./gifts-web.js";
-import { STAGE_COLUMNS, type Overview, type OverviewFilter } from "./gift-overview.js";
+import { minorDigits, STAGE_COLUMNS, type Overview, type OverviewFilter } from "./gift-overview.js";
 import { html, type Html } from "./html.js";
 import { framed, type Viewer } from "./pages.js";
 
@@ -18,11 +18,14 @@ export const GIFT_FORM_TITLES: Record<GiftForm, string> = {
   purchase: "Record a purchase",
 };
 
-/** Minor units as a plain amount: 1250 is 12.50. */
+/** Minor units as a plain amount in the currency's own digits: 1250 USD is 12.50, 1250 JPY is 1250. */
 export function money(minor: number, currency: string): string {
+  const digits = minorDigits(currency);
   const sign = minor < 0 ? "-" : "";
   const abs = Math.abs(minor);
-  return `${sign}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")} ${currency}`;
+  const scale = 10 ** digits;
+  const whole = Math.floor(abs / scale);
+  return `${sign}${whole}${digits > 0 ? `.${String(abs % scale).padStart(digits, "0")}` : ""} ${currency}`;
 }
 
 const csrfField = (v: Viewer) => html`<input type="hidden" name="csrf" value="${v.csrf}">`;
@@ -75,7 +78,7 @@ const people = (recipients: readonly GiftRecipient[]) => recipients.filter((r) =
 export function giftsPage(v: Viewer, o: Overview, f: OverviewFilter, recipients: readonly GiftRecipient[], groups: readonly GiftGroup[], notice?: string): string {
   const occasion = o.occasion;
   const filters = html`<form method="get" action="${v.base}/gifts" class="tr-row">
-${select("occasion", "Occasion", o.occasions.map((x) => [x.id, x.title] as const), occasion?.id)}
+${select("occasion", "Occasion", [...o.occasions, ...(occasion?.archived ? [occasion] : [])].map((x) => [x.id, x.archived ? `${x.title} (archived)` : x.title] as const), occasion?.id)}
 ${select("person", "Person or household", people(recipients), f.person, "Everyone")}
 ${select("group", "Group", groups.filter((g) => !g.archived).map((g) => [g.id, g.name] as const), f.group, "Any group")}
 ${select("stage", "Stage", STAGE_COLUMNS, f.stage, "Any stage")}
@@ -107,7 +110,9 @@ ${o.gifts.length === 0 ? html`<p class="rb-muted">None yet.</p>` : html`<div cla
     )}</tbody></table></div>`}
 ${occasion.groupIds.length > 0 && !occasion.archived ? html`<p><a class="rb-link" href="${v.base}/gifts/occasions/${encodeURIComponent(occasion.id)}/sync">Review changes to its groups</a></p>` : null}
 </section>`
-    : html`<section><p class="rb-muted">No occasions yet. Add the people you buy for, then an occasion.</p></section>`;
+    : f.occasion
+      ? html`<section><p class="rb-muted">That occasion is not on your list.</p></section>`
+      : html`<section><p class="rb-muted">No occasions yet. Add the people you buy for, then an occasion.</p></section>`;
   return framed(
     v,
     "Gifts",
@@ -116,7 +121,7 @@ ${occasion.groupIds.length > 0 && !occasion.archived ? html`<p><a class="rb-link
 <p class="rb-muted">Your own gift list. Only you see it here; nothing on this page is posted to Discord. Tracker admins can read the database it lives in.</p>
 ${alerts({ notice })}
 ${add}
-${o.occasions.length > 0 ? filters : null}
+${o.occasions.length > 0 || occasion ? filters : null}
 </section>
 ${body}
 <section><h2>Money, all occasions</h2>${spendTable(o.spend)}</section>`,
@@ -225,7 +230,7 @@ ${p.affected.map(
 <div class="tr-row">
 <label class="rb-choice"><input class="rb-radio" type="radio" name="decision-${a.allocationId}" value="keep" required> Keep as it is</label>
 <label class="rb-choice"><input class="rb-radio" type="radio" name="decision-${a.allocationId}" value="unassign"> Take ${a.dropped.map(names).join(", ")} off it</label>
-${p.roster.map((id) => html`<label class="rb-choice"><input class="rb-radio" type="radio" name="decision-${a.allocationId}" value="reassign:${id}"> Give it to ${names(id)}</label>`)}
+${p.roster.filter((id) => !a.recipientIds.includes(id)).map((id) => html`<label class="rb-choice"><input class="rb-radio" type="radio" name="decision-${a.allocationId}" value="reassign:${id}"> Give ${a.dropped.map(names).join(", ")}'s to ${names(id)}</label>`)}
 </div></fieldset>`,
     )}
 <div><button class="rb-btn rb-btn--primary" type="submit">Apply</button></div>
