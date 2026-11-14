@@ -9,7 +9,7 @@ import { Ceilings } from "./ceilings.js";
 import { TaskLocks } from "./locks.js";
 import { Roster } from "./roster.js";
 import { migrate, openDatabase } from "./schema.js";
-import { SHOP_RUN_PREFIX, SHOP_TABLES, ShopChecks, ShopJobIds, stepShopCheck } from "./shop-checks.js";
+import { ensureShopTables, SEARCHED_UNKNOWNS, SHOP_RUN_PREFIX, SHOP_TABLES, ShopChecks, ShopJobIds, stepShopCheck } from "./shop-checks.js";
 import { SqliteStore } from "./store.js";
 import { removeDir } from "./test-dirs.js";
 import { executeBudget } from "./usage.js";
@@ -63,7 +63,7 @@ function fakeExecutor(answers: (JobResult | Error)[]) {
   return { executor, calls };
 }
 
-const success = (out: unknown): JobResult => ({ kind: "success", result: "", structuredOutput: out, totalCostUsd: 0.02, durationMs: 5 });
+const success = (out: unknown, searches = 1): JobResult => ({ kind: "success", result: "", structuredOutput: out, totalCostUsd: 0.02, modelUsage: { "claude-small": { webSearchRequests: searches } }, durationMs: 5 });
 const FLAGGED = { verdict: "flagged", reasons: ["ScamAdviser: very low trust score"], sources: ["https://www.scamadviser.com/check-website/tradingcardgame.us"] };
 
 describe("ShopChecks", () => {
@@ -123,6 +123,25 @@ describe("stepShopCheck", () => {
     const now = queued.filter((o) => o.dedupeKey.startsWith(`now:${t.id}:${SHOP_RUN_PREFIX}`));
     expect(now).toHaveLength(1);
     expect(await stepShopCheck(w.deps)).toBe("idle");
+  });
+
+  it("records nothing when the run reports no web search, so the listing stays held (docket#128)", async () => {
+    const w = await wired([success(FLAGGED, 0)]);
+    const t = await watch(w.store, w.owner);
+    await w.checks.request("tradingcardgame.us", { taskId: t.id, ownerId: w.owner.id });
+    expect(await stepShopCheck(w.deps)).toBe("failed");
+    expect((await w.checks.get(["tradingcardgame.us"])).has("tradingcardgame.us")).toBe(false);
+  });
+
+  it("keeps a flagged shop flagged when its re-check finds too little (docket#128)", async () => {
+    const w = await wired([success({ verdict: "unknown", reasons: ["little found"], sources: [] })]);
+    const t = await watch(w.store, w.owner);
+    w.checks.record({ domain: "tradingcardgame.us", verdict: "flagged", reasons: ["ScamAdviser: very low trust score"], sources: [], checkedAt: "2026-04-01T00:00:00.000Z" });
+    await w.checks.request("tradingcardgame.us", { taskId: t.id, ownerId: w.owner.id });
+    expect(await stepShopCheck(w.deps)).toBe("recorded");
+    const kept = (await w.checks.get(["tradingcardgame.us"])).get("tradingcardgame.us");
+    expect(kept?.verdict).toBe("flagged");
+    expect(kept?.reasons).toContain("ScamAdviser: very low trust score");
   });
 
   it("queues no extra run when the watch already has one due now", async () => {
@@ -292,6 +311,21 @@ describe("a Shopify watch over the shop list", () => {
   });
 });
 
+describe("the upgrade to checks that must show a search (docket#128)", () => {
+  it("drops every stored unknown once, and keeps the rest", async () => {
+    const { db, checks } = await setup();
+    db.query("DELETE FROM shop_check_marks WHERE mark = ?").run(SEARCHED_UNKNOWNS);
+    for (const [domain, verdict] of [["thin.shop", "unknown"], ["good.com", "ok"], ["bad.us", "flagged"]] as const)
+      checks.record({ domain, verdict, reasons: [], sources: [], checkedAt: NOW.toISOString() });
+    ensureShopTables(db);
+    expect([...(await checks.get(["thin.shop", "good.com", "bad.us"])).keys()].sort()).toEqual(["bad.us", "good.com"]);
+    // Only once: an unknown recorded after the upgrade stands.
+    checks.record({ domain: "thin.shop", verdict: "unknown", reasons: [], sources: [], checkedAt: NOW.toISOString() });
+    ensureShopTables(db);
+    expect((await checks.get(["thin.shop"])).has("thin.shop")).toBe(true);
+  });
+});
+
 describe("forget-me and rollback", () => {
   it("erases a person's requests and waiters, and keeps the shops' verdicts", async () => {
     const { db, store, owner, checks } = await setup();
@@ -315,7 +349,7 @@ describe("forget-me and rollback", () => {
       try {
         expect((db.query("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(13);
         const names = (db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'shop_check%' ORDER BY name").all() as { name: string }[]).map((r) => r.name);
-        expect(names).toEqual(["shop_check_requests", "shop_check_waiters", "shop_checks"]);
+        expect(names).toEqual(["shop_check_marks", "shop_check_requests", "shop_check_waiters", "shop_checks"]);
       } finally {
         db.close();
       }

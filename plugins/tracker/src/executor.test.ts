@@ -358,13 +358,15 @@ describe("readJobResult", () => {
 
   it("keeps a success's turns, session and usage, and a failure's API status, session and cost (#215)", () => {
     const usage = { input_tokens: 10, output_tokens: 20 };
-    expect(readJobResult({ kind: "success", result: "r", durationMs: 1, numTurns: 4, sessionId: "s-1", usage })).toEqual({
+    const modelUsage = { "claude-small": { webSearchRequests: 1 } };
+    expect(readJobResult({ kind: "success", result: "r", durationMs: 1, numTurns: 4, sessionId: "s-1", usage, modelUsage })).toEqual({
       kind: "success",
       result: "r",
       durationMs: 1,
       numTurns: 4,
       sessionId: "s-1",
       usage,
+      modelUsage,
     });
     expect(readJobResult({ kind: "auth_failed", detail: "d", durationMs: 2, apiErrorStatus: 401, sessionId: "s-2", totalCostUsd: 0.01 })).toEqual({
       kind: "auth_failed",

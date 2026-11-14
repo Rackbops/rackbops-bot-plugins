@@ -237,8 +237,9 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   let sources: ResearchSources | null = null;
   const readSources: ReadSources = async (taskId) => sources?.read(taskId) ?? [];
   // The shop list (shop-checks.ts, docket#120) lives there too. Until it is open a read fails, so a
-  // Shopify listing is held, never told unvetted. Only with the execute lane, which runs the checks:
-  // without it a Shopify watch tells as before (no check could ever run, and every listing would wait).
+  // Shopify listing is held, never told unvetted. Passed with the execute lane off too (docket#128):
+  // a shop that passed is still told and a flagged one still kept out; one with no fresh check waits,
+  // its request kept until the lane runs it.
   let shopChecks: ShopChecks | null = null;
   const shopVet: ShopVet = {
     get: async (domains) => {
@@ -254,7 +255,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const types = options.types ?? {
     ...TRACKER_TYPES,
     research: researchType(webOrigin ? { readSources } : {}) as TaskType<unknown>,
-    ...wantTypes({ page: pageSource, nobleknight: nobleKnightWatchSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}), ...(shopify ? { shopify } : {}), ...(ebay ? { ebay } : {}) }, executeOn ? shopVet : undefined),
+    ...wantTypes({ page: pageSource, nobleknight: nobleKnightWatchSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}), ...(shopify ? { shopify } : {}), ...(ebay ? { ebay } : {}) }, shopVet),
   };
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };

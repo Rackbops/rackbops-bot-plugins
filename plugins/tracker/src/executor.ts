@@ -322,6 +322,8 @@ export function readJobResult(v: unknown): JobResult | null {
       ...(session !== undefined ? { sessionId: session } : {}),
       ...(cost !== undefined ? { totalCostUsd: cost } : {}),
       ...("usage" in v ? { usage: v.usage } : {}),
+      // Where Claude Code counts a WebSearch call's searches; the shop check needs them (docket#128).
+      ...("modelUsage" in v ? { modelUsage: v.modelUsage } : {}),
       ...(num(v.numTurns) !== undefined ? { numTurns: num(v.numTurns) as number } : {}),
     };
   }
