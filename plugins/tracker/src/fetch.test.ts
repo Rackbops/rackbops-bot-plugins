@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createBggFetch, createPageFetch, FetchRefusedError, isPublicAddress, MAX_REDIRECTS, NEVER_EBAY, urlProblem } from "./fetch.js";
+import { createBggFetch, createPageFetch, RAW_BODY, FetchRefusedError, isPublicAddress, MAX_REDIRECTS, NEVER_EBAY, urlProblem } from "./fetch.js";
 
 /** The price tracker's page reads (rackbops-bot-plugins#81): only the public internet, bounded. */
 
@@ -82,6 +82,14 @@ function fakeFetch(routes: Record<string, () => Response>) {
 const PUBLIC = async () => ["93.184.215.14"];
 
 describe("createPageFetch", () => {
+  it("hands back the body as sent for a read that asks with RAW_BODY, which is never sent", async () => {
+    const f = fakeFetch({ "https://shop.example/": () => new Response("<div class=\"row\">ok</div>", { status: 200 }) });
+    const reader = createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl });
+    expect((await reader.get("https://shop.example/", { [RAW_BODY]: "1" })).body).toBe('<div class="row">ok</div>');
+    expect(Object.keys(f.calls[0]?.init?.headers as Record<string, string>).map((k) => k.toLowerCase())).not.toContain(RAW_BODY);
+    expect((await reader.get("https://shop.example/")).body).not.toContain("<");
+  });
+
   it("reads a page with its own user agent and manual redirects", async () => {
     const f = fakeFetch({ "https://shop.example/": () => new Response("<p>ok</p>", { status: 200, headers: { "content-type": "text/html" } }) });
     const response = await createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl }).get("https://shop.example/");

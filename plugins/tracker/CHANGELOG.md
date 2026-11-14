@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.57.0] - 2026-11-14
+
+### Fixed
+
+- `/want source: nobleknight` (0.52.0) refused every product page: the bot's Fetch port hands a page back rebuilt for price extraction, which takes the markup apart, so docket's `nobleKnightSource` found no copy rows it could read and counted a changed layout ("I could not read Noble Knight's page just now"). Rod's first two watches failed that way on 2026-11-14. A Noble Knight read now asks the port for the page as sent (a new `RAW_BODY` directive, never sent, like `NEVER_EBAY`), still fenced and capped at 3 MB. Every other read is rebuilt as before. The tests had faked the port, so they never saw the rebuild; one now reads through the real fenced fetch.
+
 ## [0.56.0] - 2026-11-13
 
 ### Changed

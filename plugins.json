@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-13T22:32:30.499Z",
+  "generatedAt": "2026-11-15T04:14:11.987Z",
   "plugins": [
     {
       "name": "mcp",
@@ -210,7 +210,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.56.0",
+      "version": "0.57.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout and a news watch (through city-hall, with their findings), a want-list watcher (listing pages you paste, Noble Knight Games product pages you paste (a trusted seller, each copy in stock its own listing), BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, each shop first checked by one web search through city-hall, eBay through eBay's own Browse API once its keys are set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /news, /want, /tasks, /task, /settings, /web, /gift), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, a JSON task API with personal API tokens, and a plain-language intake: DM Clerk what you want in your own words, answer its questions, and press Save on the draft it shows",
       "hostApiVersion": 1,
       "intents": [
@@ -390,6 +390,12 @@
       ],
       "releases": [
         {
+          "version": "0.57.0",
+          "publishedAt": "2026-11-14T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.57.0",
+          "notes": "### Fixed\n\n- `/want source: nobleknight` (0.52.0) refused every product page: the bot's Fetch port hands a page back rebuilt for price extraction, which takes the markup apart, so docket's `nobleKnightSource` found no copy rows it could read and counted a changed layout (\"I could not read Noble Knight's page just now\"). Rod's first two watches failed that way on 2026-11-14. A Noble Knight read now asks the port for the page as sent (a new `RAW_BODY` directive, never sent, like `NEVER_EBAY`), still fenced and capped at 3 MB. Every other read is rebuilt as before. The tests had faked the port, so they never saw the rebuild; one now reads through the real fenced fetch."
+        },
+        {
           "version": "0.56.0",
           "publishedAt": "2026-11-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.56.0",
@@ -442,12 +448,6 @@
           "publishedAt": "2026-11-12T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.46.0",
           "notes": "### Added\n\n- Shop checks for Shopify watches (Rackbops/docket#120, plan item 162; docket 0.25.0). Before a Shopify watch tells a listing, its shop needs a fresh verdict from one web search, \"is <shop> a legitimate website\", run as a `claude -p` Job through city-hall on the execute lane (WebSearch only, 4 turns, 0.10 USD, charged to the owner of the watch that asked first; a usage limit or a refused credential is not charged). A shop that passes, with at least one source behind it, is told for 6 months, then checked again (a pass with no source counts as too little found). A flagged shop's listings are not DMed: each is kept as a finding marked `shop-flagged`, and the shop is checked again after 6 months. A shop the search says too little about is DMed marked \"unvetted shop -- check before buying\" and checked again after 30 days. A listing whose shop has no verdict yet is held, and when the verdict lands its watch runs again at once, unless a run is already due or a follow-up waits, when that run tells it (the extra run does not count against the owner's own run-now allowance). At most 5 checks are asked for per look. One check is sent at a time; one whose owner is at a daily ceiling waits without holding up anyone else's, and one with no answer 48 h after it was sent, or given up by the paused-runner cap, is dropped, its listings held until the next look asks again. While the execute lane is off, Shopify watches send as before, unchecked and unmarked.\n\n### Changed\n\n- Needs docket 0.25.0.\n\n### Schema\n\n- Still at 13. Three new tables, `shop_checks`, `shop_check_requests` and `shop_check_waiters`, are made on start when absent, outside the numbered schema, so 0.44.0 and older still start against the database after a rollback (they never read them). Forget-me erases a person's check requests and waiting watches; the verdicts name no one and stay. No existing table, index or row changes. After a rollback, an older forget-me does not erase the two new tables' rows (a later 0.46.0 drops a request whose owner is gone), and a waiting watch's queued shop run counts against its owner's run-now allowance."
-        },
-        {
-          "version": "0.44.0",
-          "publishedAt": "2026-11-11T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.44.0",
-          "notes": "### Added\n\n- The gift ledger's store (Rackbops/docket#94, #382; docket 0.24.0): docket's `GiftStore` port on the tracker's SQLite database, passing every `GIFT_STORE_CONTRACT` case. Nothing reads or writes it yet: the task API, the web page and the `/gift` commands come in later releases. Forget-me erases a person's gift records, their history and their idempotency keys.\n\n### Changed\n\n- Needs docket 0.24.0.\n\n### Schema\n\n- Still at 13. Three new tables, `gift_records`, `gift_events` and `gift_idempotency`, are made on start when absent, outside the numbered schema, so 0.43.0 and older still start against the database after a rollback (they never read the gift tables, and their forget-me does not erase them). No existing table, index or row changes."
         }
       ]
     },

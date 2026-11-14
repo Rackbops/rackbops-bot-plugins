@@ -10,6 +10,7 @@ import {
   pageSource,
   parseBggThingId,
   parseExclude,
+  type Source,
   type SourceId,
   SourceMiss,
   searchWords,
@@ -19,7 +20,7 @@ import {
 import { clip, liveTaskCap, NO_LONGER_LISTED, NO_SUCH_TASK, type Plan, rescheduleKeepingSnoozes, said, type TaskResult, type TrackerDeps } from "./actions.js";
 import type { Step } from "./discord.js";
 import { applyEdit, busyTask, nextRun, owned, refusingScheduleError, same, savedText } from "./edit.js";
-import { FetchRefusedError, urlProblem } from "./fetch.js";
+import { FetchRefusedError, RAW_BODY, urlProblem } from "./fetch.js";
 import { type InboxSite, inboxSite, newInboxKey } from "./inbox.js";
 import { CURRENCY_LENGTH, MAX_CONFIRM_TEXT, MAX_EXCLUDE_TEXT, MAX_TITLE, MAX_URL } from "./limits.js";
 
@@ -472,10 +473,22 @@ export async function previewWant(d: TrackerDeps, start: PendingWant): Promise<W
   }
 }
 
+/**
+ * docket-types' `nobleKnightSource` as this bot runs it: each read asks the Fetch port for the page
+ * as sent (`RAW_BODY`), since the port's usual rebuild for price extraction takes the copy rows'
+ * markup apart and every look would read as a changed layout (2026-11-14: the first two watches
+ * were refused that way). The source's own patterns are bounded, and the body stays capped.
+ */
+export const nobleKnightWatchSource: Source = {
+  id: "nobleknight",
+  search: (target, fetch, limits) =>
+    nobleKnightSource.search(target, fetch ? { get: (url, headers) => fetch.get(url, { ...headers, [RAW_BODY]: "1" }) } : undefined, limits),
+};
+
 /** A Noble Knight product page's first read: how many copies it has in stock now, or why it cannot be watched. */
 async function previewNobleKnight(d: TrackerDeps, start: PendingWant): Promise<WantPreview> {
   try {
-    const copies = await nobleKnightSource.search(start.config.target, d.fetch ?? undefined);
+    const copies = await nobleKnightWatchSource.search(start.config.target, d.fetch ?? undefined);
     const within = copies.filter((l) => wanted(l, start.config)).length;
     const c = start.config;
     const limited = c.maxPrice !== undefined || c.currency || (c.exclude?.length ?? 0) > 0 ? `, ${within} within your limits` : "";
