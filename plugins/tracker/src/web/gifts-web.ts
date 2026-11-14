@@ -2,9 +2,14 @@ import {
   GiftNotFoundError,
   GiftRevisionError,
   GiftValidationError,
+  type GiftBase,
+  type GiftDuplicate,
+  type GiftItem,
   type GiftWriteMeta,
   allocationUnits,
+  findGiftDuplicates,
   previewRoster,
+  resolveGroups,
   rosterIds,
 } from "@rackbops/docket-core";
 import { NO_LONGER_LISTED } from "../actions.js";
@@ -33,6 +38,7 @@ const NOTICES: Record<string, string> = {
   gift: "Gift saved.",
   purchase: "Purchase recorded.",
   synced: "The occasion now matches its groups.",
+  rolled: "Next year's occasion is set up.",
 };
 
 function filterOf(params: URLSearchParams): OverviewFilter {
@@ -100,6 +106,32 @@ const words = (raw: string | null) =>
 const text = (raw: string | null) => (raw ?? "").trim();
 const orNull = (raw: string | null) => (text(raw) === "" ? null : text(raw));
 
+/** Duplicate warnings the owner has not accepted yet: the gift form is shown again with them and a "Give it anyway". */
+class Warned extends Error {
+  constructor(readonly duplicates: NonNullable<FormState["duplicates"]>) {
+    super("This may repeat a gift already planned or given to the same person.");
+  }
+}
+
+/**
+ * The warned allocation ids a new gift's allocation records in `repeatOf`, once the owner accepted
+ * every one of them (`accepted`, the form's `repeatOf` fields); throws `Warned` while any is not.
+ * docket's `findGiftDuplicates` is asked with the item as it would be made, so nothing is written first.
+ */
+async function warnedFirst(e: Editor, item: Omit<GiftItem, keyof GiftBase>, occasionId: string, recipientIds: string[], accepted: string[]): Promise<string[]> {
+  const l = await loadLedger(e.d.gifts, e.v.user.id);
+  const NEW = "(new)";
+  const report = findGiftDuplicates({ ...l, items: [...l.items, { ...item, id: NEW } as GiftItem], allocation: { itemId: NEW, occasionId, recipientIds, repeatOf: accepted } });
+  if (report.warnings.every((w) => w.accepted)) return report.warnings.map((w) => w.allocationId);
+  const name = (id: string) => l.recipients.find((r) => r.id === id)?.displayName ?? id;
+  const describe = (d: GiftDuplicate) => {
+    const title = l.items.find((i) => i.id === d.itemId)?.title ?? d.itemId;
+    const on = l.occasions.find((o) => o.id === d.occasionId)?.title ?? d.occasionId;
+    return `${title} for ${d.recipientIds.map(name).join(", ")}, ${d.where === "history" ? "already given or bought on" : "planned on"} ${on}`;
+  };
+  throw new Warned({ warnings: report.warnings.map((w) => ({ id: w.allocationId, text: describe(w) })), possible: report.possible.map(describe) });
+}
+
 /** Runs one form's writes in the queue, as the person still on the list; a refusal re-renders the form. */
 async function inQueue(e: Editor, form: GiftForm, values: URLSearchParams, run: (meta: GiftWriteMeta) => Promise<string | null>): Promise<Response> {
   const outcome = await e.queue(async () => {
@@ -109,6 +141,7 @@ async function inQueue(e: Editor, form: GiftForm, values: URLSearchParams, run: 
       return { occasion: await run(meta) };
     } catch (err) {
       if (err instanceof Refused) return { error: err.message, problems: err.problems };
+      if (err instanceof Warned) return { error: err.message, problems: [], duplicates: err.duplicates };
       if (err instanceof GiftValidationError) return { error: "Some of it could not be saved:", problems: err.problems };
       if (err instanceof GiftNotFoundError) return { error: "Something it names is not on your list any more. Reload and try again." };
       if (err instanceof GiftRevisionError) return { error: "It changed while you were editing. Reload and try again." };
@@ -117,8 +150,8 @@ async function inQueue(e: Editor, form: GiftForm, values: URLSearchParams, run: 
   });
   if ("gone" in outcome) return htmlResponse(errorPage(e.v.base, "Not saved", NO_LONGER_LISTED), 403);
   if ("error" in outcome) {
-    const s: FormState = { values, error: outcome.error ?? "", problems: outcome.problems ?? [] };
-    return htmlResponse(giftFormPage(e.v, form, await choices(e), s), 400);
+    const s: FormState = { values, error: outcome.error ?? "", problems: outcome.problems ?? [], ...("duplicates" in outcome && outcome.duplicates ? { duplicates: outcome.duplicates } : {}) };
+    return htmlResponse(giftFormPage(e.v, form, await choices(e), s), "duplicates" in outcome && outcome.duplicates ? 409 : 400);
   }
   return redirect(`${e.v.base}/gifts?${new URLSearchParams({ ...(outcome.occasion ? { occasion: outcome.occasion } : {}), done: form }).toString()}`);
 }
@@ -128,7 +161,8 @@ export async function giftFormPost(e: Editor, form: GiftForm, f: URLSearchParams
   const gifts = e.d.gifts;
   if (form === "occasion" && f.get("step") === "preview") {
     const l = await loadLedger(gifts, e.v.user.id);
-    const chosen = l.groups.filter((g) => f.getAll("group").includes(g.id));
+    // A filter group (docket#98) is resolved over the owner's recipients first: docket refuses one unresolved.
+    const chosen = resolveGroups(l.groups.filter((g) => f.getAll("group").includes(g.id)), l.recipients);
     const entries = previewRoster(chosen, f.getAll("include"), f.getAll("exclude"));
     const name = (id: string) => l.recipients.find((r) => r.id === id)?.displayName ?? id;
     const preview = { names: rosterIds(entries).map(name), excluded: entries.filter((x) => x.excluded).map((x) => name(x.recipientId)) };
@@ -149,9 +183,12 @@ export async function giftFormPost(e: Editor, form: GiftForm, f: URLSearchParams
         });
         return null;
       }
-      case "group":
-        await gifts.create("group", meta, { name: text(f.get("name")), memberIds: f.getAll("member") });
+      case "group": {
+        // Labels make it a saved filter (docket#98): its members are the people carrying all of them.
+        const labels = words(f.get("labels"));
+        await gifts.create("group", meta, labels.length > 0 ? { name: text(f.get("name")), memberIds: f.getAll("member"), filter: { labels } } : { name: text(f.get("name")), memberIds: f.getAll("member") });
         return null;
+      }
       case "occasion": {
         const budget = parseMoney(f.get("budget"), text(f.get("currency")).toUpperCase());
         if (budget === undefined) throw new Refused("The budget is an amount, such as 500 or 500.00.");
@@ -172,7 +209,8 @@ export async function giftFormPost(e: Editor, form: GiftForm, f: URLSearchParams
           excludeIds,
         });
         // The roster is the snapshot of the groups as they are now (docket#97): one row per person, however many groups hold them.
-        const groups = (await gifts.list("group", meta.ownerId, { includeArchived: true })).filter((g) => groupIds.includes(g.id));
+        const all = { includeArchived: true };
+        const groups = resolveGroups((await gifts.list("group", meta.ownerId, all)).filter((g) => groupIds.includes(g.id)), await gifts.list("recipient", meta.ownerId, all));
         for (const recipientId of rosterIds(previewRoster(groups, includeIds, excludeIds))) {
           await gifts.create("occasionRecipient", meta, { occasionId: occasion.id, recipientId, target: null, budgetMinor: null, decision: "planning", skipReason: null });
         }
@@ -195,19 +233,22 @@ export async function giftFormPost(e: Editor, form: GiftForm, f: URLSearchParams
             if (!r || r.archived) throw new Refused("Something it names is not on your list any more. Reload and try again.");
           }
         }
-        const item = await gifts.create("item", meta, {
+        const fields = {
           title: text(f.get("title")),
           url: orNull(f.get("url")),
           productKey: null,
           variant: null,
           notes: null,
-          source: { kind: "manual", ref: null },
-          planning: occasionId ? "selected" : "idea",
+          source: { kind: "manual" as const, ref: null },
+          planning: occasionId ? ("selected" as const) : ("idea" as const),
           estimateMinor: estimate,
           currency: estimate === null ? null : text(f.get("currency")).toUpperCase(),
-        });
+        };
+        // Duplicate warnings (docket#100) are asked before anything is written; "Give it anyway" resends with them accepted.
+        const repeatOf = occasionId ? await warnedFirst(e, fields, occasionId, recipientIds, f.getAll("repeatOf")) : [];
+        const item = await gifts.create("item", meta, fields);
         if (occasionId) {
-          await gifts.create("allocation", meta, { itemId: item.id, occasionId, recipientIds, quantity, shared: f.get("shared") === "1", purchaseId: null, handoff: "none", givenOn: null });
+          await gifts.create("allocation", meta, { itemId: item.id, occasionId, recipientIds, quantity, shared: f.get("shared") === "1", purchaseId: null, handoff: "none", givenOn: null, ...(repeatOf.length > 0 ? { repeatOf } : {}) });
         }
         return occasionId;
       }

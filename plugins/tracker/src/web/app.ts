@@ -1,4 +1,5 @@
 import { giftFormGet, giftFormPost, giftsGet, syncGet, syncPost } from "./gifts-web.js";
+import { rolloverGet, rolloverPost } from "./gift-rollover-web.js";
 import type { User } from "@rackbops/docket-core";
 import { type Membership, NOT_MEMBER } from "../access.js";
 import type { PluginHttpInfo } from "../../../../packages/api/contract.js";
@@ -501,6 +502,8 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
         return giftFormPost(e, r.form, form);
       case "gift-sync":
         return syncPost(e, r.id, form);
+      case "gift-rollover":
+        return rolloverPost(e, r.id, form);
       case "admin-allow":
       case "admin-usr-link":
       case "admin-usr-refresh":
@@ -542,6 +545,8 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       return giftFormGet(e, r.form);
     case "gift-sync":
       return syncGet(e, r.id);
+    case "gift-rollover":
+      return rolloverGet(e, r.id);
     case "admin":
     case "admin-tasks":
     case "admin-deliveries":

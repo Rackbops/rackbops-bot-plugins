@@ -1,4 +1,4 @@
-import type { GiftGroup, GiftOccasion, GiftRecipient, GiftSpend, GiftSyncPreview } from "@rackbops/docket-core";
+import type { GiftGroup, GiftOccasion, GiftRecipient, GiftRolloverPreview, GiftSpend, GiftSyncPreview } from "@rackbops/docket-core";
 import type { GiftForm } from "./gifts-web.js";
 import { minorDigits, STAGE_COLUMNS, type Overview, type OverviewFilter } from "./gift-overview.js";
 import { html, type Html } from "./html.js";
@@ -74,13 +74,17 @@ function spendTable(spend: readonly GiftSpend[]): Html {
 
 const people = (recipients: readonly GiftRecipient[]) => recipients.filter((r) => !r.archived).map((r) => [r.id, r.displayName] as const);
 
+/** A group as a choice: its name, and a filter group's labels (docket#98), since it has no list of its own. */
+export const groupLabel = (g: GiftGroup): string => (g.filter ? `${g.name} (everyone labelled ${g.filter.labels.join(" + ")})` : g.name);
+const groupChoices = (groups: readonly GiftGroup[]) => groups.filter((g) => !g.archived).map((g) => [g.id, groupLabel(g)] as const);
+
 /** `/gifts`: one family list for an occasion, with the filters, the coverage columns and the money. */
 export function giftsPage(v: Viewer, o: Overview, f: OverviewFilter, recipients: readonly GiftRecipient[], groups: readonly GiftGroup[], notice?: string): string {
   const occasion = o.occasion;
   const filters = html`<form method="get" action="${v.base}/gifts" class="tr-row">
 ${select("occasion", "Occasion", [...o.occasions, ...(occasion?.archived ? [occasion] : [])].map((x) => [x.id, x.archived ? `${x.title} (archived)` : x.title] as const), occasion?.id)}
 ${select("person", "Person or household", people(recipients), f.person, "Everyone")}
-${select("group", "Group", groups.filter((g) => !g.archived).map((g) => [g.id, g.name] as const), f.group, "Any group")}
+${select("group", "Group", groupChoices(groups), f.group, "Any group")}
 ${select("stage", "Stage", STAGE_COLUMNS, f.stage, "Any stage")}
 <div><button class="rb-btn rb-btn--sm" type="submit">Show</button></div>
 </form>`;
@@ -109,6 +113,7 @@ ${o.gifts.length === 0 ? html`<p class="rb-muted">None yet.</p>` : html`<div cla
       (g) => html`<tr><td>${g.title}${g.allocation.shared ? html` <span class="rb-badge">shared</span>` : null}</td><td>${g.recipients.join(", ")}</td><td class="rb-num">${g.units}</td><td>${g.stage ?? "nothing left"}</td></tr>`,
     )}</tbody></table></div>`}
 ${occasion.groupIds.length > 0 && !occasion.archived ? html`<p><a class="rb-link" href="${v.base}/gifts/occasions/${encodeURIComponent(occasion.id)}/sync">Review changes to its groups</a></p>` : null}
+<p><a class="rb-link" href="${v.base}/gifts/occasions/${encodeURIComponent(occasion.id)}/rollover">Roll over to next year</a></p>
 </section>`
     : f.occasion
       ? html`<section><p class="rb-muted">That occasion is not on your list.</p></section>`
@@ -134,6 +139,8 @@ export interface FormState {
   problems?: string[];
   /** The unique roster the chosen groups and overrides give, shown before an occasion is saved. */
   preview?: { names: string[]; excluded: string[] };
+  /** A new gift's duplicate warnings (docket#100), each with its allocation id, and possible duplicates; the form then offers "Give it anyway". */
+  duplicates?: { warnings: { id: string; text: string }[]; possible: string[] };
 }
 
 export interface FormChoices {
@@ -160,7 +167,8 @@ ${input("notes", "Notes", val("notes"), { max: 2000 })}`;
       break;
     case "group":
       fields = html`${input("name", "Name", val("name"), { required: true, max: 200 })}
-${checks("member", "Members", people(c.recipients), all("member"))}`;
+${checks("member", "Members", people(c.recipients), all("member"))}
+${input("labels", "Or everyone with these labels", val("labels"), { help: "Instead of members: labels separated by commas, such as cousin. The group is then everyone carrying all of them, now and later." })}`;
       break;
     case "occasion":
       fields = html`${select("kind", "Kind", [["christmas", "Christmas"], ["birthday", "Birthday"], ["anniversary", "Anniversary"], ["custom", "Other"]], val("kind", "christmas"))}
@@ -168,7 +176,7 @@ ${input("title", "Title", val("title"), { required: true, max: 200, help: "Such 
 ${input("date", "Date", val("date"), { type: "date" })}
 ${input("currency", "Currency", val("currency", "USD"), { max: 3 })}
 ${input("budget", "Budget", val("budget"), { help: "Optional, such as 500 or 500.00." })}
-${checks("group", "Shop for these groups", c.groups.filter((g) => !g.archived).map((g) => [g.id, g.name] as const), all("group"))}
+${checks("group", "Shop for these groups", groupChoices(c.groups), all("group"))}
 ${checks("include", "Also add", people(c.recipients), all("include"))}
 ${checks("exclude", "Leave out", people(c.recipients), all("exclude"))}
 ${s.preview ? html`<div class="rb-alert rb-alert--info" role="status"><p class="rb-alert__title">Who this occasion will cover (${s.preview.names.length})</p><p>${s.preview.names.join(", ") || "Nobody yet."}</p>${s.preview.excluded.length > 0 ? html`<p>Left out: ${s.preview.excluded.join(", ")}</p>` : null}</div>` : null}`;
@@ -181,7 +189,10 @@ ${input("currency", "Currency", val("currency", "USD"), { max: 3 })}
 ${select("occasion", "Occasion", c.occasions.filter((o) => !o.archived).map((o) => [o.id, o.title] as const), val("occasion"), "Not yet (an idea for later)")}
 ${checks("for", "For", people(c.recipients), all("for"))}
 ${input("quantity", "How many each", val("quantity", "1"), { type: "number" })}
-<label class="rb-choice"><input class="rb-checkbox" type="checkbox" name="shared" value="1"${val("shared") === "1" ? html` checked` : null}> One shared gift for all of them</label>`;
+<label class="rb-choice"><input class="rb-checkbox" type="checkbox" name="shared" value="1"${val("shared") === "1" ? html` checked` : null}> One shared gift for all of them</label>
+${s.duplicates ? html`<div class="rb-alert rb-alert--warning" role="status"><p class="rb-alert__title">Already planned or given</p><ul>${s.duplicates.warnings.map((w) => html`<li>${w.text}</li>`)}</ul>${
+        s.duplicates.possible.length > 0 ? html`<p>Perhaps the same: ${s.duplicates.possible.join("; ")}</p>` : null
+      }<p>Save again to give it anyway.</p></div>${s.duplicates.warnings.map((w) => html`<input type="hidden" name="repeatOf" value="${w.id}">`)}` : null}`;
       break;
     case "purchase":
       fields = html`${select("gift", "Gift", c.unbought, val("gift"), "Choose a gift")}
@@ -203,7 +214,7 @@ ${alerts(s)}
 <form method="post" action="${v.base}/gifts/new/${form}" class="tr-stack">
 ${csrfField(v)}
 ${fields}
-<div class="tr-row">${preview}<button class="rb-btn rb-btn--primary" type="submit" name="step" value="save">Save</button></div>
+<div class="tr-row">${preview}<button class="rb-btn rb-btn--primary" type="submit" name="step" value="save">${s.duplicates ? "Give it anyway" : "Save"}</button></div>
 </form>
 </section>`,
   );
@@ -234,6 +245,40 @@ ${p.roster.filter((id) => !a.recipientIds.includes(id)).map((id) => html`<label 
 </div></fieldset>`,
     )}
 <div><button class="rb-btn rb-btn--primary" type="submit">Apply</button></div>
+</form>
+</section>`,
+  );
+}
+
+/**
+ * `/gifts/occasions/<id>/rollover` (docket#99): next year's occasion as it would be made -- its date
+ * and title, who stays with their target and budget, who is left off -- with the old occasion's
+ * unbought gifts to pick. "Update" previews again with the picks; "Set it up" makes exactly the
+ * preview shown (its token), as the sync review does.
+ */
+export function rolloverPage(v: Viewer, occasion: GiftOccasion, p: GiftRolloverPreview, token: string, names: (id: string) => string, titles: (allocationId: string) => string, error?: string): string {
+  const picked = p.ideas.map((i) => i.fromAllocationId);
+  const o = p.occasion;
+  return framed(
+    v,
+    `Roll over ${occasion.title}`,
+    html`<section>
+<p><a class="rb-link" href="${v.base}/gifts?occasion=${encodeURIComponent(occasion.id)}">Gifts</a></p>
+<h1>Roll ${occasion.title} over to next year</h1>
+${alerts({ error })}
+<p>New occasion: ${o.title}, ${o.date ?? "no date"}${o.deadline ? `, shop by ${o.deadline}` : ""}. ${occasion.title} itself stays as it is.</p>
+${p.roster.length === 0 ? html`<p class="rb-muted">Nobody on it yet.</p>` : html`<div class="rb-table-scroll"><table class="rb-table" aria-label="Who it covers">
+<thead><tr><th>Who</th><th>Gifts wanted</th><th>Budget</th></tr></thead>
+<tbody>${p.roster.map(
+      (r) => html`<tr data-recipient="${r.recipientId}"><td>${names(r.recipientId)}</td><td class="rb-num">${r.target === null ? "-" : String(r.target)}</td><td>${r.budgetMinor === null ? "-" : money(r.budgetMinor, o.currency)}</td></tr>`,
+    )}</tbody></table></div>`}
+<p>Left off: ${p.leftOff.length > 0 ? p.leftOff.map(names).join(", ") : "nobody"}.</p>
+<p class="rb-muted">Nothing bought, received, wrapped or given comes along; everyone starts again at planning.</p>
+<form method="post" action="${v.base}/gifts/occasions/${encodeURIComponent(occasion.id)}/rollover" class="tr-stack">
+${csrfField(v)}
+<input type="hidden" name="token" value="${token}">
+${checks("idea", "Carry these unbought gifts", p.pickable.map((id) => [id, titles(id)] as const), picked)}
+<div class="tr-row"><button class="rb-btn" type="submit" name="step" value="preview">Update the preview</button> <button class="rb-btn rb-btn--primary" type="submit" name="step" value="confirm">Set it up</button></div>
 </form>
 </section>`,
   );

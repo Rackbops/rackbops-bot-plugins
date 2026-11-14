@@ -357,6 +357,7 @@ describe("the gift route table", () => {
     expect(giftRoute("/gifts/groups/gg1/members")).toEqual({ kind: "members", id: "gg1" });
     expect(giftRoute("/gifts/occasions/go1/sync")).toEqual({ kind: "sync", id: "go1" });
     expect(giftRoute("/gifts/occasions/go1/summary")).toEqual({ kind: "summary", id: "go1" });
+    expect(giftRoute("/gifts/occasions/go1/rollover")).toEqual({ kind: "rollover", id: "go1" });
     expect(giftRoute("/gifts/spend")).toEqual({ kind: "spend" });
     expect(giftRoute("/gifts/batch")).toEqual({ kind: "batch" });
     for (const path of ["/gifts/toString", "/gifts/__proto__", "/gifts/items/gi1/members", "/gifts/recipients/gr1/sync", "/gifts"]) expect(giftRoute(path)).toBeNull();

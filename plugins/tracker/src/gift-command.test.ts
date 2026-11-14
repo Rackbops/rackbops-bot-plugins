@@ -52,6 +52,18 @@ async function gift(w: W, sub: string, strings: Record<string, string>, extra: {
 }
 
 describe("/gift", () => {
+  it("plans an idea that may repeat another gift for the person, and names the possible duplicate (docket#100)", async () => {
+    const w = await setup();
+    const f = await family(w);
+    const birthday = await create(w, "occasions", { kind: "birthday", title: "Bea's birthday 2027", date: "2027-02-02", timeZone: null, year: 2027, currency: "USD", budgetMinor: null, groupIds: [], includeIds: [], excludeIds: [] });
+    const first = await gift(w, "idea", { person: "Bea", title: "Scarf", occasion: "christmas 2026" });
+    expect(first).toContain("Planned Scarf for Bea for Christmas 2026.");
+    expect(first).not.toContain("Perhaps");
+    const again = await gift(w, "idea", { person: "Bea", title: "scarf", occasion: birthday.title });
+    expect(again).toContain("Planned scarf for Bea for Bea's birthday 2027. Perhaps the same as Scarf (Christmas 2026).");
+    expect((await list(w, "allocations")).map((a) => a.occasionId)).toEqual([f.xmas.id, birthday.id]);
+  });
+
   it("notes an idea, plans it on an occasion, and records it bought, each answered only to the person", async () => {
     const w = await setup();
     const f = await family(w);

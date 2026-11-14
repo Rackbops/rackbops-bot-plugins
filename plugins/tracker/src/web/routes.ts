@@ -16,6 +16,7 @@ const PERSON_CEILING = /^\/admin\/people\/([^/]+)\/ceiling$/;
 const BLOCK_LIFT = /^\/admin\/blocks\/([^/]+)\/lift$/;
 const GIFT_FORM = /^\/gifts\/new\/([a-z]+)$/;
 const GIFT_SYNC = /^\/gifts\/occasions\/([^/]+)\/sync$/;
+const GIFT_ROLLOVER = /^\/gifts\/occasions\/([^/]+)\/rollover$/;
 const TOKEN_REVOKE = /^\/tokens\/([^/]+)\/revoke$/;
 const ADMIN_TOKEN_REVOKE = /^\/admin\/tokens\/([^/]+)\/revoke$/;
 
@@ -33,6 +34,7 @@ export type Route =
   | { kind: "gifts" }
   | { kind: "gift-form"; form: GiftForm }
   | { kind: "gift-sync"; id: string }
+  | { kind: "gift-rollover"; id: string }
   | { kind: "token-revoke"; id: string }
   | { kind: "admin-token-revoke"; id: string }
   | { kind: "admin" | "admin-tasks" | "admin-deliveries" | "admin-usage" | "admin-allow" | "admin-usr-link" | "admin-usr-refresh" }
@@ -68,6 +70,8 @@ export function route(path: string): Route | null {
   if (giftForm) return (GIFT_FORMS as readonly string[]).includes(giftForm[1] ?? "") ? { kind: "gift-form", form: giftForm[1] as GiftForm } : null;
   const giftSync = GIFT_SYNC.exec(path);
   if (giftSync) return { kind: "gift-sync", id: segment(giftSync[1]) };
+  const giftRollover = GIFT_ROLLOVER.exec(path);
+  if (giftRollover) return { kind: "gift-rollover", id: segment(giftRollover[1]) };
   const revoke = TOKEN_REVOKE.exec(path);
   if (revoke) return { kind: "token-revoke", id: segment(revoke[1]) };
   const adminRevoke = ADMIN_TOKEN_REVOKE.exec(path);
@@ -118,6 +122,6 @@ export function methodsOf(r: Route): "GET" | "POST" | "GET, POST" {
   ) {
     return "POST";
   }
-  if (r.kind === "settings" || r.kind === "edit" || r.kind === "new" || r.kind === "forget" || r.kind === "tokens" || r.kind === "gift-form" || r.kind === "gift-sync") return "GET, POST";
+  if (r.kind === "settings" || r.kind === "edit" || r.kind === "new" || r.kind === "forget" || r.kind === "tokens" || r.kind === "gift-form" || r.kind === "gift-sync" || r.kind === "gift-rollover") return "GET, POST";
   return "GET";
 }
