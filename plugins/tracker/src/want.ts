@@ -477,7 +477,8 @@ export async function previewWant(d: TrackerDeps, start: PendingWant): Promise<W
  * docket-types' `nobleKnightSource` as this bot runs it: each read asks the Fetch port for the page
  * as sent (`RAW_BODY`), since the port's usual rebuild for price extraction takes the copy rows'
  * markup apart and every look would read as a changed layout (2026-11-14: the first two watches
- * were refused that way). The source's own patterns are bounded, and the body stays capped.
+ * were refused that way). Docket 0.28.0's parser reads any body in linear time (it was O(n^2) on
+ * a hostile one), the body stays capped, and the port refuses a redirect to another site.
  */
 export const nobleKnightWatchSource: Source = {
   id: "nobleknight",

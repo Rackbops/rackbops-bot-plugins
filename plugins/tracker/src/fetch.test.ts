@@ -90,6 +90,22 @@ describe("createPageFetch", () => {
     expect((await reader.get("https://shop.example/")).body).not.toContain("<");
   });
 
+  it("keeps a RAW_BODY read on its own site: follows a same-site redirect without the directive, refuses another site", async () => {
+    const f = fakeFetch({
+      "https://shop.example/a": () => new Response(null, { status: 301, headers: { location: "/b" } }),
+      "https://shop.example/b": () => new Response("<i>b</i>", { status: 200 }),
+      "https://shop.example/off": () => new Response(null, { status: 302, headers: { location: "https://other.example/x" } }),
+      "https://other.example/x": () => new Response("<i>x</i>", { status: 200 }),
+    });
+    const reader = createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl });
+    expect((await reader.get("https://shop.example/a", { [RAW_BODY]: "1" })).body).toBe("<i>b</i>");
+    for (const call of f.calls) expect(Object.keys(call.init?.headers as Record<string, string>).map((k) => k.toLowerCase())).not.toContain(RAW_BODY);
+    await expect(reader.get("https://shop.example/off", { [RAW_BODY]: "1" })).rejects.toThrow("it redirects to another site");
+    expect(f.calls.map((c) => c.url)).not.toContain("https://other.example/x");
+    // Without the directive the same redirect is followed, as before.
+    expect((await reader.get("https://shop.example/off")).body).toContain("x");
+  });
+
   it("reads a page with its own user agent and manual redirects", async () => {
     const f = fakeFetch({ "https://shop.example/": () => new Response("<p>ok</p>", { status: 200, headers: { "content-type": "text/html" } }) });
     const response = await createPageFetch({ resolve: PUBLIC, fetchImpl: f.impl }).get("https://shop.example/");

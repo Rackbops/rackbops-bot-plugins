@@ -37,7 +37,7 @@ export const USER_AGENT = "Mozilla/5.0 (compatible; RackbopsClerk/1.0; price tra
  * A directive to this port, never sent, like `NEVER_EBAY`: hand back this read's body as sent
  * (capped), not `pageForExtraction`'s. For a reader whose own patterns are bounded and that needs
  * the page's markup, which the rebuild takes apart: the Noble Knight source's copy rows (want.ts
- * `nobleKnightWatchSource`).
+ * `nobleKnightWatchSource`, docket 0.28.0's linear parser). A redirect to another site is refused.
  */
 export const RAW_BODY = "x-clerk-raw-body";
 
@@ -262,7 +262,8 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
       }
       const origin = url.origin;
       const neverEbay = Object.keys(headers).some((k) => k.toLowerCase() === NEVER_EBAY);
-      const rawBody = o.raw === true || Object.keys(headers).some((k) => k.toLowerCase() === RAW_BODY);
+      const rawAsked = Object.keys(headers).some((k) => k.toLowerCase() === RAW_BODY);
+      const rawBody = o.raw === true || rawAsked;
       const sent = Object.fromEntries(Object.entries(headers).filter(([k]) => k.toLowerCase() !== NEVER_EBAY && k.toLowerCase() !== RAW_BODY));
       for (let hop = 0; ; hop++) {
         await checkHost(url, resolve, signal, neverEbay);
@@ -282,6 +283,9 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
           } catch {
             throw new FetchRefusedError("it redirects to something that is not a web address");
           }
+          // A raw body is asked for one site's own pages, read by that source's own parser: never
+          // hand it another site's (review of #403).
+          if (rawAsked && url.origin !== origin) throw new FetchRefusedError("it redirects to another site");
           continue;
         }
         const out: Record<string, string> = {};
