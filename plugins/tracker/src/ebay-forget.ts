@@ -51,7 +51,17 @@ export function ebayLinesForgotten(text: string, words: string, max?: number): s
   // may be an eBay listing cut before its link and its "(via eBay)", which nothing can tell from
   // another place's: that line goes too, so a cut DM of a watch with an eBay place is always rewritten.
   const cut = text.endsWith("...") && !text.endsWith(DONE_LINE) ? lines.pop() : undefined;
-  const kept = lines.filter((l) => !EBAY_LINE.test(l));
+  // A judged DM puts the model's verdict (its fit, why, and the seller) on indented lines under
+  // each listing (docket's `renderJudged`): they go with their eBay listing's line.
+  const kept: string[] = [];
+  let dropping = false;
+  for (const l of lines) {
+    if (EBAY_LINE.test(l)) dropping = true;
+    else if (!(dropping && l.startsWith("  "))) {
+      dropping = false;
+      kept.push(l);
+    }
+  }
   if (kept.length === lines.length && cut === undefined) return null;
   const last = cut !== undefined ? DONE_LINE : (kept.pop() ?? "");
   const tail = [CLEARED, `eBay's own search: <${ebaySearchUrl(words, max)}>`, last];
@@ -82,7 +92,7 @@ export function ebayJobForgetSeconds(db: Database, occurrenceId: string): number
       `SELECT 1 AS one FROM occurrences o JOIN tasks t ON o.task_id = 't' || t.seq
          WHERE o.seq = ? AND t.type = 'wantjudge'
            AND (json_extract(t.config, '$.source') = 'ebay'
-             OR EXISTS (SELECT 1 FROM json_each(t.config, '$.also') a WHERE json_extract(a.value, '$.source') = 'ebay'))`,
+             OR EXISTS (SELECT 1 FROM json_each(t.config, '$.also') a WHERE CASE WHEN a.type = 'object' THEN json_extract(a.value, '$.source') END = 'ebay'))`,
     )
     .get(Number(m[1])) as { one: number } | null;
   return row ? EBAY_JOB_FORGET_SECONDS : undefined;
@@ -106,7 +116,7 @@ export function forgetEbayMessages(db: Database, now: Date, sweepAll = false): n
          FROM occurrences o JOIN tasks t ON o.task_id = 't' || t.seq
          WHERE t.type IN ('wantlist', 'wantjudge')
            AND (json_extract(t.config, '$.source') = 'ebay'
-             OR EXISTS (SELECT 1 FROM json_each(t.config, '$.also') a WHERE json_extract(a.value, '$.source') = 'ebay'))
+             OR EXISTS (SELECT 1 FROM json_each(t.config, '$.also') a WHERE CASE WHEN a.type = 'object' THEN json_extract(a.value, '$.source') END = 'ebay'))
            AND o.record IS NOT NULL
            AND (? OR o.started_at > ?)
            AND json_extract(o.record, '$.firedAt') <= ?`,

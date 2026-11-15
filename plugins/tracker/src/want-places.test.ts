@@ -292,4 +292,18 @@ describe("a watch of several places the model checks (0.63.0)", () => {
     expect(dm[0]).toContain("<https://shop.example/p/rougarou>");
     expect(dm[0]).toContain("(via BoardGameGeek)");
   });
+
+  it("over the task API, with judge left out, is checked by the model where the runner is set up, and says so", async () => {
+    const w = await world({ env: CITY_HALL, cityHallFetch: fakeCityHall().fetchImpl, fetch: shop().fetch, bgg: bggSource() });
+    await people(w.plugin);
+    const token = await makeToken(w, await signIn(w.plugin, LARRY));
+    const body = { type: "wantlist", name: "Rougarou", source: "page,bgg", target_page: SHOP, target_bgg: "300580" };
+    const made = await api(w.plugin, "POST", "/tasks", { token, body });
+    expect(made.status).toBe(201);
+    expect(JSON.stringify(await made.json())).toContain("the model checks everything they found together");
+    const db = new Database(w.dbPath, { readonly: true });
+    const type = (db.query("SELECT type FROM tasks WHERE seq = 1").get() as { type: string }).type;
+    db.close();
+    expect(type).toBe("wantjudge");
+  });
 });

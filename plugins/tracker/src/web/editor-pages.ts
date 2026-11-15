@@ -198,8 +198,8 @@ export function fieldsFor(type: NewType, mode: Mode, surface: Surface = "web"): 
             kind: "checks",
             options: SOURCE_OPTIONS,
             help: surface === "api"
-              ? "One place, or several separated by commas, such as page,ebay: one watch looks in each, sends one DM per look with what the places found, never tells the same listing twice, and one Done stops it everywhere. The same copy listed on two sites is two listings, so it can be told once from each. Give each place its own target below; with one place, target works as before."
-              : "Tick every place to look: one watch looks in each, sends one DM per look with what the places found, and one Done stops it everywhere. The same copy listed on two sites is two listings, so it can be told once from each. Fill in the box below for each place you tick.",
+              ? "One place, or several separated by commas, such as page,ebay: one watch looks in each, sends one DM per look with what the places found (with the model, only what it thinks worth a look), never tells the same listing twice, and one Done stops it everywhere. The same copy listed on two sites is two listings, so it can be told once from each. Give each place its own target below; with one place, target works as before."
+              : "Tick every place to look: one watch looks in each, sends one DM per look with what the places found (with the model, only what it thinks worth a look), and one Done stops it everywhere. The same copy listed on two sites is two listings, so it can be told once from each. Fill in the box below for each place you tick.",
           } as const,
           ...(surface === "api"
             ? [

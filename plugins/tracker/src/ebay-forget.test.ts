@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Database } from "bun:sqlite";
 import { EBAY_JOB_FORGET_SECONDS, EBAY_KEEP_MS, ebayJobForgetSeconds, forgetEbayMessages } from "./ebay-forget.js";
+import { renderJudged } from "@rackbops/docket-types";
+import { ebayLinesForgotten } from "./ebay-forget.js";
 import { openDatabase } from "./schema.js";
 
 const NOW = new Date("2026-10-20T12:00:00.000Z");
@@ -100,5 +102,47 @@ describe("how long city-hall may keep a run's Job (ebayJobForgetSeconds, Rackbop
     const noEbay = run(d, task(d, "wantjudge", { source: "page", target: "https://shop.example/s", also: [{ source: "bgg", target: "266192" }] }), 0, null);
     expect(ebayJobForgetSeconds(d, `o${mixed}`)).toBe(21_600);
     expect(ebayJobForgetSeconds(d, `o${noEbay}`)).toBeUndefined();
+  });
+
+  it("reads an `also` that is not a list of places as no eBay place, never failing the run", () => {
+    const d = db();
+    const strings = run(d, task(d, "wantjudge", { source: "page", target: "https://shop.example/s", also: ["ebay"] }), 0, null);
+    const object = run(d, task(d, "wantjudge", { source: "page", target: "https://shop.example/s", also: { source: "ebay" } }), 0, null);
+    expect(ebayJobForgetSeconds(d, `o${strings}`)).toBeUndefined();
+    expect(ebayJobForgetSeconds(d, `o${object}`)).toBeUndefined();
+    expect(forgetEbayMessages(d, NOW, true)).toBe(0);
+  });
+});
+
+describe("a judged DM of several places (0.63.0)", () => {
+  it("clears an eBay listing with the model's verdict lines under it, keeping the other places' whole", () => {
+    const page = { source: "page", target: "https://shop.example/s" } as const;
+    const ebay = { source: "ebay", target: "wingspan" } as const;
+    const verdict = (why: string, seller: string) => ({ n: 1, fit: "match", why, seller }) as const;
+    const text = renderJudged(
+      "Oceania",
+      "t1",
+      [
+        {
+          l: { id: "e1", title: "Wingspan Oceania", url: "https://www.ebay.com/itm/123456789012", price: 20, currency: "USD" },
+          v: verdict("sealed copy", "bob_sells (99.8%, 1200 ratings)"),
+          config: ebay,
+        },
+        {
+          l: { id: "p1", title: "Wingspan Oceania box", url: "https://shop.example/p/1", price: 30, currency: "USD" },
+          v: verdict("the shop's own copy", "the shop"),
+          config: page,
+        },
+      ] as Parameters<typeof renderJudged>[2],
+      0,
+      { ...page, also: [ebay] } as Parameters<typeof renderJudged>[4],
+    );
+    expect(text).toContain("bob_sells");
+    const out = ebayLinesForgotten(text, "wingspan") ?? "";
+    expect(out).not.toContain("bob_sells");
+    expect(out).not.toContain("sealed copy");
+    expect(out).not.toContain("ebay.com/itm");
+    expect(out).toContain("<https://shop.example/p/1>");
+    expect(out).toContain("the shop's own copy");
   });
 });
