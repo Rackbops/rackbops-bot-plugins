@@ -141,13 +141,18 @@ export function toHostMessage(message: OutgoingMessage): HostMessage | null {
   return { content: text };
 }
 
-/** The most messages one DM is sent as; docket's longest (a want DM, 24,000 characters) needs 12 at most. */
-export const MAX_PARTS = 15;
+/**
+ * The most messages one DM is sent as: a cap, not a guarantee. Docket's want DMs reach 24,000
+ * characters at most and a typical 20-listing one about 14,000 (8 to 11 parts); since a part breaks
+ * only between lines, one of 24,000 in lines near 1,900 characters could need about 24. Past the cap,
+ * the last part is cut.
+ */
+export const MAX_PARTS = 25;
 
 /**
  * The host messages for `message`, in order: one when it fits, else several, split between lines
  * (docket#152). A break before a listing's line ("- ...") is taken over any other, so a listing and
- * its note stay together. A line too long for a message on its own is cut, as `toHostMessage` cuts;
+ * its note stay together whenever a listing line falls inside the part. A line too long for a message on its own is cut, as `toHostMessage` cuts;
  * past `MAX_PARTS`, the last part is cut. Empty when it has no text to send.
  */
 export function toHostMessages(message: OutgoingMessage): HostMessage[] {

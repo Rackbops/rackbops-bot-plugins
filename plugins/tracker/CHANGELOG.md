@@ -4,7 +4,7 @@
 
 ### Changed
 
-- A DM longer than one Discord message goes as several messages in a row (docket#152, Rod's choice of 2026-11-15: "several messages at once"), split between lines, a break before a listing ("- ...") taken first so a listing and its note stay together; the buttons ride on the last part, whose message id is the delivery's. Up to 15 parts; a single line too long for a message is cut as before. Until now every DM was cut at 2,000 characters, so a judged eBay look with long notes lost the end of its listings and its Done button. A failure of the first part is read as before; once a part went out, a later failure settles the send unconfirmed and is never resent, so no part arrives twice. Docket's want DMs show every listing a look takes from the docket release after 0.29.0; until then they stay within one message.
+- A DM longer than one Discord message goes as several messages in a row (docket#152, Rod's choice of 2026-11-15: "several messages at once"), split between lines, a break before a listing ("- ...") taken first so a listing and its note stay together; the buttons ride on the last part, whose message id is the delivery's. Up to 25 parts (a cap: a typical 20-listing want DM takes 8 to 11); a single line too long for a message is cut as before. Until now every DM was cut at 2,000 characters, so a judged eBay look with long notes lost the end of its listings and its Done button. A failure of the first part is read as before; once a part went out, a later failure settles the send unconfirmed and is never resent, so no part arrives twice. Docket's want DMs show every listing a look takes from the docket release after 0.29.0; until then they stay within one message.
 
 ### Schema
 

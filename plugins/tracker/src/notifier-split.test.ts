@@ -50,7 +50,7 @@ describe("toHostMessages", () => {
     const one = toHostMessages({ text: `short\n${"a".repeat(MAX_CONTENT + 500)}\nend` });
     for (const p of one) expect(wrapBareUrls(p.content).length).toBeLessThanOrEqual(MAX_CONTENT);
     expect(one.map((p) => p.content)).toContain("end");
-    const huge = toHostMessages({ text: Array.from({ length: 40 }, (_, i) => `- ${i} ${"b".repeat(1500)}`).join("\n") });
+    const huge = toHostMessages({ text: Array.from({ length: 60 }, (_, i) => `- ${i} ${"b".repeat(1500)}`).join("\n") });
     expect(huge).toHaveLength(MAX_PARTS);
     for (const p of huge) expect(wrapBareUrls(p.content).length).toBeLessThanOrEqual(MAX_CONTENT);
   });
