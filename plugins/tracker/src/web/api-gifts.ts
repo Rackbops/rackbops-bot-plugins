@@ -32,6 +32,8 @@ import { sha256 } from "./secrets.js";
 import { canonicalJson } from "./task-version.js";
 import { GIFT_COLLECTIONS, type GiftCollection, MAX_GIFT_BATCH } from "./api-gift-names.js";
 import { rollover, rolloverPreview, rolloverQuery } from "./api-gift-rollover.js";
+import { findingIdea, watches } from "./api-gift-links.js";
+import { importApply, importReview } from "./api-gift-import.js";
 
 export { GIFT_COLLECTIONS, type GiftCollection, MAX_GIFT_BATCH, MAX_GIFT_BATCH_BYTES } from "./api-gift-names.js";
 
@@ -66,6 +68,11 @@ export { GIFT_COLLECTIONS, type GiftCollection, MAX_GIFT_BATCH, MAX_GIFT_BATCH_B
  *   refuses: it rides on the 201 answer as `duplicates`.
  * - `GET /gifts/occasions/<id>/summary`: coverage of each live roster row, the budget and what the
  *   occasion's gifts cost; `GET /gifts/spend`: spend per currency over the whole ledger.
+ * - `POST /gifts/finding-ideas` and `POST /gifts/items/<id>/watches` (api-gift-links.ts, docket#101):
+ *   a scout or news finding saved as a gift idea, and the watches an item follows.
+ * - `POST /gifts/import/review` and `POST /gifts/import` (api-gift-import.ts, docket#102): a pasted
+ *   list or CSV reviewed against the owner's people and occasions, then the rows they approved made.
+ *   The review writes nothing (a delegation token's `read_gifts` does for it).
  * - `POST /gifts/batch`: up to `MAX_GIFT_BATCH` creates and updates, each with its own outcome, in
  *   order; one refused row writes nothing for itself and leaves the others as they went.
  *
@@ -79,12 +86,14 @@ export type GiftRoute =
   | { kind: "collection"; collection: GiftCollection }
   | { kind: "record"; collection: GiftCollection; id: string }
   | { kind: "members" | "sync" | "summary" | "rollover"; id: string }
-  | { kind: "spend" | "batch" };
+  | { kind: "watches"; id: string }
+  | { kind: "spend" | "batch" | "finding-ideas" | "import-review" | "import" };
 
 const COLLECTION = /^\/gifts\/([a-z-]+)$/;
 const RECORD = /^\/gifts\/([a-z-]+)\/([^/]+)$/;
 const MEMBERS = /^\/gifts\/groups\/([^/]+)\/members$/;
 const OCCASION_VIEW = /^\/gifts\/occasions\/([^/]+)\/(sync|summary|rollover)$/;
+const WATCHES = /^\/gifts\/items\/([^/]+)\/watches$/;
 
 const isCollection = (name: string | undefined): name is GiftCollection => name !== undefined && Object.hasOwn(GIFT_COLLECTIONS, name);
 
@@ -100,6 +109,12 @@ function segment(raw: string | undefined): string {
 export function giftRoute(rest: string): GiftRoute | null {
   if (rest === "/gifts/spend") return { kind: "spend" };
   if (rest === "/gifts/batch") return { kind: "batch" };
+  // Before the collection and record matches, which these paths would otherwise reach as no collection.
+  if (rest === "/gifts/finding-ideas") return { kind: "finding-ideas" };
+  if (rest === "/gifts/import") return { kind: "import" };
+  if (rest === "/gifts/import/review") return { kind: "import-review" };
+  const watched = WATCHES.exec(rest);
+  if (watched) return { kind: "watches", id: segment(watched[1]) };
   const members = MEMBERS.exec(rest);
   if (members) return { kind: "members", id: segment(members[1]) };
   const view = OCCASION_VIEW.exec(rest);
@@ -123,6 +138,10 @@ export function giftMethods(r: GiftRoute): string[] {
       return ["GET", "POST"];
     case "members":
     case "batch":
+    case "finding-ideas":
+    case "watches":
+    case "import-review":
+    case "import":
       return ["POST"];
     case "summary":
     case "spend":
@@ -282,6 +301,8 @@ async function summary(gifts: GiftLedger, ownerId: string, id: string): Promise<
 /** One create or update, as its answer. */
 async function writeOne(gifts: GiftLedger, meta: GiftWriteMeta, collection: GiftCollection, id: string | null, body: Record<string, unknown>): Promise<ApiAnswer> {
   const kind = GIFT_COLLECTIONS[collection];
+  // docket does not check an item's watches against tasks (it cannot see them): only the watches route does (api-gift-links.ts).
+  if (kind === "item" && Object.hasOwn(body, "watchTaskIds")) return invalid("`watchTaskIds` is set with POST /gifts/items/<id>/watches, which checks each is one of your watches.");
   try {
     if (id === null) {
       const report = kind === "allocation" ? await duplicatesFirst(gifts, meta.ownerId, body) : null;
@@ -496,6 +517,14 @@ export function giftWrite(w: Writer, user: User, r: GiftRoute, body: Record<stri
         return rollover(gifts, meta, r.id, body);
       case "batch":
         return batch(gifts, meta, body, (text) => w.d.log.warn(text));
+      case "finding-ideas":
+        return findingIdea(w.d, user, body);
+      case "watches":
+        return watches(w.d, meta, r.id, body);
+      case "import-review":
+        return importReview(gifts, user.id, body);
+      case "import":
+        return importApply(gifts, meta, body);
       default:
         return problem(405, "method_not_allowed", "Not a write.");
     }

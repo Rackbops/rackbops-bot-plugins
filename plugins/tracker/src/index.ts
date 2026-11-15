@@ -29,6 +29,7 @@ import { TaskLocks } from "./locks.js";
 import { createDmNotifier } from "./notifier.js";
 import { type NotifyTickKind, runNotifyTick } from "./notify-lane.js";
 import { runDigests } from "./digest.js";
+import { runGiftDigests } from "./gift-digest.js";
 import { parseAdminIds, seedAdmins } from "./people.js";
 import { openDatabase, vacuumOnce } from "./schema.js";
 import { SqliteGiftStore } from "./gift-store.js";
@@ -329,6 +330,20 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
     if (kind === "notify" && options.digest !== false && deps && store) {
       const r = await runDigests({ store, notifier: deps.notifier, log: host.log, ...(delivery ? { health: delivery } : {}) }, clock.now(), signal);
       if (r.failed > 0) host.log.warn(`digest: ${r.sent} sent, ${r.failed} failed`);
+    }
+    // The opt-in gift digests (docket#103, gift-digest.ts), after it; a failure is logged, never in the way of the tick.
+    if (kind === "notify" && options.digest !== false && deps && db && !signal?.aborted) {
+      const live = deps;
+      try {
+        const g = await runGiftDigests(
+          { db, store: live.store, gifts: live.gifts, notifier: live.notifier, log: host.log, isRegistered: (id) => live.admissions.isRegistered(id), ...(delivery ? { health: delivery } : {}) },
+          clock.now(),
+          signal,
+        );
+        if (g.failed > 0) host.log.warn(`gift digest: ${g.sent} sent, ${g.failed} failed`);
+      } catch (err) {
+        host.log.warn(`gift digest: the pass failed (${err instanceof Error ? err.message : String(err)})`);
+      }
     }
   }
 

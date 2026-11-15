@@ -13,8 +13,9 @@ import type { HostButton } from "../../../packages/api/contract.js";
  *
  * - `i.<s|g|x>.<conversation>.<draft>`: Save, Change or Cancel on a draft the intake showed (intake.ts),
  *   handled before the rest (index.ts).
+ * - `g.f.<finding>`: "Save as gift idea" on a scout or news run's DM (gift-scout.ts, docket#101).
  *
- * `r`, `m` and `i` are not codes docket's encoding uses, so they never collide. docket keeps a
+ * `r`, `m`, `i` and `g` are not codes docket's encoding uses, so they never collide. docket keeps a
  * reference within 80 characters; with the 8-character prefix every id stays inside Discord's 100.
  */
 
@@ -49,7 +50,15 @@ export type ParsedId =
   | { kind: "reply-button"; occurrenceId: string }
   | { kind: "reply-modal"; occurrenceId: string }
   | { kind: "ref"; ref: string }
+  | { kind: "gift-idea"; findingId: string }
   | null;
+
+export const GIFT_IDEA_CODE = "g";
+
+/** "Save as gift idea" on one finding of a run's DM (gift-scout.ts). */
+export function giftIdeaButtonId(findingId: string): string {
+  return `${PREFIX}${GIFT_IDEA_CODE}.f.${findingId}`;
+}
 
 /** What a customId the host routed here stands for; null when it is not the tracker's. */
 export function parseCustomId(customId: string): ParsedId {
@@ -57,6 +66,8 @@ export function parseCustomId(customId: string): ParsedId {
   const rest = customId.slice(PREFIX.length);
   const own = /^([rm])\.o\.([^.]+)$/.exec(rest);
   if (own) return own[1] === REPLY_CODE ? { kind: "reply-button", occurrenceId: own[2] as string } : { kind: "reply-modal", occurrenceId: own[2] as string };
+  const idea = /^g\.f\.([^.]+)$/.exec(rest);
+  if (idea) return { kind: "gift-idea", findingId: idea[1] as string };
   return rest.length > 0 ? { kind: "ref", ref: rest } : null;
 }
 

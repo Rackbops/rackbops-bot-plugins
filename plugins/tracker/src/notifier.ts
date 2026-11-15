@@ -1,6 +1,7 @@
 import { DeliveryFailedError, ExecutorUnavailableError, type Clock, type Notifier, type OutgoingMessage, type Store } from "@rackbops/docket-core";
 import type { HostApi, HostDelivery, HostMessage, PluginLog } from "../../../packages/api/contract.js";
-import { hostButtons } from "./buttons.js";
+import { hostButtons, MAX_BUTTONS } from "./buttons.js";
+import { findingButtons } from "./gift-scout.js";
 import type { DeliveryHealth } from "./delivery-health.js";
 
 /**
@@ -25,6 +26,10 @@ import type { DeliveryHealth } from "./delivery-health.js";
  * `HostMessage.buttons` (buttons.ts), with a Reply button on a message about one run. A host from
  * before rackbops-discord-bot#323 refuses buttons before sending anything; the DM is then sent again
  * without them, as the contract asks, under docket's same claim.
+ *
+ * A scout or news run's DM to its owner also carries "Save as gift idea" buttons, one per finding
+ * (gift-scout.ts, docket#101). Reading them is best effort: a failure is logged and the DM goes
+ * without them.
  *
  * Each "cannot be messaged" and each unknown user counts toward pausing the person's delivery (so
  * the owner of a task hears when a recipient's account is gone), and each DM that goes through
@@ -155,7 +160,12 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
         throw new ExecutorUnavailableError(`delivery to ${userId} is paused`);
       }
 
-      const buttons = hostButtons(message);
+      let buttons = hostButtons(message);
+      try {
+        buttons = [...buttons, ...(await findingButtons(d.store, userId, message, MAX_BUTTONS - buttons.length))];
+      } catch (err) {
+        d.log.warn(`DM sent without gift idea buttons: reading the run's findings failed (${err instanceof Error ? err.message : String(err)})`);
+      }
       let delivery: HostDelivery;
       try {
         try {

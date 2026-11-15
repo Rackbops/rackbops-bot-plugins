@@ -119,6 +119,15 @@ describe("a usr delegation token on the task API", () => {
     expect(await status("tracker:read_gifts", "GET", "/gifts/recipients/gr1")).toBe(200);
     expect(await status("tracker:read_gifts", "PATCH", "/gifts/recipients/gr1", { expectedRevision: 1, notes: "x" })).toBe(403);
     expect(await status("tracker:list_tasks tracker:get_task tracker:update_task", "GET", "/gifts/recipients")).toBe(403);
+    // Every route of 0.58.0 (docket#101, #102) is routed and takes its own operation.
+    expect(await status("tracker:read_gifts", "POST", "/gifts/import/review", { format: "list", text: "Scarf" })).toBe(200);
+    expect(await status("tracker:write_gifts", "POST", "/gifts/import/review", { format: "list", text: "Scarf" })).toBe(403);
+    expect(await status("tracker:read_gifts", "POST", "/gifts/import", { format: "list", text: "Scarf", reviewToken: "x", approve: [] })).toBe(403);
+    expect(await status("tracker:write_gifts", "POST", "/gifts/import", { format: "list", text: "Scarf", reviewToken: "x", approve: [] })).toBe(409);
+    expect(await status("tracker:read_gifts", "POST", "/gifts/finding-ideas", { taskId: "t1", findingId: "f1" })).toBe(403);
+    expect(await status("tracker:write_gifts", "POST", "/gifts/finding-ideas", { taskId: "t1", findingId: "f1" })).toBe(404);
+    expect(await status("tracker:read_gifts", "POST", "/gifts/items/gi9/watches", { expectedRevision: 1, watchTaskIds: [] })).toBe(403);
+    expect(await status("tracker:write_gifts", "POST", "/gifts/items/gi9/watches", { expectedRevision: 1, watchTaskIds: [] })).toBe(404);
     const res = await api(w.plugin, "GET", "/gifts/spend", { token: await w.token({ scope: "tracker:list_tasks" }) });
     expect(await code(res)).toBe("insufficient_scope");
   });
@@ -216,9 +225,15 @@ describe("the route-to-operation table", () => {
       [{ kind: "gift", gift: { kind: "rollover", id: "go1" } }, ["GET", "POST"]],
       [{ kind: "gift", gift: { kind: "spend" } }, ["GET"]],
       [{ kind: "gift", gift: { kind: "batch" } }, ["POST"]],
+      [{ kind: "gift", gift: { kind: "finding-ideas" } }, ["POST"]],
+      [{ kind: "gift", gift: { kind: "watches", id: "gi1" } }, ["POST"]],
+      [{ kind: "gift", gift: { kind: "import" } }, ["POST"]],
+      [{ kind: "gift", gift: { kind: "import-review" } }, ["POST"]],
     ];
     for (const [r, methods] of gifts) {
-      for (const m of ["GET", "POST", "PATCH", "DELETE"]) expect(operationOf(r, m)).toBe(methods.includes(m) ? (m === "GET" ? "read_gifts" : "write_gifts") : null);
+      // The import review is a POST that writes nothing: a read (docket#102).
+      const reads = (m: string) => m === "GET" || (r.kind === "gift" && r.gift.kind === "import-review");
+      for (const m of ["GET", "POST", "PATCH", "DELETE"]) expect(operationOf(r, m)).toBe(methods.includes(m) ? (reads(m) ? "read_gifts" : "write_gifts") : null);
     }
     const seen: string[] = ["read_gifts", "write_gifts"];
     for (const [r, methods] of routes) {

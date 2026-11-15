@@ -17,6 +17,7 @@ const BLOCK_LIFT = /^\/admin\/blocks\/([^/]+)\/lift$/;
 const GIFT_FORM = /^\/gifts\/new\/([a-z]+)$/;
 const GIFT_SYNC = /^\/gifts\/occasions\/([^/]+)\/sync$/;
 const GIFT_ROLLOVER = /^\/gifts\/occasions\/([^/]+)\/rollover$/;
+const GIFT_ITEM = /^\/gifts\/items\/([^/]+)$/;
 const TOKEN_REVOKE = /^\/tokens\/([^/]+)\/revoke$/;
 const ADMIN_TOKEN_REVOKE = /^\/admin\/tokens\/([^/]+)\/revoke$/;
 
@@ -35,6 +36,8 @@ export type Route =
   | { kind: "gift-form"; form: GiftForm }
   | { kind: "gift-sync"; id: string }
   | { kind: "gift-rollover"; id: string }
+  | { kind: "gift-item"; id: string }
+  | { kind: "gift-import" }
   | { kind: "token-revoke"; id: string }
   | { kind: "admin-token-revoke"; id: string }
   | { kind: "admin" | "admin-tasks" | "admin-deliveries" | "admin-usage" | "admin-allow" | "admin-usr-link" | "admin-usr-refresh" }
@@ -66,6 +69,9 @@ export function route(path: string): Route | null {
   if (path === "/forget") return { kind: "forget" };
   if (path === "/tokens") return { kind: "tokens" };
   if (path === "/gifts") return { kind: "gifts" };
+  if (path === "/gifts/import") return { kind: "gift-import" };
+  const giftItem = GIFT_ITEM.exec(path);
+  if (giftItem) return { kind: "gift-item", id: segment(giftItem[1]) };
   const giftForm = GIFT_FORM.exec(path);
   if (giftForm) return (GIFT_FORMS as readonly string[]).includes(giftForm[1] ?? "") ? { kind: "gift-form", form: giftForm[1] as GiftForm } : null;
   const giftSync = GIFT_SYNC.exec(path);
@@ -122,6 +128,6 @@ export function methodsOf(r: Route): "GET" | "POST" | "GET, POST" {
   ) {
     return "POST";
   }
-  if (r.kind === "settings" || r.kind === "edit" || r.kind === "new" || r.kind === "forget" || r.kind === "tokens" || r.kind === "gift-form" || r.kind === "gift-sync" || r.kind === "gift-rollover") return "GET, POST";
+  if (r.kind === "settings" || r.kind === "edit" || r.kind === "new" || r.kind === "forget" || r.kind === "tokens" || r.kind === "gift-form" || r.kind === "gift-sync" || r.kind === "gift-rollover" || r.kind === "gift-item" || r.kind === "gift-import") return "GET, POST";
   return "GET";
 }

@@ -13,6 +13,7 @@ import { decideAccess, NOT_ADMITTED } from "./access.js";
 import { clip, enter, MAX_ANSWER, type TrackerDeps } from "./actions.js";
 import { MAX_REPLY_TEXT, modalId, parseCustomId, REPLY_FIELD, replyButtonId } from "./buttons.js";
 import { EPHEMERAL, FAILED, type Interactionish, NO_MENTIONS, STARTING, type SurfaceContext } from "./discord-common.js";
+import { saveFindingIdea } from "./gift-scout.js";
 import { press, reducesContact, replyRefusal, submitReply } from "./press.js";
 
 /**
@@ -78,6 +79,34 @@ export function createInteractionHandler(c: SurfaceContext): PluginInteractionHa
     if (result.notice) await interaction.followUp({ content: result.notice, ...EPHEMERAL });
   }
 
+  /**
+   * "Save as gift idea" (gift-scout.ts): the finding saved to the presser's own gift ledger, in the
+   * one queue, as the registered person who pressed. The DM is never edited; the answer is ephemeral.
+   * Keyed by the interaction, so a retry of this press replays its item; a second press finds the
+   * item the first made and says so.
+   */
+  async function onGiftIdea(interaction: MessageComponentInteraction, d: TrackerDeps, findingId: string) {
+    await interaction.deferUpdate();
+    const membership = await membershipOf(interaction);
+    const content = await c.queue(async () => {
+      const entry = await enter(d, interaction.user.id, membership, "registered");
+      if (!entry.ok) return entry.content;
+      const saved = await saveFindingIdea(d, entry.user, findingId, { source: "discord", key: `discord:${interaction.id}` });
+      const body =
+        saved.kind === "saved"
+          ? `Saved as a gift idea.${giftsLink()}`
+          : saved.kind === "already"
+            ? `Already saved as a gift idea.${giftsLink()}`
+            : saved.kind === "not-found"
+              ? "That finding is not one of yours, or is gone."
+              : `Not saved: ${saved.problems.join("; ")}.`;
+      return entry.notice ? `${entry.notice}\n\n${body}` : body;
+    });
+    await interaction.followUp({ content: clip(content), ...EPHEMERAL, ...NO_MENTIONS });
+  }
+
+  const giftsLink = () => (c.web ? ` See it on <${c.web.origin}/${c.web.name}/gifts>.` : "");
+
   async function onReplyButton(interaction: MessageComponentInteraction, d: TrackerDeps, occurrenceId: string) {
     // Read-only, and outside the queue: a modal has to be the first answer, within three seconds.
     // Membership and the resume wait for the submit (onReplyModal), before anything is written.
@@ -131,6 +160,7 @@ export function createInteractionHandler(c: SurfaceContext): PluginInteractionHa
       if (parsed.kind === "reply-modal" && interaction.isModalSubmit()) return await onReplyModal(interaction, d, parsed.occurrenceId);
       if (interaction.isMessageComponent() && parsed.kind === "reply-button") return await onReplyButton(interaction, d, parsed.occurrenceId);
       if (interaction.isMessageComponent() && parsed.kind === "ref") return await onButton(interaction, d, parsed.ref);
+      if (interaction.isMessageComponent() && parsed.kind === "gift-idea") return await onGiftIdea(interaction, d, parsed.findingId);
       await interaction.reply({ content: "That is not one of mine.", ...EPHEMERAL });
     } catch (err) {
       c.log.error(`interaction ${interaction.customId} failed`, err);
