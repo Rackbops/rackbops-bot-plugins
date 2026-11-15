@@ -6,6 +6,7 @@ import {
   GiftRevisionError,
   giftRequestKey,
   type GiftBase,
+  type GiftDigestState,
   type GiftEvent,
   type GiftEventFilter,
   type GiftFieldsByKind,
@@ -49,7 +50,7 @@ const PREFIX: Record<GiftKind, string> = {
 };
 
 /** The gift tables, in the order forget-me deletes from them. */
-export const GIFT_TABLES = ["gift_events", "gift_idempotency", "gift_records"] as const;
+export const GIFT_TABLES = ["gift_events", "gift_idempotency", "gift_records", "gift_digest_state"] as const;
 
 /** Makes the gift tables when absent. Idempotent; run on every open (schema.ts `openDatabase`). */
 export function ensureGiftTables(db: Database): void {
@@ -90,17 +91,48 @@ export function ensureGiftTables(db: Database): void {
     result TEXT NOT NULL,
     PRIMARY KEY (owner_id, key)
   );
+
+  CREATE TABLE IF NOT EXISTS gift_digest_state (
+    owner_id TEXT NOT NULL,
+    occasion_id TEXT NOT NULL,
+    sent_on TEXT,
+    fingerprint TEXT,
+    PRIMARY KEY (owner_id, occasion_id)
+  );
   `);
 }
 
+/** What docket's `decideGiftDigest` returned last for one occasion (gift-digest.ts, docket#103); null before the first. */
+export function getDigestState(db: Database, ownerId: string, occasionId: string): GiftDigestState | null {
+  const row = db.query("SELECT sent_on, fingerprint FROM gift_digest_state WHERE owner_id = ? AND occasion_id = ?").get(ownerId, occasionId) as
+    | { sent_on: string | null; fingerprint: string | null }
+    | null;
+  return row ? { sentOn: row.sent_on, fingerprint: row.fingerprint } : null;
+}
+
+export function putDigestState(db: Database, ownerId: string, occasionId: string, state: GiftDigestState): void {
+  db.query(
+    "INSERT INTO gift_digest_state (owner_id, occasion_id, sent_on, fingerprint) VALUES (?, ?, ?, ?) ON CONFLICT (owner_id, occasion_id) DO UPDATE SET sent_on = excluded.sent_on, fingerprint = excluded.fingerprint",
+  ).run(ownerId, occasionId, state.sentOn, state.fingerprint);
+}
+
+/** The owners with a live occasion opted in to a digest: one read, so a tick passes everyone else by. */
+export function digestOwners(db: Database): string[] {
+  const rows = db
+    .query("SELECT DISTINCT owner_id FROM gift_records WHERE kind = 'occasion' AND archived = 0 AND json_extract(fields, '$.digest') = 1 ORDER BY owner_id")
+    .all() as { owner_id: string }[];
+  return rows.map((r) => r.owner_id);
+}
+
 /**
- * Erases every gift record, event and idempotency key of one owner; returns the records and events
+ * Erases every gift record, event, idempotency key and digest state of one owner; returns the records and events
  * erased (docket's `forgetOwner` count). `forgetOwner` runs it in a transaction; forget-me (roster.ts)
  * deletes from `GIFT_TABLES` with its own statements inside its own transaction, to count each table.
  */
 export function deleteGiftsOf(db: Database, ownerId: string): number {
   const events = db.query("DELETE FROM gift_events WHERE owner_id = ?").run(ownerId).changes;
   db.query("DELETE FROM gift_idempotency WHERE owner_id = ?").run(ownerId);
+  db.query("DELETE FROM gift_digest_state WHERE owner_id = ?").run(ownerId);
   const records = db.query("DELETE FROM gift_records WHERE owner_id = ?").run(ownerId).changes;
   return records + events;
 }

@@ -1,5 +1,7 @@
 import { giftFormGet, giftFormPost, giftsGet, syncGet, syncPost } from "./gifts-web.js";
 import { rolloverGet, rolloverPost } from "./gift-rollover-web.js";
+import { itemGet, itemPost } from "./gift-links-web.js";
+import { importGet, importPost, MAX_IMPORT_FORM_BYTES } from "./gift-import-web.js";
 import type { User } from "@rackbops/docket-core";
 import { type Membership, NOT_MEMBER } from "../access.js";
 import type { PluginHttpInfo } from "../../../../packages/api/contract.js";
@@ -246,10 +248,10 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     return (await lookupWithin(() => w.membership(discordId), MEMBER_CHECK_TIMEOUT_MS)) ?? "unknown";
   }
 
-  async function readForm(request: Request): Promise<URLSearchParams | null> {
+  async function readForm(request: Request, max = MAX_FORM_BYTES): Promise<URLSearchParams | null> {
     const type = request.headers.get("content-type") ?? "";
     if (!type.toLowerCase().startsWith("application/x-www-form-urlencoded")) return null;
-    const body = await readBody(request, MAX_FORM_BYTES);
+    const body = await readBody(request, max);
     return body === null ? null : new URLSearchParams(body);
   }
 
@@ -472,7 +474,8 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     const a: AdminWeb = { d, v, queue: w.queue, memberOf: (id) => memberOf(id), signOutCookie: clear(SESSION_COOKIE), usrGuildId: w.guildIds?.[0] ?? null };
 
     if (method === "POST") {
-      const form = await readForm(request);
+      // The gift import's pasted list (gift-import-web.ts) is the one form allowed past MAX_FORM_BYTES.
+      const form = await readForm(request, r.kind === "gift-import" ? MAX_IMPORT_FORM_BYTES : MAX_FORM_BYTES);
       if (!form) return plain(400, "Bad request");
       if (!safeEqual(auth.session.csrf, form.get("csrf") ?? "")) return forbidden();
       switch (r.kind) {
@@ -504,6 +507,10 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
         return syncPost(e, r.id, form);
       case "gift-rollover":
         return rolloverPost(e, r.id, form);
+      case "gift-item":
+        return itemPost(e, r.id, form);
+      case "gift-import":
+        return importPost(e, form);
       case "admin-allow":
       case "admin-usr-link":
       case "admin-usr-refresh":
@@ -547,6 +554,10 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
       return syncGet(e, r.id);
     case "gift-rollover":
       return rolloverGet(e, r.id);
+    case "gift-item":
+      return itemGet(e, r.id, url.searchParams);
+    case "gift-import":
+      return importGet(e);
     case "admin":
     case "admin-tasks":
     case "admin-deliveries":

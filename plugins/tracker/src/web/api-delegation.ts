@@ -41,7 +41,8 @@ export type RouteKind =
 /**
  * Every operation a delegation token can name: one per task route and method, and two for the whole
  * gift ledger (#383) -- `read_gifts` for every gift read, `write_gifts` for every gift write -- so a
- * service can be let read a person's gifts without changing them.
+ * service can be let read a person's gifts without changing them. The import review (docket#102) is
+ * a POST that writes nothing, so it is `read_gifts`.
  */
 export const OPERATIONS = [
   "whoami",
@@ -90,6 +91,8 @@ export function operationOf(r: RouteKind, method: string): Operation | null {
     case "ready":
       return method === "POST" ? "sources_ready" : null;
     case "gift":
-      return giftMethods(r.gift).includes(method) ? (method === "GET" ? "read_gifts" : "write_gifts") : null;
+      if (!giftMethods(r.gift).includes(method)) return null;
+      // The import review is a POST (its list is a body) that writes nothing: a read.
+      return method === "GET" || r.gift.kind === "import-review" ? "read_gifts" : "write_gifts";
   }
 }

@@ -1,4 +1,4 @@
-import type { GiftGroup, GiftOccasion, GiftRecipient, GiftRolloverPreview, GiftSpend, GiftSyncPreview } from "@rackbops/docket-core";
+import type { GiftGroup, GiftItem, GiftOccasion, GiftRecipient, GiftRolloverPreview, GiftSpend, GiftSyncPreview } from "@rackbops/docket-core";
 import type { GiftForm } from "./gifts-web.js";
 import { minorDigits, STAGE_COLUMNS, type Overview, type OverviewFilter } from "./gift-overview.js";
 import { html, type Html } from "./html.js";
@@ -28,28 +28,28 @@ export function money(minor: number, currency: string): string {
   return `${sign}${whole}${digits > 0 ? `.${String(abs % scale).padStart(digits, "0")}` : ""} ${currency}`;
 }
 
-const csrfField = (v: Viewer) => html`<input type="hidden" name="csrf" value="${v.csrf}">`;
+export const csrfField = (v: Viewer) => html`<input type="hidden" name="csrf" value="${v.csrf}">`;
 const giftsHref = (v: Viewer, q: Record<string, string | undefined> = {}) => {
   const params = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => e[1] !== undefined && e[1] !== ""));
   const s = params.toString();
   return `${v.base}/gifts${s ? `?${s}` : ""}`;
 };
 
-function alerts(f: { error?: string | undefined; problems?: string[] | undefined; notice?: string | undefined }): Html {
+export function alerts(f: { error?: string | undefined; problems?: string[] | undefined; notice?: string | undefined }): Html {
   return html`${f.notice ? html`<div class="rb-alert rb-alert--success" role="status"><p>${f.notice}</p></div>` : null}
 ${f.error ? html`<div class="rb-alert rb-alert--danger" role="alert"><p class="rb-alert__title">Not saved</p><p>${f.error}</p>${
     f.problems && f.problems.length > 0 ? html`<ul>${f.problems.map((p) => html`<li>${p}</li>`)}</ul>` : null
   }</div>` : null}`;
 }
 
-function select(name: string, label: string, options: readonly (readonly [string, string])[], chosen: string | undefined, blank?: string): Html {
+export function select(name: string, label: string, options: readonly (readonly [string, string])[], chosen: string | undefined, blank?: string): Html {
   return html`<div class="rb-field"><label class="rb-label" for="${name}">${label}</label>
 <select class="rb-select" id="${name}" name="${name}">${blank !== undefined ? html`<option value="">${blank}</option>` : null}${options.map(
     ([value, text]) => html`<option value="${value}"${value === chosen ? html` selected` : null}>${text}</option>`,
   )}</select></div>`;
 }
 
-function checks(name: string, legend: string, options: readonly (readonly [string, string])[], chosen: readonly string[]): Html {
+export function checks(name: string, legend: string, options: readonly (readonly [string, string])[], chosen: readonly string[]): Html {
   if (options.length === 0) return html`<fieldset class="rb-field"><legend class="rb-label">${legend}</legend><p class="rb-muted">None yet.</p></fieldset>`;
   return html`<fieldset class="rb-field"><legend class="rb-label">${legend}</legend><div class="tr-row">${options.map(
     ([value, text]) =>
@@ -57,7 +57,7 @@ function checks(name: string, legend: string, options: readonly (readonly [strin
   )}</div></fieldset>`;
 }
 
-function input(name: string, label: string, value: string, o: { type?: string; required?: boolean; help?: string; max?: number } = {}): Html {
+export function input(name: string, label: string, value: string, o: { type?: string; required?: boolean; help?: string; max?: number } = {}): Html {
   return html`<div class="rb-field"><label class="rb-label" for="${name}">${label}</label>
 <input class="rb-input" id="${name}" name="${name}" type="${o.type ?? "text"}" value="${value}"${o.required ? html` required` : null}${o.max ? html` maxlength="${o.max}"` : null}>
 ${o.help ? html`<p class="rb-field__help">${o.help}</p>` : null}</div>`;
@@ -72,6 +72,9 @@ function spendTable(spend: readonly GiftSpend[]): Html {
   )}</tbody></table></div>`;
 }
 
+/** An item's own page (gift-links-web.ts). */
+export const itemHref = (v: Viewer, id: string) => `${v.base}/gifts/items/${encodeURIComponent(id)}`;
+
 const people = (recipients: readonly GiftRecipient[]) => recipients.filter((r) => !r.archived).map((r) => [r.id, r.displayName] as const);
 
 /** A group as a choice: its name, and a filter group's labels (docket#98), since it has no list of its own. */
@@ -79,7 +82,7 @@ export const groupLabel = (g: GiftGroup): string => (g.filter ? `${g.name} (ever
 const groupChoices = (groups: readonly GiftGroup[]) => groups.filter((g) => !g.archived).map((g) => [g.id, groupLabel(g)] as const);
 
 /** `/gifts`: one family list for an occasion, with the filters, the coverage columns and the money. */
-export function giftsPage(v: Viewer, o: Overview, f: OverviewFilter, recipients: readonly GiftRecipient[], groups: readonly GiftGroup[], notice?: string): string {
+export function giftsPage(v: Viewer, o: Overview, f: OverviewFilter, recipients: readonly GiftRecipient[], groups: readonly GiftGroup[], notice?: string, ideas: readonly GiftItem[] = []): string {
   const occasion = o.occasion;
   const filters = html`<form method="get" action="${v.base}/gifts" class="tr-row">
 ${select("occasion", "Occasion", [...o.occasions, ...(occasion?.archived ? [occasion] : [])].map((x) => [x.id, x.archived ? `${x.title} (archived)` : x.title] as const), occasion?.id)}
@@ -90,7 +93,7 @@ ${select("stage", "Stage", STAGE_COLUMNS, f.stage, "Any stage")}
 </form>`;
   const add = html`<p class="tr-row">${(Object.keys(GIFT_FORM_TITLES) as GiftForm[]).map(
     (k) => html`<a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/gifts/new/${k}">${GIFT_FORM_TITLES[k]}</a>`,
-  )}</p>`;
+  )} <a class="rb-btn rb-btn--ghost rb-btn--sm" href="${v.base}/gifts/import">Import a list</a></p>`;
   const body = occasion
     ? html`<section>
 <h2>${occasion.title}${occasion.archived ? html` <span class="rb-badge">archived</span>` : null}</h2>
@@ -110,7 +113,7 @@ ${o.budget ? html`<p class="rb-muted">Budget: ${o.budget.budgetMinor === null ? 
 ${o.gifts.length === 0 ? html`<p class="rb-muted">None yet.</p>` : html`<div class="rb-table-scroll"><table class="rb-table">
 <thead><tr><th>Gift</th><th>For</th><th>Units</th><th>Stage</th></tr></thead>
 <tbody>${o.gifts.map(
-      (g) => html`<tr><td>${g.title}${g.allocation.shared ? html` <span class="rb-badge">shared</span>` : null}</td><td>${g.recipients.join(", ")}</td><td class="rb-num">${g.units}</td><td>${g.stage ?? "nothing left"}</td></tr>`,
+      (g) => html`<tr><td><a class="rb-link" href="${itemHref(v, g.allocation.itemId)}">${g.title}</a>${g.allocation.shared ? html` <span class="rb-badge">shared</span>` : null}</td><td>${g.recipients.join(", ")}</td><td class="rb-num">${g.units}</td><td>${g.stage ?? "nothing left"}</td></tr>`,
     )}</tbody></table></div>`}
 ${occasion.groupIds.length > 0 && !occasion.archived ? html`<p><a class="rb-link" href="${v.base}/gifts/occasions/${encodeURIComponent(occasion.id)}/sync">Review changes to its groups</a></p>` : null}
 <p><a class="rb-link" href="${v.base}/gifts/occasions/${encodeURIComponent(occasion.id)}/rollover">Roll over to next year</a></p>
@@ -129,6 +132,7 @@ ${add}
 ${o.occasions.length > 0 || occasion ? filters : null}
 </section>
 ${body}
+${ideas.length > 0 ? html`<section><h2>Ideas not given to anyone yet</h2><ul>${ideas.map((i) => html`<li><a class="rb-link" href="${itemHref(v, i.id)}">${i.title}</a>${i.source.kind === "scout" ? html` <span class="rb-badge rb-badge--info">from scout</span>` : null}</li>`)}</ul></section>` : null}
 <section><h2>Money, all occasions</h2>${spendTable(o.spend)}</section>`,
   );
 }
@@ -174,6 +178,8 @@ ${input("labels", "Or everyone with these labels", val("labels"), { help: "Inste
       fields = html`${select("kind", "Kind", [["christmas", "Christmas"], ["birthday", "Birthday"], ["anniversary", "Anniversary"], ["custom", "Other"]], val("kind", "christmas"))}
 ${input("title", "Title", val("title"), { required: true, max: 200, help: "Such as Christmas 2026: each year is its own occasion." })}
 ${input("date", "Date", val("date"), { type: "date" })}
+${input("deadline", "Shop by", val("deadline"), { type: "date", help: "Optional: the day to have everything bought by, on or before the date." })}
+<label class="rb-choice"><input class="rb-checkbox" type="checkbox" name="digest" value="1"${val("digest") === "1" ? html` checked` : null}> Send me a digest: a DM at my usual hour when someone still needs a gift or the shop-by day is near</label>
 ${input("currency", "Currency", val("currency", "USD"), { max: 3 })}
 ${input("budget", "Budget", val("budget"), { help: "Optional, such as 500 or 500.00." })}
 ${checks("group", "Shop for these groups", groupChoices(c.groups), all("group"))}

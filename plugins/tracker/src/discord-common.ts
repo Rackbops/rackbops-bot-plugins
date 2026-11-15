@@ -2,6 +2,7 @@ import { MessageFlags } from "discord.js";
 import type { HostApi, PluginLog } from "../../../packages/api/contract.js";
 import type { GuildRoles, Membership } from "./access.js";
 import type { TrackerDeps } from "./actions.js";
+import type { WebLocation } from "./web/command.js";
 
 /**
  * What the command side (discord.ts) and the button side (interactions.ts) share: the answers for
@@ -175,4 +176,6 @@ export interface SurfaceContext {
   queue: Queue;
   membershipOf(interaction: Interactionish, discordId: string): Promise<Membership>;
   log: PluginLog;
+  /** Where the web area is, for a link in an answer; absent or null when it is not set up. */
+  web?: WebLocation | null;
 }

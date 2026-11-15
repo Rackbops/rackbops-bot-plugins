@@ -177,6 +177,8 @@ export function formatChange(e: TaskEvent, viewer: User, now: Date, names: Reado
 
 /** One stored finding (docket 0.5.0, a research request's checked claim), as the pages show it. */
 export interface FindingView {
+  /** The stored finding's id: what `POST /gifts/finding-ideas` names (0.58.0, docket#101). */
+  id: string;
   claim: string;
   /** The source, only an http(s) URL; null when there is none or it is anything else. */
   source: string | null;
@@ -199,7 +201,7 @@ const HTTP_URL = /^https?:\/\/[^\s<>"]+$/i;
 
 export function findingView(f: StoredFinding, viewer: User, now: Date): FindingView {
   const source = f.source !== null && HTTP_URL.test(f.source) ? f.source : null;
-  return { claim: f.text, source, at: formatInstant(f.at, viewer.timeZone, now), atIso: f.at, tags: [...f.tags] };
+  return { id: f.id, claim: f.text, source, at: formatInstant(f.at, viewer.timeZone, now), atIso: f.at, tags: [...f.tags] };
 }
 
 /**

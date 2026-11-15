@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.58.0] - 2026-11-15
+
+### Added
+
+- Save a scout finding as a gift idea (docket 0.27.0, docket#101, #386). The owner's copy of a scout or news run's DM carries "N. Save as gift idea", one button per finding of that run (none on an eBay finding); a press saves the finding to the presser's own gift list as an `idea` item linked back by `source: {kind: "scout", ref: "<task>/<finding>"}`, answers ephemerally "Saved as a gift idea" (with a `/gifts` link when the web area is set up), and "Already saved as a gift idea" when a live item is already linked; another person's press is refused. `POST /api/v1/gifts/finding-ideas` `{taskId, findingId, title?}` does the same from the task API: `201`, `409 already_saved`, `404` for a task or finding not the caller's. Neither ever writes the task or its findings. `GET /tasks/<id>`'s `findings` carry each finding's `id` (additive).
+- The watches a gift follows (docket#101): `POST /api/v1/gifts/items/<id>/watches` `{expectedRevision, watchTaskIds}` links an item to the caller's own price and want-list watches through docket's `linkGiftWatches` (`400 invalid` for any other id or type, `409` when stale). An item create, `PATCH` or batch row that names `watchTaskIds` is now `400 invalid`: docket's record checks cannot see tasks, so this route is the one way to set it. On the web, `/gifts/items/<id>` shows the item, "From scout: <task>" for one saved from a finding, its watches by title, and a form to pick them; each gift on `/gifts` links to it, and a new "Ideas not given to anyone yet" list shows items with no gift.
+- Import a list of gifts (docket#102): `POST /api/v1/gifts/import/review` (`read_gifts`: it writes nothing) parses a CSV or a one-gift-a-line list and reviews it against the caller's people and occasions, with a `reviewToken`; `POST /api/v1/gifts/import` (`write_gifts`) brings in only the approved rows of the review the token names (`409 stale_review` otherwise) and answers each row's outcome. Re-importing the same rows creates nothing twice. Text up to 200 KB (`413` over). On the web, `/gifts/import` (linked from `/gifts`) reviews the pasted list, offers a checkbox on each ready or new row and imports the ticked ones.
+- Gift digests (docket#103): the web occasion form takes a shop-by day and a "Send me a digest" checkbox (the API already passed `deadline` and `digest` through). On each notify tick, each registered person with an opted-in live occasion gets docket's `decideGiftDigest`: at most one DM a day per occasion at their preferred hour, when someone still needs a gift or a gift is awaiting arrival and that changed or the shop-by day is near, naming people and counts only (no price, note or item title). Claimed once with `gift-digest:<occasion>:<day>` before sending; never calls a model.
+
+### Schema
+
+- No migration; still at 13. A new table `gift_digest_state (owner_id, occasion_id, sent_on, fingerprint)` is made `IF NOT EXISTS` with the other gift tables (additive, as they are), and forget-me erases it.
 ## [0.56.0] - 2026-11-13
 
 ### Changed

@@ -57,7 +57,10 @@ export async function giftsGet(e: Editor, params: URLSearchParams): Promise<Resp
   const l = await loadLedger(e.d.gifts, e.v.user.id);
   const f = filterOf(params);
   const done = params.get("done");
-  return htmlResponse(giftsPage(e.v, overview(l, f), f, l.recipients, l.groups, done && Object.hasOwn(NOTICES, done) ? NOTICES[done] : undefined));
+  // Live items no live gift gives anyone: ideas, those saved from a scout among them (docket#101).
+  const given = new Set(l.allocations.filter((a) => !a.archived).map((a) => a.itemId));
+  const ideas = l.items.filter((i) => !i.archived && !given.has(i.id));
+  return htmlResponse(giftsPage(e.v, overview(l, f), f, l.recipients, l.groups, done && Object.hasOwn(NOTICES, done) ? NOTICES[done] : undefined, ideas));
 }
 
 async function choices(e: Editor): Promise<FormChoices> {
@@ -207,6 +210,9 @@ export async function giftFormPost(e: Editor, form: GiftForm, f: URLSearchParams
           groupIds,
           includeIds,
           excludeIds,
+          // docket#103: a shop-by day and the digest opt-in, each only when given.
+          ...(orNull(f.get("deadline")) ? { deadline: orNull(f.get("deadline")) } : {}),
+          ...(f.get("digest") === "1" ? { digest: true } : {}),
         });
         // The roster is the snapshot of the groups as they are now (docket#97): one row per person, however many groups hold them.
         const all = { includeArchived: true };

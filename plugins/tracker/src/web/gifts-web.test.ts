@@ -146,8 +146,8 @@ describe("the family gift overview", () => {
     // Fay's copy is the one that went back; the board game counts once for the household.
     expect(body).toMatch(new RegExp(`data-recipient="${id.Fay}"><td>Fay</td><td>Planned</td>`));
     expect(body).toMatch(new RegExp(`data-recipient="${id.Kim}"><td>Kim</td><td>Needs planning</td>`));
-    expect(body).toMatch(/<td>Calendar<\/td><td>Ann, Bea, Cal, Dee, Eve, Fay<\/td><td class="rb-num">6<\/td>/);
-    expect(body).toMatch(/<td>Board game <span class="rb-badge">shared<\/span><\/td><td>The Hills<\/td><td class="rb-num">1<\/td>/);
+    expect(body).toMatch(/<td><a class="rb-link" href="[^"]+">Calendar<\/a><\/td><td>Ann, Bea, Cal, Dee, Eve, Fay<\/td><td class="rb-num">6<\/td>/);
+    expect(body).toMatch(/<td><a class="rb-link" href="[^"]+">Board game<\/a> <span class="rb-badge">shared<\/span><\/td><td>The Hills<\/td><td class="rb-num">1<\/td>/);
     expect(body).toContain("Budget: 600.00 USD");
     expect(body).toContain("Review changes to its groups");
 
@@ -242,7 +242,7 @@ describe("the family gift overview", () => {
     const after = await page(w, `/gifts?${new URL(applied.headers.get("location") ?? "", ORIGIN).searchParams}`);
     expect(after).toContain("The occasion now matches its groups.");
     expect(rowsShown(after)).not.toContain(id.Fay);
-    expect(after).toMatch(/<td>Calendar<\/td><td>Ann, Bea, Cal, Dee, Eve<\/td><td class="rb-num">5<\/td>/);
+    expect(after).toMatch(/<td><a class="rb-link" href="[^"]+">Calendar<\/a><\/td><td>Ann, Bea, Cal, Dee, Eve<\/td><td class="rb-num">5<\/td>/);
   });
 });
 
@@ -278,7 +278,7 @@ describe("the gift forms' refusals", () => {
     expect((await post(w, `/gifts/occasions/${occasionId}/sync`, [["token", token], [field, `reassign:${id.Kim}`]])).status).toBe(303);
     const after = await page(w, `/gifts?occasion=${occasionId}`);
     expect(after).toMatch(new RegExp(`data-recipient="${id.Kim}"><td>Kim</td><td>Planned</td>`));
-    expect(after).toMatch(/<td>Calendar<\/td><td>Ann, Bea, Cal, Dee, Eve, Kim<\/td>/);
+    expect(after).toMatch(/<td><a class="rb-link" href="[^"]+">Calendar<\/a><\/td><td>Ann, Bea, Cal, Dee, Eve, Kim<\/td>/);
     const occasion = ((await (await api(w.plugin, "GET", `/gifts/occasions/${occasionId}`, { token: w.token })).json()) as Json).record;
     expect((await api(w.plugin, "PATCH", `/gifts/occasions/${occasionId}`, { token: w.token, body: { expectedRevision: occasion.revision, archived: true } })).status).toBe(200);
     const archived = await call(w.plugin, "GET", `/gifts/occasions/${occasionId}/sync`, { jar: w.jar });

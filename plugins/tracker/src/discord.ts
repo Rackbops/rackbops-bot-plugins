@@ -111,6 +111,7 @@ export function createSurface(w: SurfaceWiring): { commands: PluginCommand[]; in
     membershipOf: (interaction, discordId) =>
       w.membership ? w.membership(interaction, discordId) : lookupMembership(interaction, w.guildIds, discordId, w.log, w.roleGate),
     log: w.log,
+    web: w.web,
   };
   const membershipOf = (interaction: ChatInputCommandInteraction, discordId: string) =>
     ctx.membershipOf(interaction as unknown as Interactionish, discordId);

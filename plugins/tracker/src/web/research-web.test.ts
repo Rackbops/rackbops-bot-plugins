@@ -249,7 +249,7 @@ describe("research from the task API", () => {
     db.close();
 
     const read = await body(await api(w.plugin, "GET", "/tasks/t1", { token: w.token }));
-    expect(read.findings).toEqual([{ claim: "A post says X", source: "https://www.tiktok.com/@a/video/1", at: "2026-11-11T23:57:00.000Z", tags }]);
+    expect(read.findings).toEqual([{ id: "f1", claim: "A post says X", source: "https://www.tiktok.com/@a/video/1", at: "2026-11-11T23:57:00.000Z", tags }]);
 
     const page = await (await call(w.plugin, "GET", "/tasks/t1", { jar: w.larry })).text();
     expect(page).toContain("[research, approve, social, tiktok, published:2026-10-02, snippet, &lt;b&gt;x&lt;/b&gt;]");
