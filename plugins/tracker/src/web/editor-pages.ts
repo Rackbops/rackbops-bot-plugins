@@ -96,7 +96,7 @@ const RESEARCH_FIELDS: readonly Field[] = [
     label: "Social posts",
     kind: "text",
     maxlength: MAX_SOCIAL,
-    help: "Leave it empty to let the research decide: it searches YouTube, TikTok, Instagram and Bluesky when the question asks what people recommend, think or experienced. none searches no platform; or name the platforms to search, separated by commas. Reddit is never read. Not with pages from your browser.",
+    help: "Leave it empty to let the research decide: it searches YouTube, TikTok and Instagram when the question asks what people recommend, think or experienced. none searches no platform; or name the platforms to search, separated by commas (bluesky is accepted but not searched). Reddit is never read. Not with pages from your browser.",
   },
   { name: "since", label: "Posts since", kind: "text", maxlength: MAX_WHEN, help: 'A day, as "2026-09-01" or "3 months ago": posts before it do not count. Not with pages from your browser.' },
 ];
