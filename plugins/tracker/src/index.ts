@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DeliveryFailedError, type Executor, GiftLedger, Lanes, type Clock, type Fetch, type Notifier, noticeOnce, type TaskType } from "@rackbops/docket-core";
-import { bggSource, ebaySource, inboxSource, nobleKnightSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, news, scout, type ShopVet, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
+import { bggSource, ebaySource, inboxSource, pageSource, shopifySource, price, type ReadInbox, type ReadSources, reminder, renewal, researchType, news, scout, type ShopVet, type Source, type SourceId, wantjudgeType, wantlistType } from "@rackbops/docket-types";
 import { createEbayBrowse, parseEbayKeys } from "./ebay.js";
 import { ebayJobForgetSeconds, forgetEbayMessages } from "./ebay-forget.js";
 import { createFirecrawlScrape, parseFirecrawlKey } from "./firecrawl.js";
@@ -35,6 +35,7 @@ import { openDatabase, vacuumOnce } from "./schema.js";
 import { SqliteGiftStore } from "./gift-store.js";
 import { Roster } from "./roster.js";
 import { SqliteStore } from "./store.js";
+import { nobleKnightWatchSource } from "./want.js";
 import { createWebHandler } from "./web/app.js";
 import { handleMailInbound, MAIL_PATH } from "./web/mail-inbound.js";
 import { MailAddresses, parseMailConfig } from "./mail.js";
@@ -237,8 +238,9 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   let sources: ResearchSources | null = null;
   const readSources: ReadSources = async (taskId) => sources?.read(taskId) ?? [];
   // The shop list (shop-checks.ts, docket#120) lives there too. Until it is open a read fails, so a
-  // Shopify listing is held, never told unvetted. Only with the execute lane, which runs the checks:
-  // without it a Shopify watch tells as before (no check could ever run, and every listing would wait).
+  // Shopify listing is held, never told unvetted. Passed with the execute lane off too (docket#128):
+  // a shop that passed is still told and a flagged one still kept out; one with no fresh check waits,
+  // its request kept until the lane runs it.
   let shopChecks: ShopChecks | null = null;
   const shopVet: ShopVet = {
     get: async (domains) => {
@@ -254,7 +256,7 @@ export function createPlugin(host: HostApi, options: TrackerOptions = {}): Plugi
   const types = options.types ?? {
     ...TRACKER_TYPES,
     research: researchType(webOrigin ? { readSources } : {}) as TaskType<unknown>,
-    ...wantTypes({ page: pageSource, nobleknight: nobleKnightSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}), ...(shopify ? { shopify } : {}), ...(ebay ? { ebay } : {}) }, executeOn ? shopVet : undefined),
+    ...wantTypes({ page: pageSource, nobleknight: nobleKnightWatchSource, inbox: inboxSource(readInbox), ...(bgg ? { bgg } : {}), ...(shopify ? { shopify } : {}), ...(ebay ? { ebay } : {}) }, shopVet),
   };
   const pageFetch = options.fetch ?? ((signal?: AbortSignal) => createPageFetch(signal ? { signal } : {}));
   const health: HealthState = { activatedAt: null, lastTickAt: null, blocked: null };

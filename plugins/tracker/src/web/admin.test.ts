@@ -485,9 +485,10 @@ describe("forget-me", () => {
 
   it("the erasure covers every table in the schema", async () => {
     const w = await setup();
-    // Every table but SQLite's own counter, tracker_meta, which holds housekeeping, and shop_checks,
-    // one verdict per shop, which names no person (shop-checks.ts).
-    const tables = query<{ name: string }>(w.dbPath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('sqlite_sequence', 'tracker_meta', 'shop_checks')").map((t) => t.name);
+    // Every table but SQLite's own counter, tracker_meta, which holds housekeeping, and shop_checks
+    // and shop_check_marks, one verdict per shop and the shop list's own marks, which name no person
+    // (shop-checks.ts).
+    const tables = query<{ name: string }>(w.dbPath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT IN ('sqlite_sequence', 'tracker_meta', 'shop_checks', 'shop_check_marks')").map((t) => t.name);
     expect([...ERASED_TABLES].map(String).sort()).toEqual(tables.sort());
   });
 

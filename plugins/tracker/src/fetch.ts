@@ -33,6 +33,14 @@ export const MAX_BYTES = 3 * 1024 * 1024;
 export const MAX_REDIRECTS = 5;
 export const USER_AGENT = "Mozilla/5.0 (compatible; RackbopsClerk/1.0; price tracker)";
 
+/**
+ * A directive to this port, never sent, like `NEVER_EBAY`: hand back this read's body as sent
+ * (capped), not `pageForExtraction`'s. For a reader whose own patterns are bounded and that needs
+ * the page's markup, which the rebuild takes apart: the Noble Knight source's copy rows (want.ts
+ * `nobleKnightWatchSource`, docket 0.28.0's linear parser). A redirect to another site is refused.
+ */
+export const RAW_BODY = "x-clerk-raw-body";
+
 export class FetchRefusedError extends Error {
   override name = "FetchRefusedError";
 }
@@ -254,7 +262,9 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
       }
       const origin = url.origin;
       const neverEbay = Object.keys(headers).some((k) => k.toLowerCase() === NEVER_EBAY);
-      const sent = Object.fromEntries(Object.entries(headers).filter(([k]) => k.toLowerCase() !== NEVER_EBAY));
+      const rawAsked = Object.keys(headers).some((k) => k.toLowerCase() === RAW_BODY);
+      const rawBody = o.raw === true || rawAsked;
+      const sent = Object.fromEntries(Object.entries(headers).filter(([k]) => k.toLowerCase() !== NEVER_EBAY && k.toLowerCase() !== RAW_BODY));
       for (let hop = 0; ; hop++) {
         await checkHost(url, resolve, signal, neverEbay);
         signal.throwIfAborted();
@@ -273,6 +283,9 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
           } catch {
             throw new FetchRefusedError("it redirects to something that is not a web address");
           }
+          // A raw body is asked for one site's own pages, read by that source's own parser: never
+          // hand it another site's (review of #403).
+          if (rawAsked && url.origin !== origin) throw new FetchRefusedError("it redirects to another site");
           continue;
         }
         const out: Record<string, string> = {};
@@ -280,7 +293,7 @@ export function createPageFetch(o: PageFetchOptions = {}): Fetch {
           out[key] = value;
         });
         const body = await readCapped(response, maxBytes);
-        return { status: response.status, body: o.raw ? body : pageForExtraction(body), headers: out };
+        return { status: response.status, body: rawBody ? body : pageForExtraction(body), headers: out };
       }
     },
   };

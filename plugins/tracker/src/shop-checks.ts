@@ -12,7 +12,7 @@ import {
   runNowKey,
   type Store,
 } from "@rackbops/docket-core";
-import { parseShopCheck, type ShopCheck, type ShopVerdict, type ShopVet, shopDomain, shopJob, shopStanding } from "@rackbops/docket-types";
+import { mergeShopCheck, parseShopCheck, type ShopCheck, type ShopVerdict, type ShopVet, shopDomain, shopJob, shopStanding, webSearches } from "@rackbops/docket-types";
 import type { PluginLog } from "../../../packages/api/contract.js";
 import { type JobIdRecords, requeuedAfter } from "./executor.js";
 import type { TaskLocks } from "./locks.js";
@@ -72,8 +72,23 @@ export function ensureShopTables(db: Database): void {
     owner_id TEXT NOT NULL,
     PRIMARY KEY (domain, task_id)
   );
+  CREATE TABLE IF NOT EXISTS shop_check_marks (
+    mark TEXT PRIMARY KEY
+  );
   `);
+  // Once (docket#128): an "ok" or "unknown" stored before a check had to show it searched may stand
+  // on no search at all, and would let a listing be told as vetted or marked "unvetted". Each such
+  // shop is asked again. A "flagged" one is kept: it only ever holds listings back.
+  // `shop_check_marks` holds that it was done; like `shop_checks` it names no person.
+  db.transaction(() => {
+    if (db.query("SELECT 1 FROM shop_check_marks WHERE mark = ?").get(SEARCHED_CHECKS)) return;
+    db.exec("DELETE FROM shop_checks WHERE verdict IN ('ok', 'unknown')");
+    db.query("INSERT INTO shop_check_marks (mark) VALUES (?)").run(SEARCHED_CHECKS);
+  })();
 }
+
+/** The `shop_check_marks` mark that the "ok" and "unknown" checks stored before docket#128 were dropped. */
+export const SEARCHED_CHECKS = "checks_need_a_search";
 
 const strings = (raw: string): string[] => {
   try {
@@ -294,12 +309,18 @@ async function stepOne(d: ShopCheckerDeps, req: ShopRequest): Promise<ShopStep> 
   if (result.kind !== "usage_limit" && result.kind !== "auth_failed") {
     await charge(d.store, { userId: owner.id, taskId: null, source: "run", key, calls: 1, costUsd: result.totalCostUsd ?? null, at: d.clock.now() });
   }
-  const check = result.kind === "success" ? parseShopCheck(result.structuredOutput, req.domain, d.clock.now()) : null;
-  if (!check) {
+  // A check stands only on a web search the run reports it made (docket#128): one that names none,
+  // or an answer that is not a check, records nothing and its listings stay held.
+  const searched = webSearches(result) > 0;
+  const parsed = result.kind === "success" && searched ? parseShopCheck(result.structuredOutput, req.domain, d.clock.now()) : null;
+  if (!parsed) {
     d.checks.drop(req.domain);
-    d.log.warn(`shop check ${req.domain}: ${result.kind === "success" ? "no usable answer" : result.kind}; its listings stay held`);
+    const why = result.kind !== "success" ? result.kind : searched ? "no usable answer" : "no web search ran";
+    d.log.warn(`shop check ${req.domain}: ${why}; its listings stay held`);
     return "failed";
   }
+  // A flagged shop stays flagged after a re-check that finds too little.
+  const check = mergeShopCheck((await d.checks.get([req.domain])).get(req.domain), parsed);
   const waiting = d.checks.record(check);
   d.log.info(`shop check ${req.domain}: ${check.verdict}`);
   for (const taskId of waiting) await runAgain(d, taskId);
