@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-15T04:43:32.670Z",
+  "generatedAt": "2026-11-15T22:50:36.636Z",
   "plugins": [
     {
       "name": "mcp",
@@ -210,7 +210,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.58.0",
+      "version": "0.60.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout and a news watch (through city-hall, with their findings), a want-list watcher (listing pages you paste, Noble Knight Games product pages you paste (a trusted seller, each copy in stock its own listing), BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, each shop first checked by one web search through city-hall, eBay through eBay's own Browse API once its keys are set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /news, /want, /tasks, /task, /settings, /web, /gift), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, a JSON task API with personal API tokens, and a plain-language intake: DM Clerk what you want in your own words, answer its questions, and press Save on the draft it shows",
       "hostApiVersion": 1,
       "intents": [
@@ -390,6 +390,12 @@
       ],
       "releases": [
         {
+          "version": "0.60.0",
+          "publishedAt": "2026-11-15T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.60.0",
+          "notes": "### Changed\n\n- A DM longer than one Discord message goes as several messages in a row (docket#152, Rod's choice of 2026-11-15: \"several messages at once\"), split between lines, a break before a listing (\"- ...\") taken first so a listing and its note stay together; the buttons ride on the last part, whose message id is the delivery's. Up to 15 parts; a single line too long for a message is cut as before. Until now every DM was cut at 2,000 characters, so a judged eBay look with long notes lost the end of its listings and its Done button. A failure of the first part is read as before; once a part went out, a later failure settles the send unconfirmed and is never resent, so no part arrives twice. Docket's want DMs show every listing a look takes from the docket release after 0.29.0; until then they stay within one message.\n\n### Schema\n\n- No change. Still at 13."
+        },
+        {
           "version": "0.58.0",
           "publishedAt": "2026-11-15T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.58.0",
@@ -442,12 +448,6 @@
           "publishedAt": "2026-11-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.48.0",
           "notes": "### Added\n\n- Duplicate check on the task API (#390). `POST /tasks` refuses with `409 duplicate` a new task that looks for the same thing as one of the owner's active or paused tasks, naming them in the message and in a `duplicates` list (`id`, `title`, `status`, `type`), unless the body carries `allowDuplicate: true`. The same thing means a want-list watch (plain or judged) with the same source and search: an eBay or Shopify search's words (the name when no target is given), a BGG game's id, a page's address, or an inbox eBay or BGG watch's words; a news watch with the same subject; or a price with the same page. Words are compared trimmed, lower-cased and with runs of space as one. `POST /tasks/validate` takes `allowDuplicate` too and answers `duplicates` (empty when none), saying so in its message, without refusing. Reminders, renewals, scouts and research requests are not compared. On 2026-11-11 a setup prompt run a second time through the ChatGPT connector made six copies of existing watches, each of which DMed every current listing again. The check is read outside the write queue, so two creates sent at the same instant can both pass it. Discord and the web editor do not check yet.\n\n### Schema\n\n- No change. Still at 13."
-        },
-        {
-          "version": "0.47.0",
-          "publishedAt": "2026-11-13T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.47.0",
-          "notes": "### Added\n\n- Gift routes in the task API (Rackbops/docket#94, #383): the owner's gift ledger under `/api/v1/gifts/` -- recipients, groups and their members, occasions and their rosters, items, purchases and allocations, the reviewed roster sync with an occasion's groups, an occasion's coverage, budget and cost, and spend per currency, plus a batch of up to 25 writes with an outcome per row. Writes take an `expectedRevision` (a stale one is 409 and changes nothing) and `Idempotency-Key`. Another person's ids are the unknown record's 404, and sharing a task gives no gift access. Two new usr delegation operations, `read_gifts` and `write_gifts`, cover every gift read and every gift write; a service link made before 0.47.0 does not cover them until it is made again. `GET /capabilities` lists them under `gifts`. No model call and no runner.\n\n### Schema\n\n- No change. Still at 13."
         }
       ]
     },
