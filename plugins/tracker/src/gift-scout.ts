@@ -7,6 +7,7 @@ import {
   isEbayFinding,
   type OutgoingMessage,
   type Store,
+  type StoredFinding,
   type User,
 } from "@rackbops/docket-core";
 import type { HostButton } from "../../../packages/api/contract.js";
@@ -28,18 +29,62 @@ import { giftIdeaButtonId } from "./buttons.js";
 /** The task types whose run DMs offer "Save as gift idea". */
 export const GIFT_IDEA_TYPES: ReadonlySet<string> = new Set(["scout", "news"]);
 
-/** The buttons for `message` to `userId`, at most `room`; none when it is not the owner's DM of a scout or news run. */
+/**
+ * The numbered items of a scout or news DM, in the order its text numbers them, each with the
+ * address on its own `   <url>` line (docket-types' `renderScout` and `renderNews`): the run's
+ * own item order, as sent. An item whose address the text lost (a DM cut to fit) is left out.
+ */
+export function dmItems(text: string): { n: number; url: string }[] {
+  const out: { n: number; url: string }[] = [];
+  let current: number | null = null;
+  for (const line of text.split("\n")) {
+    const head = /^(\d{1,3})\. /.exec(line);
+    if (head) {
+      current = Number(head[1]);
+      continue;
+    }
+    const link = /^ {3}<(https?:\/\/[^\s<>]+)>$/.exec(line);
+    if (link && current !== null) {
+      out.push({ n: current, url: link[1] as string });
+      current = null;
+    }
+  }
+  return out;
+}
+
+/** Reads one task's findings by their address: the tracker's store does it in one indexed query (store.ts `findingsBySource`). */
+export interface FindingsBySource {
+  findingsBySource(taskId: string, ownerId: string, sources: readonly string[]): Promise<StoredFinding[]>;
+}
+
+const hasLookup = (store: Store): store is Store & FindingsBySource => typeof (store as Partial<FindingsBySource>).findingsBySource === "function";
+
+/**
+ * The buttons for `message` to `userId`, at most `room`; none when it is not the owner's DM of a
+ * scout or news run, or names no item. Each DM item is matched to its finding by address -- this
+ * run's finding first, else the newest of the task's (a link shown again keeps its first finding
+ * row, ON CONFLICT DO NOTHING) -- and carries the DM's own number, so a button never points at
+ * another item; an item with no finding, or an eBay one, gets none. Only the DM's addresses are read.
+ */
 export async function findingButtons(store: Store, userId: string, message: OutgoingMessage, room: number): Promise<HostButton[]> {
   const ref = message.ref;
   if (!ref?.occurrenceId || room <= 0) return [];
+  const items = dmItems(message.text);
+  if (items.length === 0) return [];
   const task = await store.getTask(ref.taskId);
   if (!task || task.ownerId !== userId || !GIFT_IDEA_TYPES.has(task.type)) return [];
-  const findings = (await store.listFindings({ taskId: task.id, ownerId: userId })).filter((f) => f.occurrenceId === ref.occurrenceId);
-  return findings
-    .map((f, i) => ({ f, n: i + 1 }))
-    .filter(({ f }) => !isEbayFinding(f))
-    .slice(0, room)
-    .map(({ f, n }) => ({ customId: giftIdeaButtonId(f.id), label: `${n}. Save as gift idea`, style: "secondary" as const }));
+  const sources = [...new Set(items.map((i) => i.url))];
+  const found = hasLookup(store)
+    ? await store.findingsBySource(task.id, userId, sources)
+    : (await store.listFindings({ taskId: task.id, ownerId: userId })).filter((f) => f.source !== null && sources.includes(f.source));
+  const buttons: HostButton[] = [];
+  for (const { n, url } of items) {
+    const same = found.filter((f) => f.source === url);
+    const f = same.find((x) => x.occurrenceId === ref.occurrenceId) ?? same.at(-1);
+    if (!f || isEbayFinding(f)) continue;
+    buttons.push({ customId: giftIdeaButtonId(f.id), label: `${n}. Save as gift idea`, style: "secondary" });
+  }
+  return buttons.slice(0, room);
 }
 
 export type SavedIdea =

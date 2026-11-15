@@ -1,7 +1,7 @@
 import { giftFormGet, giftFormPost, giftsGet, syncGet, syncPost } from "./gifts-web.js";
 import { rolloverGet, rolloverPost } from "./gift-rollover-web.js";
 import { itemGet, itemPost } from "./gift-links-web.js";
-import { importGet, importPost, MAX_IMPORT_FORM_BYTES } from "./gift-import-web.js";
+import { importGet, importPost, importTooLarge, MAX_IMPORT_FORM_BYTES } from "./gift-import-web.js";
 import type { User } from "@rackbops/docket-core";
 import { type Membership, NOT_MEMBER } from "../access.js";
 import type { PluginHttpInfo } from "../../../../packages/api/contract.js";
@@ -476,7 +476,12 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     if (method === "POST") {
       // The gift import's pasted list (gift-import-web.ts) is the one form allowed past MAX_FORM_BYTES.
       const form = await readForm(request, r.kind === "gift-import" ? MAX_IMPORT_FORM_BYTES : MAX_FORM_BYTES);
-      if (!form) return plain(400, "Bad request");
+      if (!form) {
+        // A form too big to read is the import's one likely refusal: say so on its page (nothing was read or written).
+        const isForm = (request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/x-www-form-urlencoded");
+        if (r.kind === "gift-import" && isForm) return importTooLarge(v);
+        return plain(400, "Bad request");
+      }
       if (!safeEqual(auth.session.csrf, form.get("csrf") ?? "")) return forbidden();
       switch (r.kind) {
       case "logout":

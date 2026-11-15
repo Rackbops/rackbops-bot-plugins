@@ -116,12 +116,20 @@ export function putDigestState(db: Database, ownerId: string, occasionId: string
   ).run(ownerId, occasionId, state.sentOn, state.fingerprint);
 }
 
-/** The owners with a live occasion opted in to a digest: one read, so a tick passes everyone else by. */
-export function digestOwners(db: Database): string[] {
+/**
+ * Each owner with a live occasion opted in to a digest, with those occasions' ids: one read, so a
+ * tick passes everyone else by. An occasion whose date is before `before` (`YYYY-MM-DD`; the caller
+ * passes a day no zone is still before) is past for every zone and left out; one with no date stays.
+ */
+export function digestOwners(db: Database, before: string): { ownerId: string; occasionIds: string[] }[] {
   const rows = db
-    .query("SELECT DISTINCT owner_id FROM gift_records WHERE kind = 'occasion' AND archived = 0 AND json_extract(fields, '$.digest') = 1 ORDER BY owner_id")
-    .all() as { owner_id: string }[];
-  return rows.map((r) => r.owner_id);
+    .query(
+      "SELECT owner_id, seq FROM gift_records WHERE kind = 'occasion' AND archived = 0 AND json_extract(fields, '$.digest') = 1 AND (json_extract(fields, '$.date') IS NULL OR json_extract(fields, '$.date') >= ?) ORDER BY owner_id, seq",
+    )
+    .all(before) as { owner_id: string; seq: number }[];
+  const out = new Map<string, string[]>();
+  for (const r of rows) out.set(r.owner_id, [...(out.get(r.owner_id) ?? []), `${PREFIX.occasion}${r.seq}`]);
+  return [...out].map(([ownerId, occasionIds]) => ({ ownerId, occasionIds }));
 }
 
 /**

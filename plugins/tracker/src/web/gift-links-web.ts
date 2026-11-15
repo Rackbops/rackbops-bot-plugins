@@ -1,7 +1,7 @@
 import type { GiftItem, GiftWriteMeta, Task } from "@rackbops/docket-core";
 import { NO_LONGER_LISTED } from "../actions.js";
 import { GIFT_IDEA_TYPES } from "../gift-scout.js";
-import { watches } from "./api-gift-links.js";
+import { isLive, watches } from "./api-gift-links.js";
 import type { Editor } from "./editor.js";
 import { alerts, checks, csrfField, money } from "./gift-pages.js";
 import { html, htmlResponse, redirect } from "./html.js";
@@ -65,7 +65,7 @@ async function view(e: Editor, id: string, s: { error?: string; problems?: strin
     from = { taskId, title: task && task.status !== "archived" ? task.title : null };
   }
   const linked = item.watchTaskIds ?? [];
-  const choices = tasks.filter((t) => WATCH_TYPES.has(t.type) && (t.status !== "archived" || linked.includes(t.id)));
+  const choices = tasks.filter((t) => WATCH_TYPES.has(t.type) && (isLive(t) || linked.includes(t.id)));
   return htmlResponse(itemPage(e.v, { item, from, choices }, s), status);
 }
 

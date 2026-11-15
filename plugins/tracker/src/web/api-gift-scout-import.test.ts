@@ -50,6 +50,25 @@ function taskAndFindings(path: string): string {
   }
 }
 
+/** A scout run's DM text as docket-types' renderScout lays it out: `N. title`, then `   <url>`. */
+const scoutDm = (rows: [string, string][]): string =>
+  ["Scout: birding", "", `${rows.length} new finds:`, ...rows.flatMap(([title, url], i) => ["", `${i + 1}. ${title}`, "   fits birding", `   <${url}>`])].join("\n");
+
+async function dmNotifier(w: W) {
+  const { createDmNotifier } = await import("../notifier.js");
+  const sent: { to: string; buttons: string[] }[] = [];
+  const notifier = createDmNotifier({
+    store: w.store,
+    clock: { now: () => new Date(AT) },
+    log: { info() {}, warn() {}, error() {} },
+    dm: async (to, m) => {
+      sent.push({ to, buttons: (m.buttons ?? []).map((b) => `${b.customId}|${b.label}`) });
+      return { guildId: null, channelId: "c", messageId: "m" };
+    },
+  });
+  return { sent, notifier };
+}
+
 describe("save a scout finding as a gift idea (docket#101)", () => {
   it("the DM button saves it once, as the presser's own idea linked by source, and leaves the scout and its findings as they were", async () => {
     const w = await setup();
@@ -88,25 +107,50 @@ describe("save a scout finding as a gift idea (docket#101)", () => {
     w.db.close();
   });
 
-  it("puts a numbered button per finding on the owner's copy of the scout run's DM only", async () => {
-    const { createDmNotifier } = await import("../notifier.js");
+  it("puts a numbered button per DM item on the owner's copy of the scout run's DM only", async () => {
     const w = await setup();
-    const sent: { to: string; buttons: string[] }[] = [];
-    const notifier = createDmNotifier({
-      store: w.store,
-      clock: { now: () => new Date(AT) },
-      log: { info() {}, warn() {}, error() {} },
-      dm: async (to, m) => {
-        sent.push({ to, buttons: (m.buttons ?? []).map((b) => `${b.customId}|${b.label}`) });
-        return { guildId: null, channelId: "c", messageId: "m" };
-      },
-    });
-    await notifier.sendDm(w.larryId, { text: "2 new finds", ref: { taskId: w.scout.id, occurrenceId: "o9" } });
-    await notifier.sendDm(w.curlyId, { text: "2 new finds", ref: { taskId: w.scout.id, occurrenceId: "o9" } });
-    await notifier.sendDm(w.larryId, { text: "older run", ref: { taskId: w.scout.id, occurrenceId: "o1" } });
+    const { sent, notifier } = await dmNotifier(w);
+    const text = scoutDm([["Field guide to owls", "https://shop.example.com/owls"], ["Feeder camera", "https://shop.example.com/cam"]]);
+    await notifier.sendDm(w.larryId, { text, ref: { taskId: w.scout.id, occurrenceId: "o9" } });
+    await notifier.sendDm(w.curlyId, { text, ref: { taskId: w.scout.id, occurrenceId: "o9" } });
+    await notifier.sendDm(w.larryId, { text: "Scout: birding\n\nNothing new this time.", ref: { taskId: w.scout.id, occurrenceId: "o1" } });
     expect(sent[0]?.buttons).toEqual(["tracker:r.o.o9|Reply", `tracker:g.f.${w.f1.id}|1. Save as gift idea`, `tracker:g.f.${w.f2.id}|2. Save as gift idea`]);
     expect(sent[1]?.buttons).toEqual(["tracker:r.o.o9|Reply"]);
     expect(sent[2]?.buttons).toEqual(["tracker:r.o.o1|Reply"]);
+    w.db.close();
+  });
+
+  it("numbers each button by the DM's own item, so a link an earlier run stored gets its own number's button", async () => {
+    const w = await setup();
+    // An earlier run (o1) stored the lamp; this run (o9) shows it again first, then the owls.
+    const lamp = await w.store.addFinding({ taskId: w.scout.id, ownerId: w.larryId, occurrenceId: "o1", type: "scout", text: "Bird lamp -- fits birding", tags: ["scout", "general"], source: "https://shop.example.com/lamp", at: "2026-09-30T12:00:00.000Z" });
+    const { sent, notifier } = await dmNotifier(w);
+    const text = scoutDm([["Bird lamp", "https://shop.example.com/lamp"], ["Field guide to owls", "https://shop.example.com/owls"]]);
+    await notifier.sendDm(w.larryId, { text, ref: { taskId: w.scout.id, occurrenceId: "o9" } });
+    expect(sent[0]?.buttons).toEqual(["tracker:r.o.o9|Reply", `tracker:g.f.${lamp.id}|1. Save as gift idea`, `tracker:g.f.${w.f1.id}|2. Save as gift idea`]);
+    // Stored by this run too, and again by a later one: the button takes this run's own row.
+    const lampNow = await w.store.addFinding({ taskId: w.scout.id, ownerId: w.larryId, occurrenceId: "o9", type: "scout", text: "Bird lamp -- fits birding", tags: ["scout", "general"], source: "https://shop.example.com/lamp", at: AT });
+    await w.store.addFinding({ taskId: w.scout.id, ownerId: w.larryId, occurrenceId: "o10", type: "scout", text: "Field guide to owls -- fits birding", tags: ["scout", "general"], source: "https://shop.example.com/owls", at: "2026-10-02T12:00:00.000Z" });
+    await notifier.sendDm(w.larryId, { text, ref: { taskId: w.scout.id, occurrenceId: "o9" } });
+    expect(sent[1]?.buttons).toEqual(["tracker:r.o.o9|Reply", `tracker:g.f.${lampNow.id}|1. Save as gift idea`, `tracker:g.f.${w.f1.id}|2. Save as gift idea`]);
+    w.db.close();
+  });
+
+  it("gives an eBay finding no button, nor an item with no finding, and keeps the others' numbers", async () => {
+    const w = await setup();
+    const ebay = await w.store.addFinding({ taskId: w.scout.id, ownerId: w.larryId, occurrenceId: "o9", type: "scout", text: "Owl print -- fits birding", tags: ["scout", "general"], source: "https://www.ebay.com/itm/123456", at: AT });
+    const tagged = await w.store.addFinding({ taskId: w.scout.id, ownerId: w.larryId, occurrenceId: "o9", type: "scout", text: "Owl mug -- fits birding", tags: ["scout", "ebay"], source: "https://shop.example.com/mug", at: AT });
+    const { sent, notifier } = await dmNotifier(w);
+    const text = scoutDm([
+      ["Owl print", "https://www.ebay.com/itm/123456"],
+      ["Owl mug", "https://shop.example.com/mug"],
+      ["Something never stored", "https://shop.example.com/ghost"],
+      ["Feeder camera", "https://shop.example.com/cam"],
+    ]);
+    await notifier.sendDm(w.larryId, { text, ref: { taskId: w.scout.id, occurrenceId: "o9" } });
+    expect(sent[0]?.buttons).toEqual(["tracker:r.o.o9|Reply", `tracker:g.f.${w.f2.id}|4. Save as gift idea`]);
+    expect(sent[0]?.buttons.join(" ")).not.toContain(ebay.id);
+    expect(sent[0]?.buttons.join(" ")).not.toContain(tagged.id);
     w.db.close();
   });
 });
@@ -137,6 +181,36 @@ describe("the watches a gift follows (docket#101)", () => {
     expect((await api(w.plugin, "POST", "/gifts/batch", { token: w.larry, body: { writes: [{ op: "update", collection: "items", id: item.id, expectedRevision: 2, fields: { watchTaskIds: [theirs.id] } }] } }).then(read)).results[0].status).toBe(400);
     expect((await read(await api(w.plugin, "GET", `/gifts/items/${item.id}`, { token: w.larry }))).record).toMatchObject({ revision: 2, watchTaskIds: [kettle.id, lego.id] });
     expect(taskAndFindings(w.dbPath)).toBe(before);
+    w.db.close();
+  });
+
+  it("takes only live watches: a done or archived one is refused, unless the item already follows it", async () => {
+    const w = await setup();
+    const kettle = await w.task(w.larryId, "price", "Kettle price");
+    const old = await w.task(w.larryId, "price", "Old toaster price");
+    const shelved = await w.task(w.larryId, "wantlist", "Shelved want-list");
+    const item = (await read(await api(w.plugin, "POST", "/gifts/items", { token: w.larry, body: { title: "Kettle", url: null, productKey: null, variant: null, notes: null, source: { kind: "manual", ref: null }, planning: "idea", estimateMinor: null, currency: null } }))).record;
+    const link = (expectedRevision: number, watchTaskIds: string[]) => api(w.plugin, "POST", `/gifts/items/${item.id}/watches`, { token: w.larry, body: { expectedRevision, watchTaskIds } });
+    expect((await link(1, [kettle.id, old.id])).status).toBe(200);
+    await w.store.updateTask(old.id, { status: "done", at: AT });
+    await w.store.updateTask(shelved.id, { status: "archived", at: AT });
+    for (const bad of [[kettle.id, shelved.id], [kettle.id, old.id, shelved.id]]) {
+      const res = await link(2, bad);
+      expect(res.status).toBe(400);
+      expect((await read(res)).error.code).toBe("invalid");
+    }
+    // Already followed, so it may stay while the item's other watches change.
+    const kept = await link(2, [old.id]);
+    expect(kept.status).toBe(200);
+    expect((await read(kept)).record.watchTaskIds).toEqual([old.id]);
+    // Once dropped, the done watch is not offered again, nor taken.
+    expect((await link(3, [])).status).toBe(200);
+    expect((await link(4, [old.id])).status).toBe(400);
+    const page = await (await call(w.plugin, "GET", `/gifts/items/${item.id}`, { jar: w.larryJar })).text();
+    expect(page).toContain("Kettle price");
+    expect(page).not.toContain("Old toaster price");
+    expect(page).not.toContain("Shelved want-list");
+    expect((await api(w.plugin, "POST", "/gifts/items/i999/watches", { token: w.larry, body: { expectedRevision: 1, watchTaskIds: [] } })).status).toBe(404);
     w.db.close();
   });
 
@@ -227,6 +301,35 @@ describe("importing a list of gifts (docket#102)", () => {
     expect(stale.status).toBe(409);
     expect(await stale.text()).toContain("Something changed since the review");
     expect((await items(w)).map((i) => i.title)).toEqual(["Socks"]);
+    w.db.close();
+  });
+});
+
+describe("a list too large to import (docket#102)", () => {
+  it("the web page and the task API both say to import it in parts, and nothing is written", async () => {
+    const w = await setup();
+    const csrf = await csrfOf(w.plugin, w.larryJar);
+    const message = "That list is too large: import it in parts.";
+    // Over the 640 KiB form cap: the form is never read.
+    const huge = await call(w.plugin, "POST", "/gifts/import", { jar: w.larryJar, origin: ORIGIN, form: [["csrf", csrf], ["format", "list"], ["text", "z".repeat(640 * 1024 + 1)], ["step", "review"]] });
+    expect(huge.status).toBe(413);
+    expect(await huge.text()).toContain(message);
+    // Under the form cap but over the 200 KiB text cap.
+    const long = await call(w.plugin, "POST", "/gifts/import", { jar: w.larryJar, origin: ORIGIN, form: [["csrf", csrf], ["format", "list"], ["text", "z".repeat(200 * 1024 + 1)], ["step", "review"]] });
+    expect(long.status).toBe(413);
+    expect(await long.text()).toContain(message);
+    for (const path of ["/gifts/import/review", "/gifts/import"]) {
+      const extra = path === "/gifts/import" ? { reviewToken: "x", approve: [] } : {};
+      const text = await api(w.plugin, "POST", path, { token: w.larry, body: { format: "list", text: "z".repeat(200 * 1024 + 1), ...extra } });
+      expect(text.status).toBe(413);
+      expect((await read(text)).error).toEqual({ code: "too_large", message });
+      const body = await api(w.plugin, "POST", path, { token: w.larry, body: { format: "list", text: "z".repeat(640 * 1024 + 1), ...extra } });
+      expect(body.status).toBe(413);
+      expect((await read(body)).error).toEqual({ code: "too_large", message });
+    }
+    // Any other form over its cap is still a plain bad request.
+    expect((await call(w.plugin, "POST", "/settings", { jar: w.larryJar, origin: ORIGIN, form: [["csrf", csrf], ["x", "z".repeat(640 * 1024 + 1)]] })).status).toBe(400);
+    expect(await items(w)).toEqual([]);
     w.db.close();
   });
 });

@@ -21,7 +21,7 @@ import { listingsAnswer } from "./api-listings.js";
 import { sourcesAnswer, sourcesReadyAnswer } from "./api-sources.js";
 import type { Writer } from "./editor.js";
 import { readBody } from "./html.js";
-import { MAX_GIFT_IMPORT_BYTES } from "./api-gift-import.js";
+import { MAX_GIFT_IMPORT_BYTES, TOO_LARGE } from "./api-gift-import.js";
 import { isIdempotencyKey } from "./api-idempotency.js";
 import { validateAnswer } from "./api-validate.js";
 import { sha256 } from "./secrets.js";
@@ -380,8 +380,10 @@ export async function handleApi(w: ApiWiring, request: Request, path: string): P
     if (key !== null && !isIdempotencyKey(key)) return json(problem(400, "invalid_idempotency_key", "Idempotency-Key is 8 to 128 letters, digits, '-', '_', '.' or ':'; a UUID will do."));
     let body: Record<string, unknown> = {};
     if (method !== "DELETE") {
-      const read = await readJson(request, r.kind === "listings" ? MAX_LISTINGS_BYTES : r.kind === "sources" ? MAX_SOURCES_BYTES : r.kind === "gift" && r.gift.kind === "batch" ? MAX_GIFT_BATCH_BYTES : r.kind === "gift" && (r.gift.kind === "import" || r.gift.kind === "import-review") ? MAX_GIFT_IMPORT_BYTES : MAX_API_BYTES);
-      if (!read.ok) return json(read.answer);
+      const isImport = r.kind === "gift" && (r.gift.kind === "import" || r.gift.kind === "import-review");
+      const read = await readJson(request, r.kind === "listings" ? MAX_LISTINGS_BYTES : r.kind === "sources" ? MAX_SOURCES_BYTES : r.kind === "gift" && r.gift.kind === "batch" ? MAX_GIFT_BATCH_BYTES : isImport ? MAX_GIFT_IMPORT_BYTES : MAX_API_BYTES);
+      // An import body over its cap says what the web page says (api-gift-import.ts TOO_LARGE).
+      if (!read.ok) return json(isImport && read.answer.status === 413 ? problem(413, "too_large", TOO_LARGE) : read.answer);
       body = read.body;
     }
     if (key === null) return json(await write(writer, user, r, method, body, base));

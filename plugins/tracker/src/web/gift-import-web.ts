@@ -1,6 +1,6 @@
 import type { GiftImportMatch, GiftImportOutcome, GiftWriteMeta } from "@rackbops/docket-core";
 import { NO_LONGER_LISTED } from "../actions.js";
-import { DEFAULT_IMPORT_CURRENCY, type ImportInput, type ImportReview, importApply, importInput, MAX_IMPORT_TEXT_BYTES, reviewOf } from "./api-gift-import.js";
+import { DEFAULT_IMPORT_CURRENCY, type ImportInput, type ImportReview, importApply, importInput, MAX_IMPORT_TEXT_BYTES, reviewOf, TOO_LARGE } from "./api-gift-import.js";
 import type { Editor } from "./editor.js";
 import { alerts, csrfField, input, money, select } from "./gift-pages.js";
 import { html, type Html, htmlResponse } from "./html.js";
@@ -34,7 +34,7 @@ ${select("format", "Format", FORMATS, i?.format ?? "csv")}
 <div class="rb-field"><label class="rb-label" for="text">The list</label>
 <textarea class="rb-textarea" id="text" name="text" rows="12" required>
 ${i?.text ?? ""}</textarea>
-<p class="rb-field__help">At most ${String(MAX_IMPORT_TEXT_BYTES / 1024)} KB and 500 gifts. Nothing is saved until you press Import.</p></div>
+<p class="rb-field__help">At most ${String(MAX_IMPORT_TEXT_BYTES / 1024)} KiB and 500 gifts. Nothing is saved until you press Import.</p></div>
 ${input("currency", "Currency", i?.currency ?? DEFAULT_IMPORT_CURRENCY, { max: 3, help: "For a price whose row names no currency." })}
 ${step}`;
 }
@@ -80,6 +80,11 @@ export function outcomesPage(v: Viewer, outcomes: readonly GiftImportOutcome[]):
 <p class="rb-muted">Importing the same rows again makes nothing twice.</p>
 </section>`,
   );
+}
+
+/** A POST whose form was over `MAX_IMPORT_FORM_BYTES` (app.ts): unread, so nothing is written, and the page says why. */
+export function importTooLarge(v: Viewer): Response {
+  return htmlResponse(importPage(v, null, null, TOO_LARGE), 413);
 }
 
 /** `GET /gifts/import`. */

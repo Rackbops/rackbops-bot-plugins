@@ -1,11 +1,19 @@
+import type { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { GiftLedger, type GiftWriteMeta, type OutgoingMessage } from "@rackbops/docket-core";
+import { makeFakeDelivery, makeFakeHost } from "../../../packages/testkit/index.js";
+import { Admissions } from "./admissions.js";
 import { runGiftDigests } from "./gift-digest.js";
 import { getDigestState, SqliteGiftStore } from "./gift-store.js";
+import { createPlugin, DB_DIR, DB_FILE } from "./index.js";
 import { admit } from "./people.js";
 import { Roster } from "./roster.js";
 import { openDatabase } from "./schema.js";
 import { SqliteStore } from "./store.js";
+import { removeDir } from "./test-dirs.js";
 
 /**
  * The opt-in gift digest on the notify tick (docket#103, gift-digest.ts): due at the owner's hour,
@@ -93,6 +101,43 @@ describe("the gift digest (docket#103)", () => {
     expect(s.db.query("SELECT count(*) AS n FROM gift_digest_state").get()).toEqual({ n: 0 });
   });
 
+  it("reads nothing of the ledger for a past-dated occasion, before the owner's hour, or once today's digest went", async () => {
+    const s = await setup(false);
+    await s.gifts.create("occasion", s.meta(), {
+      kind: "birthday", title: "Ann 2026", date: "2026-12-01", timeZone: null, year: 2026, currency: "USD", budgetMinor: null,
+      groupIds: [], includeIds: [], excludeIds: [], deadline: null, digest: true,
+    });
+    let reads = 0;
+    const gifts = new Proxy(s.gifts, {
+      get(target, key, receiver) {
+        const v = Reflect.get(target, key, receiver);
+        if (typeof v !== "function") return v;
+        return (...args: unknown[]) => {
+          if (key === "list" || key === "get") reads++;
+          return v.apply(target, args);
+        };
+      },
+    });
+    const deps = { ...s.deps, gifts };
+    expect(await runGiftDigests(deps, at("2026-12-10T09:05:00.000Z"))).toEqual({ sent: 0, failed: 0 });
+    expect(reads).toBe(0);
+    expect(s.sent).toEqual([]);
+    expect(s.db.query("SELECT count(*) AS n FROM gift_digest_state").get()).toEqual({ n: 0 });
+    // Christmas opted in: nothing read before 09:00, one pass at 09:05, then nothing more today.
+    await s.gifts.update("occasion", s.occasion.id, s.meta(), s.occasion.revision, { digest: true });
+    expect(await runGiftDigests(deps, at("2026-12-10T08:59:00.000Z"))).toEqual({ sent: 0, failed: 0 });
+    expect(reads).toBe(0);
+    expect(await runGiftDigests(deps, at("2026-12-10T09:05:00.000Z"))).toEqual({ sent: 1, failed: 0 });
+    const after = reads;
+    expect(after).toBeGreaterThan(0);
+    expect(await runGiftDigests(deps, at("2026-12-10T15:00:00.000Z"))).toEqual({ sent: 0, failed: 0 });
+    expect(reads).toBe(after);
+    expect(s.sent).toHaveLength(1);
+    // The next day it is read again.
+    await runGiftDigests(deps, at("2026-12-11T09:05:00.000Z"));
+    expect(reads).toBeGreaterThan(after);
+  });
+
   it("stores the state of a quiet nothing, and a person not registered or paused is passed by", async () => {
     const s = await setup();
     // Everyone done: both skipped for this occasion.
@@ -125,5 +170,64 @@ describe("the gift digest (docket#103)", () => {
     const erased = new Roster(s.db).erase(s.larry.id);
     expect(erased.rows.gift_digest_state).toBe(1);
     expect(s.db.query("SELECT count(*) AS n FROM gift_digest_state").get()).toEqual({ n: 0 });
+  });
+});
+
+describe("the gift digest on the plugin's notify tick", () => {
+  /** The plugin on a real data file and a second connection to it, with one opted-in occasion. */
+  async function tick(digest: boolean | undefined, run: (r: { dms: () => string[]; at: (iso: string) => Promise<void> }) => Promise<void>) {
+    const dataDir = mkdtempSync(join(tmpdir(), "tracker-gift-digest-"));
+    let plugin: ReturnType<typeof createPlugin> | null = null;
+    let db: Database | null = null;
+    try {
+      let now = new Date(AT);
+      const clock = { now: () => new Date(now) };
+      const delivery = makeFakeDelivery();
+      const host = makeFakeHost({ name: "tracker", dataDir, env: { TRACKER_ADMIN_DISCORD_IDS: "111111111111111111" }, ...delivery });
+      plugin = createPlugin(host, { clock, ...(digest !== undefined ? { digest } : {}) });
+      await plugin.activate!();
+      db = openDatabase(join(dataDir, DB_DIR, DB_FILE));
+      const store = new SqliteStore(db);
+      const larry = await store.updateUser((await admit(store, "111111111111111111", new Date(AT))).id, { timeZone: "UTC", preferredHour: 9 });
+      new Admissions(db).markRegistered(larry.id, AT);
+      const gifts = new GiftLedger(new SqliteGiftStore(db));
+      const meta = (k: string): GiftWriteMeta => ({ ownerId: larry.id, actor: larry.id, source: "api", at: AT, idempotencyKey: k });
+      const bea = await gifts.create("recipient", meta("k1"), { displayName: "Bea", kind: "person", memberIds: [], labels: [], interests: [], avoid: [], notes: null });
+      const occasion = await gifts.create("occasion", meta("k2"), {
+        kind: "christmas", title: "Christmas 2026", date: "2026-12-25", timeZone: null, year: 2026, currency: "USD", budgetMinor: null,
+        groupIds: [], includeIds: [], excludeIds: [], deadline: "2026-12-20", digest: true,
+      });
+      await gifts.create("occasionRecipient", meta("k3"), { occasionId: occasion.id, recipientId: bea.id, target: null, budgetMinor: null, decision: "planning", skipReason: null });
+      const p = plugin;
+      await run({
+        dms: () => delivery.calls.dm.map((c) => c.message.content ?? "").filter((t) => t.startsWith("Gifts for")),
+        at: async (iso) => {
+          now = new Date(iso);
+          await p.ticks![0]!.run(new AbortController().signal);
+        },
+      });
+    } finally {
+      await plugin?.dispose?.();
+      db?.close();
+      removeDir(dataDir);
+    }
+  }
+
+  it("sends the opted-in digest once, at the owner's hour, through the real wiring", async () => {
+    await tick(undefined, async ({ dms, at }) => {
+      await at("2026-12-10T08:30:00.000Z");
+      expect(dms()).toEqual([]);
+      await at("2026-12-10T09:05:00.000Z");
+      expect(dms()).toEqual([["Gifts for Christmas 2026", "10 days to shop.", "Still needs a gift: Bea."].join("\n")]);
+      await at("2026-12-10T10:05:00.000Z");
+      expect(dms()).toHaveLength(1);
+    });
+  });
+
+  it("is off whenever the daily digest is (options.digest: false)", async () => {
+    await tick(false, async ({ dms, at }) => {
+      await at("2026-12-10T09:05:00.000Z");
+      expect(dms()).toEqual([]);
+    });
   });
 });

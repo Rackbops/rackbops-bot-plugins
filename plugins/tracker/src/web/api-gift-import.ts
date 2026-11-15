@@ -8,7 +8,7 @@ import { problem } from "./api-tasks.js";
  *
  * - `POST /gifts/import/review` `{format: "csv"|"list", text, currency?}`: docket's
  *   `parseGiftImport`, then `reviewGiftImport` against the caller's live people and occasions.
- *   Writes nothing. 200 `{staged: {unknownColumns, problems}, rows, reviewToken}`; the token names
+ *   Writes no gift record (with an `Idempotency-Key`, api.ts keeps its answer, as for any API answer). 200 `{staged: {unknownColumns, problems}, rows, reviewToken}`; the token names
  *   exactly this input and this review.
  * - `POST /gifts/import` `{format, text, currency?, reviewToken, approve: [rowKey...]}`: the same
  *   input parsed and reviewed again now; a token that no longer names it is 409 `stale_review` and
@@ -18,7 +18,7 @@ import { problem } from "./api-tasks.js";
  *
  * docket keys every write by the row's content, never by the caller's key, so importing the same
  * rows again creates nothing twice, with or without an `Idempotency-Key` (api.ts keeps the answer
- * under one, as for every gift write). `text` is at most `MAX_IMPORT_TEXT_BYTES`; docket caps the
+ * under one, as for every gift write). `text` is at most `MAX_IMPORT_TEXT_BYTES` (200 KiB; `413` over it); docket caps the
  * rows at 500. A row's own currency wins; one with none takes `currency`, else `DEFAULT_IMPORT_CURRENCY`
  * for an occasion the import makes.
  */
@@ -42,7 +42,9 @@ export interface ImportReview {
   reviewToken: string;
 }
 
-const tooLarge = (): ApiAnswer => problem(413, "too_large", `The list is over ${MAX_IMPORT_TEXT_BYTES / 1024} KB; import it in parts.`);
+/** What a list over the cap is told, on the web page and in the API's 413 alike. */
+export const TOO_LARGE = "That list is too large: import it in parts.";
+const tooLarge = (): ApiAnswer => problem(413, "too_large", TOO_LARGE);
 
 /** The input fields of a body, or the answer refusing them; `extra` are the other fields the route takes. */
 export function importInput(body: Record<string, unknown>, extra: readonly string[]): ImportInput | ApiAnswer {

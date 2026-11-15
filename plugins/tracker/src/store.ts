@@ -810,6 +810,13 @@ export class SqliteStore implements Store {
     return this.all(`SELECT * FROM findings ${clause} ORDER BY at, seq`, ...params).map(toFinding);
   }
 
+  /** One task's findings whose source is one of `sources`, oldest first (gift-scout.ts `findingButtons`). */
+  async findingsBySource(taskId: string, ownerId: string, sources: readonly string[]): Promise<StoredFinding[]> {
+    if (sources.length === 0) return [];
+    const marks = sources.map(() => "?").join(", ");
+    return this.all(`SELECT * FROM findings WHERE task_id = ? AND owner_id = ? AND source IN (${marks}) ORDER BY at, seq`, taskId, ownerId, ...sources).map(toFinding);
+  }
+
   async deleteFindings(ownerId: string): Promise<number> {
     return deleteFindingsOf(this.db, ownerId);
   }
