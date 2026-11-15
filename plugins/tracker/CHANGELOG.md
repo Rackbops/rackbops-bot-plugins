@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.63.0] - 2026-11-15
+
+### Added
+
+- The model can check a want-list watch of several places (Rod, 2026-11-15: "start it right after 59"; docket 0.31.0). `judge: yes` with several places is no longer refused, and the web form keeps its "Check listings with the model" choice when several boxes are ticked. Each look reads every place that is due; the model then checks everything they found in one look, and one DM tells the ones worth a look, each by its own place. The model may open listings only on a page, Noble Knight or BGG place's own site, never eBay's. A judged watch with an eBay place among several has its city-hall Job erased within six hours (`forgetAfterSeconds`), as a judged eBay watch's is.
+
+### Changed
+
+- `@rackbops/docket-core` and `@rackbops/docket-types` 0.31.0: the several-place judged watch.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.61.0] - 2026-11-15
 
 ### Added

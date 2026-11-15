@@ -93,4 +93,12 @@ describe("how long city-hall may keep a run's Job (ebayJobForgetSeconds, Rackbop
     expect(ebayJobForgetSeconds(d, "o999999")).toBeUndefined();
     expect(ebayJobForgetSeconds(d, `x${judged}`)).toBeUndefined();
   });
+
+  it("six hours for a judged watch with an eBay place among several, nothing for one without (0.63.0)", () => {
+    const d = db();
+    const mixed = run(d, task(d, "wantjudge", { source: "page", target: "https://shop.example/s", also: [{ source: "ebay", target: "wingspan" }] }), 0, null);
+    const noEbay = run(d, task(d, "wantjudge", { source: "page", target: "https://shop.example/s", also: [{ source: "bgg", target: "266192" }] }), 0, null);
+    expect(ebayJobForgetSeconds(d, `o${mixed}`)).toBe(21_600);
+    expect(ebayJobForgetSeconds(d, `o${noEbay}`)).toBeUndefined();
+  });
 });

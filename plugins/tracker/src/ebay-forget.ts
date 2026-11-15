@@ -70,7 +70,7 @@ export const EBAY_JOB_FORGET_SECONDS = EBAY_KEEP_MS / 1000;
 
 /**
  * `EBAY_JOB_FORGET_SECONDS` when occurrence `occurrenceId` (`o<seq>`) is a run of a judged eBay
- * watch, else undefined. A plain watch sends no Job. An inbox eBay watch (no eBay keys) is stored
+ * watch, or of a judged watch with an eBay place among several (0.63.0), else undefined. A plain watch sends no Job. An inbox eBay watch (no eBay keys) is stored
  * as `source: "inbox"`, so its Jobs are kept as before: its listings come from its owner's own
  * browser or alert emails, not eBay's API, and are kept as findings.
  */
@@ -80,7 +80,9 @@ export function ebayJobForgetSeconds(db: Database, occurrenceId: string): number
   const row = db
     .query(
       `SELECT 1 AS one FROM occurrences o JOIN tasks t ON o.task_id = 't' || t.seq
-         WHERE o.seq = ? AND t.type = 'wantjudge' AND json_extract(t.config, '$.source') = 'ebay'`,
+         WHERE o.seq = ? AND t.type = 'wantjudge'
+           AND (json_extract(t.config, '$.source') = 'ebay'
+             OR EXISTS (SELECT 1 FROM json_each(t.config, '$.also') a WHERE json_extract(a.value, '$.source') = 'ebay'))`,
     )
     .get(Number(m[1])) as { one: number } | null;
   return row ? EBAY_JOB_FORGET_SECONDS : undefined;
