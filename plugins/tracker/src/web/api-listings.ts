@@ -2,7 +2,7 @@ import type { User } from "@rackbops/docket-core";
 import { BGG_HOST, type Listing } from "@rackbops/docket-types";
 import { acceptListing, type InboxSite, MAX_LISTINGS_PER_POST } from "../inbox.js";
 import { ownLiveTask } from "../manage.js";
-import { WANT_TYPES, type WatchConfig, watchSite } from "../want.js";
+import { WANT_TYPES, type WatchConfig, watchPlaces, watchSite } from "../want.js";
 import { type ApiAnswer, NOT_FOUND_MESSAGE, problem } from "./api-tasks.js";
 import type { Writer } from "./editor.js";
 
@@ -90,19 +90,29 @@ export async function listingsAnswer(w: Writer, user: User, id: string, body: Re
     if (!task || !WANT_TYPES.has(task.type) || (task.status !== "active" && task.status !== "paused")) {
       return problem(404, "not_found", NOT_FOUND_MESSAGE);
     }
-    const config = task.config as WatchConfig;
-    if (config.source !== "inbox") {
+    // A watch of several places (0.59.0) takes listings for each inbox place among them, by its site.
+    const inboxes = watchPlaces(task.config as WatchConfig).filter((p) => p.source === "inbox");
+    const config = inboxes[0];
+    if (!config) {
       return problem(409, "conflict", "That watch reads its listings itself (a page, BoardGameGeek's API, Shopify, or eBay's own API): listings are sent in only to an inbox watch: an eBay one made without this bot's eBay keys, or a BGG one made without BGG access.");
     }
     if (!inbox) return problem(503, "unavailable", "This bot cannot take listings just now; try again later.");
     // Only the watch's own site: its DMs link each listing, so an address elsewhere is never passed on (#229).
-    const site = watchSite(config);
-    const on = site === "ebay" ? " on eBay" : site === "bgg" ? " on BoardGameGeek" : "";
-    const onSite = accepted.filter((l) => onWatchSite(site, l.url));
+    const sites = inboxes.map((p) => ({ place: p, site: watchSite(p) }));
+    const site = sites.length === 1 ? (sites[0]?.site ?? null) : null;
+    const siteName = (x: string | null): string | null => (x === "ebay" ? "eBay" : x === "bgg" ? "BoardGameGeek" : null);
+    const names = sites.map((x) => siteName(x.site)).filter((x): x is string => x !== null);
+    const on = names.length > 0 && sites.every((x) => x.site !== null) ? ` on ${names.join(" or ")}` : "";
+    const onSite = accepted.filter((l) => sites.some((x) => onWatchSite(x.site, l.url)));
     if (onSite.length === 0) return problem(400, "invalid", `None of those listings could be used: each needs a \`title\` and an absolute http(s) \`url\`${on}.`);
     const left = raw.length - onSite.length;
-    const stored = inbox.add(task.id, config.target, onSite, w.d.clock.now());
-    const from = site === "ebay" ? " from eBay" : site === "bgg" ? " from BoardGameGeek" : "";
+    let stored = 0;
+    const now = w.d.clock.now();
+    for (const x of sites) {
+      const mine = onSite.filter((l) => onWatchSite(x.site, l.url) && sites.find((y) => onWatchSite(y.site, l.url)) === x);
+      if (mine.length > 0) stored += inbox.add(task.id, x.place.target, mine, now);
+    }
+    const from = site === "ebay" ? " from eBay" : site === "bgg" ? " from BoardGameGeek" : sites.length > 1 && names.length > 0 ? ` from ${names.join(" or ")}` : "";
     const skipped = left > 0 ? ` ${left === 1 ? "1 was" : `${left} were`} left out: each needs a title and an absolute http(s) address${on}.` : "";
     const when = task.status === "paused" ? "The watch is paused: I read them once it is resumed." : "I read them at the watch's next look and DM you the new ones within your limits.";
     return {

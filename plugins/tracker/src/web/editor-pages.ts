@@ -42,7 +42,8 @@ export type Values = Readonly<Record<string, string>>;
 export interface Field {
   name: string;
   label: string;
-  kind: "text" | "textarea" | "number" | "date" | "url" | "select";
+  /** `checks`: one checkbox per option, any number ticked; sent as one value per box, or over the API as one string separated by commas. */
+  kind: "text" | "textarea" | "number" | "date" | "url" | "select" | "checks";
   help?: string;
   required?: boolean;
   maxlength?: number;
@@ -130,6 +131,18 @@ const newsFields = (mode: Mode, surface: Surface): readonly Field[] => [
 ];
 
 const SOURCE_OPTIONS = [["page", "a listing page I paste"], ["bgg", "BoardGameGeek's marketplace"], ["ebay", "eBay: its own API, or listings I send in"], ["shopify", "Shopify stores: new copies in stock"], ["nobleknight", "Noble Knight Games: a product page I paste"]] as const;
+/** The longest BGG or Noble Knight address a place takes: a game's or product's page, never a search's. */
+const MAX_PLACE_ADDRESS = 200;
+
+/** Each place's own target, for a watch that looks in several (want.ts `WantInput.targets`). */
+const PLACE_TARGETS: readonly Field[] = [
+  { name: "target_page", label: "The listing page (for a listing page)", kind: "text", maxlength: MAX_URL, help: "A shop's listing or search page's address." },
+  { name: "target_bgg", label: "The BGG game (for BoardGameGeek)", kind: "text", maxlength: MAX_PLACE_ADDRESS, help: "Its address or its id. While this bot has no BGG access, its listings reach the watch when you send them in through the task API, such as from Claude in Chrome; then words work too (the name when empty)." },
+  { name: "target_ebay", label: "Words to search eBay for (for eBay)", kind: "text", maxlength: MAX_TITLE, help: "The name when empty. With this bot's eBay keys, each look is one search through eBay's own API, and a listing counts only when its title has every word; without them, a watch never opens eBay, so its listings reach the watch when you send them in through the task API." },
+  { name: "target_shopify", label: "Words to search Shopify for (for Shopify)", kind: "text", maxlength: MAX_TITLE, help: "The name when empty: a product counts only when its title has every word. Each Shopify look is a paid search, so in a watch with other places Shopify is searched at most once a day." },
+  { name: "target_nobleknight", label: "The Noble Knight product page (for Noble Knight)", kind: "text", maxlength: MAX_PLACE_ADDRESS, help: "One product's page, such as https://www.nobleknight.com/P/2148112695." },
+];
+
 const JUDGE_OPTIONS = [["yes", "yes: the model checks each new listing and its seller first"], ["no", "no: DM me every new listing"]] as const;
 
 /** `/want`'s limits, the same on an edit (but for what an empty number means): where it looks is fixed once made. */
@@ -158,7 +171,7 @@ const wantLimits = (mode: Mode, surface: Surface, judged = false): readonly Fiel
   { name: "exclude", label: "Leave out titles with", kind: "text", maxlength: MAX_EXCLUDE_TEXT, help: "Words or phrases, separated by commas: a listing whose title has any of them is left out, such as investigator for a campaign box. At most 20. Leave it empty to leave nothing out." },
   ...(judged ? [] : CONFIRM_FIELDS),
   ...(mode === "new" || judged ? [WANT_NOTES_FIELD] : []),
-  { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}, and at least ${MIN_SHOPIFY_HOURS} for Shopify, since each Shopify look is a paid Firecrawl search. ${empty(mode, `When empty, ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG, ${DEFAULT_EBAY_HOURS} for eBay, ${DEFAULT_INBOX_HOURS} for BGG when this bot has no BGG access, whose listings are sent in, and ${DEFAULT_SHOPIFY_HOURS} for Shopify.`, surface)}` },
+  { name: "hours", label: "Hours between looks", kind: "number", min: 1, max: MAX_WANT_HOURS, help: `1 to ${MAX_WANT_HOURS}, and at least ${MIN_SHOPIFY_HOURS} for a watch of Shopify alone, since each Shopify look is a paid Firecrawl search; a watch of several places reads Shopify at most every ${MIN_SHOPIFY_HOURS} hours. ${empty(mode, `When empty, ${DEFAULT_PAGE_HOURS} for a page, ${DEFAULT_BGG_HOURS} for BGG, ${DEFAULT_EBAY_HOURS} for eBay, ${DEFAULT_INBOX_HOURS} for BGG when this bot has no BGG access, whose listings are sent in, and ${DEFAULT_SHOPIFY_HOURS} for Shopify; for several places, the fewest of theirs.`, surface)}` },
 ];
 
 /**
@@ -179,21 +192,34 @@ export function fieldsFor(type: NewType, mode: Mode, surface: Surface = "web"): 
       { name: "name", label: "What you want", kind: "text", required: true, maxlength: MAX_TITLE },
       ...(mode === "new"
         ? [
-          { name: "source", label: "Where to look", kind: "select", options: SOURCE_OPTIONS } as const,
           {
-            name: "target",
-            label: "The page, the BGG game, or the words to search eBay or Shopify for",
-            kind: "text",
-            maxlength: MAX_URL,
-            help:
-              "A shop's listing or search page, or a BGG game's address or id. For eBay, the words to search for (the name when empty): with this bot's eBay keys, each look is one search through eBay's own API, and a listing counts only when its title has every word; without them, a watch never opens eBay, so its listings reach the watch when you send them in through the task API, such as from Claude in Chrome in your own browser. BGG works the same way while this bot has no BGG access. For Shopify, the words to search Shopify stores for (the name when empty): a product counts only when its title has every word.",
+            name: "source",
+            label: "Where to look",
+            kind: "checks",
+            options: SOURCE_OPTIONS,
+            help: surface === "api"
+              ? "One place, or several separated by commas, such as page,ebay: one watch looks in each, a copy two places list is DMed once, and one Done stops it everywhere. A watch the model checks (judge: yes) looks in one place. Give each place its own target below; with one place, target works as before."
+              : "Tick every place to look: one watch looks in each, a copy two places list is DMed once, and one Done stops it everywhere. A watch the model checks looks in one place. Fill in the box below for each place you tick.",
           } as const,
+          ...(surface === "api"
+            ? [
+              {
+                name: "target",
+                label: "The page, the BGG game, or the words to search eBay or Shopify for",
+                kind: "text",
+                maxlength: MAX_URL,
+                help:
+                  "For a watch of one place. A shop's listing or search page, or a BGG game's address or id. For eBay, the words to search for (the name when empty): with this bot's eBay keys, each look is one search through eBay's own API, and a listing counts only when its title has every word; without them, a watch never opens eBay, so its listings reach the watch when you send them in through the task API, such as from Claude in Chrome in your own browser. BGG works the same way while this bot has no BGG access. For Shopify, the words to search Shopify stores for (the name when empty): a product counts only when its title has every word.",
+              } as const,
+            ]
+            : []),
+          ...PLACE_TARGETS,
           {
             name: "judge",
             label: "Check listings with the model",
             kind: "select",
             options: JUDGE_OPTIONS,
-            help: "Each check counts against your daily model budget. Needs the model runner; fixed once the watch is made. Choose no to give words to double-check below.",
+            help: "Each check counts against your daily model budget. Needs the model runner; fixed once the watch is made; only for a watch of one place. Choose no to give words to double-check below.",
           } as const,
         ]
         : []),
@@ -244,6 +270,16 @@ export function prose(text: string): Html {
 function field(f: Field, values: Values): Html {
   const value = values[f.name] ?? "";
   const help = f.help ? html`<p class="rb-field__help">${f.help}</p>` : null;
+  if (f.kind === "checks") {
+    const ticked = value.split(",").map((v) => v.trim());
+    return html`<fieldset class="rb-field" id="${f.name}">
+<legend class="rb-label">${f.label}</legend>
+${(f.options ?? []).map(
+      ([v, label]) => html`<div><label class="rb-choice"><input class="rb-checkbox" type="checkbox" name="${f.name}" value="${v}"${ticked.includes(v) ? html` checked` : null}> ${label}</label></div>`,
+    )}
+${help}
+</fieldset>`;
+  }
   if (f.kind === "select") {
     return html`<div class="rb-field">
 <label class="rb-label" for="${f.name}">${f.label}</label>
@@ -283,7 +319,7 @@ const NOUN: Record<NewType, string> = { reminder: "reminder", renewal: "renewal"
 const INTRO: Partial<Record<NewType, string>> = {
   price: "I read the page once now; nothing is made unless I find a price in it.",
   wantlist:
-    "I look at the page or BGG every few hours, or at the eBay listings you send in every hour, and DM you each new listing within your limits, until you press Done. A page is read once now; nothing is made unless I find listings in it.",
+    "I look in every place you tick -- a page, BGG, eBay, Shopify or Noble Knight -- every few hours (eBay every hour), and DM you each new listing within your limits, until you press Done. A page is read once now; nothing is made unless I find listings in it.",
   research:
     "A research run looks it up on the web, then a second run checks the answer against its sources; only an answer that passes is DMed to you. It can take a while, and requests share a daily budget.",
   scout:

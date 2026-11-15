@@ -90,7 +90,7 @@ describe("/want source: nobleknight", () => {
     s.refuse = "www.nobleknight.com is not on the public internet";
     expect(await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "nobleknight", target: PAGE } })).toBe("I cannot read that page: www.nobleknight.com is not on the public internet.");
     const none = await slash(w.plugin, "want", LARRY, { strings: { name: "X", source: "bogus", target: PAGE } });
-    expect(none).toBe("`source` is page, bgg, ebay, shopify or nobleknight.");
+    expect(none).toBe("`source` is page, bgg, ebay, shopify or nobleknight, or several of them separated by commas.");
   });
 
   it("makes the watch from the web form and shows where it looks", async () => {

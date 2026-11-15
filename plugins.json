@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-15T04:43:32.670Z",
+  "generatedAt": "2026-11-15T22:37:36.149Z",
   "plugins": [
     {
       "name": "mcp",
@@ -210,7 +210,7 @@
     {
       "name": "tracker",
       "package": "@rackbops/plugin-tracker",
-      "version": "0.58.0",
+      "version": "0.59.0",
       "description": "The task tracker for Rackbops Clerk: reminders, renewals, price drops, one-off research (on the web, or on pages your own browser gathers and sends in through the task API, with a fuller pass on pages the research could not open) and an interest scout and a news watch (through city-hall, with their findings), a want-list watcher (listing pages you paste, Noble Knight Games product pages you paste (a trusted seller, each copy in stock its own listing), BoardGameGeek through its API once its token is set, Shopify stores' new copies in stock through Firecrawl once its key is set, each shop first checked by one web search through city-hall, eBay through eBay's own Browse API once its keys are set, and eBay and BoardGameGeek listings you send in through the task API or that eBay's saved-search alert emails forwarded to your alert address carry, which the watcher never opens; with the model checking each new listing and its seller first, through city-hall) by slash command, delivered by DM with buttons, and a daily DM at each person's hour of what is due today and overdue, on docket's SQLite store (/allow, /register, /remind, /renewal, /price, /research, /scout, /news, /want, /tasks, /task, /settings, /web, /gift), with a web area for your tasks, history and settings, a web editor to make, change, pause and delete your own tasks (research requests too, made but not changed, and scouts, made and changed), an admin view (with the DMs that did not arrive, raising a person's daily model ceiling, and daily model usage per person), an operator switch that turns the daily budgets off for the alpha, forget-me, a JSON task API with personal API tokens, and a plain-language intake: DM Clerk what you want in your own words, answer its questions, and press Save on the draft it shows",
       "hostApiVersion": 1,
       "intents": [
@@ -390,6 +390,12 @@
       ],
       "releases": [
         {
+          "version": "0.59.0",
+          "publishedAt": "2026-11-15T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.59.0",
+          "notes": "### Added\n\n- One want-list watch can look in several places (Rod, 2026-11-15, on the web area's New want-list watch form: \"This should be check boxes for multiple selections, not single pull down choices\"). The form's \"Where to look\" is now a box for each place (a listing page, BoardGameGeek, eBay, Shopify, Noble Knight), each with its own box below for its target (the page's address, the BGG game, the words to search eBay or Shopify for, which default to the name, or the Noble Knight product page). Over the task API and `/want`, `source` takes one place as before or several separated by commas (`page,ebay`), with `target_page`, `target_bgg`, `target_ebay`, `target_shopify` and `target_nobleknight`; with one place, `target` works as before. The watch is stored as docket 0.29.0's `WantConfig`: its first place in `source`/`target` and the rest in `also`, so every watch made before reads as it did. One look reads every place, a copy two places list under the same id is DMed once, all of a look's new listings go out in one DM, and one Done stops the watch everywhere. A watch of several places looks as often as its most often read place by default (any 1 to 168 hours); Shopify's paid search in one is read at most every 24 hours (`everyHours`). It is a plain watch: one the model checks (`judge: yes`) looks in one place, and asking for one with several is refused. Places are fixed once made; an edit keeps them.\n- `GET /tasks/<id>` shows a watch of several places' `places`, each shaped as the watch's own `source`, `target` and inbox fields (additive). `GET /types` lists the five `target_<source>` fields, and `source`'s options are no longer an `enum`, since one string may name several.\n\n### Changed\n\n- Every path that read a watch's one source reads each place: listings sent in through `POST /tasks/<id>/listings` go to the watch's inbox place for their site; an eBay alert email reaches an eBay inbox place among several; duplicates (#390) match when any one place repeats any one of another watch's; the 6-hour clearing of eBay's listings from a recorded DM takes out only the eBay lines of a watch with other places, keeping theirs; the task page and the confirmation name every place.\n- A form body may now be up to 40 KiB (was 32 KiB): the new want-list form, with a target for each place, is the longest editor form.\n- `@rackbops/docket-core` and `@rackbops/docket-types` 0.29.0 (from 0.28.0): `WantConfig.also` and the several-place run.\n\n### Schema\n\n- No change. Still at 13."
+        },
+        {
           "version": "0.58.0",
           "publishedAt": "2026-11-15T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.58.0",
@@ -442,12 +448,6 @@
           "publishedAt": "2026-11-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.48.0",
           "notes": "### Added\n\n- Duplicate check on the task API (#390). `POST /tasks` refuses with `409 duplicate` a new task that looks for the same thing as one of the owner's active or paused tasks, naming them in the message and in a `duplicates` list (`id`, `title`, `status`, `type`), unless the body carries `allowDuplicate: true`. The same thing means a want-list watch (plain or judged) with the same source and search: an eBay or Shopify search's words (the name when no target is given), a BGG game's id, a page's address, or an inbox eBay or BGG watch's words; a news watch with the same subject; or a price with the same page. Words are compared trimmed, lower-cased and with runs of space as one. `POST /tasks/validate` takes `allowDuplicate` too and answers `duplicates` (empty when none), saying so in its message, without refusing. Reminders, renewals, scouts and research requests are not compared. On 2026-11-11 a setup prompt run a second time through the ChatGPT connector made six copies of existing watches, each of which DMed every current listing again. The check is read outside the write queue, so two creates sent at the same instant can both pass it. Discord and the web editor do not check yet.\n\n### Schema\n\n- No change. Still at 13."
-        },
-        {
-          "version": "0.47.0",
-          "publishedAt": "2026-11-13T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.47.0",
-          "notes": "### Added\n\n- Gift routes in the task API (Rackbops/docket#94, #383): the owner's gift ledger under `/api/v1/gifts/` -- recipients, groups and their members, occasions and their rosters, items, purchases and allocations, the reviewed roster sync with an occasion's groups, an occasion's coverage, budget and cost, and spend per currency, plus a batch of up to 25 writes with an outcome per row. Writes take an `expectedRevision` (a stale one is 409 and changes nothing) and `Idempotency-Key`. Another person's ids are the unknown record's 404, and sharing a task gives no gift access. Two new usr delegation operations, `read_gifts` and `write_gifts`, cover every gift read and every gift write; a service link made before 0.47.0 does not cover them until it is made again. `GET /capabilities` lists them under `gifts`. No model call and no runner.\n\n### Schema\n\n- No change. Still at 13."
         }
       ]
     },

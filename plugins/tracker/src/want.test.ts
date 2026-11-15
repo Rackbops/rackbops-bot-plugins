@@ -512,7 +512,10 @@ describe("/want", () => {
     const jar = await signIn(w.plugin, LARRY);
     const csrf = await csrfOf(w.plugin, jar);
     const form = await (await call(w.plugin, "GET", "/new/wantlist", { jar })).text();
-    expect(form).toContain('name="target"');
+    // The form's places are boxes to tick, each with its own target (0.59.0); `target` is still read.
+    expect(form).toContain('type="checkbox" name="source" value="page" checked');
+    expect(form).toContain('name="target_page"');
+    expect(form).not.toContain('name="target"');
     const made = await call(w.plugin, "POST", "/new/wantlist", { jar, origin: ORIGIN, form: { csrf, name: "Wingspan", source: "page", target: SHOP, max: "40", currency: "", hours: "" } });
     expect(made.status).toBe(303);
     const edit = await (await call(w.plugin, "GET", "/tasks/t1/edit", { jar })).text();

@@ -11,11 +11,12 @@ import {
   parseBggThingId,
   parseExclude,
   type Source,
-  type SourceId,
   SourceMiss,
   searchWords,
   type WantConfig,
+  type WantPlace,
   wanted,
+  wantPlaces,
 } from "@rackbops/docket-types";
 import { clip, liveTaskCap, NO_LONGER_LISTED, NO_SUCH_TASK, type Plan, rescheduleKeepingSnoozes, said, type TaskResult, type TrackerDeps } from "./actions.js";
 import type { Step } from "./discord.js";
@@ -130,7 +131,10 @@ export type WatchConfig = WantConfig & {
 
 export interface WantInput {
   name: string;
+  /** One source, or several separated by commas: one watch that looks in each (docket 0.29.0 `also`). */
   source: string;
+  /** Each place's own target, for a watch of several places: a page or Noble Knight address, a BGG game, or words to search for. */
+  targets?: Partial<Record<WantSource, string>>;
   /** The page's address or the BGG game; for `ebay` (and `bgg` without its API), the words to search for (the name when empty), or for BGG a game. */
   target?: string;
   max?: number;
@@ -304,6 +308,27 @@ export function watchWhere(c: WantConfig): string {
 }
 
 /**
+ * Each place a watch looks in, as a one-place watch with the watch's limits and words (docket's
+ * `wantPlaces`): one for a watch made before several places, more for one made with them.
+ */
+export function watchPlaces(c: WatchConfig): WatchConfig[] {
+  const { also: _also, search: _search, game: _game, ...limits } = c;
+  return wantPlaces(c).map((p) => ({
+    ...limits,
+    source: p.source,
+    target: p.target,
+    ...(p.search !== undefined ? { search: p.search } : {}),
+    ...(p.game !== undefined ? { game: p.game } : {}),
+  }));
+}
+
+/** Where a watch looks, every place, in a sentence's words. */
+export function watchWhereAll(c: WatchConfig): string {
+  const each = watchPlaces(c).map(watchWhere);
+  return each.length <= 1 ? (each[0] ?? watchWhere(c)) : `${each.slice(0, -1).join(", ")} and ${each.at(-1)}`;
+}
+
+/**
  * How listings reach an inbox watch, for its confirmation: never by the tracker opening the site.
  * `alerts` is the owner's alert address (mail.ts) while the alert-email route is on, else null.
  */
@@ -363,61 +388,125 @@ export interface PendingWant {
   judge: boolean;
 }
 
-/** `/want`'s checks, in the queue: the source, the target, the limits and the caps. */
-export async function startWant(d: TrackerDeps, user: User, input: WantInput): Promise<Plan<{ start: PendingWant }>> {
-  if (!d.types.wantlist) return { ok: false, error: WANT_OFF };
-  const source = input.source.trim().toLowerCase();
-  if (!(WANT_SOURCES as readonly string[]).includes(source)) return { ok: false, error: "`source` is page, bgg, ebay, shopify or nobleknight." };
+/**
+ * The order a watch's places are kept in (Rod, 2026-11-15: several places in one watch): a place
+ * read on every look first, then eBay (whose API watch keeps no data) and Shopify (a paid search,
+ * the one place that may be read less often than the watch looks), so neither is a several-place
+ * watch's first place.
+ */
+const PLACE_ORDER: readonly WantSource[] = ["page", "nobleknight", "bgg", "ebay", "shopify"];
+
+export const ONE_JUDGED_PLACE =
+  "The model checks a watch that looks in one place only. Tick one place, or choose no to check with the model for a plain watch that looks in all of them.";
+export const SOURCE_WORDS = "`source` is page, bgg, ebay, shopify or nobleknight, or several of them separated by commas.";
+
+/** The sources `raw` names: one, or several separated by commas, each once, in `PLACE_ORDER`; none is a page. */
+export function sourcesPlan(raw: string): Plan<{ sources: WantSource[] }> {
+  const named = raw.split(",").map((s) => s.trim().toLowerCase()).filter((s) => s !== "");
+  if (named.length === 0) return { ok: true, sources: ["page"] };
+  if (named.some((s) => !(WANT_SOURCES as readonly string[]).includes(s))) return { ok: false, error: SOURCE_WORDS };
+  return { ok: true, sources: PLACE_ORDER.filter((s) => named.includes(s)) };
+}
+
+/** Whether `source` is an inbox watch on this bot: eBay without the eBay keys, BGG without its API. */
+function inboxSiteOf(d: TrackerDeps, source: WantSource): InboxSite | null {
+  return source === "ebay" && !d.ebay ? "ebay" : source === "bgg" && !d.bgg ? "bgg" : null;
+}
+
+/** One place a watch looks in, as kept: docket's `WantPlace` with an inbox place's words and game. */
+type WatchPlace = Pick<WatchConfig, "source" | "target" | "search" | "game">;
+
+/** One place's checks: its target read as its source reads it; `words` is what a searched place searches for. */
+function placePlan(d: TrackerDeps, source: WantSource, rawTarget: string | undefined, name: string): Plan<{ place: WatchPlace; words: string | null }> {
   if (source === "shopify" && !d.shopify) return { ok: false, error: SHOPIFY_OFF };
   // eBay without the eBay keys, and BGG while the bot has no BGG API access, are inbox watches.
-  const site: InboxSite | null = source === "ebay" && !d.ebay ? "ebay" : source === "bgg" && !d.bgg ? "bgg" : null;
+  const site = inboxSiteOf(d, source);
   // Searched by its words: Shopify's catalog, and eBay through its API.
   const searched = source === "shopify" || (source === "ebay" && d.ebay === true);
-  const planned = limitsPlan(input, defaultWantHours(site ? "inbox" : source), minWantHours(source));
-  if (!planned.ok) return planned;
-  const { limits } = planned;
-  if (source === "ebay" && d.ebay === true && limits.currency && limits.currency !== "USD") return { ok: false, error: EBAY_USD };
-  if (source === "nobleknight" && limits.currency && limits.currency !== "USD") return { ok: false, error: NOBLE_KNIGHT_USD };
-  // An eBay API watch keeps no eBay data (ebay-forget.ts). A judged one hands its listings to
-  // city-hall's queue in its Job, which city-hall erases once it ends and never past six hours
-  // (`ebayJobForgetSeconds`, Rackbops/city-hall#6; Rod, 2026-11-08), so it may be judged like any watch.
-  // Confirm words make a plain watch unless the owner asked for the model, which `confirmPlan` refuses.
-  const confirming = [input.confirm, input.unconfirmed].some((v) => v !== undefined && v.trim() !== "" && v.trim() !== "-");
-  const judged = confirming && input.judge !== true ? ({ ok: true, judge: false } as const) : judgePlan(d, input.judge);
-  if (!judged.ok) return judged;
-  const target = (input.target ?? "").trim();
-  let inbox: { search: string; game: number | null } | null = null;
-  let words: string | null = null;
+  const target = (rawTarget ?? "").trim();
   if (searched) {
     // The words to search for, the name when none are given.
-    words = (target || limits.name).replace(/\s+/g, " ");
+    const words = (target || name).replace(/\s+/g, " ");
     if (words.length > MAX_TITLE) return { ok: false, error: `The words to search for are longer than ${MAX_TITLE} characters.` };
     if (!/[\p{L}\p{N}]/u.test(words)) return { ok: false, error: `Give the words to search ${source === "ebay" ? "eBay" : "Shopify"} for, such as \`Wingspan Oceania expansion\`.` };
-  } else if (site) {
+    return { ok: true, place: { source: source === "ebay" ? "ebay" : "shopify", target: words }, words };
+  }
+  if (site) {
     if (!d.webEditor || !d.inbox) return { ok: false, error: INBOX_OFF };
     // For BGG, a game named by its address or id is kept as the game; any other text is the words.
     const game = site === "bgg" && target ? parseBggThingId(target) : null;
-    const search = (game === null && target ? target : limits.name).replace(/\s+/g, " ");
+    const search = (game === null && target ? target : name).replace(/\s+/g, " ");
     if (search.length > MAX_TITLE) return { ok: false, error: `The words to search for are longer than ${MAX_TITLE} characters.` };
-    inbox = { search, game };
-  } else {
-    if (target.length === 0) {
-      const what = source === "page" ? "the listing page's address" : source === "nobleknight" ? NOBLE_KNIGHT_TARGET : "the BGG game: its address or its id";
-      return { ok: false, error: `\`target\` is ${what}.` };
-    }
-    if (target.length > MAX_URL) return { ok: false, error: `That address is longer than ${MAX_URL} characters.` };
-    if (source === "page") {
-      if (!d.fetch) return { ok: false, error: WANT_OFF };
-      const problem = urlProblem(target);
-      if (problem) return { ok: false, error: problem };
-      if (isEbayHost(new URL(target).hostname)) return { ok: false, error: EBAY_PAGE };
-    } else if (source === "nobleknight") {
-      if (!d.fetch) return { ok: false, error: WANT_OFF };
-      if (nobleKnightProduct(target) === null) return { ok: false, error: `That is not a Noble Knight product page. \`target\` is ${NOBLE_KNIGHT_TARGET}.` };
-    } else if (parseBggThingId(target) === null) {
-      return { ok: false, error: "That is not a BGG game. Paste its address, such as `https://boardgamegeek.com/boardgame/266192/wingspan`, or its id." };
-    }
+    return { ok: true, place: { source: "inbox", target: newInboxKey(site), search, ...(game !== null ? { game: String(game) } : {}) }, words: null };
   }
+  if (target.length === 0) {
+    const what = source === "page" ? "the listing page's address" : source === "nobleknight" ? NOBLE_KNIGHT_TARGET : "the BGG game: its address or its id";
+    return { ok: false, error: `\`target\` is ${what}.` };
+  }
+  if (target.length > MAX_URL) return { ok: false, error: `That address is longer than ${MAX_URL} characters.` };
+  if (source === "page") {
+    if (!d.fetch) return { ok: false, error: WANT_OFF };
+    const problem = urlProblem(target);
+    if (problem) return { ok: false, error: problem };
+    if (isEbayHost(new URL(target).hostname)) return { ok: false, error: EBAY_PAGE };
+    return { ok: true, place: { source: "page", target }, words: null };
+  }
+  if (source === "nobleknight") {
+    if (!d.fetch) return { ok: false, error: WANT_OFF };
+    const product = nobleKnightProduct(target);
+    if (product === null) return { ok: false, error: `That is not a Noble Knight product page. \`target\` is ${NOBLE_KNIGHT_TARGET}.` };
+    return { ok: true, place: { source: "nobleknight", target: product.url }, words: null };
+  }
+  const id = parseBggThingId(target);
+  if (id === null) return { ok: false, error: "That is not a BGG game. Paste its address, such as `https://boardgamegeek.com/boardgame/266192/wingspan`, or its id." };
+  return { ok: true, place: { source: "bgg", target: String(id) }, words: null };
+}
+
+const PLACE_NAME: Record<WantSource, string> = { page: "the listing page", bgg: "BoardGameGeek", ebay: "eBay", shopify: "Shopify", nobleknight: "Noble Knight" };
+
+/**
+ * A several-place watch's extra places, with Shopify's paid search kept to its floor: a watch that
+ * looks more often reads Shopify at most every `MIN_SHOPIFY_HOURS` (docket's `everyHours`).
+ */
+function extraPlaces(places: readonly WatchPlace[], hours: number): WantPlace[] {
+  return places.map((p) => ({ ...(p as WantPlace), ...(p.source === "shopify" && hours < MIN_SHOPIFY_HOURS ? { everyHours: MIN_SHOPIFY_HOURS } : {}) }));
+}
+
+/** `/want`'s checks, in the queue: the sources, their targets, the limits and the caps. */
+export async function startWant(d: TrackerDeps, user: User, input: WantInput): Promise<Plan<{ start: PendingWant }>> {
+  if (!d.types.wantlist) return { ok: false, error: WANT_OFF };
+  const named = sourcesPlan(input.source);
+  if (!named.ok) return named;
+  const { sources } = named;
+  const several = sources.length > 1;
+  for (const source of sources) if (source === "shopify" && !d.shopify) return { ok: false, error: SHOPIFY_OFF };
+  // A several-place watch looks as often as its most often read place does, and may look every hour.
+  const kinds = sources.map((s) => (inboxSiteOf(d, s) ? "inbox" : s));
+  const planned = limitsPlan(input, Math.min(...kinds.map(defaultWantHours)), several ? 1 : minWantHours(sources[0] as WantSource));
+  if (!planned.ok) return planned;
+  const { limits } = planned;
+  if (sources.includes("ebay") && d.ebay === true && limits.currency && limits.currency !== "USD") return { ok: false, error: EBAY_USD };
+  if (sources.includes("nobleknight") && limits.currency && limits.currency !== "USD") return { ok: false, error: NOBLE_KNIGHT_USD };
+  // An eBay API watch keeps no eBay data (ebay-forget.ts). A judged one hands its listings to
+  // city-hall's queue in its Job, which city-hall erases once it ends and never past six hours
+  // (\`ebayJobForgetSeconds\`, Rackbops/city-hall#6; Rod, 2026-11-08), so it may be judged like any watch.
+  // Confirm words make a plain watch unless the owner asked for the model, which \`confirmPlan\` refuses.
+  // A several-place watch is plain: the model checks a watch of one place (docket's \`ONE_PLACE\`).
+  const confirming = [input.confirm, input.unconfirmed].some((v) => v !== undefined && v.trim() !== "" && v.trim() !== "-");
+  if (several && input.judge === true) return { ok: false, error: ONE_JUDGED_PLACE };
+  const judged = several || (confirming && input.judge !== true) ? ({ ok: true, judge: false } as const) : judgePlan(d, input.judge);
+  if (!judged.ok) return judged;
+  const places: WatchPlace[] = [];
+  const searched: string[] = [];
+  for (const source of sources) {
+    // One place takes `target` as it always has; several take each place's own, a search's words defaulting to the name.
+    const target = several ? input.targets?.[source] : (input.targets?.[source] ?? input.target);
+    const planned = placePlan(d, source, target, limits.name);
+    if (!planned.ok) return several ? { ok: false, error: `${PLACE_NAME[source]}: ${planned.error}` } : planned;
+    places.push(planned.place);
+    if (planned.words !== null) searched.push(planned.words);
+  }
+  const words = searched.length > 0 ? searched.join(" ") : null;
   if ((await liveWants(d, user)) >= MAX_WANT_TASKS) return { ok: false, error: atCap(d) };
   const capped = await liveTaskCap(d, user);
   if (capped) return { ok: false, error: capped };
@@ -427,17 +516,10 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   if (!confirmed.ok) return confirmed;
   const noted = notesPlan(input.notes, judged.judge);
   if (!noted.ok) return noted;
-  const where: WatchConfig =
-    words !== null
-      ? { source: source === "ebay" ? "ebay" : "shopify", target: words }
-      : site && inbox
-        ? { source: "inbox", target: newInboxKey(site), search: inbox.search, ...(inbox.game !== null ? { game: String(inbox.game) } : {}) }
-        : {
-            source: source as SourceId,
-            target: source === "bgg" ? String(parseBggThingId(target)) : source === "nobleknight" ? (nobleKnightProduct(target)?.url ?? target) : target,
-          };
+  const [first, ...rest] = places as [WatchPlace, ...WatchPlace[]];
   const config: WatchConfig = {
-    ...where,
+    ...first,
+    ...(rest.length > 0 ? { also: extraPlaces(rest, limits.hours) } : {}),
     ...(limits.maxPrice !== undefined ? { maxPrice: limits.maxPrice } : {}),
     ...(limits.currency ? { currency: limits.currency } : {}),
     ...(excluded.exclude.length > 0 ? { exclude: excluded.exclude } : {}),
@@ -526,8 +608,10 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
     ...(c.maxPrice !== undefined ? [`at or under ${money(c.maxPrice, c.currency ?? "")}`] : []),
     ...(c.currency && c.maxPrice === undefined ? [`in ${c.currency}`] : []),
   ];
-  const where = watchWhere(c);
-  const inbox = c.source === "inbox";
+  const where = watchWhereAll(c);
+  const places = watchPlaces(c);
+  const has = (source: string) => places.some((p) => p.source === source);
+  const inbox = places.every((p) => p.source === "inbox");
   // The judge opens no page for an inbox, Shopify or eBay watch (docket-types' wantjudge).
   const closed = inbox || c.source === "shopify" || c.source === "ebay";
   const shows = closed ? "what the listing says about the seller" : "what its page shows about the seller";
@@ -541,14 +625,15 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
         start.judge
           ? `I look at ${where} every ${plural(start.hours, "hour")}, and the model looks at each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before -- whether it is the thing, and ${shows} -- then I DM you the ones worth a look, with its notes; the first look starts within a minute. Those looks are model runs, charged like research; \`judge: false\` makes a watch without them. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`
           : `I look at ${where} every ${plural(start.hours, "hour")} and DM you each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before; ${first}. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`,
-        ...inboxNote(c, task.id, d.mail && watchSite(c) === "ebay" ? d.mail.addressFor(user.id, now) : null),
-        ...(c.source === "shopify"
-          ? ["Shopify's search finds new copies at Shopify stores only (not eBay or used copies), and I keep a product only when its title has every word you are watching for. Each look is a Firecrawl search (5 credits)."]
+        ...(places.length > 1 ? ["A look reads every place; a copy two places list is shown once, and one Done stops them all."] : []),
+        ...places.flatMap((p) => inboxNote(p, task.id, d.mail && watchSite(p) === "ebay" ? d.mail.addressFor(user.id, now) : null)),
+        ...(has("shopify")
+          ? [`Shopify's search finds new copies at Shopify stores only (not eBay or used copies), and I keep a product only when its title has every word you are watching for. Each look is a Firecrawl search (5 credits)${places.length > 1 && start.hours < MIN_SHOPIFY_HOURS ? `, so I search Shopify at most every ${MIN_SHOPIFY_HOURS} hours` : ""}.`]
           : []),
-        ...(c.source === "nobleknight"
+        ...(has("nobleknight")
           ? ["I read that one Noble Knight product page, and each copy it has in stock is a listing: its grade, note and price. Noble Knight is a trusted seller, so no shop check runs. A copy I have shown you is not shown again, even at a lower price."]
           : []),
-        ...(c.source === "ebay"
+        ...(has("ebay")
           ? [`I search eBay US through eBay's own API, newest listings first, new and used, an auction at its current bid (or its Buy It Now price), and count a listing only when its title has every word you are watching for. I never open an eBay page${start.judge ? "; the model checks each new listing from what eBay's API says, and city-hall erases that check's Job soon after it ends, within 6 hours" : ", and the model does not check these listings"}. eBay's terms let me keep its listings only briefly, so they are in the DM alone, and my own copy of it is cleared after 6 hours.`]
           : []),
         // Last, so a long list is what the reply's length cap cuts, never how listings reach the watch.
@@ -563,7 +648,7 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
 function confirmNote(c: WatchConfig): string[] {
   if (!c.confirm || c.confirm.length === 0) return [];
   const list = (w: string[]) => w.map((e) => `"${e}"`).join(", ");
-  const read = c.source === "ebay" ? "I read it in full through eBay's API (its item specifics and description), and " : "";
+  const read = watchPlaces(c).some((p) => p.source === "ebay") ? "I read it in full through eBay's API (its item specifics and description), and " : "";
   const out = c.unconfirmed && c.unconfirmed.length > 0 ? `leave it out if it has ${list(c.unconfirmed)}, and otherwise` : "otherwise";
   return [
     `A listing whose title has none of ${list(c.confirm)}: ${read}DM it if that says one, ${out} DM it marked \`check: not confirmed as "${c.confirm[0]}"\`.`,
@@ -596,16 +681,20 @@ async function editWantLocked(d: TrackerDeps, user: User, taskId: string, input:
   const cleared = (v: string | undefined) => v !== undefined && (v.trim() === "" || v.trim() === "-");
   const currency = input.currency === undefined ? config.currency : cleared(input.currency) ? undefined : input.currency;
   const max = input.max === undefined ? config.maxPrice : input.max === null ? undefined : input.max;
+  const places = watchPlaces(config);
+  const several = places.length > 1;
   const planned = limitsPlan(
     { name: input.name ?? task.title, max, currency, hours: input.hours ?? (schedule?.kind === "poll" ? schedule.every : undefined) },
     defaultWantHours(config.source),
-    minWantHours(config.source),
+    several ? 1 : minWantHours(config.source),
   );
   if (!planned.ok) return planned;
   const { limits } = planned;
-  if (config.source === "ebay" && limits.currency && limits.currency !== "USD") return { ok: false, error: EBAY_USD };
-  if (config.source === "nobleknight" && limits.currency && limits.currency !== "USD") return { ok: false, error: NOBLE_KNIGHT_USD };
-  const searchedBy = config.source === "shopify" || config.source === "ebay" ? config.target : null;
+  const has = (source: string) => places.some((p) => p.source === source);
+  if (has("ebay") && limits.currency && limits.currency !== "USD") return { ok: false, error: EBAY_USD };
+  if (has("nobleknight") && limits.currency && limits.currency !== "USD") return { ok: false, error: NOBLE_KNIGHT_USD };
+  const searched = places.filter((p) => p.source === "shopify" || p.source === "ebay").map((p) => p.target);
+  const searchedBy = searched.length > 0 ? searched.join(" ") : null;
   const excluded = input.exclude === undefined ? ({ ok: true, exclude: config.exclude ?? [] } as const) : excludePlan(input.exclude, searchedBy);
   if (!excluded.ok) return excluded;
   const confirmed = confirmPlan(
@@ -617,12 +706,14 @@ async function editWantLocked(d: TrackerDeps, user: User, taskId: string, input:
   if (!confirmed.ok) return confirmed;
   const noted = notesPlan(input.notes !== undefined ? input.notes : (config.notes ?? ""), task.type === "wantjudge");
   if (!noted.ok) return noted;
-  // Where it looks stays: the source, the target (an inbox watch's key) and an inbox watch's words and game.
+  // Where it looks stays: the source, the target (an inbox watch's key) and an inbox watch's words
+  // and game, and any other places, Shopify's kept to its floor at the hours it now has.
   const nextConfig: WatchConfig = {
     source: config.source,
     target: config.target,
     ...(config.search !== undefined ? { search: config.search } : {}),
     ...(config.game !== undefined ? { game: config.game } : {}),
+    ...(several ? { also: extraPlaces(wantPlaces(config).slice(1).map(({ everyHours: _e, ...p }) => p), limits.hours) } : {}),
     ...(limits.maxPrice !== undefined ? { maxPrice: limits.maxPrice } : {}),
     ...(limits.currency ? { currency: limits.currency } : {}),
     ...(excluded.exclude.length > 0 ? { exclude: excluded.exclude } : {}),

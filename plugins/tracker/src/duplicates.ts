@@ -1,7 +1,7 @@
 import type { Task, User } from "@rackbops/docket-core";
 import { nobleKnightProduct, parseBggThingId } from "@rackbops/docket-types";
 import type { TrackerDeps } from "./actions.js";
-import { WANT_TYPES, type WatchConfig, watchSite } from "./want.js";
+import { WANT_TYPES, type WatchConfig, watchPlaces, watchSite } from "./want.js";
 
 /**
  * A new task that repeats one the person already has (Rackbops/rackbops-bot-plugins#390). On
@@ -13,7 +13,8 @@ import { WANT_TYPES, type WatchConfig, watchSite } from "./want.js";
  *
  * - a want-list watch (plain or judged, both count) with the same source and the same search: an
  *   eBay or Shopify search's words, a BGG game's id, a page's address; an eBay or BGG watch on the
- *   inbox route counts as that site, compared by its words;
+ *   inbox route counts as that site, compared by its words; a watch of several places matches
+ *   when any one of its places matches any one of the new watch's;
  * - a news watch with the same subject;
  * - a price with the same page.
  *
@@ -38,17 +39,29 @@ function words(s: unknown): string {
   return typeof s === "string" ? s.trim().replace(/\s+/g, " ").toLowerCase() : "";
 }
 
-/** A want-list search as `<site>:<what>`, from the create's fields. */
-function wantKeyFromFields(form: URLSearchParams): Key {
-  const source = words(form.get("source")) || "page";
-  const target = (form.get("target") ?? "").trim();
+/**
+ * A want-list search as `<site>:<what>` for each place a create names: one, or several (0.59.0),
+ * each with its own `target_<source>`; one place takes `target` too, as want.ts reads them.
+ */
+function wantKeysFromFields(form: URLSearchParams): Key[] {
+  const named = form.getAll("source").join(",").split(",").map(words).filter((x) => x !== "");
+  const sources = named.length > 0 ? [...new Set(named)] : ["page"];
+  const several = sources.length > 1;
+  return sources.map((source) => {
+    const own = (form.get(`target_${source}`) ?? "").trim();
+    return placeKeyFromFields(source, several ? own : own || (form.get("target") ?? "").trim(), form.get("name"));
+  });
+}
+
+/** One place's key, from its source, its target and the watch's name. */
+function placeKeyFromFields(source: string, target: string, name: string | null): Key {
   if (source === "ebay" || source === "shopify") {
-    const w = words(target || form.get("name"));
+    const w = words(target || name);
     return w ? `${source}:${w}` : null;
   }
   if (source === "bgg") {
     if (!target) {
-      const w = words(form.get("name"));
+      const w = words(name);
       return w ? `bgg-words:${w}` : null;
     }
     // A BGG inbox watch named by words in `target` keeps them as its `search` (want.ts).
@@ -78,8 +91,16 @@ function wantKeyFromConfig(c: WatchConfig): Key {
   return null;
 }
 
+function keysFromFields(type: string, form: URLSearchParams): Key[] {
+  return type === "wantlist" ? wantKeysFromFields(form) : [keyFromFields(type, form)];
+}
+
+function keysFromTask(task: Task): Key[] {
+  if (WANT_TYPES.has(task.type)) return watchPlaces(task.config as WatchConfig).map(wantKeyFromConfig);
+  return [keyFromTask(task)];
+}
+
 function keyFromFields(type: string, form: URLSearchParams): Key {
-  if (type === "wantlist") return wantKeyFromFields(form);
   if (type === "news") {
     const w = words(form.get("subject"));
     return w ? `news:${w}` : null;
@@ -109,13 +130,14 @@ function family(type: string): string[] {
 
 /** The person's live tasks that look for what a create with these fields would look for. */
 export async function findDuplicates(d: Pick<TrackerDeps, "store">, user: User, type: string, form: URLSearchParams): Promise<Duplicate[]> {
-  const key = keyFromFields(type, form);
-  if (key === null) return [];
+  const keys = new Set(keysFromFields(type, form).filter((k): k is string => k !== null));
+  if (keys.size === 0) return [];
   const found: Duplicate[] = [];
   for (const t of family(type)) {
     for (const status of ["active", "paused"] as const) {
       for (const task of await d.store.listTasks({ ownerId: user.id, status, type: t })) {
-        if (keyFromTask(task) === key) found.push({ id: task.id, title: task.title, status: task.status, type: task.type });
+        // A watch of several places repeats another when any one place does.
+        if (keysFromTask(task).some((k) => k !== null && keys.has(k))) found.push({ id: task.id, title: task.title, status: task.status, type: task.type });
       }
     }
   }

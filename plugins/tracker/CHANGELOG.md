@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.59.0] - 2026-11-15
+
+### Added
+
+- One want-list watch can look in several places (Rod, 2026-11-15, on the web area's New want-list watch form: "This should be check boxes for multiple selections, not single pull down choices"). The form's "Where to look" is now a box for each place (a listing page, BoardGameGeek, eBay, Shopify, Noble Knight), each with its own box below for its target (the page's address, the BGG game, the words to search eBay or Shopify for, which default to the name, or the Noble Knight product page). Over the task API and `/want`, `source` takes one place as before or several separated by commas (`page,ebay`), with `target_page`, `target_bgg`, `target_ebay`, `target_shopify` and `target_nobleknight`; with one place, `target` works as before. The watch is stored as docket 0.29.0's `WantConfig`: its first place in `source`/`target` and the rest in `also`, so every watch made before reads as it did. One look reads every place, a copy two places list under the same id is DMed once, all of a look's new listings go out in one DM, and one Done stops the watch everywhere. A watch of several places looks as often as its most often read place by default (any 1 to 168 hours); Shopify's paid search in one is read at most every 24 hours (`everyHours`). It is a plain watch: one the model checks (`judge: yes`) looks in one place, and asking for one with several is refused. Places are fixed once made; an edit keeps them.
+- `GET /tasks/<id>` shows a watch of several places' `places`, each shaped as the watch's own `source`, `target` and inbox fields (additive). `GET /types` lists the five `target_<source>` fields, and `source`'s options are no longer an `enum`, since one string may name several.
+
+### Changed
+
+- Every path that read a watch's one source reads each place: listings sent in through `POST /tasks/<id>/listings` go to the watch's inbox place for their site; an eBay alert email reaches an eBay inbox place among several; duplicates (#390) match when any one place repeats any one of another watch's; the 6-hour clearing of eBay's listings from a recorded DM takes out only the eBay lines of a watch with other places, keeping theirs; the task page and the confirmation name every place.
+- A form body may now be up to 40 KiB (was 32 KiB): the new want-list form, with a target for each place, is the longest editor form.
+- `@rackbops/docket-core` and `@rackbops/docket-types` 0.29.0 (from 0.28.0): `WantConfig.also` and the several-place run.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.58.0] - 2026-11-15
 
 ### Added

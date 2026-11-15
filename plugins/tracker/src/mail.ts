@@ -6,7 +6,7 @@ import type { TrackerDeps } from "./actions.js";
 import { htmlText, MAX_HTML_CHARS, readEbayAlert, SEARCH_MARKS, sameSearch } from "./ebay-alert.js";
 import { acceptListing } from "./inbox.js";
 import type { MailMessage } from "./mime.js";
-import { WANT_TYPES, type WatchConfig, watchSite } from "./want.js";
+import { WANT_TYPES, type WatchConfig, watchPlaces, watchSite } from "./want.js";
 
 /**
  * The alert-email route (tracker 0.25.0; Rod's "build the email route", with the forwarding
@@ -228,9 +228,11 @@ async function watchesFor(d: TrackerDeps, user: User, search: string) {
   for (const type of WANT_TYPES) {
     for (const status of ["active", "paused"] as const) {
       for (const task of await d.store.listTasks({ ownerId: user.id, status, type })) {
-        const c = task.config as WatchConfig;
-        if (watchSite(c) === "ebay" && sameSearch(c.search ?? task.title, search)) out.push({ task, key: c.target });
-        else if (c.source === "ebay" && sameSearch(c.target, search)) searched = true;
+        // Every place of a watch (0.59.0): an eBay inbox place among several takes its alerts too.
+        for (const c of watchPlaces(task.config as WatchConfig)) {
+          if (watchSite(c) === "ebay" && sameSearch(c.search ?? task.title, search)) out.push({ task, key: c.target });
+          else if (c.source === "ebay" && sameSearch(c.target, search)) searched = true;
+        }
       }
     }
   }

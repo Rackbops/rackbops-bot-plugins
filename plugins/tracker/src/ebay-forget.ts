@@ -12,7 +12,8 @@ import { ebaySearchUrl } from "./want.js";
  * so an owed send can be retried). Six hours after a run of an `ebay` watch fired, a recorded DM
  * that lists listings keeps its first line (the watch's name and how many, no eBay data) and the
  * rest becomes a note with eBay's own search, so a send still owed never carries an old listing.
- * Other DMs of such a watch (a miss) hold no listing and are left as they are.
+ * Other DMs of such a watch (a miss) hold no listing and are left as they are. A watch of several
+ * places with eBay among them (0.59.0) loses only its eBay lines (`ebayLinesForgotten`).
  *
  * Plain SQL over the tracker's own tables plus a JSON rewrite, run on the notify tick over the
  * runs that fired in the two days before the cutoff (`EBAY_SWEEP_MS`), and at activation over all
@@ -33,6 +34,22 @@ export function ebayForgottenText(firstLine: string, words: string, max?: number
       "Press Done once you have it, and I stop looking.",
     ].join("\n"),
   );
+}
+
+/** A DM line that lists an eBay listing: `- ...` linking an item on an eBay site as `<https://...>`. */
+const EBAY_LINE = /^- .*<https?:\/\/(?:[^/>]*\.)?ebay\.[a-z.]+[/>]/i;
+
+/**
+ * A DM of a watch of several places (0.59.0) with its eBay listings taken out: the other places'
+ * lines stay, and the eBay ones become the same note and eBay's own search, before its last line.
+ * Null when it lists no eBay listing, so nothing is rewritten.
+ */
+export function ebayLinesForgotten(text: string, words: string, max?: number): string | null {
+  const lines = text.split("\n");
+  const kept = lines.filter((l) => !EBAY_LINE.test(l));
+  if (kept.length === lines.length) return null;
+  const last = kept.pop() ?? "";
+  return clip([...kept, CLEARED, `eBay's own search: <${ebaySearchUrl(words, max)}>`, last].join("\n"));
 }
 
 /**
@@ -76,7 +93,9 @@ export function forgetEbayMessages(db: Database, now: Date, sweepAll = false): n
     .query(
       `SELECT o.seq AS seq, o.record AS record, t.config AS config
          FROM occurrences o JOIN tasks t ON o.task_id = 't' || t.seq
-         WHERE t.type IN ('wantlist', 'wantjudge') AND json_extract(t.config, '$.source') = 'ebay'
+         WHERE t.type IN ('wantlist', 'wantjudge')
+           AND (json_extract(t.config, '$.source') = 'ebay'
+             OR EXISTS (SELECT 1 FROM json_each(t.config, '$.also') a WHERE json_extract(a.value, '$.source') = 'ebay'))
            AND o.record IS NOT NULL
            AND (? OR o.started_at > ?)
            AND json_extract(o.record, '$.firedAt') <= ?`,
@@ -85,7 +104,7 @@ export function forgetEbayMessages(db: Database, now: Date, sweepAll = false): n
   let changed = 0;
   for (const r of rows) {
     let record: { outcome?: { notify?: { text?: unknown } } };
-    let config: { target?: unknown; maxPrice?: unknown };
+    let config: { source?: unknown; target?: unknown; maxPrice?: unknown; also?: unknown };
     try {
       record = JSON.parse(r.record);
       config = JSON.parse(r.config);
@@ -95,10 +114,14 @@ export function forgetEbayMessages(db: Database, now: Date, sweepAll = false): n
     const text = record.outcome?.notify?.text;
     // Only a DM that lists listings: each listing line links its item as <https://...>.
     if (typeof text !== "string" || !text.includes("<https://") || text.includes(CLEARED)) continue;
-    const words = typeof config.target === "string" ? config.target : "";
+    const also = Array.isArray(config.also) ? (config.also as { source?: unknown; target?: unknown }[]) : [];
+    const ebay = config.source === "ebay" ? config : also.find((p) => p !== null && typeof p === "object" && p.source === "ebay");
+    const words = typeof ebay?.target === "string" ? ebay.target : "";
     const max = typeof config.maxPrice === "number" ? config.maxPrice : undefined;
     const first = text.split("\n", 1)[0] ?? "";
-    (record.outcome as { notify: { text: string } }).notify.text = ebayForgottenText(first, words, max);
+    const cleared = also.length > 0 ? ebayLinesForgotten(text, words, max) : ebayForgottenText(first, words, max);
+    if (cleared === null) continue;
+    (record.outcome as { notify: { text: string } }).notify.text = cleared;
     db.query("UPDATE occurrences SET record = ? WHERE seq = ?").run(JSON.stringify(record), r.seq);
     changed++;
   }

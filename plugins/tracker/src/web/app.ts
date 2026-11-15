@@ -96,13 +96,16 @@ export interface WebWiring {
 }
 
 /**
- * The biggest form body read. The longest form is a research request (a 1000-character question,
- * 2000 of context and two 100-character dates), which percent-encoded at nine bytes a character can
- * take about 28.2 KiB; anything bigger is refused before it is parsed. editor.test.ts fills each
- * field of every editor form that has a maxlength to it (others 32 characters) and checks it still
- * fits, so a raised limit fails a test rather than a person.
+ * The biggest form body read. The longest form is a new want-list watch since it takes a target
+ * for each of its places (0.59.0): a 1000-character page address, 200 each for Noble Knight and
+ * BGG, 100 each for eBay's and Shopify's words, beside its 1000 of exclude words, 600 of confirm
+ * words and 500 of notes, which percent-encoded at nine bytes a character can take about 34.7 KiB
+ * (a research request, the longest before it, about 29.9 KiB); anything bigger is refused before
+ * it is parsed. editor.test.ts fills each field of every editor form that has a maxlength to it
+ * (others 32 characters) and checks it still fits, so a raised limit fails a test rather than a
+ * person.
  */
-export const MAX_FORM_BYTES = 32 * 1024;
+export const MAX_FORM_BYTES = 40 * 1024;
 
 function plain(status: number, text: string, extra: Record<string, string> = {}): Response {
   return new Response(text, {
