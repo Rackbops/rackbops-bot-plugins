@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.62.0] - 2026-11-15
+
+### Changed
+
+- Want-list DMs show every listing a look takes, up to 20, past one Discord message (docket#152, Rod's choice of 2026-11-15: "several messages at once"). They come from docket 0.30.0 (released inside 0.31.0) and go out in several messages as 0.60.0 sends them, with Done on the last. Until now a judged eBay look with long notes showed four or five of its listings and no Done button.
+- The 6-hour clearing of eBay's lines from a recorded DM of a watch of several places now works to docket's want-DM length (`MAX_WANT_DM_CHARS`, 24,000) and no longer to 2,000. A long DM keeps every other place's line, and only a DM cut at that length gives up its last ones for the note.
+- `@rackbops/docket-core` and `@rackbops/docket-types` 0.31.0 (from 0.29.0). 0.31.0 also carries a judged watch of several places, which this tracker does not offer yet.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.61.0] - 2026-11-15
 
 ### Added

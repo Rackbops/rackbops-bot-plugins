@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { clip, MAX_ANSWER } from "./actions.js";
+import { MAX_WANT_DM_CHARS } from "@rackbops/docket-types";
+import { clip } from "./actions.js";
 import { ebaySearchUrl } from "./want.js";
 
 /**
@@ -47,7 +48,7 @@ const EBAY_LINE = /^- .*<https?:\/\/(?:[^/>]*\.)?ebay\.[a-z.]+[/>]/i;
  */
 export function ebayLinesForgotten(text: string, words: string, max?: number): string | null {
   const lines = text.split("\n");
-  // A DM cut at Discord's length (docket's `clip`, "...") lost its closing line, and its last line
+  // A DM cut at docket's want-DM length (`wantDm`'s `clip`, "...") lost its closing line, and its last line
   // may be an eBay listing cut before its link and its "(via eBay)", which nothing can tell from
   // another place's: that line goes too, so a cut DM of a watch with an eBay place is always rewritten.
   const cut = text.endsWith("...") && !text.endsWith(DONE_LINE) ? lines.pop() : undefined;
@@ -56,9 +57,10 @@ export function ebayLinesForgotten(text: string, words: string, max?: number): s
   const last = cut !== undefined ? DONE_LINE : (kept.pop() ?? "");
   const tail = [CLEARED, `eBay's own search: <${ebaySearchUrl(words, max)}>`, last];
   // The note must survive whole, or the sweep would not know the DM as cleared: a DM near
-  // Discord's length gives up its last listings, never its first line, to make room for it.
-  while (kept.length > 1 && [...kept, ...tail].join("\n").length > MAX_ANSWER) kept.pop();
-  return clip([...kept, ...tail].join("\n"));
+  // docket's want-DM length (0.62.0: up to MAX_WANT_DM_CHARS, sent as several Discord messages)
+  // gives up its last listings, never its first line, to make room for it.
+  while (kept.length > 1 && [...kept, ...tail].join("\n").length > MAX_WANT_DM_CHARS) kept.pop();
+  return clip([...kept, ...tail].join("\n"), MAX_WANT_DM_CHARS);
 }
 
 /**
