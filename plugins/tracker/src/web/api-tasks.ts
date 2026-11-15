@@ -222,7 +222,7 @@ function watchJson(c: WatchConfig) {
   const places = watchPlaces(c);
   return {
     ...placeJson(c),
-    // A watch of several places (0.59.0): every place, its first one first, each shaped as above.
+    // A watch of several places (0.61.0): every place, its first one first, each shaped as above.
     ...(places.length > 1 ? { places: places.map(placeJson) } : {}),
   };
 }

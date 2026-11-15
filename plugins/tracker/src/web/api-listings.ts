@@ -90,7 +90,7 @@ export async function listingsAnswer(w: Writer, user: User, id: string, body: Re
     if (!task || !WANT_TYPES.has(task.type) || (task.status !== "active" && task.status !== "paused")) {
       return problem(404, "not_found", NOT_FOUND_MESSAGE);
     }
-    // A watch of several places (0.59.0) takes listings for each inbox place among them, by its site.
+    // A watch of several places (0.61.0) takes listings for each inbox place among them, by its site.
     const inboxes = watchPlaces(task.config as WatchConfig).filter((p) => p.source === "inbox");
     const config = inboxes[0];
     if (!config) {

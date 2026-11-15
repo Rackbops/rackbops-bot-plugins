@@ -228,7 +228,7 @@ async function watchesFor(d: TrackerDeps, user: User, search: string) {
   for (const type of WANT_TYPES) {
     for (const status of ["active", "paused"] as const) {
       for (const task of await d.store.listTasks({ ownerId: user.id, status, type })) {
-        // Every place of a watch (0.59.0): an eBay inbox place among several takes its alerts too.
+        // Every place of a watch (0.61.0): an eBay inbox place among several takes its alerts too.
         for (const c of watchPlaces(task.config as WatchConfig)) {
           if (watchSite(c) === "ebay" && sameSearch(c.search ?? task.title, search)) out.push({ task, key: c.target });
           else if (c.source === "ebay" && sameSearch(c.target, search)) searched = true;

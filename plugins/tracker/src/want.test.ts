@@ -512,7 +512,7 @@ describe("/want", () => {
     const jar = await signIn(w.plugin, LARRY);
     const csrf = await csrfOf(w.plugin, jar);
     const form = await (await call(w.plugin, "GET", "/new/wantlist", { jar })).text();
-    // The form's places are boxes to tick, each with its own target (0.59.0); `target` is still read.
+    // The form's places are boxes to tick, each with its own target (0.61.0); `target` is still read.
     expect(form).toContain('type="checkbox" name="source" value="page" checked');
     expect(form).toContain('name="target_page"');
     expect(form).not.toContain('name="target"');

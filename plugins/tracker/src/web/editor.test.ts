@@ -866,7 +866,7 @@ describe("the gates", () => {
     const worst = (fields: readonly Field[]) =>
       new URLSearchParams({ csrf: "x".repeat(43), ...Object.fromEntries(fields.map((f) => [f.name, "あ".repeat(f.maxlength ?? 32)])) }).toString().length;
     const forms = [...NEW_TYPES.map((t) => fieldsFor(t, "new")), ...EDITOR_TYPES.map((t) => fieldsFor(t, "edit"))];
-    // A new want-list watch (since 0.59.0, a target for each of its places) is the longest, past a
+    // A new want-list watch (since 0.61.0, a target for each of its places) is the longest, past a
     // new research request; were docket-types to raise its limits past the cap, a legitimate request
     // would get a bare "Bad request" and lose what was typed.
     expect(Math.max(...forms.map(worst))).toBe(worst(fieldsFor("wantlist", "new")));

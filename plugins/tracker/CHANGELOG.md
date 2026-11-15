@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.59.0] - 2026-11-15
+## [0.61.0] - 2026-11-15
 
 ### Added
 
@@ -12,6 +12,16 @@
 - Every path that read a watch's one source reads each place: listings sent in through `POST /tasks/<id>/listings` go to the watch's inbox place for their site; an eBay alert email reaches an eBay inbox place among several; duplicates (#390) match when any one place repeats any one of another watch's; the 6-hour clearing of eBay's listings from a recorded DM takes out only the eBay lines of a watch with other places, keeping theirs; the edit page and the confirmation name every place.
 - A form body may now be up to 40 KiB (was 32 KiB): the new want-list form, with a target for each place, is the longest editor form.
 - `@rackbops/docket-core` and `@rackbops/docket-types` 0.29.0 (from 0.28.0): `WantConfig.also` and the several-place run.
+
+### Schema
+
+- No change. Still at 13.
+
+## [0.60.0] - 2026-11-15
+
+### Changed
+
+- A DM longer than one Discord message goes as several messages in a row (docket#152, Rod's choice of 2026-11-15: "several messages at once"), split between lines, a break before a listing ("- ...") taken first so a listing and its note stay together; the buttons ride on the last part, whose message id is the delivery's. Up to 25 parts (a cap: a typical 20-listing want DM takes 8 to 11); a single line too long for a message is cut as before. Until now every DM was cut at 2,000 characters, so a judged eBay look with long notes lost the end of its listings and its Done button. A failure of the first part is read as before; once a part went out, a later failure settles the send unconfirmed and is never resent, so no part arrives twice. Docket's want DMs show every listing a look takes from the docket release after 0.29.0; until then they stay within one message.
 
 ### Schema
 

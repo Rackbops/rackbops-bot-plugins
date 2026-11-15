@@ -40,7 +40,7 @@ function words(s: unknown): string {
 }
 
 /**
- * A want-list search as `<site>:<what>` for each place a create names: one, or several (0.59.0),
+ * A want-list search as `<site>:<what>` for each place a create names: one, or several (0.61.0),
  * each with its own `target_<source>`; one place takes `target` too, as want.ts reads them.
  */
 function wantKeysFromFields(form: URLSearchParams): Key[] {

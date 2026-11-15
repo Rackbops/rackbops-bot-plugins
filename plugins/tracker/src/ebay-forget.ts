@@ -13,7 +13,7 @@ import { ebaySearchUrl } from "./want.js";
  * that lists listings keeps its first line (the watch's name and how many, no eBay data) and the
  * rest becomes a note with eBay's own search, so a send still owed never carries an old listing.
  * Other DMs of such a watch (a miss) hold no listing and are left as they are. A watch of several
- * places with eBay among them (0.59.0) loses only its eBay lines (`ebayLinesForgotten`).
+ * places with eBay among them (0.61.0) loses only its eBay lines (`ebayLinesForgotten`).
  *
  * Plain SQL over the tracker's own tables plus a JSON rewrite, run on the notify tick over the
  * runs that fired in the two days before the cutoff (`EBAY_SWEEP_MS`), and at activation over all
@@ -41,7 +41,7 @@ export function ebayForgottenText(firstLine: string, words: string, max?: number
 const EBAY_LINE = /^- .*<https?:\/\/(?:[^/>]*\.)?ebay\.[a-z.]+[/>]/i;
 
 /**
- * A DM of a watch of several places (0.59.0) with its eBay listings taken out: the other places'
+ * A DM of a watch of several places (0.61.0) with its eBay listings taken out: the other places'
  * lines stay, and the eBay ones become the same note and eBay's own search, before its last line.
  * Null when it lists no eBay listing, so nothing is rewritten.
  */
