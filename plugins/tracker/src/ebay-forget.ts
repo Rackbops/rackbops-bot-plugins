@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { clip } from "./actions.js";
+import { clip, MAX_ANSWER } from "./actions.js";
 import { ebaySearchUrl } from "./want.js";
 
 /**
@@ -54,7 +54,11 @@ export function ebayLinesForgotten(text: string, words: string, max?: number): s
   const kept = lines.filter((l) => !EBAY_LINE.test(l));
   if (kept.length === lines.length && cut === undefined) return null;
   const last = cut !== undefined ? DONE_LINE : (kept.pop() ?? "");
-  return clip([...kept, CLEARED, `eBay's own search: <${ebaySearchUrl(words, max)}>`, last].join("\n"));
+  const tail = [CLEARED, `eBay's own search: <${ebaySearchUrl(words, max)}>`, last];
+  // The note must survive whole, or the sweep would not know the DM as cleared: a DM near
+  // Discord's length gives up its last listings, never its first line, to make room for it.
+  while (kept.length > 1 && [...kept, ...tail].join("\n").length > MAX_ANSWER) kept.pop();
+  return clip([...kept, ...tail].join("\n"));
 }
 
 /**

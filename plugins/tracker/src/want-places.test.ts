@@ -216,6 +216,15 @@ describe("eBay's lines in a watch of several places", () => {
     expect(out).not.toContain("seller1");
     expect(out).toContain("<https://shop.example/p/rougarou>");
     expect(out?.split("\n").at(-1)).toBe("Press Done once you have it, and I stop looking.");
+    // A DM cut at full length keeps the whole note, giving up its last listings for it.
+    const long = Array.from({ length: 12 }, (_, i) => `- Curse of the Rougarou ${i} -- 30.00 USD <https://shop.example/p/${"r".repeat(120)}${i}>`);
+    const full = `${["Rougarou: 13 new listings.", ...long].join("\n")}\n- Curse of the Rougarou -- 20.00 USD -- sold by seller1 <https://www.ebay.com/itm/123>`.slice(0, 1997) + "...";
+    const whole = ebayLinesForgotten(full, "curse rougarou");
+    expect(whole?.length).toBeLessThanOrEqual(2000);
+    expect(whole).toContain("eBay's listings are not kept here past 6 hours");
+    expect(whole?.split("\n").at(-1)).toBe("Press Done once you have it, and I stop looking.");
+    expect(whole?.split("\n")[0]).toBe("Rougarou: 13 new listings.");
+    expect(whole).not.toContain("seller1");
   });
 
   it("are found by the sweep through the watch's also", () => {
