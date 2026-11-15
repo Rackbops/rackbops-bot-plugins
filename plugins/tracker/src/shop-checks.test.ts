@@ -9,7 +9,7 @@ import { Ceilings } from "./ceilings.js";
 import { TaskLocks } from "./locks.js";
 import { Roster } from "./roster.js";
 import { migrate, openDatabase } from "./schema.js";
-import { ensureShopTables, SEARCHED_UNKNOWNS, SHOP_RUN_PREFIX, SHOP_TABLES, ShopChecks, ShopJobIds, stepShopCheck } from "./shop-checks.js";
+import { ensureShopTables, SEARCHED_CHECKS, SHOP_RUN_PREFIX, SHOP_TABLES, ShopChecks, ShopJobIds, stepShopCheck } from "./shop-checks.js";
 import { SqliteStore } from "./store.js";
 import { removeDir } from "./test-dirs.js";
 import { executeBudget } from "./usage.js";
@@ -312,13 +312,14 @@ describe("a Shopify watch over the shop list", () => {
 });
 
 describe("the upgrade to checks that must show a search (docket#128)", () => {
-  it("drops every stored unknown once, and keeps the rest", async () => {
+  it("drops every stored ok and unknown once, and keeps the flagged", async () => {
     const { db, checks } = await setup();
-    db.query("DELETE FROM shop_check_marks WHERE mark = ?").run(SEARCHED_UNKNOWNS);
+    db.query("DELETE FROM shop_check_marks WHERE mark = ?").run(SEARCHED_CHECKS);
     for (const [domain, verdict] of [["thin.shop", "unknown"], ["good.com", "ok"], ["bad.us", "flagged"]] as const)
       checks.record({ domain, verdict, reasons: [], sources: [], checkedAt: NOW.toISOString() });
     ensureShopTables(db);
-    expect([...(await checks.get(["thin.shop", "good.com", "bad.us"])).keys()].sort()).toEqual(["bad.us", "good.com"]);
+    expect([...(await checks.get(["thin.shop", "good.com", "bad.us"])).keys()]).toEqual(["bad.us"]);
+    expect((await checks.get(["bad.us"])).get("bad.us")?.verdict).toBe("flagged");
     // Only once: an unknown recorded after the upgrade stands.
     checks.record({ domain: "thin.shop", verdict: "unknown", reasons: [], sources: [], checkedAt: NOW.toISOString() });
     ensureShopTables(db);

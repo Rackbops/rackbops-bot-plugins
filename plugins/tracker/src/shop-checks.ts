@@ -76,18 +76,19 @@ export function ensureShopTables(db: Database): void {
     mark TEXT PRIMARY KEY
   );
   `);
-  // Once (docket#128): an "unknown" stored before a check had to show it searched may stand on no
-  // search at all, and would let a listing be told marked "unvetted". Each such shop is asked again.
+  // Once (docket#128): an "ok" or "unknown" stored before a check had to show it searched may stand
+  // on no search at all, and would let a listing be told as vetted or marked "unvetted". Each such
+  // shop is asked again. A "flagged" one is kept: it only ever holds listings back.
   // `shop_check_marks` holds that it was done; like `shop_checks` it names no person.
   db.transaction(() => {
-    if (db.query("SELECT 1 FROM shop_check_marks WHERE mark = ?").get(SEARCHED_UNKNOWNS)) return;
-    db.exec("DELETE FROM shop_checks WHERE verdict = 'unknown'");
-    db.query("INSERT INTO shop_check_marks (mark) VALUES (?)").run(SEARCHED_UNKNOWNS);
+    if (db.query("SELECT 1 FROM shop_check_marks WHERE mark = ?").get(SEARCHED_CHECKS)) return;
+    db.exec("DELETE FROM shop_checks WHERE verdict IN ('ok', 'unknown')");
+    db.query("INSERT INTO shop_check_marks (mark) VALUES (?)").run(SEARCHED_CHECKS);
   })();
 }
 
-/** The `shop_check_marks` mark that the unknowns stored before docket#128 were dropped. */
-export const SEARCHED_UNKNOWNS = "unknowns_need_a_search";
+/** The `shop_check_marks` mark that the "ok" and "unknown" checks stored before docket#128 were dropped. */
+export const SEARCHED_CHECKS = "checks_need_a_search";
 
 const strings = (raw: string): string[] => {
   try {
