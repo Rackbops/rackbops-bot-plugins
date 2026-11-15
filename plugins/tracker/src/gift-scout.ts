@@ -37,18 +37,24 @@ export const GIFT_IDEA_TYPES: ReadonlySet<string> = new Set(["scout", "news"]);
 export function dmItems(text: string): { n: number; url: string }[] {
   const out: { n: number; url: string }[] = [];
   let current: number | null = null;
+  let url: string | null = null;
+  // The item's own address is its last link-shaped line before the next head: a model-written
+  // `why` or summary line above it may itself look like `<https://...>`, and must not win.
+  const close = () => {
+    if (current !== null && url !== null) out.push({ n: current, url });
+  };
   for (const line of text.split("\n")) {
     const head = /^(\d{1,3})\. /.exec(line);
     if (head) {
+      close();
       current = Number(head[1]);
+      url = null;
       continue;
     }
     const link = /^ {3}<(https?:\/\/[^\s<>]+)>$/.exec(line);
-    if (link && current !== null) {
-      out.push({ n: current, url: link[1] as string });
-      current = null;
-    }
+    if (link && current !== null) url = link[1] as string;
   }
+  close();
   return out;
 }
 
