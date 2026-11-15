@@ -502,7 +502,12 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
     // One place takes `target` as it always has; several take each place's own, a search's words defaulting to the name.
     const target = several ? input.targets?.[source] : (input.targets?.[source] ?? input.target);
     const planned = placePlan(d, source, target, limits.name);
-    if (!planned.ok) return several ? { ok: false, error: `${PLACE_NAME[source]}: ${planned.error}` } : planned;
+    if (!planned.ok) {
+      // Name the field the caller used: its place's own box, unless it gave one place's `target`.
+      const boxed = several || input.targets?.[source] !== undefined || (input.target === undefined && input.targets !== undefined);
+      const error = boxed ? planned.error.replaceAll("`target`", `\`target_${source}\``) : planned.error;
+      return { ok: false, error: several ? `${PLACE_NAME[source]}: ${error}` : error };
+    }
     places.push(planned.place);
     if (planned.words !== null) searched.push(planned.words);
   }
@@ -625,7 +630,7 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
         start.judge
           ? `I look at ${where} every ${plural(start.hours, "hour")}, and the model looks at each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before -- whether it is the thing, and ${shows} -- then I DM you the ones worth a look, with its notes; the first look starts within a minute. Those looks are model runs, charged like research; \`judge: false\` makes a watch without them. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`
           : `I look at ${where} every ${plural(start.hours, "hour")} and DM you each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before; ${first}. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`,
-        ...(places.length > 1 ? ["A look reads every place; a copy two places list is shown once, and one Done stops them all."] : []),
+        ...(places.length > 1 ? ["A look reads every place and sends one DM with what they found; a listing is never told twice, though the same copy on two sites is two listings. One Done stops them all."] : []),
         ...places.flatMap((p) => inboxNote(p, task.id, d.mail && watchSite(p) === "ebay" ? d.mail.addressFor(user.id, now) : null)),
         ...(has("shopify")
           ? [`Shopify's search finds new copies at Shopify stores only (not eBay or used copies), and I keep a product only when its title has every word you are watching for. Each look is a Firecrawl search (5 credits)${places.length > 1 && start.hours < MIN_SHOPIFY_HOURS ? `, so I search Shopify at most every ${MIN_SHOPIFY_HOURS} hours` : ""}.`]

@@ -22,6 +22,7 @@ import { ebaySearchUrl } from "./want.js";
 
 export const EBAY_KEEP_MS = 6 * 3600_000;
 export const EBAY_SWEEP_MS = 48 * 3600_000;
+const DONE_LINE = "Press Done once you have it, and I stop looking.";
 const CLEARED = "eBay's listings are not kept here past 6 hours, so they are not repeated now.";
 
 /** What a cleared DM says after its first line. */
@@ -31,7 +32,7 @@ export function ebayForgottenText(firstLine: string, words: string, max?: number
       firstLine,
       CLEARED,
       `eBay's own search: <${ebaySearchUrl(words, max)}>`,
-      "Press Done once you have it, and I stop looking.",
+      DONE_LINE,
     ].join("\n"),
   );
 }
@@ -46,9 +47,13 @@ const EBAY_LINE = /^- .*<https?:\/\/(?:[^/>]*\.)?ebay\.[a-z.]+[/>]/i;
  */
 export function ebayLinesForgotten(text: string, words: string, max?: number): string | null {
   const lines = text.split("\n");
+  // A DM cut at Discord's length (docket's `clip`, "...") lost its closing line, and its last line
+  // may be an eBay listing cut before its link and its "(via eBay)", which nothing can tell from
+  // another place's: that line goes too, so a cut DM of a watch with an eBay place is always rewritten.
+  const cut = text.endsWith("...") && !text.endsWith(DONE_LINE) ? lines.pop() : undefined;
   const kept = lines.filter((l) => !EBAY_LINE.test(l));
-  if (kept.length === lines.length) return null;
-  const last = kept.pop() ?? "";
+  if (kept.length === lines.length && cut === undefined) return null;
+  const last = cut !== undefined ? DONE_LINE : (kept.pop() ?? "");
   return clip([...kept, CLEARED, `eBay's own search: <${ebaySearchUrl(words, max)}>`, last].join("\n"));
 }
 

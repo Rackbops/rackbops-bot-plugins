@@ -7,7 +7,7 @@ import { ebayLinesForgotten, forgetEbayMessages } from "./ebay-forget.js";
 import { openDatabase } from "./schema.js";
 import { BGG_THING, shopSearch } from "./want-fixtures.js";
 import { ONE_JUDGED_PLACE, SOURCE_WORDS, sourcesPlan } from "./want.js";
-import { api, call, cleanup, csrfOf, LARRY, makeToken, ORIGIN, people, signIn, slash, world } from "./web/harness.js";
+import { api, call, cleanup, csrfOf, LARRY, makeToken, ORIGIN, people, signIn, world } from "./web/harness.js";
 
 /**
  * One watch, several places (Rod, 2026-11-15, on the New want-list watch form: "This should be
@@ -66,14 +66,14 @@ describe("the sources a watch names", () => {
 });
 
 describe("a watch of several places", () => {
-  it("from the web form's boxes: one watch, one DM with every place's listings", async () => {
+  it("from the web form's boxes: one watch, one DM with every place's listings, its judge default left out", async () => {
     const { fetch, reads } = shop();
     const bgg = bggSource();
     const w = await world({ fetch, bgg });
     await people(w.plugin);
     const jar = await signIn(w.plugin, LARRY);
     const csrf = await csrfOf(w.plugin, jar);
-    const form: [string, string][] = [["csrf", csrf], ["name", "Rougarou"], ["source", "page"], ["source", "bgg"], ["target_page", SHOP], ["target_bgg", "300580"], ["judge", "no"]];
+    const form: [string, string][] = [["csrf", csrf], ["name", "Rougarou"], ["source", "page"], ["source", "bgg"], ["target_page", SHOP], ["target_bgg", "300580"], ["judge", "yes"]];
     const made = await call(w.plugin, "POST", "/new/wantlist", { jar, origin: ORIGIN, form });
     expect(made.status).toBe(303);
     const config = configOf(w.dbPath, "t1");
@@ -125,20 +125,19 @@ describe("a watch of several places", () => {
     expect(((await bad.json()) as { error: { message: string } }).error.message).toStartWith("BoardGameGeek: That is not a BGG game.");
     // Several places take only their own targets: `target` alone names no page.
     const generic = await api(w.plugin, "POST", "/tasks", { token, body: { type: "wantlist", name: "R", source: "page,bgg", target: SHOP, target_bgg: "300580" } });
-    expect(((await generic.json()) as { error: { message: string } }).error.message).toStartWith("the listing page: `target` is");
+    expect(((await generic.json()) as { error: { message: string } }).error.message).toStartWith("the listing page: `target_page` is");
   });
 
-  it("from Discord: several sources searched by the name need no targets, and an inbox place takes its listings", async () => {
+  it("several inbox places searched by the name need no targets, and each takes its own site's listings", async () => {
     const w = await world({ fetch: shop().fetch });
     await people(w.plugin);
+    const token = await makeToken(w, await signIn(w.plugin, LARRY));
     // Without eBay keys or BGG access both are inbox places, searched by the name.
-    const made = await slash(w.plugin, "want", LARRY, { strings: { name: "Rougarou", source: "bgg,ebay" } });
-    expect(made).toContain("Watching `t1`: Rougarou.");
-    expect(made).toContain("A look reads every place");
+    const made = await api(w.plugin, "POST", "/tasks", { token, body: { type: "wantlist", name: "Rougarou", source: "bgg,ebay" } });
+    expect(made.status).toBe(201);
     const config = configOf(w.dbPath, "t1");
     expect(config.source).toBe("inbox");
     expect((config.also as { source: string }[])[0]?.source).toBe("inbox");
-    const token = await makeToken(w, await signIn(w.plugin, LARRY));
     const sent = await api(w.plugin, "POST", "/tasks/t1/listings", {
       token,
       body: {
@@ -152,6 +151,12 @@ describe("a watch of several places", () => {
     expect(sent.status).toBe(200);
     const answer = (await sent.json()) as { accepted: number; rejected: number };
     expect(answer).toMatchObject({ accepted: 2, rejected: 1 });
+    // Each went to its own site's place.
+    const rows = openDatabase(w.dbPath).query("SELECT key, listing FROM want_inbox ORDER BY seq").all() as { key: string; listing: string }[];
+    expect(rows.map((r) => [r.key.split("-")[0], JSON.parse(r.listing).url]).sort()).toEqual([
+      ["bgg", "https://boardgamegeek.com/geekmarket/product/9"],
+      ["ebay", "https://www.ebay.com/itm/1"],
+    ]);
     const before = w.sent.length;
     await pollTick(w.plugin);
     expect(content(w.sent, before)).toContain("Rougarou: 2 new listings.");
@@ -202,6 +207,15 @@ describe("eBay's lines in a watch of several places", () => {
     expect(out).toContain("eBay's own search: <https://www.ebay.com/sch/i.html?_nkw=curse+rougarou&_udhi=40>");
     expect(out?.split("\n").at(-1)).toBe("Press Done once you have it, and I stop looking.");
     expect(ebayLinesForgotten("Rougarou: a new listing.\n- X <https://shop.example/p/1>\nPress Done.", "x")).toBeNull();
+  });
+
+  it("drops a line cut at Discord's length, which may be an eBay listing before its link", () => {
+    const cut = `${DM.split("\n").slice(0, 2).join("\n")}\n- Curse of the Rougarou -- 20.00 USD -- sold by seller1...`;
+    const out = ebayLinesForgotten(cut, "curse rougarou");
+    expect(out).not.toBeNull();
+    expect(out).not.toContain("seller1");
+    expect(out).toContain("<https://shop.example/p/rougarou>");
+    expect(out?.split("\n").at(-1)).toBe("Press Done once you have it, and I stop looking.");
   });
 
   it("are found by the sweep through the watch's also", () => {
