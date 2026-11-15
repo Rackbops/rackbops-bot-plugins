@@ -10,7 +10,7 @@ import { awaitingPages, blockedPages, sentResearch, waitingForPages } from "../r
 import { NOT_NOW } from "../run-now.js";
 import { MAX_LIVE_NEWS, NEWS_OFF } from "../news.js";
 import { SCOUT_OFF } from "../scout.js";
-import { INBOX_OFF, JUDGE_OFF, type WatchConfig, watchSite } from "../want.js";
+import { INBOX_OFF, JUDGE_OFF, type WatchConfig, watchPlaces, watchSite } from "../want.js";
 import { actOn, editableTask, runOn, makeTask, READING, saveEdit, SLOW_PAGE, type TaskAction, type Writer, type Written } from "./editor.js";
 import { EDITOR_TYPES, type EditorType, type Field, fieldsFor, MODEL_TYPES, NEW_TYPES, type NewType } from "./editor-pages.js";
 import { editValues } from "./form-input.js";
@@ -83,7 +83,8 @@ export function intakeTypes(d: Pick<TrackerDeps, "research">): IntakeType[] {
       ...(f.maxlength !== undefined ? { maxLength: f.maxlength } : {}),
       ...(f.min !== undefined ? { minimum: f.min } : {}),
       ...(f.max !== undefined ? { maximum: f.max } : {}),
-      ...(f.options ? { enum: f.options.map(([value]) => value) } : {}),
+      // A `checks` field takes several values in one string, so its options are no enum (its help names them).
+      ...(f.options && f.kind !== "checks" ? { enum: f.options.map(([value]) => value) } : {}),
       // The one field an edit clears with `null` says so in data too (docket-types 0.14.0's `IntakeField.nullable`).
       ...(clearsWithNull(type, mode, f.name) ? { nullable: true } : {}),
     }));
@@ -106,7 +107,7 @@ function clearsWithNull(type: string, mode: "new" | "edit", name: string): boole
  * carry, so the same reading (and the same refusal of a fraction where a whole number goes) applies.
  */
 export function asFields(body: Record<string, unknown>, type: NewType, mode: "new" | "edit"): URLSearchParams | ApiAnswer {
-  const fields = new Map(fieldsFor(type, mode).map((f) => [f.name, f]));
+  const fields = new Map(fieldsFor(type, mode, "api").map((f) => [f.name, f]));
   const form = new URLSearchParams();
   for (const [key, value] of Object.entries(body)) {
     if (mode === "new" && key === "type") continue;
@@ -218,6 +219,15 @@ export async function taskJson(d: TrackerDeps, user: User, task: Task) {
  * a BGG `game` when one was named; its top price and currency are in `settings` as for any watch.
  */
 function watchJson(c: WatchConfig) {
+  const places = watchPlaces(c);
+  return {
+    ...placeJson(c),
+    // A watch of several places (0.61.0): every place, its first one first, each shaped as above.
+    ...(places.length > 1 ? { places: places.map(placeJson) } : {}),
+  };
+}
+
+function placeJson(c: WatchConfig) {
   const site = watchSite(c);
   return {
     source: c.source,

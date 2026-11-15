@@ -12,7 +12,7 @@ import { runNow } from "../run-now.js";
 import { finishPrice, previewPrice, startPrice } from "../price.js";
 import { createResearch, RESEARCH_OFF } from "../research.js";
 import { createRenewal } from "../tracked.js";
-import { editWant, finishWant, previewWant, startWant, type WatchConfig, watchSite } from "../want.js";
+import { editWant, finishWant, previewWant, startWant, type WatchConfig, watchPlaces, watchSite } from "../want.js";
 import { EDITOR_TYPES, type EditorType, confirmDeletePage, editTaskPage, type NewType, newTaskPage, notice, ownerControls, taskHref, type Values } from "./editor-pages.js";
 import { editValues, newsEdit, newsInput, priceEdit, priceInput, reminderEdit, reminderInput, renewalEdit, renewalInput, researchInput, scoutEdit, scoutInput, typed, wantEdit, wantInput } from "./form-input.js";
 import { htmlResponse, redirect } from "./html.js";
@@ -246,7 +246,12 @@ export async function taskPage(e: Editor, id: string, done: string | null, error
   return htmlResponse(historyPage(e.v, view, { controls, flash: notice(done, error), owner }), error ? 400 : 200);
 }
 
+/** Where a watch looks, every place, for its edit page. */
 function wantWhere(c: WatchConfig): string {
+  return watchPlaces(c).map(placeWhere).join("; ");
+}
+
+function placeWhere(c: WatchConfig): string {
   const site = watchSite(c);
   if (site) {
     const what = c.game !== undefined ? `BGG game ${c.game}` : `"${c.search ?? ""}"`;

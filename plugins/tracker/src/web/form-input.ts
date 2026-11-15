@@ -8,7 +8,7 @@ import type { ResearchInput } from "../research.js";
 import { DEFAULT_NEWS_EVERY, kindsOf, type NewsEdit, type NewsInput } from "../news.js";
 import type { ScoutEdit, ScoutInput } from "../scout.js";
 import type { PeriodUnit, RenewalInput } from "../tracked.js";
-import { type WantEdit, type WantInput, wordsText } from "../want.js";
+import { WANT_SOURCES, type WantEdit, type WantInput, wordsText } from "../want.js";
 import { fieldsFor, type NewType, type Values } from "./editor-pages.js";
 
 /**
@@ -36,7 +36,7 @@ function decimal(form: URLSearchParams, name: string): number | undefined {
 
 /** What was typed into `type`'s fields, and nothing else, to show again with a refusal. */
 export function typed(type: NewType, mode: "new" | "edit", form: URLSearchParams): Values {
-  return Object.fromEntries(fieldsFor(type, mode).map((f) => [f.name, str(form, f.name)]));
+  return Object.fromEntries(fieldsFor(type, mode).map((f) => [f.name, f.kind === "checks" ? form.getAll(f.name).join(",") : str(form, f.name)]));
 }
 
 export function reminderInput(form: URLSearchParams): ReminderInput {
@@ -139,11 +139,20 @@ export function wantInput(form: URLSearchParams): WantInput {
   const max = decimal(form, "max");
   const currency = opt(form, "currency");
   const hours = int(form, "hours");
-  const judge = opt(form, "judge");
+  // The model checks a watch of one place: with several ticked, the form's judge (yes by default
+  // where the model runner is set up) is left out, so they make a plain watch (want.ts ONE_JUDGED_PLACE).
+  const judge = form.getAll("source").length > 1 ? undefined : opt(form, "judge");
   const notes = lines(opt(form, "notes"));
+  const targets = WANT_SOURCES.flatMap((s) => {
+    const v = opt(form, `target_${s}`);
+    return v !== undefined ? [[s, v] as const] : [];
+  });
   return {
     name: str(form, "name"),
-    source: str(form, "source") || "page",
+    // Ticked boxes come one value each; the API sends one string, maybe separated by commas.
+    source: form.getAll("source").join(",") || "page",
+    // Always set: the web form names each place's own box, so its errors name `target_<source>`.
+    targets: Object.fromEntries(targets),
     // "yes" or "no"; anything else is left out, so the default applies.
     ...(judge === "yes" || judge === "no" ? { judge: judge === "yes" } : {}),
     ...(target !== undefined ? { target } : {}),

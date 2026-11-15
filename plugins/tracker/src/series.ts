@@ -50,7 +50,9 @@ export async function seriesLines(d: Pick<TrackerDeps, "store" | "clock">, user:
 
 /** An eBay watch that searches eBay's API (want.ts): it keeps no findings (ebay-forget.ts). */
 export function isEbayApiWatch(task: Task): boolean {
-  return isWant(task) && (task.config as { source?: unknown } | null)?.source === "ebay";
+  const c = task.config as { source?: unknown; also?: unknown } | null;
+  // A watch of several places keeps the other places' findings: only an eBay-only watch has none.
+  return isWant(task) && c?.source === "ebay" && !(Array.isArray(c.also) && c.also.length > 0);
 }
 export const NO_EBAY_FINDINGS = "none kept: eBay's listings are in the DMs only";
 
