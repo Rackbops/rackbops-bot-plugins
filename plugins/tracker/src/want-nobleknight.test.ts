@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
 import type { Plugin } from "../../../packages/api/contract.js";
-import { FetchRefusedError } from "./fetch.js";
+import { createPageFetch, FetchRefusedError } from "./fetch.js";
 import { NOBLE_KNIGHT_USD } from "./want.js";
 import { call, cleanup, csrfOf, LARRY, ORIGIN, people, signIn, slash, world } from "./web/harness.js";
 
@@ -119,5 +119,19 @@ describe("/want source: nobleknight", () => {
     expect(gbp.status).not.toBe(303);
     expect(await gbp.text()).toContain("I read Noble Knight&#39;s prices in USD");
 
+  });
+  it("reads the copies through the bot's own fenced fetch, whose usual rebuild would take the rows apart", async () => {
+    const reads: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      reads.push(url);
+      return new Response(productPage([SW, VG]), { status: 200, headers: { "content-type": "text/html" } });
+    }) as unknown as typeof fetch;
+    const w = await world({ fetch: createPageFetch({ resolve: async () => ["93.184.215.14"], fetchImpl }) });
+    await people(w.plugin);
+    const made = await slash(w.plugin, "want", LARRY, { strings: { name: "Edge", source: "nobleknight", target: PAGE } });
+    expect(made).toContain("Noble Knight has 2 copies in stock now.");
+    expect(reads).toEqual([`${PAGE}?SS=USD`]);
+    await pollTick(w.plugin);
+    expect((w.sent[0]?.message as { content: string }).content).toContain("VG+/NM (unpunched, cards sealed) -- 247.50 USD");
   });
 });

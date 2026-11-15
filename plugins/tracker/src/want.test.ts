@@ -327,8 +327,18 @@ describe("/want", () => {
     expect(made).toContain("Watching `t1`: Wingspan Oceania expansion.");
     expect(made).toContain(`Shopify stores' search for "Wingspan Oceania expansion" every 24 hours`);
     expect(made).toContain("5 credits");
+    // No execute lane here: the shop list still holds a listing whose shop has no check (docket#128).
     await pollTick(w.plugin);
     expect(calls).toHaveLength(1);
+    expect(w.sent).toHaveLength(0);
+    const seeded = new Database(w.dbPath);
+    seeded
+      .query("INSERT INTO shop_checks (domain, verdict, reasons, sources, checked_at) VALUES (?, 'ok', '[]', '[\"https://a.example/r\"]', ?)")
+      .run("store.stonemaiergames.com", w.clock.now().toISOString());
+    seeded.close();
+    w.clock.advance(24 * 3600_000);
+    await pollTick(w.plugin);
+    expect(calls).toHaveLength(2);
     expect(calls[0]?.url).toBe(FIRECRAWL_SCRAPE_URL);
     expect(calls[0]?.init.method).toBe("POST");
     expect((calls[0]?.init.headers as Record<string, string>).authorization).toBe("Bearer fc-key");
@@ -340,10 +350,10 @@ describe("/want", () => {
     // Not again before the day is out; the next day, nothing new is nothing said.
     w.clock.advance(6 * 3600_000);
     await pollTick(w.plugin);
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     w.clock.advance(18 * 3600_000);
     await pollTick(w.plugin);
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(w.sent).toHaveLength(1);
   });
 

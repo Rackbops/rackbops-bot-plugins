@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.57.0] - 2026-11-14
+
+### Fixed
+
+- `/want source: nobleknight` (0.52.0) refused every product page: the bot's Fetch port hands a page back rebuilt for price extraction, which takes the markup apart, so docket's `nobleKnightSource` found no copy rows it could read and counted a changed layout ("I could not read Noble Knight's page just now"). Rod's first two watches failed that way on 2026-11-14. A Noble Knight read now asks the port for the page as sent (a new `RAW_BODY` directive, never sent, like `NEVER_EBAY`), still fenced and capped at 3 MB. Every other read is rebuilt as before. The tests had faked the port, so they never saw the rebuild; one now reads through the real fenced fetch. A raw read refuses a redirect to another site, so no other site's page reaches Noble Knight's parser.
+- The shop check could let an unchecked Shopify listing through (docket#128, the release blocker for docket#120). With the execute lane off, the shop list was not passed to Shopify watches at all, so they told every listing unmarked, even from a flagged shop. It is now always passed: a shop that passed is told, a flagged one is kept out, and one with no fresh check is held, its request kept until the lane runs it. A check is recorded only when its run reports a web search (docket 0.28.0's `webSearches`, from the CLI's `modelUsage`, which the result now carries through: `readJobResult` keeps it). A flagged shop stays flagged after a re-check that finds too little. Every "ok" and "unknown" stored before this is dropped once on start, so each such shop is checked again; a flagged shop stays flagged. **Deploy docket-runner with Rackbops/docket-runner#63 first**: an older runner passes no `modelUsage`, so every check counts no search, records nothing, and is asked (and charged) again on each look while every Shopify listing stays held.
+
+### Changed
+
+- `@rackbops/docket-core` and `@rackbops/docket-types` 0.28.0 (from 0.27.0): a want-list watch holds a listing priced at 150% or more of its usual price (docket#144), kept as a `price-spike` finding and never DMed; Noble Knight pages are read in linear time on any body.
+
+### Schema
+
+- No version change; still at 13. A new table, `shop_check_marks`, made IF NOT EXISTS beside the shop tables, holds the one-time mark above; it names no person.
+
 ## [0.56.0] - 2026-11-13
 
 ### Changed
