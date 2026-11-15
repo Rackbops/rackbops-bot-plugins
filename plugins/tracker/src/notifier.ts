@@ -27,6 +27,11 @@ import type { DeliveryHealth } from "./delivery-health.js";
  * before rackbops-discord-bot#323 refuses buttons before sending anything; the DM is then sent again
  * without them, as the contract asks, under docket's same claim.
  *
+ * A text longer than one Discord message (docket's want DMs, docket#152) goes as several messages in
+ * a row, split between lines (`toHostMessages`), the buttons on the last, whose id is returned. A
+ * failure of the first part is read as above; once a part has gone out, any later failure is a plain
+ * error, so docket settles the send unconfirmed and never resends the parts already sent.
+ *
  * A scout or news run's DM to its owner also carries "Save as gift idea" buttons, one per finding
  * (gift-scout.ts, docket#101). Reading them is best effort: a failure is logged and the DM goes
  * without them.
@@ -136,6 +141,54 @@ export function toHostMessage(message: OutgoingMessage): HostMessage | null {
   return { content: text };
 }
 
+/**
+ * The most messages one DM is sent as: a cap, not a guarantee. Docket's want DMs reach 24,000
+ * characters at most and a typical 20-listing one about 14,000 (8 to 11 parts); since a part breaks
+ * only between lines, one of 24,000 in lines near 1,900 characters could need about 24. Past the cap,
+ * the last part is cut.
+ */
+export const MAX_PARTS = 25;
+
+/**
+ * The host messages for `message`, in order: one when it fits, else several, split between lines
+ * (docket#152). A break before a listing's line ("- ...") is taken over any other, so a listing and
+ * its note stay together whenever a listing line falls inside the part. A line too long for a message on its own is cut, as `toHostMessage` cuts;
+ * past `MAX_PARTS`, the last part is cut. Empty when it has no text to send.
+ */
+export function toHostMessages(message: OutgoingMessage): HostMessage[] {
+  if (message.text.trim().length === 0) return [];
+  if (wrapBareUrls(message.text).length <= MAX_CONTENT) return [{ content: message.text }];
+  const fits = (t: string) => wrapBareUrls(t).length <= MAX_CONTENT;
+  const lines = message.text.split("\n");
+  const parts: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (parts.length === MAX_PARTS - 1) {
+      parts.push(lines.slice(i).join("\n"));
+      break;
+    }
+    // The most whole lines from i that fit, then back to the last listing start, if any after i.
+    let end = i;
+    while (end < lines.length && fits(lines.slice(i, end + 1).join("\n"))) end++;
+    if (end === i) {
+      parts.push(lines[i] as string);
+      i++;
+      continue;
+    }
+    if (end < lines.length) {
+      let back = end;
+      while (back > i + 1 && !(lines[back] as string).startsWith("- ")) back--;
+      if ((lines[back] as string).startsWith("- ")) end = back;
+    }
+    parts.push(lines.slice(i, end).join("\n"));
+    i = end;
+  }
+  return parts
+    .filter((t) => t.trim().length > 0)
+    .map((t) => toHostMessage({ text: t }))
+    .filter((m): m is HostMessage => m !== null);
+}
+
 export function createDmNotifier(d: DmNotifierDeps): Notifier {
   return {
     async sendDm(userId, message) {
@@ -143,7 +196,8 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
       if (!user) throw new DeliveryFailedError(`no user ${userId}`, true);
       const discordId = user.discordId;
       if (!discordId || !HOST_SNOWFLAKE.test(discordId)) throw new DeliveryFailedError(`user ${userId} has no valid Discord id`, true);
-      const hostMessage = toHostMessage(message);
+      const parts = toHostMessages(message);
+      const hostMessage = parts[parts.length - 1];
       if (!hostMessage) throw new DeliveryFailedError("the message has no text");
 
       // A person whose delivery paused (earlier in this tick, or before) is held, not failed: every
@@ -166,6 +220,32 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
       } catch (err) {
         d.log.warn(`DM sent without gift idea buttons: reading the run's findings failed (${err instanceof Error ? err.message : String(err)})`);
       }
+      // A long message goes as several in a row (docket#152), the buttons on the last. Once one
+      // has gone out, a failure is never a refusal: what went out stays, and docket settles the
+      // send unconfirmed rather than resending the parts already sent.
+      for (const [n, part] of parts.slice(0, -1).entries()) {
+        try {
+          await d.dm(discordId, part);
+        } catch (err) {
+          if (n === 0) {
+            const mapped = deliveryError(err);
+            const reason = err instanceof Error ? err.message : String(err);
+            if (reason === HOST_CANNOT_MESSAGE || isUnknownUser(err)) {
+              try {
+                const counted = await d.health?.recordFailure(userId, reason, d.clock.now().toISOString());
+                if (counted?.paused) d.log.warn(`paused delivery to ${userId}: ${counted.failures} DMs in a row could not be delivered`);
+              } catch (countErr) {
+                d.log.error(`could not count a failed DM to ${userId}`, countErr);
+              }
+            } else if (!(mapped instanceof DeliveryFailedError)) {
+              const what = message.ref?.occurrenceId ? `delivery of ${message.ref.occurrenceId}` : "a DM";
+              d.log.warn(`${what} to ${userId} is unconfirmed (${reason}); it will not be resent`);
+            }
+            throw mapped;
+          }
+          throw partSent(d, message, userId, n, parts.length, err);
+        }
+      }
       let delivery: HostDelivery;
       try {
         try {
@@ -176,6 +256,7 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
           delivery = await d.dm(discordId, hostMessage);
         }
       } catch (err) {
+        if (parts.length > 1) throw partSent(d, message, userId, parts.length - 1, parts.length, err);
         const mapped = deliveryError(err);
         const reason = err instanceof Error ? err.message : String(err);
         if (reason === HOST_CANNOT_MESSAGE || isUnknownUser(err)) {
@@ -200,4 +281,15 @@ export function createDmNotifier(d: DmNotifierDeps): Notifier {
       return { messageId: delivery.messageId };
     },
   };
+}
+
+/**
+ * Part `n` (0-based) of a split DM failed after earlier parts went out: logged once as unconfirmed,
+ * and returned as a plain error, so docket settles the send unconfirmed and never sends it again.
+ */
+function partSent(d: DmNotifierDeps, message: OutgoingMessage, userId: string, n: number, total: number, err: unknown): Error {
+  const reason = err instanceof Error ? err.message : String(err);
+  const what = message.ref?.occurrenceId ? `delivery of ${message.ref.occurrenceId}` : "a DM";
+  d.log.warn(`${what} to ${userId} stopped after ${n} of ${total} parts (${reason}); it will not be resent`);
+  return new Error(`part ${n + 1} of ${total} failed after ${n} went out: ${reason}`);
 }
