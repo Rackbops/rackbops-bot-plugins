@@ -240,6 +240,21 @@ describe("eBay's lines in a watch of several places", () => {
     expect(out?.split("\n").at(-1)).toBe("Press Done once you have it, and I stop looking.");
   });
 
+  it("takes a judged eBay listing's note line with it, seller and all", () => {
+    const judged = [
+      "Rougarou: 2 new listings worth a look.",
+      "- Curse of the Rougarou -- 30.00 USD <https://shop.example/p/rougarou>",
+      "  looks right: the expansion, new. Seller: shopkeeper",
+      "- Curse of the Rougarou -- 20.00 USD -- sold by seller1 <https://www.ebay.com/itm/123> (via eBay)",
+      "  looks right: sealed. Seller: seller1 (99.8% positive)",
+      "Press Done once you have it, and I stop looking.",
+    ].join("\n");
+    const out = ebayLinesForgotten(judged, "curse rougarou") ?? "";
+    expect(out).toContain("  looks right: the expansion, new. Seller: shopkeeper");
+    expect(out).not.toContain("seller1");
+    expect(out).not.toContain("sealed");
+  });
+
   it("are found by the sweep through the watch's also", () => {
     const db = openDatabase(":memory:");
     try {

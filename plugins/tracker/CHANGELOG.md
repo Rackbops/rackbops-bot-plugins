@@ -4,8 +4,9 @@
 
 ### Changed
 
-- Want-list DMs show every listing a look takes, up to 20, past one Discord message (docket#152, Rod's choice of 2026-11-15: "several messages at once"). They come from docket 0.30.0 (released inside 0.31.0) and go out in several messages as 0.60.0 sends them, with Done on the last. Until now a judged eBay look with long notes showed four or five of its listings and no Done button.
-- The 6-hour clearing of eBay's lines from a recorded DM of a watch of several places now works to docket's want-DM length (`MAX_WANT_DM_CHARS`, 24,000) and no longer to 2,000. A long DM keeps every other place's line, and only a DM cut at that length gives up its last ones for the note.
+- Want-list DMs show every listing a look takes, up to 20, past one Discord message (docket#152, Rod's choice of 2026-11-15: "several messages at once"). They come from docket 0.30.0 (released inside 0.31.0) and go out in several messages as 0.60.0 sends them, with Done on the last. Until now a judged eBay look with long notes showed four or five of its listings, and the clip at 2,000 characters lost the rest and the "Press Done" line.
+- The 6-hour clearing of eBay's lines from a recorded DM of a watch of several places now works to docket's want-DM length (`MAX_WANT_DM_CHARS`, 24,000) and no longer to 2,000. A long DM keeps every other place's line. Only a DM within reach of that length gives up its last lines to make room for the note.
+- The same clearing takes a judged listing's indented note line ("  looks right: ... Seller: ...") with its eBay listing, so no seller name stays. Not reachable yet, since a judged watch looks in one place, but docket 0.31.0 can judge several.
 - `@rackbops/docket-core` and `@rackbops/docket-types` 0.31.0 (from 0.29.0). 0.31.0 also carries a judged watch of several places, which this tracker does not offer yet.
 
 ### Schema

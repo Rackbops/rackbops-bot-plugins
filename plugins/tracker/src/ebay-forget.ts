@@ -52,13 +52,15 @@ export function ebayLinesForgotten(text: string, words: string, max?: number): s
   // may be an eBay listing cut before its link and its "(via eBay)", which nothing can tell from
   // another place's: that line goes too, so a cut DM of a watch with an eBay place is always rewritten.
   const cut = text.endsWith("...") && !text.endsWith(DONE_LINE) ? lines.pop() : undefined;
-  const kept = lines.filter((l) => !EBAY_LINE.test(l));
+  // A judged DM follows each listing with an indented note line ("  looks right: ... Seller: ..."),
+  // which goes with its eBay listing: it may name the seller.
+  const kept = lines.filter((l, i) => !EBAY_LINE.test(l) && !(l.startsWith("  ") && EBAY_LINE.test(lines[i - 1] ?? "")));
   if (kept.length === lines.length && cut === undefined) return null;
   const last = cut !== undefined ? DONE_LINE : (kept.pop() ?? "");
   const tail = [CLEARED, `eBay's own search: <${ebaySearchUrl(words, max)}>`, last];
   // The note must survive whole, or the sweep would not know the DM as cleared: a DM near
-  // docket's want-DM length (0.62.0: up to MAX_WANT_DM_CHARS, sent as several Discord messages)
-  // gives up its last listings, never its first line, to make room for it.
+  // docket's want-DM length (from docket 0.30.0, tracker 0.62.0: up to MAX_WANT_DM_CHARS, sent as
+  // several Discord messages) gives up its last listings, never its first line, to make room for it.
   while (kept.length > 1 && [...kept, ...tail].join("\n").length > MAX_WANT_DM_CHARS) kept.pop();
   return clip([...kept, ...tail].join("\n"), MAX_WANT_DM_CHARS);
 }
