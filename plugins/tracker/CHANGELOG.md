@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.63.0] - 2026-11-15
+
+### Added
+
+- The model can check a want-list watch of several places (Rod, 2026-11-15: "start it right after 59"; docket 0.31.0). `judge: yes` with several places is no longer refused, and the web form keeps its "Check listings with the model" choice when several boxes are ticked. Each look reads every place that is due; the model then checks everything they found in one look, and one DM tells the ones worth a look, each by its own place. The model may open listings only on a page, Noble Knight or BGG place's own site, never eBay's. A judged watch with an eBay API place (searched with this bot's eBay keys) among several has its city-hall Job erased within six hours (`forgetAfterSeconds`), as a judged eBay watch's is.
+
+### Changed
+
+- A watch of several places made without `judge` now follows the same default as a watch of one place: checked by the model where the model runner is set up (each check counts against the daily model budget), as `/want`, the task API and tracker-mcp do for one place. Before, several places always made a plain watch. Watches already made keep their kind. `notes` is accepted with several places for the same reason.
+- The 6-hour clearing of eBay's lines (0.62.0) also takes several indented note lines under one eBay listing, not only the first.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.62.0] - 2026-11-15
 
 ### Changed

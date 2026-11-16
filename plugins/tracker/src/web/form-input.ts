@@ -139,9 +139,7 @@ export function wantInput(form: URLSearchParams): WantInput {
   const max = decimal(form, "max");
   const currency = opt(form, "currency");
   const hours = int(form, "hours");
-  // The model checks a watch of one place: with several ticked, the form's judge (yes by default
-  // where the model runner is set up) is left out, so they make a plain watch (want.ts ONE_JUDGED_PLACE).
-  const judge = form.getAll("source").length > 1 ? undefined : opt(form, "judge");
+  const judge = opt(form, "judge");
   const notes = lines(opt(form, "notes"));
   const targets = WANT_SOURCES.flatMap((s) => {
     const v = opt(form, `target_${s}`);

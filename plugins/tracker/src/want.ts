@@ -396,8 +396,6 @@ export interface PendingWant {
  */
 const PLACE_ORDER: readonly WantSource[] = ["page", "nobleknight", "bgg", "ebay", "shopify"];
 
-export const ONE_JUDGED_PLACE =
-  "The model checks a watch that looks in one place only. Tick one place, or choose no to check with the model for a plain watch that looks in all of them.";
 export const SOURCE_WORDS = "`source` is page, bgg, ebay, shopify or nobleknight, or several of them separated by commas.";
 
 /** The sources `raw` names: one, or several separated by commas, each once, in `PLACE_ORDER`; none is a page. */
@@ -491,10 +489,9 @@ export async function startWant(d: TrackerDeps, user: User, input: WantInput): P
   // city-hall's queue in its Job, which city-hall erases once it ends and never past six hours
   // (\`ebayJobForgetSeconds\`, Rackbops/city-hall#6; Rod, 2026-11-08), so it may be judged like any watch.
   // Confirm words make a plain watch unless the owner asked for the model, which \`confirmPlan\` refuses.
-  // A several-place watch is plain: the model checks a watch of one place (docket's \`ONE_PLACE\`).
+  // A several-place watch may be judged too (docket 0.31.0): the model checks what every place found.
   const confirming = [input.confirm, input.unconfirmed].some((v) => v !== undefined && v.trim() !== "" && v.trim() !== "-");
-  if (several && input.judge === true) return { ok: false, error: ONE_JUDGED_PLACE };
-  const judged = several || (confirming && input.judge !== true) ? ({ ok: true, judge: false } as const) : judgePlan(d, input.judge);
+  const judged = confirming && input.judge !== true ? ({ ok: true, judge: false } as const) : judgePlan(d, input.judge);
   if (!judged.ok) return judged;
   const places: WatchPlace[] = [];
   const searched: string[] = [];
@@ -617,9 +614,11 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
   const places = watchPlaces(c);
   const has = (source: string) => places.some((p) => p.source === source);
   const inbox = places.every((p) => p.source === "inbox");
-  // The judge opens no page for an inbox, Shopify or eBay watch (docket-types' wantjudge).
-  const closed = inbox || c.source === "shopify" || c.source === "ebay";
-  const shows = closed ? "what the listing says about the seller" : "what its page shows about the seller";
+  // The judge opens no page for an inbox, Shopify or eBay place (docket-types' wantjudge), so a
+  // watch of several opens pages only where one of its places is a page, Noble Knight or BGG.
+  const closedPlace = (s: string) => s === "inbox" || s === "shopify" || s === "ebay";
+  const closed = places.every((p) => closedPlace(p.source));
+  const shows = closed ? "what the listing says about the seller" : places.some((p) => closedPlace(p.source)) ? "what its page (where it may open one) or the listing shows about the seller" : "what its page shows about the seller";
   const first = inbox ? "the first look is within a minute, and finds nothing until listings are sent in" : "the first look, within a minute, DMs what is there now";
   return {
     ok: true,
@@ -630,7 +629,11 @@ export async function finishWant(d: TrackerDeps, asked: User, start: PendingWant
         start.judge
           ? `I look at ${where} every ${plural(start.hours, "hour")}, and the model looks at each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before -- whether it is the thing, and ${shows} -- then I DM you the ones worth a look, with its notes; the first look starts within a minute. Those looks are model runs, charged like research; \`judge: false\` makes a watch without them. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`
           : `I look at ${where} every ${plural(start.hours, "hour")} and DM you each listing${limits.length ? ` ${limits.join(" ")}` : ""} I have not shown you before; ${first}. Press Done on a DM once you have it, or \`/task done ${task.id}\`.`,
-        ...(places.length > 1 ? ["Each look reads every place that is due (Shopify at most every 24 hours) and sends one DM with what they found; a listing is never told twice, though the same copy on two sites is two listings. One Done stops them all."] : []),
+        ...(places.length > 1
+          ? [
+              `Each look reads every place that is due (Shopify at most every 24 hours)${start.judge ? ", the model checks everything they found together," : ""} and sends one DM with ${start.judge ? "the ones worth a look" : "what they found"}; a listing is never told twice, though the same copy on two sites is two listings. One Done stops them all.`,
+            ]
+          : []),
         ...places.flatMap((p) => inboxNote(p, task.id, d.mail && watchSite(p) === "ebay" ? d.mail.addressFor(user.id, now) : null)),
         ...(has("shopify")
           ? [`Shopify's search finds new copies at Shopify stores only (not eBay or used copies), and I keep a product only when its title has every word you are watching for. Each look is a Firecrawl search (5 credits)${places.length > 1 && start.hours < MIN_SHOPIFY_HOURS ? `, so I search Shopify at most every ${MIN_SHOPIFY_HOURS} hours` : ""}.`]

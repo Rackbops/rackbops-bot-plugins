@@ -6,7 +6,8 @@ import type { Plugin } from "../../../packages/api/contract.js";
 import { ebayLinesForgotten, forgetEbayMessages } from "./ebay-forget.js";
 import { openDatabase } from "./schema.js";
 import { BGG_THING, shopSearch } from "./want-fixtures.js";
-import { ONE_JUDGED_PLACE, SOURCE_WORDS, sourcesPlan } from "./want.js";
+import { SOURCE_WORDS, sourcesPlan } from "./want.js";
+import { CITY_HALL, dmsTo, fakeCityHall, success } from "./web/execute-harness.js";
 import { api, call, cleanup, csrfOf, LARRY, makeToken, ORIGIN, people, signIn, world } from "./web/harness.js";
 
 /**
@@ -66,14 +67,14 @@ describe("the sources a watch names", () => {
 });
 
 describe("a watch of several places", () => {
-  it("from the web form's boxes: one watch, one DM with every place's listings, its judge default left out", async () => {
+  it("from the web form's boxes: one watch, one DM with every place's listings", async () => {
     const { fetch, reads } = shop();
     const bgg = bggSource();
     const w = await world({ fetch, bgg });
     await people(w.plugin);
     const jar = await signIn(w.plugin, LARRY);
     const csrf = await csrfOf(w.plugin, jar);
-    const form: [string, string][] = [["csrf", csrf], ["name", "Rougarou"], ["source", "page"], ["source", "bgg"], ["target_page", SHOP], ["target_bgg", "300580"], ["judge", "yes"]];
+    const form: [string, string][] = [["csrf", csrf], ["name", "Rougarou"], ["source", "page"], ["source", "bgg"], ["target_page", SHOP], ["target_bgg", "300580"], ["judge", "no"]];
     const made = await call(w.plugin, "POST", "/new/wantlist", { jar, origin: ORIGIN, form });
     expect(made.status).toBe(303);
     const config = configOf(w.dbPath, "t1");
@@ -113,13 +114,10 @@ describe("a watch of several places", () => {
     expect(fields.map((f) => f.name)).toContain("target_nobleknight");
   });
 
-  it("is refused when the model is asked to check it, and when a place's target is wrong, naming the place", async () => {
+  it("is refused when a place's target is wrong, naming the place", async () => {
     const w = await world({ fetch: shop().fetch, bgg: bggSource() });
     await people(w.plugin);
     const token = await makeToken(w, await signIn(w.plugin, LARRY));
-    const judged = await api(w.plugin, "POST", "/tasks", { token, body: { type: "wantlist", name: "R", source: "page,bgg", target_page: SHOP, target_bgg: "300580", judge: "yes" } });
-    expect(judged.status).not.toBe(201);
-    expect(((await judged.json()) as { error: { message: string } }).error.message).toBe(ONE_JUDGED_PLACE);
     const bad = await api(w.plugin, "POST", "/tasks", { token, body: { type: "wantlist", name: "R", source: "page,bgg", target_page: SHOP, target_bgg: "not a game" } });
     expect(bad.status).toBe(400);
     expect(((await bad.json()) as { error: { message: string } }).error.message).toStartWith("BoardGameGeek: That is not a BGG game.");
@@ -276,5 +274,64 @@ describe("eBay's lines in a watch of several places", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe("a watch of several places the model checks (0.63.0)", () => {
+  it("reads every place, has the model look at all they found in one Job, and DMs the ones worth a look", async () => {
+    const city = fakeCityHall();
+    const bgg = bggSource();
+    const work: Promise<void>[] = [];
+    const w = await world({ env: CITY_HALL, cityHallFetch: city.fetchImpl, executeStarted: (p) => void work.push(p), fetch: shop().fetch, bgg });
+    await people(w.plugin);
+    const round = async () => {
+      for (const t of w.plugin.ticks ?? []) await t.run(new AbortController().signal);
+      await Promise.all(work.splice(0));
+      w.clock.advance(61_000);
+    };
+    const jar = await signIn(w.plugin, LARRY);
+    const csrf = await csrfOf(w.plugin, jar);
+    // The web form's judge choice is kept with several places ticked.
+    const form: [string, string][] = [["csrf", csrf], ["name", "Rougarou"], ["source", "page"], ["source", "bgg"], ["target_page", SHOP], ["target_bgg", "300580"], ["judge", "yes"]];
+    expect((await call(w.plugin, "POST", "/new/wantlist", { jar, origin: ORIGIN, form })).status).toBe(303);
+    const db = new Database(w.dbPath, { readonly: true });
+    const type = (db.query("SELECT type FROM tasks WHERE seq = 1").get() as { type: string }).type;
+    db.close();
+    expect(type).toBe("wantjudge");
+    expect(configOf(w.dbPath, "t1").also).toEqual([{ source: "bgg", target: "300580" }]);
+
+    for (let i = 0; i < 4 && city.jobs.size === 0; i++) await round();
+    expect(city.jobs.size).toBe(1);
+    const job = city.latest();
+    const spec = job?.spec as { prompt: string; allowedTools: string[] };
+    expect(spec.prompt).toContain("1. Curse of the Rougarou");
+    expect(spec.prompt).toContain("a shop page they gave and BoardGameGeek's marketplace");
+    expect(spec.allowedTools.sort()).toEqual(["WebFetch(domain:boardgamegeek.com)", "WebFetch(domain:shop.example)"]);
+    // Neither place's eBay: the Job is kept as any judged watch's.
+    expect(job?.forgetAfterSeconds).toBeUndefined();
+    const n = (spec.prompt.match(/^\d+\. /gm) ?? []).length;
+    expect(n).toBeGreaterThan(1);
+    const verdicts = { verdicts: Array.from({ length: n }, (_, i) => ({ n: i + 1, fit: "match", why: "it", seller: "not shown" })) };
+    if (job) Object.assign(job, { status: "done", result: success(verdicts, 0.1) });
+    for (let i = 0; i < 4 && !dmsTo(w.sent, LARRY).some((c) => c.startsWith("Rougarou")); i++) await round();
+    const dm = dmsTo(w.sent, LARRY).filter((c) => c.startsWith("Rougarou"));
+    expect(dm).toHaveLength(1);
+    expect(dm[0]).toContain(`${n} new listings worth a look`);
+    expect(dm[0]).toContain("<https://shop.example/p/rougarou>");
+    expect(dm[0]).toContain("(via BoardGameGeek)");
+  });
+
+  it("over the task API, with judge left out, is checked by the model where the runner is set up, and says so", async () => {
+    const w = await world({ env: CITY_HALL, cityHallFetch: fakeCityHall().fetchImpl, fetch: shop().fetch, bgg: bggSource() });
+    await people(w.plugin);
+    const token = await makeToken(w, await signIn(w.plugin, LARRY));
+    const body = { type: "wantlist", name: "Rougarou", source: "page,bgg", target_page: SHOP, target_bgg: "300580" };
+    const made = await api(w.plugin, "POST", "/tasks", { token, body });
+    expect(made.status).toBe(201);
+    expect(JSON.stringify(await made.json())).toContain("the model checks everything they found together");
+    const db = new Database(w.dbPath, { readonly: true });
+    const type = (db.query("SELECT type FROM tasks WHERE seq = 1").get() as { type: string }).type;
+    db.close();
+    expect(type).toBe("wantjudge");
   });
 });

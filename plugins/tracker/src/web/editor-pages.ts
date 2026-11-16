@@ -198,8 +198,8 @@ export function fieldsFor(type: NewType, mode: Mode, surface: Surface = "web"): 
             kind: "checks",
             options: SOURCE_OPTIONS,
             help: surface === "api"
-              ? "One place, or several separated by commas, such as page,ebay: one watch looks in each, sends one DM per look with what the places found, never tells the same listing twice, and one Done stops it everywhere. The same copy listed on two sites is two listings, so it can be told once from each. A watch the model checks (judge: yes) looks in one place. Give each place its own target below; with one place, target works as before."
-              : "Tick every place to look: one watch looks in each, sends one DM per look with what the places found, and one Done stops it everywhere. The same copy listed on two sites is two listings, so it can be told once from each. With more than one place ticked the model does not check listings, whatever the choice below says. Fill in the box below for each place you tick.",
+              ? "One place, or several separated by commas, such as page,ebay: one watch looks in each, sends one DM per look with what the places found (with the model, only what it thinks worth a look), never tells the same listing twice, and one Done stops it everywhere. The same copy listed on two sites is two listings, so it can be told once from each. Give each place its own target below; with one place, target works as before."
+              : "Tick every place to look: one watch looks in each, sends one DM per look with what the places found (with the model, only what it thinks worth a look), and one Done stops it everywhere. The same copy listed on two sites is two listings, so it can be told once from each. Fill in the box below for each place you tick.",
           } as const,
           ...(surface === "api"
             ? [
@@ -219,7 +219,7 @@ export function fieldsFor(type: NewType, mode: Mode, surface: Surface = "web"): 
             label: "Check listings with the model",
             kind: "select",
             options: JUDGE_OPTIONS,
-            help: "Each check counts against your daily model budget. Needs the model runner; fixed once the watch is made; only for a watch of one place, so it is ignored when you tick more than one. Choose no to give words to double-check below.",
+            help: "Each check counts against your daily model budget. Needs the model runner; fixed once the watch is made. With several places the model checks what they all found together. Choose no to give words to double-check below.",
           } as const,
         ]
         : []),
