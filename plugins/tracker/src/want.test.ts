@@ -95,7 +95,10 @@ describe("/want", () => {
     expect(w.sent).toHaveLength(2);
   });
 
-  /** A watch whose first run found 20 listings, each line about 180 characters, so not all fit in one message. */
+  /**
+   * A watch whose first run found 20 listings, each line about 180 characters, so not all fit in one
+   * message: since docket 0.30.0 the DM lists all 20 and goes as two messages (0.60.0), Done on the last.
+   */
   async function twentyListings(logs?: string[]) {
     const items: Item[] = Array.from({ length: 20 }, (_, i) => ({
       name: `Wingspan expansion ${String(i + 1).padStart(2, "0")}: ${"birds, eggs and nests in a box ".repeat(3).trim()}`,
@@ -107,11 +110,13 @@ describe("/want", () => {
     await people(w.plugin);
     await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan expansions", source: "page", target: SHOP } });
     await pollTick(w.plugin);
-    expect(content(w.sent, 0)).toContain("Wingspan expansions: 20 new listings.");
-    // Since docket 0.30.0 the DM lists all 20, across as many messages as it takes (0.60.0).
-    const dm = w.sent.map((_, i) => content(w.sent, i)).join("\n");
-    expect(dm).toContain("Wingspan expansion 20:");
-    expect(dm).not.toContain("more: `/task history t1`");
+    expect(w.sent).toHaveLength(2);
+    expect(content(w.sent, 0)).toStartWith("Wingspan expansions: 20 new listings.\n");
+    const dm = `${content(w.sent, 0)}\n${content(w.sent, 1)}`;
+    for (const it of items) expect(dm).toContain(`- ${it.name} -- 30.00 USD <${it.url}>`);
+    expect(dm).not.toContain("more:");
+    expect(buttons(w.sent, 0)).toHaveLength(0);
+    expect(buttons(w.sent, 1).some((b) => b.label.toLowerCase() === "done")).toBe(true);
     return { w, items };
   }
 

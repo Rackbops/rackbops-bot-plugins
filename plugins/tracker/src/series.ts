@@ -84,8 +84,8 @@ function findingLines(task: Task, findings: readonly StoredFinding[]): string[] 
 }
 
 /**
- * A want-list watch's `findings` as `/task history`'s second message (#166: its DM shows 5 of a
- * run's up to `MAX_NEW_PER_RUN` and leaves the rest to `/task history`): a header, then the newest
+ * A want-list watch's `findings` as `/task history`'s second message (#166, when its DM
+ * showed 5 of a run's up to `MAX_NEW_PER_RUN`; since 0.62.0 the DM shows them all): a header, then the newest
  * of a run's worth, oldest to newest, as many whole lines as fit in one message with the header and
  * any last line; and, when some are not listed, a last line saying how many and, while the web area
  * is set up (`webEditor`), that the task's page there shows the newest `FINDINGS_SHOWN`. Null when

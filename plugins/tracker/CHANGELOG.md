@@ -4,12 +4,25 @@
 
 ### Added
 
-- The model can check a want-list watch of several places (Rod, 2026-11-15: "start it right after 59"; docket 0.31.0). `judge: yes` with several places is no longer refused, and the web form keeps its "Check listings with the model" choice when several boxes are ticked. Each look reads every place that is due; the model then checks everything they found in one look, and one DM tells the ones worth a look, each by its own place. The model may open listings only on a page, Noble Knight or BGG place's own site, never eBay's. A judged watch with an eBay API place (searched with this bot's eBay keys) among several has its city-hall Job erased within six hours (`forgetAfterSeconds`), as a judged eBay watch's is. A recorded DM's eBay lines are cleared after six hours with the model's verdict lines under them (fit, why, seller).
+- The model can check a want-list watch of several places (Rod, 2026-11-15: "start it right after 59"; docket 0.31.0). `judge: yes` with several places is no longer refused, and the web form keeps its "Check listings with the model" choice when several boxes are ticked. Each look reads every place that is due; the model then checks everything they found in one look, and one DM tells the ones worth a look, each by its own place. The model may open listings only on a page, Noble Knight or BGG place's own site, never eBay's. A judged watch with an eBay API place (searched with this bot's eBay keys) among several has its city-hall Job erased within six hours (`forgetAfterSeconds`), as a judged eBay watch's is.
 
 ### Changed
 
 - A watch of several places made without `judge` now follows the same default as a watch of one place: checked by the model where the model runner is set up (each check counts against the daily model budget), as `/want`, the task API and tracker-mcp do for one place. Before, several places always made a plain watch. Watches already made keep their kind. `notes` is accepted with several places for the same reason.
-- `@rackbops/docket-core` and `@rackbops/docket-types` 0.31.0 (from 0.29.0): the several-place judged watch, and docket 0.30.0's want-list DM, which lists every listing a look found (up to 20, sent as several messages when one cannot hold them) instead of 5 and "...and N more".
+- The 6-hour clearing of eBay's lines (0.62.0) also takes several indented note lines under one eBay listing, not only the first.
+
+### Schema
+
+- No change. Still at 13.
+
+## [0.62.0] - 2026-11-15
+
+### Changed
+
+- Want-list DMs show every listing a look takes, up to 20, past one Discord message (docket#152, Rod's choice of 2026-11-15: "several messages at once"). They come from docket 0.30.0 (released inside 0.31.0) and go out in several messages as 0.60.0 sends them, with Done on the last. Until now a judged eBay look with long notes showed four or five of its listings, and the clip at 2,000 characters lost the rest and the "Press Done" line.
+- The 6-hour clearing of eBay's lines from a recorded DM of a watch of several places now works to docket's want-DM length (`MAX_WANT_DM_CHARS`, 24,000) and no longer to 2,000. A long DM keeps every other place's line. Only a DM within reach of that length gives up its last lines to make room for the note.
+- The same clearing takes a judged listing's indented note line ("  looks right: ... Seller: ...") with its eBay listing, so no seller name stays. Not reachable yet, since a judged watch looks in one place, but docket 0.31.0 can judge several.
+- `@rackbops/docket-core` and `@rackbops/docket-types` 0.31.0 (from 0.29.0). 0.31.0 also carries a judged watch of several places, which this tracker does not offer yet.
 
 ### Schema
 

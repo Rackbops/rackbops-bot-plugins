@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-16T01:09:24.667Z",
+  "generatedAt": "2026-11-16T01:30:58.842Z",
   "plugins": [
     {
       "name": "mcp",
@@ -393,7 +393,13 @@
           "version": "0.63.0",
           "publishedAt": "2026-11-15T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.63.0",
-          "notes": "### Added\n\n- The model can check a want-list watch of several places (Rod, 2026-11-15: \"start it right after 59\"; docket 0.31.0). `judge: yes` with several places is no longer refused, and the web form keeps its \"Check listings with the model\" choice when several boxes are ticked. Each look reads every place that is due; the model then checks everything they found in one look, and one DM tells the ones worth a look, each by its own place. The model may open listings only on a page, Noble Knight or BGG place's own site, never eBay's. A judged watch with an eBay API place (searched with this bot's eBay keys) among several has its city-hall Job erased within six hours (`forgetAfterSeconds`), as a judged eBay watch's is. A recorded DM's eBay lines are cleared after six hours with the model's verdict lines under them (fit, why, seller).\n\n### Changed\n\n- A watch of several places made without `judge` now follows the same default as a watch of one place: checked by the model where the model runner is set up (each check counts against the daily model budget), as `/want`, the task API and tracker-mcp do for one place. Before, several places always made a plain watch. Watches already made keep their kind. `notes` is accepted with several places for the same reason.\n- `@rackbops/docket-core` and `@rackbops/docket-types` 0.31.0 (from 0.29.0): the several-place judged watch, and docket 0.30.0's want-list DM, which lists every listing a look found (up to 20, sent as several messages when one cannot hold them) instead of 5 and \"...and N more\".\n\n### Schema\n\n- No change. Still at 13."
+          "notes": "### Added\n\n- The model can check a want-list watch of several places (Rod, 2026-11-15: \"start it right after 59\"; docket 0.31.0). `judge: yes` with several places is no longer refused, and the web form keeps its \"Check listings with the model\" choice when several boxes are ticked. Each look reads every place that is due; the model then checks everything they found in one look, and one DM tells the ones worth a look, each by its own place. The model may open listings only on a page, Noble Knight or BGG place's own site, never eBay's. A judged watch with an eBay API place (searched with this bot's eBay keys) among several has its city-hall Job erased within six hours (`forgetAfterSeconds`), as a judged eBay watch's is.\n\n### Changed\n\n- A watch of several places made without `judge` now follows the same default as a watch of one place: checked by the model where the model runner is set up (each check counts against the daily model budget), as `/want`, the task API and tracker-mcp do for one place. Before, several places always made a plain watch. Watches already made keep their kind. `notes` is accepted with several places for the same reason.\n- The 6-hour clearing of eBay's lines (0.62.0) also takes several indented note lines under one eBay listing, not only the first.\n\n### Schema\n\n- No change. Still at 13."
+        },
+        {
+          "version": "0.62.0",
+          "publishedAt": "2026-11-15T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.62.0",
+          "notes": "### Changed\n\n- Want-list DMs show every listing a look takes, up to 20, past one Discord message (docket#152, Rod's choice of 2026-11-15: \"several messages at once\"). They come from docket 0.30.0 (released inside 0.31.0) and go out in several messages as 0.60.0 sends them, with Done on the last. Until now a judged eBay look with long notes showed four or five of its listings, and the clip at 2,000 characters lost the rest and the \"Press Done\" line.\n- The 6-hour clearing of eBay's lines from a recorded DM of a watch of several places now works to docket's want-DM length (`MAX_WANT_DM_CHARS`, 24,000) and no longer to 2,000. A long DM keeps every other place's line. Only a DM within reach of that length gives up its last lines to make room for the note.\n- The same clearing takes a judged listing's indented note line (\"  looks right: ... Seller: ...\") with its eBay listing, so no seller name stays. Not reachable yet, since a judged watch looks in one place, but docket 0.31.0 can judge several.\n- `@rackbops/docket-core` and `@rackbops/docket-types` 0.31.0 (from 0.29.0). 0.31.0 also carries a judged watch of several places, which this tracker does not offer yet.\n\n### Schema\n\n- No change. Still at 13."
         },
         {
           "version": "0.61.0",
@@ -442,12 +448,6 @@
           "publishedAt": "2026-11-13T00:00:00.000Z",
           "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.52.0",
           "notes": "### Added\n\n- `/want source: nobleknight` (Rod, 2026-11-13: \"make sure that https://www.nobleknight.com/ is a trusted seller and is included in board game want tasks\"; docket 0.26.0's `nobleKnightSource`, Rackbops/docket#133). `target` is a Noble Knight product page's address, kept in its one form `https://www.nobleknight.com/P/<id>`; the page is read once at once (\"Noble Knight has N copies in stock now\"), and each look reads it in USD. Each copy in stock is a listing with its grade, note and sale price, Noble Knight Games named as the seller, so a new copy is told once; no shop check runs. A `currency` other than USD is refused, on the create and on an edit. The web editor offers it (\"Noble Knight Games: a product page I paste\"), the edit page shows \"Noble Knight's page <address>\", and the duplicate check (#390) matches two watches of one product whatever form of its address each was given.\n\n### Schema\n\n- No change. Still at 13."
-        },
-        {
-          "version": "0.50.0",
-          "publishedAt": "2026-11-13T00:00:00.000Z",
-          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/tracker-v0.50.0",
-          "notes": "### Added\n\n- `/gift` (Rackbops/docket#94, #385): quick capture on your own gift list from Discord. `/gift idea` plans a gift for a person on an open occasion, or saves it as an idea noted \"For <name>\"; `/gift bought` records a planned gift as bought, found by its title (and person or occasion when more than one matches), priced in the occasion's own currency digits and dated in your time zone; `/gift needs` says who on an occasion still needs a gift, by the same coverage rules as the web page and the task API. Every answer is ephemeral, with a link to `/gifts` when the web area is set up. A new command name: the bot registers it on the next start.\n\n### Schema\n\n- No change. Still at 13."
         }
       ]
     },
