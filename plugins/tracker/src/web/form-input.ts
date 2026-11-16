@@ -45,9 +45,9 @@ export function typed(type: NewType, mode: "new" | "edit", form: URLSearchParams
  * and nothing is made by the link. Only the form's own fields are taken, by the names the form posts
  * and the task API's `POST /tasks` takes; anything else in the query is ignored. A select keeps only
  * one of its options and a set of checkboxes only its options (given once each, or as one value
- * separated by commas, as the API takes them); text is shown as given, and saving checks it as it
- * checks what is typed. A want-list watch also takes the API's `target` for a watch of one place: it
- * fills that place's own box unless the query fills the box itself.
+ * separated by commas, as the API takes them); text is shown as given (an empty value keeps the
+ * default), and saving checks it as it checks what is typed. A want-list watch also takes the API's `target` for a watch of one place: it
+ * fills that place's own box (a page's, with no place given) unless the query fills the box itself.
  */
 export function prefilled(type: NewType, query: URLSearchParams): Values {
   const out: Record<string, string> = {};
@@ -61,11 +61,13 @@ export function prefilled(type: NewType, query: URLSearchParams): Values {
       const v = (query.get(f.name) ?? "").trim();
       if (allowed.has(v)) out[f.name] = v;
     } else {
-      out[f.name] = query.get(f.name) ?? "";
+      const v = query.get(f.name) ?? "";
+      if (v !== "") out[f.name] = v;
     }
   }
   if (type === "wantlist") {
-    const places = (out.source ?? "").split(",").filter((v) => v !== "");
+    // No place given (or none real): the form's default, a page, as the task API's own default.
+    const places = (out.source ?? "page").split(",").filter((v) => v !== "");
     const target = query.get("target");
     if (places.length === 1 && target !== null && out[`target_${places[0]}`] === undefined) out[`target_${places[0]}`] = target;
   }

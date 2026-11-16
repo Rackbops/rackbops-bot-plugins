@@ -520,7 +520,8 @@ The `__Host-` prefix, which would stop that, requires `Path=/` and so cannot be 
 ### A new task's form filled in from a link
 
 Since 0.64.0 every new-task form (`/new/wantlist`, `/new/reminder`, `/new/renewal`, `/new/price`,
-`/new/research`, `/new/scout`, `/new/news`) takes its fields from its address's query, so another
+`/new/research`, `/new/scout`, `/new/news`, all under the web area's `/tracker/`, so
+`<TRACKER_WEB_URL>/tracker/new/wantlist`) takes its fields from its address's query, so another
 app can send a person to a form already filled in -- a product list linking to "watch this", say.
 This is the contract for that link. The link only fills the form: the person reads it, changes what
 they like, and presses the button, and nothing is made until they do. The save is the form's own
@@ -529,7 +530,7 @@ link cannot make, change or skip anything a person could not type.
 
 - **The names are the form's own**, the same as the task API's `POST /api/v1/tasks` takes for that
   type (below) -- a want-list watch's are in the table here. Anything else in the query is ignored.
-  A field the query leaves out keeps the form's default.
+  A field the query leaves out, or gives empty, keeps the form's default.
 - **A choice** (`judge`, a reminder's `repeat`, a renewal's `unit`, ...) is taken only when the
   value is one of its options; otherwise the default stays. **The places to look** (`source`) may
   be given once each (`source=ebay&source=shopify`) or as one value separated by commas
@@ -539,14 +540,18 @@ link cannot make, change or skip anything a person could not type.
   out of range is refused then, with the form's own message, as if typed. A browser shows a number
   field given something that is not a number as empty.
 - **Encode each value** as a URL query value (`encodeURIComponent`, or `URLSearchParams`).
-- **Signing in.** A browser with no session is signed in first. With the usr sign-in on, it goes to
-  usr and comes back to the same address, query and all. A one-time `/web` link, or signing in
-  again after a sign-out, opens My tasks instead, so the link has to be opened again after it.
-  Research, a scout or a news watch on a bot without the model runner shows its "not available"
+- **Signing in.** A browser with no session has to sign in first. With the usr sign-in on, it goes
+  to usr and comes back to the same address, query and all. Otherwise it is shown the sign-in page,
+  and the one-time `/web` link it points to opens My tasks, so the link has to be opened again
+  after it; so does signing back in within 12 hours of pressing Sign out.
+  The address, query and all, passes through usr's sign-in, so keep anything private out of a
+  link's text fields (notes, context). Research, a scout or a news watch on a bot without the model runner shows its "not available"
   page, and the query fills nothing.
-- **Which places and kinds this bot offers** is in `GET /api/v1/capabilities`' `sources`, and each
-  field's limits (`maxLength`, `minimum`, `maximum`, `enum`) in `GET /api/v1/types` (Task API,
-  below; both take a token). To make a task with no person at the form, use the task API itself, or
+- **What this bot searches by itself** is in `GET /tracker/api/v1/capabilities`' `sources`, true or
+  false only (`runner` for the model, `bgg`, `ebay`, `shopify`); the five places in the table can
+  always be ticked, and a place this bot does not search makes a watch whose listings are sent in.
+  Each field's limits (`maxLength`, `minimum`, `maximum`, `enum`) are in `GET
+  /tracker/api/v1/types` (Task API, below; both take a token). To make a task with no person at the form, use the task API itself, or
   tracker-mcp's `validate_task` and `create_task`.
 
 A want-list watch (`/new/wantlist`):
@@ -555,20 +560,20 @@ A want-list watch (`/new/wantlist`):
 |---|---|
 | `name` | What you want (required to save). |
 | `source` | Where to look: `page`, `bgg`, `ebay`, `shopify`, `nobleknight`, one or several. |
-| `target_page`, `target_bgg`, `target_ebay`, `target_shopify`, `target_nobleknight` | Each place's own box: a page's address, a BGG game's address or id, the words to search eBay or Shopify for (the name when empty), a Noble Knight product page. |
-| `target` | The task API's target for a watch of one place: with exactly one `source`, it fills that place's box, unless the query fills the box itself. Ignored otherwise. |
+| `target_page`, `target_bgg`, `target_ebay`, `target_shopify`, `target_nobleknight` | Each place's own box: a page's address, a BGG game's address or id (or words, while this bot has no BGG access), the words to search eBay or Shopify for (the name when empty), a Noble Knight product page. |
+| `target` | The task API's target for a watch of one place: with exactly one `source` (or none, which means a page, as in the API), it fills that place's box, unless the query fills the box itself. Ignored with several places. |
 | `judge` | `yes` or `no`: Check listings with the model. Left out, yes where the model runner is set up. |
 | `max` | Top price, a number. |
 | `currency` | Only listings in it, such as `USD`. |
 | `exclude` | Leave out titles with: words or phrases separated by commas. |
-| `confirm`, `unconfirmed` | Double-check titles without, then leave out ones with (a plain watch only, `judge=no`). |
-| `notes` | Notes for the model (a checked watch only, `judge=yes`). |
+| `confirm`, `unconfirmed` | Double-check titles without, then leave out ones with. A plain watch only: saving refuses them with `judge=yes`, and `judge` left out is yes where the model runner is set up, so send `judge=no` with them. `unconfirmed` needs `confirm`. |
+| `notes` | Notes for the model. A checked watch only: saving refuses them with `judge=no`. |
 | `hours` | Hours between looks, a whole number. |
 
 For example, an eBay and Noble Knight watch, plain, at most 350 USD:
 
 ```
-<TRACKER_WEB_URL>/new/wantlist?name=Arkham%20Horror%3A%20The%20Card%20Game&source=ebay,nobleknight&target_ebay=arkham%20horror%20card%20game&target_nobleknight=https%3A%2F%2Fwww.nobleknight.com%2FP%2F2148112695&max=350&currency=USD&exclude=investigator&judge=no
+<TRACKER_WEB_URL>/tracker/new/wantlist?name=Arkham%20Horror%3A%20The%20Card%20Game&source=ebay,nobleknight&target_ebay=arkham%20horror%20card%20game&target_nobleknight=https%3A%2F%2Fwww.nobleknight.com%2FP%2F2148112695&max=350&currency=USD&exclude=investigator&judge=no
 ```
 
 ## Alert emails

@@ -64,11 +64,21 @@ describe("prefilled", () => {
     const several = prefilled("wantlist", q({ source: "ebay,shopify", target: "a" }));
     expect(several.target_ebay).toBeUndefined();
     expect(several.target_shopify).toBeUndefined();
-    expect(prefilled("wantlist", q({ target: "a" }))).toEqual({});
+    // With no place given, the default place (a page) takes it, as the task API's default does.
+    expect(prefilled("wantlist", q({ target: "https://shop.example/w" }))).toEqual({ target_page: "https://shop.example/w" });
+    expect(prefilled("wantlist", q({ source: "moon", target: "https://shop.example/w" }))).toEqual({ target_page: "https://shop.example/w" });
   });
 
-  it("takes nothing from an empty query", () => {
+  it("takes nothing from an empty query, and an empty value keeps the default", () => {
     expect(prefilled("wantlist", new URLSearchParams())).toEqual({});
+    expect(prefilled("renewal", q({ currency: "", every: "", name: "Domain" }))).toEqual({ name: "Domain" });
+  });
+
+  it("keeps a textarea's text whole, and the page escapes it", async () => {
+    const w = await setup();
+    const page = await (await call(w.plugin, "GET", `/new/wantlist?${q({ notes: "a</textarea><script>x</script>" })}`, { jar: w.larry })).text();
+    expect(page).not.toContain("<script>x</script>");
+    expect(page).toContain("a&lt;/textarea&gt;&lt;script&gt;x&lt;/script&gt;</textarea>");
   });
 });
 
@@ -124,7 +134,7 @@ describe("GET /new/<type> with a query", () => {
   it("a prefilled form saves only through the usual post with the session's token", async () => {
     const w = await setup();
     const csrf = await csrfOf(w.plugin, w.larry);
-    // A cross-site post of the same fields, without the token, is refused as before.
+    // A post of the same fields without the session's token is refused as before.
     const forged = await call(w.plugin, "POST", "/new/reminder", { jar: w.larry, form: { text: "x", when: "tomorrow 9am" }, origin: ORIGIN });
     expect(forged.status).toBe(403);
     expect(taskCount(w.dbPath)).toBe(0);
