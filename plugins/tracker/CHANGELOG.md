@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.64.0] - 2026-11-16
+
+### Added
+
+- Every new-task form in the web area can be filled in from a link (Rod, 2026-11-16: "Can we document an API contract to pre fill a docket watch?"). `/new/wantlist?name=...&source=ebay,nobleknight&target_ebay=...&max=350&judge=no` shows the want-list form with those fields filled in and those places ticked; the same works for `/new/reminder`, `/new/renewal`, `/new/price`, `/new/research`, `/new/scout` and `/new/news` by their own field names. The link only fills the form: nothing is made until the person presses the button, through the usual post with the session's CSRF token. Only the form's own fields are taken (a choice only to one of its options, a place only to a real place), and a want-list link may use the task API's `target` for a watch of one place. The README's "A new task's form filled in from a link" is the contract, and a test holds its want-list field table to the form.
+
+### Schema
+
+- No change. Still at 13.
+
 ## [0.63.0] - 2026-11-15
 
 ### Added

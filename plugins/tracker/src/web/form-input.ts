@@ -39,6 +39,39 @@ export function typed(type: NewType, mode: "new" | "edit", form: URLSearchParams
   return Object.fromEntries(fieldsFor(type, mode).map((f) => [f.name, f.kind === "checks" ? form.getAll(f.name).join(",") : str(form, f.name)]));
 }
 
+/**
+ * A new-task form's values taken from its address's query (`/new/<type>?name=...`), so another app
+ * can link a person to a form already filled in: the person still reads it and presses the button,
+ * and nothing is made by the link. Only the form's own fields are taken, by the names the form posts
+ * and the task API's `POST /tasks` takes; anything else in the query is ignored. A select keeps only
+ * one of its options and a set of checkboxes only its options (given once each, or as one value
+ * separated by commas, as the API takes them); text is shown as given, and saving checks it as it
+ * checks what is typed. A want-list watch also takes the API's `target` for a watch of one place: it
+ * fills that place's own box unless the query fills the box itself.
+ */
+export function prefilled(type: NewType, query: URLSearchParams): Values {
+  const out: Record<string, string> = {};
+  for (const f of fieldsFor(type, "new")) {
+    if (!query.has(f.name)) continue;
+    const allowed = new Set((f.options ?? []).map(([v]) => v));
+    if (f.kind === "checks") {
+      const ticked = [...new Set(query.getAll(f.name).flatMap((v) => v.split(",")).map((v) => v.trim()).filter((v) => allowed.has(v)))];
+      if (ticked.length > 0) out[f.name] = ticked.join(",");
+    } else if (f.kind === "select") {
+      const v = (query.get(f.name) ?? "").trim();
+      if (allowed.has(v)) out[f.name] = v;
+    } else {
+      out[f.name] = query.get(f.name) ?? "";
+    }
+  }
+  if (type === "wantlist") {
+    const places = (out.source ?? "").split(",").filter((v) => v !== "");
+    const target = query.get("target");
+    if (places.length === 1 && target !== null && out[`target_${places[0]}`] === undefined) out[`target_${places[0]}`] = target;
+  }
+  return out;
+}
+
 export function reminderInput(form: URLSearchParams): ReminderInput {
   const when = opt(form, "when");
   return { text: str(form, "text"), ...(when !== undefined ? { when } : {}), repeat: (str(form, "repeat") || "none") as Repeat };

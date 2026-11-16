@@ -246,7 +246,7 @@ served at a hashed path, cached for a year).
 | `/` | My tasks: the same list as `/tasks` (active tasks owned and received, next run in your zone; paused ones and why), each linking to its history, and links to make a new one. |
 | `/tasks/<id>` | A task's history: the same as `/task history`, for the owner, an accepted recipient or an admin. Anyone else gets the same 404 as an unknown id. The owner also sees Edit (not for a research request), Pause or Resume, and Delete. |
 | `/new/wantlist` | A new want-list watch (GET, POST), by `/want`'s rules (`judge` too, yes or no): "Where to look" is a box to tick for each place (a page, BGG, eBay, Shopify, Noble Knight; since 0.61.0), each with its own target box below (`target_<source>`); one watch looks in every place ticked. Its edit changes the name, top price, currency, exclude, confirm and unconfirmed words and hours; an emptied top price, currency, exclude, confirm or unconfirmed field clears it, and where it looks -- an inbox watch's key and words too -- stays as made. |
-| `/new/reminder`, `/new/renewal`, `/new/price`, `/new/research`, `/new/scout`, `/new/news` | The editor's new-task forms (GET), and making one (POST). `/new/research`, `/new/scout` and `/new/news` are linked from My tasks only while the model runner is set up (a news watch's kinds go one per line, and an emptied "What counts", "What never counts" or "How to tell it apart" clears it); without it the page says the type is not available instead of showing a form. A scout's interests go in a text box, separated by commas or one per line; its edit form shows the list one per line, and an emptied "Who it is for" or "Notes" clears it. |
+| `/new/reminder`, `/new/renewal`, `/new/price`, `/new/research`, `/new/scout`, `/new/news` | The editor's new-task forms (GET), and making one (POST). Each form, `/new/wantlist`'s too, can be filled in from a link (since 0.64.0; A new task's form filled in from a link, below). `/new/research`, `/new/scout` and `/new/news` are linked from My tasks only while the model runner is set up (a news watch's kinds go one per line, and an emptied "What counts", "What never counts" or "How to tell it apart" clears it); without it the page says the type is not available instead of showing a form. A scout's interests go in a text box, separated by commas or one per line; its edit form shows the list one per line, and an emptied "Who it is for" or "Notes" clears it. |
 | `/tasks/<id>/edit` | The owner's edit form (GET) and saving it (POST). |
 | `/tasks/<id>/pause`, `/resume`, `/delete` | POST only. Delete answers a confirmation first; only a second post carrying `confirm=yes` deletes. |
 | `/resume-dms` | POST only: Resume DMs, the button on the banner every page shows a person whose DMs are paused (Pause after failed DMs, above). It resumes them as their next command would, and My tasks then says how many tasks are back on; pressed when they are not paused, it changes nothing. |
@@ -516,6 +516,60 @@ are among the rows, so they are signed out everywhere at once, and the browser's
 (cookie tossing), and so plant its own session or sign-in cookie in your browser: a login-CSRF.
 The `__Host-` prefix, which would stop that, requires `Path=/` and so cannot be used with
 `Path=/tracker/`. Put the bot on a host whose sibling subdomains are all yours.
+
+### A new task's form filled in from a link
+
+Since 0.64.0 every new-task form (`/new/wantlist`, `/new/reminder`, `/new/renewal`, `/new/price`,
+`/new/research`, `/new/scout`, `/new/news`) takes its fields from its address's query, so another
+app can send a person to a form already filled in -- a product list linking to "watch this", say.
+This is the contract for that link. The link only fills the form: the person reads it, changes what
+they like, and presses the button, and nothing is made until they do. The save is the form's own
+post, with the session's CSRF token from the same origin, under every rule a typed form meets, so a
+link cannot make, change or skip anything a person could not type.
+
+- **The names are the form's own**, the same as the task API's `POST /api/v1/tasks` takes for that
+  type (below) -- a want-list watch's are in the table here. Anything else in the query is ignored.
+  A field the query leaves out keeps the form's default.
+- **A choice** (`judge`, a reminder's `repeat`, a renewal's `unit`, ...) is taken only when the
+  value is one of its options; otherwise the default stays. **The places to look** (`source`) may
+  be given once each (`source=ebay&source=shopify`) or as one value separated by commas
+  (`source=ebay,shopify`), as the API takes them; a name that is not a place is dropped, and with
+  none left the default (a page) stays ticked.
+- **Text is shown as given**, escaped, and checked only when the person saves: a value too long or
+  out of range is refused then, with the form's own message, as if typed. A browser shows a number
+  field given something that is not a number as empty.
+- **Encode each value** as a URL query value (`encodeURIComponent`, or `URLSearchParams`).
+- **Signing in.** A browser with no session is signed in first. With the usr sign-in on, it goes to
+  usr and comes back to the same address, query and all. A one-time `/web` link, or signing in
+  again after a sign-out, opens My tasks instead, so the link has to be opened again after it.
+  Research, a scout or a news watch on a bot without the model runner shows its "not available"
+  page, and the query fills nothing.
+- **Which places and kinds this bot offers** is in `GET /api/v1/capabilities`' `sources`, and each
+  field's limits (`maxLength`, `minimum`, `maximum`, `enum`) in `GET /api/v1/types` (Task API,
+  below; both take a token). To make a task with no person at the form, use the task API itself, or
+  tracker-mcp's `validate_task` and `create_task`.
+
+A want-list watch (`/new/wantlist`):
+
+| Field | What it fills |
+|---|---|
+| `name` | What you want (required to save). |
+| `source` | Where to look: `page`, `bgg`, `ebay`, `shopify`, `nobleknight`, one or several. |
+| `target_page`, `target_bgg`, `target_ebay`, `target_shopify`, `target_nobleknight` | Each place's own box: a page's address, a BGG game's address or id, the words to search eBay or Shopify for (the name when empty), a Noble Knight product page. |
+| `target` | The task API's target for a watch of one place: with exactly one `source`, it fills that place's box, unless the query fills the box itself. Ignored otherwise. |
+| `judge` | `yes` or `no`: Check listings with the model. Left out, yes where the model runner is set up. |
+| `max` | Top price, a number. |
+| `currency` | Only listings in it, such as `USD`. |
+| `exclude` | Leave out titles with: words or phrases separated by commas. |
+| `confirm`, `unconfirmed` | Double-check titles without, then leave out ones with (a plain watch only, `judge=no`). |
+| `notes` | Notes for the model (a checked watch only, `judge=yes`). |
+| `hours` | Hours between looks, a whole number. |
+
+For example, an eBay and Noble Knight watch, plain, at most 350 USD:
+
+```
+<TRACKER_WEB_URL>/new/wantlist?name=Arkham%20Horror%3A%20The%20Card%20Game&source=ebay,nobleknight&target_ebay=arkham%20horror%20card%20game&target_nobleknight=https%3A%2F%2Fwww.nobleknight.com%2FP%2F2148112695&max=350&currency=USD&exclude=investigator&judge=no
+```
 
 ## Alert emails
 
