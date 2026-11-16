@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { Database } from "bun:sqlite";
 import type { Fetch, FetchResponse } from "@rackbops/docket-core";
-import { parseMarketplace, type Source } from "@rackbops/docket-types";
+import { MAX_WANT_DM_CHARS, parseMarketplace, type Source } from "@rackbops/docket-types";
 import type { Plugin } from "../../../packages/api/contract.js";
 import { ebayLinesForgotten, forgetEbayMessages } from "./ebay-forget.js";
 import { openDatabase } from "./schema.js";
@@ -217,14 +217,42 @@ describe("eBay's lines in a watch of several places", () => {
     expect(out).toContain("<https://shop.example/p/rougarou>");
     expect(out?.split("\n").at(-1)).toBe("Press Done once you have it, and I stop looking.");
     // A DM cut at full length keeps the whole note, giving up its last listings for it.
-    const long = Array.from({ length: 12 }, (_, i) => `- Curse of the Rougarou ${i} -- 30.00 USD <https://shop.example/p/${"r".repeat(120)}${i}>`);
-    const full = `${["Rougarou: 13 new listings.", ...long].join("\n")}\n- Curse of the Rougarou -- 20.00 USD -- sold by seller1 <https://www.ebay.com/itm/123>`.slice(0, 1997) + "...";
+    const long = Array.from({ length: 150 }, (_, i) => `- Curse of the Rougarou ${i} -- 30.00 USD <https://shop.example/p/${"r".repeat(120)}${i}>`);
+    const full = `${["Rougarou: 13 new listings.", ...long].join("\n")}\n- Curse of the Rougarou -- 20.00 USD -- sold by seller1 <https://www.ebay.com/itm/123>`.slice(0, MAX_WANT_DM_CHARS - 3) + "...";
+    expect(full.length).toBe(MAX_WANT_DM_CHARS);
     const whole = ebayLinesForgotten(full, "curse rougarou");
-    expect(whole?.length).toBeLessThanOrEqual(2000);
+    expect(whole?.length).toBeLessThanOrEqual(MAX_WANT_DM_CHARS);
     expect(whole).toContain("eBay's listings are not kept here past 6 hours");
     expect(whole?.split("\n").at(-1)).toBe("Press Done once you have it, and I stop looking.");
     expect(whole?.split("\n")[0]).toBe("Rougarou: 13 new listings.");
     expect(whole).not.toContain("seller1");
+  });
+
+  it("keeps every other place's line of a DM past one Discord message (docket 0.30.0 and later)", () => {
+    const shops = Array.from({ length: 10 }, (_, i) => `- Curse of the Rougarou ${i} -- 30.00 USD -- ${"a long title ".repeat(30)}<https://shop.example/p/${i}>`);
+    const ebay = Array.from({ length: 10 }, (_, i) => `- Curse of the Rougarou -- 20.00 USD -- sold by seller${i} <https://www.ebay.com/itm/${i}> (via eBay)`);
+    const text = ["Rougarou: 20 new listings.", ...shops, ...ebay, "Press Done once you have it, and I stop looking."].join("\n");
+    expect(text.length).toBeGreaterThan(2000);
+    const out = ebayLinesForgotten(text, "curse rougarou");
+    for (let i = 0; i < 10; i++) expect(out).toContain(`<https://shop.example/p/${i}>`);
+    expect(out).not.toContain("ebay.com/itm");
+    expect(out).toContain("eBay's listings are not kept here past 6 hours");
+    expect(out?.split("\n").at(-1)).toBe("Press Done once you have it, and I stop looking.");
+  });
+
+  it("takes a judged eBay listing's note line with it, seller and all", () => {
+    const judged = [
+      "Rougarou: 2 new listings worth a look.",
+      "- Curse of the Rougarou -- 30.00 USD <https://shop.example/p/rougarou>",
+      "  looks right: the expansion, new. Seller: shopkeeper",
+      "- Curse of the Rougarou -- 20.00 USD -- sold by seller1 <https://www.ebay.com/itm/123> (via eBay)",
+      "  looks right: sealed. Seller: seller1 (99.8% positive)",
+      "Press Done once you have it, and I stop looking.",
+    ].join("\n");
+    const out = ebayLinesForgotten(judged, "curse rougarou") ?? "";
+    expect(out).toContain("  looks right: the expansion, new. Seller: shopkeeper");
+    expect(out).not.toContain("seller1");
+    expect(out).not.toContain("sealed");
   });
 
   it("are found by the sweep through the watch's also", () => {
