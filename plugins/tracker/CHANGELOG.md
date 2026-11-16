@@ -9,7 +9,7 @@
 ### Changed
 
 - A watch of several places made without `judge` now follows the same default as a watch of one place: checked by the model where the model runner is set up (each check counts against the daily model budget), as `/want`, the task API and tracker-mcp do for one place. Before, several places always made a plain watch. Watches already made keep their kind. `notes` is accepted with several places for the same reason.
-- `@rackbops/docket-core` and `@rackbops/docket-types` 0.31.0: the several-place judged watch.
+- `@rackbops/docket-core` and `@rackbops/docket-types` 0.31.0 (from 0.29.0): the several-place judged watch, and docket 0.30.0's want-list DM, which lists every listing a look found (up to 20, sent as several messages when one cannot hold them) instead of 5 and "...and N more".
 
 ### Schema
 

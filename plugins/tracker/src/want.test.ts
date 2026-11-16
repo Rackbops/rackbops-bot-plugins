@@ -108,7 +108,10 @@ describe("/want", () => {
     await slash(w.plugin, "want", LARRY, { strings: { name: "Wingspan expansions", source: "page", target: SHOP } });
     await pollTick(w.plugin);
     expect(content(w.sent, 0)).toContain("Wingspan expansions: 20 new listings.");
-    expect(content(w.sent, 0)).toContain("...and 15 more: `/task history t1` lists them all.");
+    // Since docket 0.30.0 the DM lists all 20, across as many messages as it takes (0.60.0).
+    const dm = w.sent.map((_, i) => content(w.sent, i)).join("\n");
+    expect(dm).toContain("Wingspan expansion 20:");
+    expect(dm).not.toContain("more: `/task history t1`");
     return { w, items };
   }
 
