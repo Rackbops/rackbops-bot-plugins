@@ -549,7 +549,7 @@ export function createWebHandler(w: WebWiring): (request: Request, info: PluginH
     case "edit":
       return editGet(e, r.id);
     case "new":
-      return newGet(e, r.type);
+      return newGet(e, r.type, url.searchParams);
     case "forget":
       return forgetRoute(a, method, null);
     case "tokens":

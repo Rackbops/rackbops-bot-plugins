@@ -14,7 +14,7 @@ import { createResearch, RESEARCH_OFF } from "../research.js";
 import { createRenewal } from "../tracked.js";
 import { editWant, finishWant, previewWant, startWant, type WatchConfig, watchPlaces, watchSite } from "../want.js";
 import { EDITOR_TYPES, type EditorType, confirmDeletePage, editTaskPage, type NewType, newTaskPage, notice, ownerControls, taskHref, type Values } from "./editor-pages.js";
-import { editValues, newsEdit, newsInput, priceEdit, priceInput, reminderEdit, reminderInput, renewalEdit, renewalInput, researchInput, scoutEdit, scoutInput, typed, wantEdit, wantInput } from "./form-input.js";
+import { editValues, newsEdit, newsInput, priceEdit, priceInput, reminderEdit, reminderInput, renewalEdit, renewalInput, prefilled, researchInput, scoutEdit, scoutInput, typed, wantEdit, wantInput } from "./form-input.js";
 import { htmlResponse, redirect } from "./html.js";
 import { taskVersion, VERSION_MISMATCH } from "./task-version.js";
 import { historyPage, notFoundPage, type Viewer } from "./pages.js";
@@ -220,13 +220,18 @@ const DEFAULTS: Record<NewType, Values> = {
   wantjudge: {},
 };
 
-export function newGet(e: Editor, type: NewType): Response {
+/**
+ * A new task's form, filled in from the address's query where it names the form's fields
+ * (`prefilled`), over the type's defaults. Nothing is made until the person saves it.
+ */
+export function newGet(e: Editor, type: NewType, query: URLSearchParams = new URLSearchParams()): Response {
   // Without the model runner the page says so instead of offering a form that can only be refused.
   if (type === "research" && !e.d.research) return htmlResponse(newTaskPage(e.v, type, {}, undefined, RESEARCH_OFF));
   if (type === "scout" && !e.d.research) return htmlResponse(newTaskPage(e.v, type, {}, undefined, SCOUT_OFF));
   if (type === "news" && !e.d.research) return htmlResponse(newTaskPage(e.v, type, {}, undefined, NEWS_OFF));
-  if (type === "wantlist") return htmlResponse(newTaskPage(e.v, type, { ...DEFAULTS.wantlist, judge: e.d.research ? "yes" : "no" }));
-  return htmlResponse(newTaskPage(e.v, type, type === "renewal" ? { ...DEFAULTS.renewal, currency: "USD" } : DEFAULTS[type]));
+  const given = prefilled(type, query);
+  if (type === "wantlist") return htmlResponse(newTaskPage(e.v, type, { ...DEFAULTS.wantlist, judge: e.d.research ? "yes" : "no", ...given }));
+  return htmlResponse(newTaskPage(e.v, type, { ...(type === "renewal" ? { ...DEFAULTS.renewal, currency: "USD" } : DEFAULTS[type]), ...given }));
 }
 
 export async function newPost(e: Editor, type: NewType, form: URLSearchParams): Promise<Response> {
