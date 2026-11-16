@@ -549,7 +549,8 @@ link cannot make, change or skip anything a person could not type.
   page, and the query fills nothing.
 - **What this bot searches by itself** is in `GET /tracker/api/v1/capabilities`' `sources`, true or
   false only (`runner` for the model, `bgg`, `ebay`, `shopify`); the five places in the table can
-  always be ticked, and a place this bot does not search makes a watch whose listings are sent in.
+  always be ticked: eBay or BGG where this bot does not search them makes a watch whose listings
+  are sent in, and Shopify with `shopify: false` is refused when saving.
   Each field's limits (`maxLength`, `minimum`, `maximum`, `enum`) are in `GET
   /tracker/api/v1/types` (Task API, below; both take a token). To make a task with no person at the form, use the task API itself, or
   tracker-mcp's `validate_task` and `create_task`.
