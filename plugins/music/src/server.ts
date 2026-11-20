@@ -95,6 +95,21 @@ function page(title: string, body: string, status: number): Response {
  */
 export async function handleCallback(req: Request, clientIp: string, deps: CallbackDeps): Promise<Response> {
   const url = new URL(req.url);
+  // Keep search engines off this host: it serves one OAuth callback and nothing a crawler should
+  // list. `/robots.txt` answers before the callback checks so a crawler gets a 200 instead of a 404.
+  if (req.method === "GET" && url.pathname === "/robots.txt") {
+    return noindex(new Response("User-agent: *\nDisallow: /\n", { headers: { "Content-Type": "text/plain; charset=utf-8" } }));
+  }
+  return noindex(await route(req, url, clientIp, deps));
+}
+
+/** Marks a response as not for search indexes, so a crawler that does reach a page leaves it out. */
+function noindex(response: Response): Response {
+  response.headers.set("X-Robots-Tag", "noindex, nofollow");
+  return response;
+}
+
+async function route(req: Request, url: URL, clientIp: string, deps: CallbackDeps): Promise<Response> {
   if (req.method !== "GET" || url.pathname !== deps.callbackPath) {
     return page("Not found", "Nothing here.", 404);
   }
@@ -188,7 +203,7 @@ export function startCallbackServer(
     },
     error(err) {
       deps.log?.error("Spotify callback server error", err);
-      return page(FAILURE_PAGE_TITLE, FAILURE_PAGE_BODY, 500);
+      return noindex(page(FAILURE_PAGE_TITLE, FAILURE_PAGE_BODY, 500));
     },
   });
   const boundPort = server.port ?? port;

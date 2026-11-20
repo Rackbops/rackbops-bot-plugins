@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-16T03:37:38.975Z",
+  "generatedAt": "2026-11-20T00:31:26.599Z",
   "plugins": [
     {
       "name": "mcp",
@@ -97,7 +97,7 @@
     {
       "name": "music",
       "package": "@rackbops/plugin-music",
-      "version": "1.7.1",
+      "version": "1.7.2",
       "description": "Music features: setlist.fm setlists turned into Spotify playlists, and the Spotify account link (/setlist, /spotify)",
       "hostApiVersion": 1,
       "intents": [],
@@ -151,6 +151,12 @@
         }
       ],
       "releases": [
+        {
+          "version": "1.7.2",
+          "publishedAt": "2026-11-20T00:00:00.000Z",
+          "url": "https://github.com/Rackbops/rackbops-bot-plugins/releases/tag/music-v1.7.2",
+          "notes": "### Changed\n\n- The callback server now sends `X-Robots-Tag: noindex, nofollow` on every response and answers `/robots.txt` with `Disallow: /`, so search engines stop reporting the host's root as a \"Not found\" page. Every other path is still a 404."
+        },
         {
           "version": "1.7.1",
           "publishedAt": "2026-10-17T00:00:00.000Z",

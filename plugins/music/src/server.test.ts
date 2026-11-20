@@ -58,6 +58,18 @@ describe("handleCallback", () => {
     expect(response.status).toBe(404);
   });
 
+  test("every response says noindex, and /robots.txt disallows everything", async () => {
+    const notFound = await handleCallback(get("", "/"), "ip", makeDeps());
+    expect(notFound.status).toBe(404);
+    expect(notFound.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+    const robots = await handleCallback(get("", "/robots.txt"), "ip", makeDeps());
+    expect(robots.status).toBe(200);
+    expect(robots.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+    expect(await robots.text()).toBe("User-agent: *\nDisallow: /\n");
+    const callback = await handleCallback(get("?code=C&state=T"), "ip", makeDeps());
+    expect(callback.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+  });
+
   test("a POST is refused even on the right path", async () => {
     const request = new Request(`https://bot.example.com${PATH}?code=C&state=T`, { method: "POST" });
     expect((await handleCallback(request, "ip", makeDeps())).status).toBe(404);
