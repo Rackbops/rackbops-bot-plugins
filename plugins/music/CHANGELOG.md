@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.7.2] - 2026-11-20
+
+### Changed
+
+- The callback server now sends `X-Robots-Tag: noindex, nofollow` on every response and answers `/robots.txt` with `Disallow: /`, so search engines stop reporting the host's root as a "Not found" page. Every other path is still a 404.
+
 ## [1.7.1] - 2026-10-17
 
 ### Fixed
